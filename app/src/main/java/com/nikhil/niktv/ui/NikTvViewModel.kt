@@ -61,11 +61,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(savedProfile = profile) }
         runCatching {
             val saved = store.activeSession.first()?.takeIf { it.profile == profile }
-            val session = saved?.takeIf {
-                System.currentTimeMillis() - it.authenticatedAtMillis < SESSION_MAX_AGE_MS &&
-                    runCatching { portal.categories(it, CatalogType.LIVE_TV) }.isSuccess
-            }
-                ?: portal.authenticate(profile).also { store.save(it) }
+            // Keep the saved session without probing the portal. Cached browsing
+            // should remain available, and an actual 401/403 refreshes on demand.
+            val session = saved ?: portal.authenticate(profile).also { store.save(it) }
             _state.update { it.copy(session = session, savedProfile = session.profile) }
             loadTypeInternal(session, CatalogType.LIVE_TV)
         }.onFailure { error ->
@@ -205,14 +203,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun playInternal(item: MediaItem, type: CatalogType, series: MediaItem?, episodes: List<MediaItem>) {
         var session = requireNotNull(_state.value.session)
-        if (session.profile.portalType == PortalType.STALKER &&
-            System.currentTimeMillis() - session.authenticatedAtMillis >= SESSION_MAX_AGE_MS) {
-            session = refreshSession(session.profile)
-        }
         val urlKey = "${type.name}:${item.id}"
         val cachedUrl = _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
         val url = cachedUrl ?: runCatching { portal.playableUrl(session, item, type) }.getOrElse { firstError ->
-            if (session.profile.portalType != PortalType.STALKER) throw firstError
+            if (session.profile.portalType != PortalType.STALKER || !firstError.isAuthenticationFailure()) throw firstError
             session = refreshSession(session.profile)
             portal.playableUrl(session, item, type)
         }.also { resolved ->
@@ -379,10 +373,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         Regex("\\b(\\d+)\\b")
     ).firstNotNullOfOrNull { it.findAll(this).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull() }
 
+    private fun Throwable.isAuthenticationFailure(): Boolean = message.orEmpty().let { text ->
+        text.contains("Authorization failed", ignoreCase = true) ||
+            text.contains("HTTP status: 401") || text.contains("HTTP status: 403")
+    }
+
     companion object {
         private const val MAX_RECENT_ITEMS = 100
         private const val MAX_PROGRESS_ITEMS = 200
         private const val MAX_PLAYBACK_URLS = 500
-        private const val SESSION_MAX_AGE_MS = 15 * 60_000L
     }
 }

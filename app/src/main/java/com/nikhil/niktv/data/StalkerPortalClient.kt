@@ -45,6 +45,9 @@ class StalkerPortalClient(private val context: Context) {
                     null
                 } else endpoint to response
             }.getOrElse {
+                if (it is PortalHttpException && it.statusCode == 429) {
+                    error("The portal is temporarily rate-limiting requests. Wait ${it.retryAfterSeconds ?: 30} seconds, then try again once.")
+                }
                 attempts += "${endpoint.pathForMessage()}: ${it.message}"
                 null
             }
@@ -358,7 +361,11 @@ class StalkerPortalClient(private val context: Context) {
         http.newCall(builder.build()).execute().use { response ->
             val body = response.body?.string().orEmpty()
             val diagnostic = buildDiagnostic(endpointUrl, params, response.code, response.header("Content-Type"), body, profile, session)
-            if (!response.isSuccessful) error(diagnostic)
+            if (!response.isSuccessful) {
+                val retryAfter = response.header("Retry-After")?.toLongOrNull()
+                    ?: runCatching { parsePortalResponse(body).payload().string("retry_after")?.toLongOrNull() }.getOrNull()
+                throw PortalHttpException(response.code, retryAfter, diagnostic)
+            }
             if (body.isBlank()) error(diagnostic)
             return try {
                 parsePortalResponse(body)
@@ -452,18 +459,15 @@ class StalkerPortalClient(private val context: Context) {
     private fun endpointCandidates(portalUrl: String): List<String> {
         val direct = portalUrl.takeIf { it.endsWith(".php", ignoreCase = true) }
         val withoutC = portalUrl.removeSuffix("/c")
-        val bases = linkedSetOf(withoutC)
-        if (withoutC.endsWith("/stalker_portal")) bases += withoutC.removeSuffix("/stalker_portal")
+        val root = withoutC.removeSuffix("/stalker_portal")
         return buildList {
             direct?.let(::add)
-            bases.forEach { base ->
-                add("$base/server/load.php")
-                add("$base/portal.php")
-                if (!base.endsWith("/stalker_portal")) {
-                    add("$base/stalker_portal/server/load.php")
-                    add("$base/stalker_portal/portal.php")
-                }
-            }
+            // Most modern Stalker portals use this endpoint. Probe it first so a
+            // normal login does not generate multiple avoidable Cloudflare hits.
+            add("$root/stalker_portal/server/load.php")
+            add("$root/stalker_portal/portal.php")
+            add("$root/server/load.php")
+            add("$root/portal.php")
         }.distinct()
     }
     private fun String.pathForMessage(): String = runCatching { toHttpUrl().encodedPath }.getOrDefault(this)
@@ -559,3 +563,9 @@ class StalkerPortalClient(private val context: Context) {
         private fun cookieKey(cookie: Cookie) = "${cookie.domain}|${cookie.path}|${cookie.name}"
     }
 }
+
+private class PortalHttpException(
+    val statusCode: Int,
+    val retryAfterSeconds: Long?,
+    message: String
+) : IllegalStateException(message)

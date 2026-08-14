@@ -1,4 +1,16 @@
-fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+fun String.withoutPropertyQuotes(): String {
+    val value = trim()
+    return when {
+        value.length >= 2 && value.first() == '"' && value.last() == '"' -> value.substring(1, value.length - 1)
+        value.length >= 2 && value.first() == '\'' && value.last() == '\'' -> value.substring(1, value.length - 1)
+        else -> value
+    }.trim()
+}
+
+fun String.asBuildConfigString(): String {
+    val value = withoutPropertyQuotes()
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+}
 
 val defaultProfileName = providers.gradleProperty("NIKTV_DEFAULT_PROFILE_NAME")
     .orElse(providers.environmentVariable("NIKTV_DEFAULT_PROFILE_NAME")).orElse("")

@@ -69,6 +69,11 @@ import kotlinx.coroutines.delay
 
 private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
+    if (value.length >= 2 && ((value.first() == '"' && value.last() == '"') ||
+            (value.first() == '\'' && value.last() == '\''))) value.substring(1, value.length - 1).trim()
+    else value
+}
 
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
@@ -127,10 +132,10 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 
 @Composable
 private fun ProfileScreen(saved: PortalProfile?, loading: Boolean, connect: (PortalProfile) -> Unit, reconnect: () -> Unit) {
-    var name by remember(saved) { mutableStateOf(saved?.name?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PROFILE_NAME) }
-    var url by remember(saved) { mutableStateOf(saved?.portalUrl?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PORTAL_URL) }
-    var mac by remember(saved) { mutableStateOf(saved?.macAddress?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_MAC_ADDRESS) }
-    var serial by remember(saved) { mutableStateOf(saved?.serialNumber?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_SERIAL_NUMBER) }
+    var name by remember(saved) { mutableStateOf((saved?.name?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PROFILE_NAME).withoutConfigurationQuotes()) }
+    var url by remember(saved) { mutableStateOf((saved?.portalUrl?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PORTAL_URL).withoutConfigurationQuotes()) }
+    var mac by remember(saved) { mutableStateOf((saved?.macAddress?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_MAC_ADDRESS).withoutConfigurationQuotes()) }
+    var serial by remember(saved) { mutableStateOf((saved?.serialNumber?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_SERIAL_NUMBER).withoutConfigurationQuotes()) }
     var portalType by remember(saved) { mutableStateOf(saved?.portalType ?: PortalType.STALKER) }
     var username by remember(saved) { mutableStateOf(saved?.username.orEmpty()) }
     var password by remember(saved) { mutableStateOf(saved?.password.orEmpty()) }
@@ -158,7 +163,7 @@ private fun ProfileScreen(saved: PortalProfile?, loading: Boolean, connect: (Por
                         if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth(), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial already registered for this MAC. Leave blank to generate one.") }, singleLine = true)
                     }
                     val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
-                    Button(onClick = { connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text("Authenticate") }
+                    Button(onClick = { connect(PortalProfile(name.withoutConfigurationQuotes(), url.withoutConfigurationQuotes(), mac.withoutConfigurationQuotes(), serial.withoutConfigurationQuotes(), portalType, username.withoutConfigurationQuotes(), password.withoutConfigurationQuotes())) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text("Authenticate") }
                     if (saved != null) TextButton(onClick = reconnect, Modifier.fillMaxWidth()) { Text("Reconnect to ${saved.name}") }
                     Text("Only connect to portals and media you are authorized to access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
