@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
@@ -88,7 +89,7 @@ private fun ProfileScreen(saved: PortalProfile?, loading: Boolean, connect: (Por
     var username by remember(saved) { mutableStateOf(saved?.username.orEmpty()) }
     var password by remember(saved) { mutableStateOf(saved?.password.orEmpty()) }
     var advanced by remember(saved) { mutableStateOf(saved?.serialNumber?.isNotBlank() == true) }
-    BoxWithConstraints(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp), contentAlignment = Alignment.Center) {
         val wide = maxWidth >= 720.dp
         Row(horizontalArrangement = Arrangement.spacedBy(56.dp), verticalAlignment = Alignment.CenterVertically) {
             if (wide) Column(Modifier.widthIn(max = 380.dp)) { Text("nikTv", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold); Text("Your portal, beautifully organized on every screen.", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -136,7 +137,7 @@ private fun CatalogScreen(state: NikTvState, selectType: (CatalogType) -> Unit, 
 
 @Composable
 private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, logout: () -> Unit, modifier: Modifier) {
-    Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("nikTv", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
         Spacer(Modifier.weight(1f))
         CatalogType.entries.forEach { type ->
