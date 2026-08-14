@@ -398,6 +398,7 @@ private fun CatalogNavigationItem(
 @Composable
 private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
     val activity = LocalContext.current as? Activity
+    val filterMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(240.dp)
     var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
     var selectedSeason by rememberSaveable(state.selectedSeries?.id) { mutableStateOf<Int?>(null) }
     var searchVisible by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf(false) }
@@ -461,7 +462,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(if (state.selectedSeries != null) "Choose a season" else "Filter ${state.selectedType.title}", style = MaterialTheme.typography.labelLarge)
                     FlowRow(
-                        Modifier.fillMaxWidth(),
+                        Modifier.fillMaxWidth().heightIn(max = filterMaxHeight).verticalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
