@@ -14,6 +14,7 @@ import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.model.BrowseCatalogCache
 import com.nikhil.niktv.model.PlaybackUrl
+import com.nikhil.niktv.model.RecentSearch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -28,6 +29,7 @@ class ProfileStore(private val context: Context) {
     private val progressKey = stringPreferencesKey("playback_progress")
     private val playbackUrlsKey = stringPreferencesKey("playback_urls")
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
+    private val recentSearchesKey = stringPreferencesKey("recent_searches")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         prefs[key]?.let { runCatching { Json.decodeFromString<PortalProfile>(it) }.getOrNull() }
     }
@@ -47,6 +49,9 @@ class ProfileStore(private val context: Context) {
         prefs[playbackUrlsKey]?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
+    val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
+        prefs[recentSearchesKey]?.let { runCatching { Json.decodeFromString<List<RecentSearch>>(it) }.getOrNull() }.orEmpty()
+    }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
         it[key] = Json.encodeToString(session.profile)
         it[sessionKey] = Json.encodeToString(session)
@@ -85,6 +90,9 @@ class ProfileStore(private val context: Context) {
         context.dataStore.edit { it[browseKey] = Json.encodeToString(cache) }
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
+    suspend fun saveRecentSearches(items: List<RecentSearch>) = context.dataStore.edit {
+        it[recentSearchesKey] = Json.encodeToString(items)
+    }
     suspend fun clear() = context.dataStore.edit {
         it.remove(key)
         it.remove(sessionKey)
@@ -94,5 +102,6 @@ class ProfileStore(private val context: Context) {
         it.remove(recentKey)
         it.remove(progressKey)
         it.remove(playbackUrlsKey)
+        it.remove(recentSearchesKey)
     }
 }

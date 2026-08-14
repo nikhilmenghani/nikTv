@@ -108,6 +108,14 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     editProfile = vm::editProfile,
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
+                    ,openSearch = vm::openSearch
+                    ,closeSearch = vm::closeSearch
+                    ,setSearchType = vm::setSearchType
+                    ,setSearchQuery = vm::setSearchQuery
+                    ,search = vm::search
+                    ,useRecentSearch = vm::useRecentSearch
+                    ,deleteRecentSearch = vm::deleteRecentSearch
+                    ,openSearchResult = vm::openSearchResult
                 )
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -195,26 +203,37 @@ private fun CatalogScreen(
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
     logout: () -> Unit,
-    setCacheIntervalMinutes: (Int) -> Unit
+    setCacheIntervalMinutes: (Int) -> Unit,
+    openSearch: () -> Unit,
+    closeSearch: () -> Unit,
+    setSearchType: (SearchContentType) -> Unit,
+    setSearchQuery: (String) -> Unit,
+    search: (Boolean) -> Unit,
+    useRecentSearch: (RecentSearch) -> Unit,
+    deleteRecentSearch: (RecentSearch) -> Unit,
+    openSearchResult: (MediaItem) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val wide = configuration.screenWidthDp >= 720
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
+    BackHandler(enabled = state.searchOpen, onBack = closeSearch)
     BackHandler(enabled = state.favoritesOpen && !state.settingsOpen, onBack = closeFavorites)
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
-        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, Modifier.weight(1f), isTv, false)
+        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, Modifier.weight(1f), isTv)
+        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
+        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
-        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, Modifier.weight(1f), false, true)
-        if (!state.settingsOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
+        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, Modifier.weight(1f), false)
+        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
+        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), false, true)
+        if (!state.settingsOpen && !state.searchOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
     }
 }
 
@@ -269,6 +288,7 @@ private fun HomeContent(
     removeRecent: (RecentItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     openSettings: () -> Unit,
+    openSearch: () -> Unit,
     modifier: Modifier,
     tv: Boolean
 ) {
@@ -281,6 +301,7 @@ private fun HomeContent(
                 Text("Home", style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                 Text("Recently played", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
             IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
         Spacer(Modifier.height(12.dp))
@@ -412,6 +433,7 @@ private fun FavoritesContent(
     openFavorite: (FavoriteItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     openSettings: () -> Unit,
+    openSearch: () -> Unit,
     modifier: Modifier,
     tv: Boolean
 ) {
@@ -424,6 +446,7 @@ private fun FavoritesContent(
                 Text("Favorites", style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                 Text("${state.favorites.size} saved", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
             IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
         Spacer(Modifier.height(12.dp))
@@ -442,6 +465,94 @@ private fun FavoritesContent(
                 }
                 items(favorites, key = { it.key }) { favorite ->
                     MediaListItem(favorite.media, { openFavorite(favorite) }, { toggleFavorite(favorite) }, true, tv)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SearchContent(
+    state: NikTvState,
+    close: () -> Unit,
+    setType: (SearchContentType) -> Unit,
+    setQuery: (String) -> Unit,
+    search: (Boolean) -> Unit,
+    useRecent: (RecentSearch) -> Unit,
+    deleteRecent: (RecentSearch) -> Unit,
+    openResult: (MediaItem) -> Unit,
+    modifier: Modifier,
+    tv: Boolean
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
+    Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text("Search", Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(8.dp))
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SearchContentType.entries.forEachIndexed { index, type ->
+                SegmentedButton(
+                    selected = state.searchType == type,
+                    onClick = { setType(type) },
+                    shape = SegmentedButtonDefaults.itemShape(index, SearchContentType.entries.size)
+                ) { Text(type.title) }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = state.searchQuery,
+            onValueChange = setQuery,
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+            singleLine = true,
+            shape = RoundedCornerShape(24.dp),
+            placeholder = { Text("Search ${state.searchType.title.lowercase()}") },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = {
+                Row {
+                    if (state.searchQuery.isNotEmpty()) IconButton(onClick = { setQuery("") }) { Icon(Icons.Default.Close, "Clear") }
+                    FilledIconButton(onClick = { search(false) }, enabled = state.searchQuery.isNotBlank() && !state.searchServerLoading) {
+                        Icon(Icons.Default.ArrowForward, "Search")
+                    }
+                }
+            }
+        )
+        if (state.recentSearches.isNotEmpty() && state.searchResults.isEmpty()) {
+            Text("Recent searches", Modifier.padding(top = 16.dp, bottom = 6.dp), style = MaterialTheme.typography.titleMedium)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                state.recentSearches.forEach { recent ->
+                    InputChip(
+                        selected = false,
+                        onClick = { useRecent(recent) },
+                        label = { Text(recent.query) },
+                        trailingIcon = {
+                            Icon(Icons.Default.Close, "Delete ${recent.query}", Modifier.size(18.dp).clickable { deleteRecent(recent) })
+                        }
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (state.searchServerLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (state.searchQuery.isNotBlank() && state.searchResults.isEmpty() && !state.searchServerLoading) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("No cached results", style = MaterialTheme.typography.titleMedium)
+                Text("Search the portal once for this title. Requests are rate-limited for account safety.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = { search(true) }) { Icon(Icons.Default.CloudDownload, null); Spacer(Modifier.width(8.dp)); Text("Search server") }
+            }
+        }
+        if (state.searchResults.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("${state.searchResults.size} results${if (state.searchUsedServer) " · server checked" else " · cached"}", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { search(true) }, enabled = !state.searchServerLoading) { Text("Search server") }
+            }
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+                items(state.searchResults, key = { "search-${state.searchType}-${it.id}" }) { item ->
+                    MediaListItem(item, { openResult(item) }, {}, false, tv)
                 }
             }
         }
@@ -598,7 +709,7 @@ private fun CatalogNavigationItem(
 }
 
 @Composable
-private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, refreshCatalog: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
+private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, refreshCatalog: () -> Unit, openSettings: () -> Unit, openSearch: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
     val activity = LocalContext.current as? Activity
     val filterMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(240.dp)
     var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
@@ -697,6 +808,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             if (state.selectedSeries == null) IconButton(onClick = refreshCatalog) {
                 Icon(Icons.Default.Refresh, "Refresh ${state.selectedType.title}")
             }
+            IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
             IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
         AnimatedVisibility(
@@ -769,7 +881,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             }
         }
     }
-        if (!searchVisible) {
+        if (false) {
             ExtendedFloatingActionButton(
                 onClick = { searchVisible = true; prepareFullSearch() },
                 icon = { Icon(Icons.Default.Search, null) },

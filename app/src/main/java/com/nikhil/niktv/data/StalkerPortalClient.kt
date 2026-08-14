@@ -6,7 +6,10 @@ import android.os.Build
 import android.provider.Settings
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Cookie
@@ -30,14 +33,20 @@ class StalkerPortalClient(private val context: Context) {
         .readTimeout(35, TimeUnit.SECONDS)
         .build()
     @Volatile private var authenticationTrace: String = ""
+    private val authMutex = Mutex()
+    private val requestMutex = Mutex()
+    private val trafficPrefs = context.getSharedPreferences("portal_traffic_guard", Context.MODE_PRIVATE)
+    private val requestTimes = ArrayDeque<Long>()
+    private var lastRequestAt = 0L
 
-    suspend fun authenticate(profile: PortalProfile): PortalSession = withContext(Dispatchers.IO) {
+    suspend fun authenticate(profile: PortalProfile): PortalSession = authMutex.withLock { withContext(Dispatchers.IO) {
         if (profile.portalType == PortalType.XTREAM) return@withContext authenticateXtream(profile)
         val normalized = normalizePortal(profile.portalUrl)
         val clean = profile.copy(portalUrl = normalized, macAddress = normalizeMac(profile.macAddress))
         val handshakeParams = mapOf("type" to "stb", "action" to "handshake", "token" to "", "JsHttpRequest" to "1")
         val attempts = mutableListOf<String>()
-        val discovered = endpointCandidates(normalized).firstNotNullOfOrNull { endpoint ->
+        val preferredEndpoint = trafficPrefs.getString(endpointKey(clean), null)
+        val discovered = endpointCandidates(normalized, preferredEndpoint).firstNotNullOfOrNull { endpoint ->
             runCatching {
                 val response = request(clean, endpoint, null, handshakeParams)
                 if (response.payload().string("token").isNullOrBlank()) {
@@ -45,6 +54,9 @@ class StalkerPortalClient(private val context: Context) {
                     null
                 } else endpoint to response
             }.getOrElse {
+                if (it is PortalRateLimitCooldownException) {
+                    error("Portal protection is active. Wait ${it.remainingSeconds} seconds before making another server request.")
+                }
                 if (it is PortalHttpException && it.statusCode == 429) {
                     error("The portal is temporarily rate-limiting requests. Wait ${it.retryAfterSeconds ?: 30} seconds, then try again once.")
                 }
@@ -53,6 +65,7 @@ class StalkerPortalClient(private val context: Context) {
             }
         } ?: error("No compatible Stalker API endpoint was found. Tried: ${attempts.joinToString()}")
         val (endpointUrl, handshake) = discovered
+        trafficPrefs.edit().putString(endpointKey(clean), endpointUrl).apply()
         val token = requireNotNull(handshake.payload().string("token"))
         val random = handshake.payload().string("random")
         val identity = createDeviceIdentity(clean)
@@ -80,11 +93,11 @@ class StalkerPortalClient(private val context: Context) {
         }
         if (payload is JsonObject) {
             val message = payload.string("block_msg") ?: payload.string("msg")
-            val explicitlyBlocked = payload["blocked"]?.jsonPrimitive?.contentOrNull in setOf("1", "true")
+            val explicitlyBlocked = (payload["blocked"] as? JsonPrimitive)?.contentOrNull in setOf("1", "true")
             if (explicitlyBlocked) error(message?.takeIf(String::isNotBlank) ?: "The portal reports that this profile is blocked")
         }
         session
-    }
+    } }
 
     suspend fun categories(session: PortalSession, type: CatalogType): List<Category> = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamCategories(session, type)
@@ -129,6 +142,38 @@ class StalkerPortalClient(private val context: Context) {
     suspend fun fullCatalog(session: PortalSession, type: CatalogType, categories: List<Category>): List<MediaItem> = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamCatalog(session, type, null)
         categories.flatMap { category -> catalog(session, category) }.distinctBy { it.id }
+    }
+
+    /** One bounded server operation used by the dedicated search screen. */
+    suspend fun search(session: PortalSession, type: SearchContentType, query: String): List<MediaItem> = withContext(Dispatchers.IO) {
+        if (session.profile.portalType == PortalType.XTREAM) {
+            val catalogType = if (type == SearchContentType.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+            return@withContext xtreamCatalog(session, catalogType, null)
+                .filter { it.title.contains(query, ignoreCase = true) }
+        }
+        val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+            "type" to "vod", "action" to "get_ordered_list", "category" to "*",
+            "search" to query.trim(), "p" to "1", "fav" to "0", "sortby" to "added",
+            "hd" to "0", "ended" to "0"
+        )))
+        response.payload().arrayFromData().mapNotNull { node ->
+            val item = node as? JsonObject ?: return@mapNotNull null
+            val id = item.string("id") ?: item.string("movie_id") ?: return@mapNotNull null
+            val series = item.boolish("is_series") || item.string("series") == "1" ||
+                item.string("type").equals("series", ignoreCase = true) || item.string("name").orEmpty().contains("series", ignoreCase = true)
+            val episode = item.boolish("is_episode") || item.string("episode_id") != null
+            val matchesType = when (type) {
+                SearchContentType.SERIES -> series && !episode
+                SearchContentType.MOVIES -> !series && !episode
+                SearchContentType.EPISODES -> episode
+            }
+            if (!matchesType) return@mapNotNull null
+            MediaItem(id, item.string("name") ?: item.string("title") ?: "Untitled",
+                portalAssetUrl(session, item.string("logo") ?: item.string("screenshot_uri") ?: item.string("pic")),
+                item.string("cmd"), item.string("description") ?: item.string("genres_str"),
+                item.string("season_number")?.toIntOrNull(), item.string("episode")?.toIntOrNull(),
+                item.string("season_id"), item.string("category_id"), item.string("episode_id"))
+        }.filter { it.title.contains(query, ignoreCase = true) }.distinctBy { it.id }
     }
 
     suspend fun playableUrl(session: PortalSession, item: MediaItem, type: CatalogType): String = withContext(Dispatchers.IO) {
@@ -202,7 +247,7 @@ class StalkerPortalClient(private val context: Context) {
             if (item.boolish("is_season")) return@flatMap emptyList()
             val season = item.string("season_number")?.toIntOrNull() ?: item.string("season")?.toIntOrNull() ?: fallbackSeason
             val command = item.string("cmd") ?: series.command
-            val numbered = (item["series"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull?.toIntOrNull() }.orEmpty()
+            val numbered = (item["series"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }.orEmpty()
             val explicitEpisode = item.string("series_number")?.toIntOrNull() ?: item.string("episode")?.toIntOrNull() ?: item.string("episode_id")?.toIntOrNull()
             if (item.boolish("is_episode") && command != null && explicitEpisode != null) {
                 listOf(MediaItem(
@@ -236,7 +281,7 @@ class StalkerPortalClient(private val context: Context) {
         val response = xtreamRequest(clean)
         val user = (response as? JsonObject)?.get("user_info") as? JsonObject
             ?: error("Xtream server did not return user information")
-        val authenticated = user["auth"]?.jsonPrimitive?.contentOrNull in setOf("1", "true")
+        val authenticated = (user["auth"] as? JsonPrimitive)?.contentOrNull in setOf("1", "true")
         if (!authenticated) error(user.string("message") ?: "Xtream username or password was rejected")
         val status = user.string("status")
         if (status != null && status !in setOf("Active", "active")) error("Xtream account status: $status")
@@ -334,7 +379,8 @@ class StalkerPortalClient(private val context: Context) {
     }
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
-    private fun request(profile: PortalProfile, endpointUrl: String, session: PortalSession?, params: Map<String, String>): JsonElement {
+    private suspend fun request(profile: PortalProfile, endpointUrl: String, session: PortalSession?, params: Map<String, String>): JsonElement = requestMutex.withLock {
+        awaitTrafficPermit()
         val endpoint = endpointUrl.toHttpUrl().newBuilder().apply {
             params.forEach { (key, value) ->
                 // Cast4K's Retrofit declaration marks the Stalker `cmd` value as
@@ -364,11 +410,12 @@ class StalkerPortalClient(private val context: Context) {
             if (!response.isSuccessful) {
                 val retryAfter = response.header("Retry-After")?.toLongOrNull()
                     ?: runCatching { parsePortalResponse(body).payload().string("retry_after")?.toLongOrNull() }.getOrNull()
+                if (response.code == 429) recordRateLimit(retryAfter)
                 throw PortalHttpException(response.code, retryAfter, diagnostic)
             }
             if (body.isBlank()) error(diagnostic)
             return try {
-                parsePortalResponse(body)
+                parsePortalResponse(body).also { clearRateLimitStrikes() }
             } catch (_: Throwable) {
                 error(diagnostic)
             }
@@ -456,11 +503,12 @@ class StalkerPortalClient(private val context: Context) {
         // Keep the path supplied by the user. Discovery handles /c, /stalker_portal and direct PHP URLs.
         return url
     }
-    private fun endpointCandidates(portalUrl: String): List<String> {
+    private fun endpointCandidates(portalUrl: String, preferred: String? = null): List<String> {
         val direct = portalUrl.takeIf { it.endsWith(".php", ignoreCase = true) }
         val withoutC = portalUrl.removeSuffix("/c")
         val root = withoutC.removeSuffix("/stalker_portal")
         return buildList {
+            preferred?.let(::add)
             direct?.let(::add)
             // Most modern Stalker portals use this endpoint. Probe it first so a
             // normal login does not generate multiple avoidable Cloudflare hits.
@@ -470,6 +518,42 @@ class StalkerPortalClient(private val context: Context) {
             add("$root/portal.php")
         }.distinct()
     }
+
+    private suspend fun awaitTrafficPermit() {
+        val now = System.currentTimeMillis()
+        val blockedUntil = trafficPrefs.getLong("blocked_until", 0L)
+        if (blockedUntil > now) {
+            val seconds = ((blockedUntil - now + 999L) / 1000L).coerceAtLeast(1L)
+            throw PortalRateLimitCooldownException(seconds)
+        }
+        while (requestTimes.isNotEmpty() && now - requestTimes.first() >= REQUEST_WINDOW_MS) requestTimes.removeFirst()
+        val spacingWait = (lastRequestAt + MIN_REQUEST_SPACING_MS - now).coerceAtLeast(0L)
+        val budgetWait = if (requestTimes.size >= MAX_REQUESTS_PER_WINDOW)
+            (requestTimes.first() + REQUEST_WINDOW_MS - now).coerceAtLeast(0L) else 0L
+        val wait = maxOf(spacingWait, budgetWait)
+        if (wait > 0L) delay(wait)
+        val grantedAt = System.currentTimeMillis()
+        while (requestTimes.isNotEmpty() && grantedAt - requestTimes.first() >= REQUEST_WINDOW_MS) requestTimes.removeFirst()
+        requestTimes.addLast(grantedAt)
+        lastRequestAt = grantedAt
+    }
+
+    private fun recordRateLimit(retryAfter: Long?) {
+        val strikes = (trafficPrefs.getInt("rate_limit_strikes", 0) + 1).coerceAtMost(5)
+        val exponential = 30L * (1L shl (strikes - 1))
+        val seconds = maxOf(retryAfter ?: 30L, exponential).coerceAtMost(30L * 60L)
+        trafficPrefs.edit().putInt("rate_limit_strikes", strikes)
+            .putLong("blocked_until", System.currentTimeMillis() + seconds * 1000L).apply()
+    }
+
+    private fun clearRateLimitStrikes() {
+        // A successful request clears an expired block, but retain a decreasing strike
+        // count so repeated bursts do not immediately return to the shortest cooldown.
+        val strikes = trafficPrefs.getInt("rate_limit_strikes", 0)
+        trafficPrefs.edit().putLong("blocked_until", 0L).putInt("rate_limit_strikes", (strikes - 1).coerceAtLeast(0)).apply()
+    }
+
+    private fun endpointKey(profile: PortalProfile): String = "endpoint_" + sha1(profile.portalUrl + "|" + profile.macAddress).take(20)
     private fun String.pathForMessage(): String = runCatching { toHttpUrl().encodedPath }.getOrDefault(this)
     private fun portalReferer(endpoint: HttpUrl): String = endpoint.newBuilder()
         .encodedPath(endpoint.encodedPath.substringBefore("server/load.php") + "c/")
@@ -522,13 +606,16 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.array(): List<JsonElement> = when (this) { is JsonArray -> this; is JsonObject -> values.firstOrNull { it is JsonArray } as? JsonArray ?: emptyList(); else -> emptyList() }
     private fun JsonElement.arrayFromData(): List<JsonElement> = ((this as? JsonObject)?.get("data") ?: this).array()
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
-    private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+    private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Mobile Safari/533.3"
         private const val MAG_VER = "ImageDescription: 2.20.02-pub-424; ImageDate: Fri May 8 15:39:55 UTC 2020; PORTAL version: 5.6.2; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x588"
         private const val HW_VERSION = "1.7-BD-00"
         private const val API_SIGNATURE = "262"
+        private const val MIN_REQUEST_SPACING_MS = 1_000L
+        private const val REQUEST_WINDOW_MS = 60_000L
+        private const val MAX_REQUESTS_PER_WINDOW = 20
     }
 
     private data class DeviceIdentity(val serial: String, val stbType: String, val clientType: String, val metrics: String, val hardwareVersion2: String)
@@ -569,3 +656,6 @@ private class PortalHttpException(
     val retryAfterSeconds: Long?,
     message: String
 ) : IllegalStateException(message)
+
+private class PortalRateLimitCooldownException(val remainingSeconds: Long) :
+    IllegalStateException("Portal requests are paused for $remainingSeconds seconds")

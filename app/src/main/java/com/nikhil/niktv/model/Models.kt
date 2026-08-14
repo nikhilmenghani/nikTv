@@ -22,6 +22,16 @@ enum class CatalogType(val title: String, val apiType: String) {
 }
 
 @Serializable
+enum class SearchContentType(val title: String) { SERIES("Series"), MOVIES("Movies"), EPISODES("Episodes") }
+
+@Serializable
+data class RecentSearch(
+    val query: String,
+    val type: SearchContentType,
+    val searchedAtMillis: Long = System.currentTimeMillis()
+) { val key: String get() = "${type.name}:${query.lowercase()}" }
+
+@Serializable
 data class Category(val id: String, val title: String, val type: CatalogType)
 @Serializable
 data class MediaItem(
@@ -42,7 +52,8 @@ data class SearchCatalogCache(
     val profileKey: String,
     val type: CatalogType,
     val cachedAtMillis: Long,
-    val items: List<MediaItem>
+    val items: List<MediaItem>,
+    val completedCategoryIds: Set<String> = emptySet()
 )
 
 @Serializable

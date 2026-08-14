@@ -34,7 +34,14 @@ data class NikTvState(
     val playbackProgress: List<PlaybackProgress> = emptyList(),
     val playbackUrls: List<PlaybackUrl> = emptyList(),
     val cacheIntervalMinutes: Int = 60,
-    val browseCache: BrowseCatalogCache? = null
+    val browseCache: BrowseCatalogCache? = null,
+    val searchOpen: Boolean = false,
+    val searchType: SearchContentType = SearchContentType.SERIES,
+    val searchQuery: String = "",
+    val searchResults: List<MediaItem> = emptyList(),
+    val searchServerLoading: Boolean = false,
+    val searchUsedServer: Boolean = false,
+    val recentSearches: List<RecentSearch> = emptyList()
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -50,6 +57,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
+        viewModelScope.launch { store.recentSearches.collect { searches -> _state.update { it.copy(recentSearches = searches) } } }
     }
 
     private fun restoreSession() = viewModelScope.launch {
@@ -82,18 +90,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reconnect() { _state.value.savedProfile?.let(::connect) }
 
-    fun loadType(type: CatalogType) = task {
-        val session = requireNotNull(_state.value.session)
-        loadTypeInternal(session, type)
+    fun loadType(type: CatalogType) {
+        viewModelScope.launch {
+            runCatching { loadTypeInternal(requireNotNull(_state.value.session), type) }
+                .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not load ${type.title}") } }
+        }
     }
 
     private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType, forceRefresh: Boolean = false, preferredCategoryId: String? = null) {
         val profileKey = session.profile.cacheKey()
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         if (!forceRefresh) {
-            store.browseCatalog(type).first()?.takeIf {
-                it.profileKey == profileKey && System.currentTimeMillis() - it.cachedAtMillis < maxAge
-            }?.let { cached ->
+            store.browseCatalog(type).first()?.takeIf { it.profileKey == profileKey }?.let { cached ->
                 val selected = cached.categories.firstOrNull { it.id == preferredCategoryId }
                     ?: cached.categories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
                     ?: cached.categories.firstOrNull()
@@ -102,7 +110,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     items = selected?.let { category -> cached.itemsByCategory[category.id] }.orEmpty(),
                     selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null, browseCache = cached
                 ) }
-                if (selected == null || cached.itemsByCategory.containsKey(selected.id)) return
+                val fresh = System.currentTimeMillis() - cached.cachedAtMillis < maxAge
+                if (fresh && (selected == null || cached.itemsByCategory.containsKey(selected.id))) return
             }
         }
         val categories = portal.categories(session, type)
@@ -196,6 +205,71 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
+
+    fun openSearch() = _state.update { it.copy(searchOpen = true, settingsOpen = false, favoritesOpen = false) }
+    fun closeSearch() = _state.update { it.copy(searchOpen = false, searchServerLoading = false) }
+    fun setSearchType(type: SearchContentType) = _state.update {
+        it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false)
+    }
+    fun setSearchQuery(query: String) = _state.update { it.copy(searchQuery = query) }
+
+    fun search(forceServer: Boolean = false) {
+        val snapshot = _state.value
+        val query = snapshot.searchQuery.trim()
+        if (query.isBlank() || snapshot.searchServerLoading) return
+        viewModelScope.launch {
+            rememberSearch(query, snapshot.searchType)
+            val local = localSearch(snapshot.searchType, query)
+            _state.update { it.copy(searchResults = local, searchUsedServer = false) }
+            if (!forceServer && local.isNotEmpty()) return@launch
+            _state.update { it.copy(searchServerLoading = true) }
+            runCatching { portal.search(requireNotNull(_state.value.session), snapshot.searchType, query) }
+                .onSuccess { server ->
+                    _state.update { current -> current.copy(
+                        searchResults = (local + server).distinctBy { it.id },
+                        searchServerLoading = false, searchUsedServer = true
+                    ) }
+                }.onFailure { error ->
+                    _state.update { it.copy(searchServerLoading = false, error = error.message ?: "Server search failed") }
+                }
+        }
+    }
+
+    private suspend fun localSearch(type: SearchContentType, query: String): List<MediaItem> {
+        val catalogType = if (type == SearchContentType.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+        val indexed = store.searchCatalog(catalogType).first()?.items.orEmpty()
+        val browsed = store.browseCatalog(catalogType).first()?.itemsByCategory?.values?.flatten().orEmpty()
+        val episodes = if (type == SearchContentType.EPISODES) {
+            (_state.value.favorites.filter { it.kind == FavoriteKind.EPISODE }.map { it.media } +
+                _state.value.recentlyPlayed.filter { it.kind == FavoriteKind.EPISODE }.map { it.media } +
+                _state.value.items.filter { it.episodeNumber != null })
+        } else emptyList()
+        val source = if (type == SearchContentType.EPISODES) episodes else indexed + browsed
+        return source.distinctBy { it.id }.filter { it.title.contains(query, ignoreCase = true) }
+    }
+
+    private suspend fun rememberSearch(query: String, type: SearchContentType) {
+        val entry = RecentSearch(query, type)
+        store.saveRecentSearches((listOf(entry) + _state.value.recentSearches.filterNot { it.key == entry.key }).take(20))
+    }
+    fun useRecentSearch(search: RecentSearch) {
+        _state.update { it.copy(searchQuery = search.query, searchType = search.type, searchOpen = true) }
+        search()
+    }
+    fun deleteRecentSearch(search: RecentSearch) = viewModelScope.launch {
+        store.saveRecentSearches(_state.value.recentSearches.filterNot { it.key == search.key })
+    }
+    fun openSearchResult(item: MediaItem) {
+        when (_state.value.searchType) {
+            SearchContentType.SERIES -> task {
+                val session = requireNotNull(_state.value.session)
+                _state.update { it.copy(searchOpen = false, homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = item, items = emptyList()) }
+                _state.update { it.copy(items = portal.episodes(session, item)) }
+            }
+            SearchContentType.MOVIES -> play(item, CatalogType.MOVIES)
+            SearchContentType.EPISODES -> play(item, CatalogType.SERIES)
+        }
+    }
 
     private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) = task {
         playInternal(item, type, series, episodes)
