@@ -215,11 +215,11 @@ private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType)
     Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
         Row(
             Modifier.widthIn(max = 448.dp).fillMaxWidth().height(76.dp).padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             CatalogNavigationItem(
                 "Home", Icons.Default.Home, state.homeOpen, openHome,
-                (if (state.homeOpen) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
+                (if (state.homeOpen) Modifier.weight(1f) else Modifier.width(48.dp)).fillMaxHeight()
             )
             visibleCatalogTypes.forEach { type ->
                 val selected = !state.homeOpen && !state.favoritesOpen && state.selectedType == type
@@ -228,12 +228,12 @@ private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType)
                     icon = type.icon(),
                     selected = selected,
                     onClick = { selectType(type) },
-                    modifier = (if (selected) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
+                    modifier = (if (selected) Modifier.weight(1f) else Modifier.width(48.dp)).fillMaxHeight()
                 )
             }
             CatalogNavigationItem(
                 "Favorites", Icons.Default.Favorite, state.favoritesOpen, openFavorites,
-                (if (state.favoritesOpen) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
+                (if (state.favoritesOpen) Modifier.weight(1f) else Modifier.width(48.dp)).fillMaxHeight()
             )
         }
     }
@@ -445,11 +445,11 @@ private fun CatalogNavigationItem(
         tonalElevation = if (selected) 2.dp else 0.dp
     ) {
         Row(
-            Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            Modifier.padding(horizontal = if (selected || alwaysShowLabel) 18.dp else 12.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = if (selected || alwaysShowLabel) null else label, Modifier.size(24.dp))
+            Icon(icon, contentDescription = if (selected || alwaysShowLabel) null else label, Modifier.size(if (selected || alwaysShowLabel) 24.dp else 22.dp))
             AnimatedVisibility(
                 visible = selected || alwaysShowLabel,
                 enter = fadeIn() + expandHorizontally(),
