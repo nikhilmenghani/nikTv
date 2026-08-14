@@ -6,6 +6,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.model.PortalSession
+import com.nikhil.niktv.model.CatalogType
+import com.nikhil.niktv.model.SearchCatalogCache
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -26,5 +28,19 @@ class ProfileStore(private val context: Context) {
         it[sessionKey] = Json.encodeToString(session)
     }
     suspend fun clearSession() = context.dataStore.edit { it.remove(sessionKey) }
-    suspend fun clear() = context.dataStore.edit { it.remove(key); it.remove(sessionKey) }
+    fun searchCatalog(type: CatalogType): Flow<SearchCatalogCache?> {
+        val cacheKey = stringPreferencesKey("search_catalog_${type.name.lowercase()}")
+        return context.dataStore.data.map { prefs ->
+            prefs[cacheKey]?.let { runCatching { Json.decodeFromString<SearchCatalogCache>(it) }.getOrNull() }
+        }
+    }
+    suspend fun saveSearchCatalog(cache: SearchCatalogCache) {
+        val cacheKey = stringPreferencesKey("search_catalog_${cache.type.name.lowercase()}")
+        context.dataStore.edit { it[cacheKey] = Json.encodeToString(cache) }
+    }
+    suspend fun clear() = context.dataStore.edit {
+        it.remove(key)
+        it.remove(sessionKey)
+        CatalogType.entries.forEach { type -> it.remove(stringPreferencesKey("search_catalog_${type.name.lowercase()}")) }
+    }
 }

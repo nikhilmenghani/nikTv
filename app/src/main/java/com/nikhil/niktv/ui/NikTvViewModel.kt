@@ -7,6 +7,9 @@ import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.data.StalkerPortalClient
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 data class NikTvState(
@@ -21,7 +24,10 @@ data class NikTvState(
     val nowPlaying: Pair<String, String>? = null,
     val restoring: Boolean = true,
     val settingsOpen: Boolean = false,
-    val selectedSeries: MediaItem? = null
+    val selectedSeries: MediaItem? = null,
+    val fullSearchItems: List<MediaItem>? = null,
+    val fullSearchLoading: Boolean = false,
+    val fullSearchCachedAtMillis: Long? = null
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -68,7 +74,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType) {
         val categories = portal.categories(session, type)
-        _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = null, items = emptyList(), selectedSeries = null) }
+        _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = null, items = emptyList(), selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null) }
         categories.firstOrNull()?.let { category ->
             _state.update { it.copy(selectedCategory = category) }
             _state.update { it.copy(items = portal.catalog(session, category)) }
@@ -91,6 +97,54 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else play(item)
     }
+
+    fun prepareFullSearch(forceRefresh: Boolean = false) {
+        val snapshot = _state.value
+        if (snapshot.selectedSeries != null || snapshot.fullSearchLoading) return
+        val session = snapshot.session ?: return
+        val type = snapshot.selectedType
+        val categories = snapshot.categories
+        val profileKey = session.profile.cacheKey()
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && snapshot.fullSearchItems != null &&
+            now - (snapshot.fullSearchCachedAtMillis ?: 0L) < SEARCH_CACHE_TTL_MILLIS) return
+        viewModelScope.launch {
+            _state.update { it.copy(fullSearchLoading = true) }
+            if (!forceRefresh) {
+                store.searchCatalog(type).first()?.takeIf { it.profileKey == profileKey }?.let { cached ->
+                    _state.update { current ->
+                        if (current.selectedType == type && current.selectedSeries == null)
+                            current.copy(fullSearchItems = cached.items, fullSearchCachedAtMillis = cached.cachedAtMillis)
+                        else current
+                    }
+                    if (now - cached.cachedAtMillis < SEARCH_CACHE_TTL_MILLIS) {
+                        _state.update { it.copy(fullSearchLoading = false) }
+                        return@launch
+                    }
+                }
+            }
+            runCatching {
+                coroutineScope {
+                    val categoryResults = categories.map { category -> async { runCatching { portal.catalog(session, category) } } }.awaitAll()
+                    val failures = categoryResults.mapNotNull { it.exceptionOrNull() }
+                    if (failures.isNotEmpty()) error("${failures.size} of ${categories.size} categories could not be loaded. ${failures.first().message.orEmpty()}")
+                    categoryResults.flatMap { it.getOrThrow() }.distinctBy { it.id }
+                }
+            }.onSuccess { results ->
+                val cachedAt = System.currentTimeMillis()
+                store.saveSearchCatalog(SearchCatalogCache(profileKey, type, cachedAt, results))
+                _state.update { current ->
+                    if (current.selectedType == type && current.selectedSeries == null)
+                        current.copy(fullSearchItems = results, fullSearchLoading = false, fullSearchCachedAtMillis = cachedAt)
+                    else current.copy(fullSearchLoading = false)
+                }
+            }.onFailure { error ->
+                _state.update { it.copy(fullSearchLoading = false, error = error.message ?: "Could not search the full catalog") }
+            }
+        }
+    }
+
+    fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
     private fun play(item: MediaItem) = task {
         val s = _state.value
@@ -119,5 +173,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             runCatching { block() }.onFailure { e -> _state.update { it.copy(error = e.message ?: "Unexpected error") } }
             _state.update { it.copy(loading = false) }
         }
+    }
+
+    private fun PortalProfile.cacheKey() = "$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+
+    companion object {
+        private const val SEARCH_CACHE_TTL_MILLIS = 30 * 60 * 1000L
     }
 }

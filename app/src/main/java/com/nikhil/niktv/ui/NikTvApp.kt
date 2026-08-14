@@ -3,6 +3,7 @@ package com.nikhil.niktv.ui
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -28,12 +29,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -48,6 +53,7 @@ import coil3.compose.AsyncImage
 import com.nikhil.niktv.model.*
 
 private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
+private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
@@ -65,7 +71,10 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     closeSeries = vm::closeSeries,
+                    prepareFullSearch = vm::prepareFullSearch,
+                    refreshFullSearch = vm::refreshFullSearch,
                     openSettings = vm::openSettings,
+                    closeSettings = vm::closeSettings,
                     reauthenticate = vm::reauthenticate,
                     editProfile = vm::editProfile,
                     logout = vm::logout
@@ -140,7 +149,10 @@ private fun CatalogScreen(
     selectCategory: (Category) -> Unit,
     play: (MediaItem) -> Unit,
     closeSeries: () -> Unit,
+    prepareFullSearch: () -> Unit,
+    refreshFullSearch: () -> Unit,
     openSettings: () -> Unit,
+    closeSettings: () -> Unit,
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
     logout: () -> Unit
@@ -148,40 +160,40 @@ private fun CatalogScreen(
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val wide = configuration.screenWidthDp >= 720
+    BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
-        NavigationPanel(state, selectType, openSettings, Modifier.width(220.dp).fillMaxHeight())
-        if (state.settingsOpen) SettingsContent(state, reauthenticate, editProfile, logout, Modifier.weight(1f))
-        else CatalogContent(state, selectCategory, play, closeSeries, Modifier.weight(1f), isTv)
+        NavigationPanel(state, selectType, Modifier.width(220.dp).fillMaxHeight())
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        else CatalogContent(state, selectCategory, play, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
-        if (state.settingsOpen) SettingsContent(state, reauthenticate, editProfile, logout, Modifier.weight(1f))
-        else CatalogContent(state, selectCategory, play, closeSeries, Modifier.weight(1f), false)
-        CatalogBottomNavigation(state, selectType, openSettings)
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        else CatalogContent(state, selectCategory, play, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), false, true)
+        if (!state.settingsOpen) CatalogBottomNavigation(state, selectType)
     }
 }
 
 @Composable
-private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openSettings: () -> Unit, modifier: Modifier) {
+private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, modifier: Modifier) {
     Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("nikTv", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
         Spacer(Modifier.weight(1f))
-        CatalogType.entries.forEach { type ->
+        visibleCatalogTypes.forEach { type ->
             CatalogNavigationItem(type.title, type.icon(), state.selectedType == type, { selectType(type) }, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         }
         Spacer(Modifier.weight(1f))
-        CatalogNavigationItem("Settings", Icons.Default.Settings, state.settingsOpen, openSettings, Modifier.fillMaxWidth(), alwaysShowLabel = true)
     }
 }
 
 @Composable
-private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit, openSettings: () -> Unit) {
+private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit) {
     Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
         Row(
             Modifier.widthIn(max = 448.dp).fillMaxWidth().height(76.dp).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            CatalogType.entries.forEach { type ->
-                val selected = !state.settingsOpen && state.selectedType == type
+            visibleCatalogTypes.forEach { type ->
+                val selected = state.selectedType == type
                 CatalogNavigationItem(
                     label = type.title,
                     icon = type.icon(),
@@ -190,31 +202,34 @@ private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType)
                     modifier = (if (selected) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
                 )
             }
-            CatalogNavigationItem(
-                label = "Settings",
-                icon = Icons.Default.Settings,
-                selected = state.settingsOpen,
-                onClick = openSettings,
-                modifier = (if (state.settingsOpen) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
-            )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsContent(
     state: NikTvState,
+    closeSettings: () -> Unit,
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
     logout: () -> Unit,
     modifier: Modifier
 ) {
     val profile = state.savedProfile ?: return
-    Column(
-        modifier.statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
+    Scaffold(
+        modifier = modifier,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            LargeTopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = { IconButton(onClick = closeSettings) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
+            )
+        }
+    ) { padding -> Column(
+        Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Settings", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         SettingsSection("Connection") {
             SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
             HorizontalDivider()
@@ -252,7 +267,7 @@ private fun SettingsContent(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-    }
+    } }
 }
 
 @Composable
@@ -321,9 +336,38 @@ private fun CatalogNavigationItem(
 }
 
 @Composable
-private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, closeSeries: () -> Unit, modifier: Modifier, tv: Boolean) {
+private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
+    val activity = LocalContext.current as? Activity
     var filterExpanded by rememberSaveable(state.selectedType) { mutableStateOf(false) }
-    Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
+    var searchVisible by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf(false) }
+    var searchQuery by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf("") }
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val searchableItems = if (searchVisible && searchQuery.isNotBlank() && state.selectedSeries == null) state.fullSearchItems ?: state.items else state.items
+    val filteredItems = remember(searchableItems, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) searchableItems else searchableItems.filter { item ->
+            item.title.contains(query, ignoreCase = true) || item.description?.contains(query, ignoreCase = true) == true
+        }
+    }
+    val resultCount = if (searchQuery.isBlank()) searchableItems.size else filteredItems.size
+    val searchTarget = if (state.selectedSeries != null) "episodes" else state.selectedType.searchLabel()
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(searchVisible) {
+        if (searchVisible) {
+            searchFocusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
+    DisposableEffect(searchVisible, activity) {
+        if (!searchVisible || activity == null) return@DisposableEffect onDispose { }
+        val window = activity.window
+        val previousSoftInputMode = window.attributes.softInputMode
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        onDispose { window.setSoftInputMode(previousSoftInputMode) }
+    }
+    Box(modifier.statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (state.selectedSeries != null) {
                 IconButton(onClick = closeSeries) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to series") }
@@ -331,7 +375,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             Column(Modifier.weight(1f)) {
                 Text(state.selectedSeries?.title ?: state.selectedType.title, style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                 Text(
-                    "${state.items.size} ${if (state.selectedSeries != null) state.items.size.episodeLabel() else state.selectedType.itemLabel(state.items.size)}",
+                    "$resultCount ${if (state.selectedSeries != null) resultCount.episodeLabel() else state.selectedType.itemLabel(resultCount)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -339,6 +383,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             if (state.selectedSeries == null) IconButton(onClick = { filterExpanded = !filterExpanded }) {
                 Icon(Icons.Default.FilterAlt, if (filterExpanded) "Close category filters" else "Filter by category")
             }
+            IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
         AnimatedVisibility(
             visible = filterExpanded && state.selectedSeries == null,
@@ -354,7 +399,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Filter ${state.selectedType.title}", style = MaterialTheme.typography.labelLarge)
                     FlowRow(
-                        Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+                        Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -370,9 +415,68 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             }
         }
         Spacer(Modifier.height(12.dp))
-        if (state.items.isEmpty() && !state.loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No items returned by this category", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
-            items(state.items, key = { it.id }) { item -> MediaListItem(item, play, tv) }
+        if (filteredItems.isEmpty() && !state.loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                if (searchQuery.isBlank()) "No items returned by this category" else "No results for “${searchQuery.trim()}”",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 96.dp)) {
+            items(filteredItems, key = { it.id }) { item -> MediaListItem(item, play, tv) }
+        }
+    }
+        if (!searchVisible) {
+            ExtendedFloatingActionButton(
+                onClick = { searchVisible = true; prepareFullSearch() },
+                icon = { Icon(Icons.Default.Search, null) },
+                text = { Text("Search $searchTarget") },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+            )
+        }
+        AnimatedVisibility(
+            visible = searchVisible,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .imePadding()
+                .offset(y = if (hasBottomNavigation && imeVisible) 76.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() else 0.dp)
+                .padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+            enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
+        ) {
+            Surface(shape = RoundedCornerShape(28.dp), tonalElevation = 6.dp, shadowElevation = 8.dp) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth().focusRequester(searchFocusRequester),
+                    singleLine = true,
+                    shape = RoundedCornerShape(28.dp),
+                    placeholder = { Text("Search $searchTarget") },
+                    leadingIcon = { Icon(Icons.Default.Search, "Search", tint = MaterialTheme.colorScheme.primary) },
+                    trailingIcon = {
+                        Row {
+                            if (state.selectedSeries == null) IconButton(onClick = refreshFullSearch, enabled = !state.fullSearchLoading) {
+                                Icon(Icons.Default.Refresh, "Refresh all categories")
+                            }
+                            IconButton(onClick = {
+                                if (searchQuery.isNotEmpty()) searchQuery = ""
+                                else { searchVisible = false; keyboard?.hide() }
+                            }) {
+                                Icon(Icons.Default.Close, if (searchQuery.isNotEmpty()) "Clear search" else "Close search")
+                            }
+                        }
+                    },
+                    supportingText = {
+                        Text(if (state.fullSearchLoading) "Loading all categories…" else if (state.selectedSeries == null) "Searching all ${state.selectedType.searchLabel()} · refreshes every 30 minutes" else "Searching this series")
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            }
         }
     }
 }
@@ -405,5 +509,11 @@ private fun CatalogType.itemLabel(count: Int) = when (this) {
     CatalogType.MOVIES -> if (count == 1) "movie" else "movies"
     CatalogType.SERIES -> if (count == 1) "series" else "series"
     CatalogType.RADIO -> if (count == 1) "station" else "stations"
+}
+private fun CatalogType.searchLabel() = when (this) {
+    CatalogType.LIVE_TV -> "channels"
+    CatalogType.MOVIES -> "movies"
+    CatalogType.SERIES -> "series"
+    CatalogType.RADIO -> "stations"
 }
 private fun Int.episodeLabel() = if (this == 1) "episode" else "episodes"

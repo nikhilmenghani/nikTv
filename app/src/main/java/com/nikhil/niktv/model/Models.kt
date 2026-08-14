@@ -16,11 +16,13 @@ data class PortalProfile(
 @Serializable
 enum class PortalType { STALKER, XTREAM }
 
+@Serializable
 enum class CatalogType(val title: String, val apiType: String) {
     LIVE_TV("Live TV", "itv"), MOVIES("Movies", "vod"), SERIES("Series", "series"), RADIO("Radio", "radio")
 }
 
 data class Category(val id: String, val title: String, val type: CatalogType)
+@Serializable
 data class MediaItem(
     val id: String,
     val title: String,
@@ -29,6 +31,14 @@ data class MediaItem(
     val description: String? = null,
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null
+)
+
+@Serializable
+data class SearchCatalogCache(
+    val profileKey: String,
+    val type: CatalogType,
+    val cachedAtMillis: Long,
+    val items: List<MediaItem>
 )
 
 @Serializable
