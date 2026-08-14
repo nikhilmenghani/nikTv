@@ -387,7 +387,7 @@ class StalkerPortalClient(private val context: Context) {
             .addQueryParameter("password", profile.password)
             .apply { action?.let { addQueryParameter("action", it) }; categoryId?.let { addQueryParameter("category_id", it) }; seriesId?.let { addQueryParameter("series_id", it) } }
             .build()
-        val request = Request.Builder().url(url).header("User-Agent", "nikTv/0.1 Android").header("Accept", "application/json").build()
+        val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").header("Accept", "application/json").build()
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error("Xtream server returned HTTP ${response.code}")
@@ -456,7 +456,7 @@ class StalkerPortalClient(private val context: Context) {
     ): String {
         val safeBody = redact(body, profile, session)
         return buildString {
-            appendLine("nikTv portal diagnostics")
+            appendLine("NikTV portal diagnostics")
             appendLine("Endpoint: $endpointUrl")
             appendLine("Request: type=${params["type"] ?: "?"}, action=${params["action"] ?: "?"}")
             appendLine("HTTP status: $status")

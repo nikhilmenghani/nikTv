@@ -24,6 +24,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,6 +55,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -85,7 +88,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             when {
                 state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::playNextEpisode, vm::savePlaybackProgress)
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.loading, vm::connect, vm::reconnect, vm::switchProfile, vm::removeProfile)
+                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor)
                 else -> CatalogScreen(
                     state = state,
                     selectType = { vm.closeSearch(); vm.closeSettings(); vm.closeFavorites(); vm.closeHome(); vm.loadType(it) },
@@ -145,7 +148,72 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 }
 
 @Composable
-private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, loading: Boolean, connect: (PortalProfile) -> Unit, reconnect: () -> Unit, selectProfile: (PortalProfile) -> Unit, removeProfile: (PortalProfile) -> Unit) {
+private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit) {
+    if (profiles.isNotEmpty() && !editorOpen) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text("Who's watching?", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+            Text("Choose an IPTV profile", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(Modifier.widthIn(max = 760.dp).padding(top = 28.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                profiles.forEach { profile ->
+                    Column(Modifier.width(150.dp).clip(RoundedCornerShape(24.dp)).clickable { selectProfile(profile) }.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Surface(Modifier.size(112.dp), shape = RoundedCornerShape(28.dp), color = if (profile.portalType == PortalType.STALKER) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer) {
+                            Box(contentAlignment = Alignment.Center) { Icon(if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null, Modifier.size(52.dp)) }
+                        }
+                        Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                        Text(profile.portalType.displayName(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Column(Modifier.width(150.dp).clip(RoundedCornerShape(24.dp)).clickable(onClick = addProfile).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(Modifier.size(112.dp), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Add, "Add profile", Modifier.size(52.dp)) } }
+                    Text("Add profile", style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        }
+        return
+    }
+    var name by remember(saved, editorOpen) { mutableStateOf(saved?.name.orEmpty()) }
+    var url by remember(saved, editorOpen) { mutableStateOf(saved?.portalUrl.orEmpty()) }
+    var mac by remember(saved, editorOpen) { mutableStateOf(saved?.macAddress.orEmpty()) }
+    var serial by remember(saved, editorOpen) { mutableStateOf(saved?.serialNumber.orEmpty()) }
+    var portalType by remember(saved, editorOpen) { mutableStateOf(saved?.portalType ?: PortalType.STALKER) }
+    var username by remember(saved, editorOpen) { mutableStateOf(saved?.username.orEmpty()) }
+    var password by remember(saved, editorOpen) { mutableStateOf(saved?.password.orEmpty()) }
+    var advanced by remember(saved, editorOpen) { mutableStateOf(saved?.serialNumber?.isNotBlank() == true) }
+    val nameFocus = remember { FocusRequester() }; val urlFocus = remember { FocusRequester() }
+    val credentialFocus = remember { FocusRequester() }; val lastFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    Box(Modifier.fillMaxSize().statusBarsPadding().imePadding().padding(16.dp), contentAlignment = Alignment.Center) {
+        Card(Modifier.widthIn(max = 520.dp).fillMaxHeight()) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (profiles.isNotEmpty()) IconButton(onClick = cancelEditor) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to profiles") }
+                    Column { Text(if (saved == null) "Add profile" else "Edit ${saved.name}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Credentials stay local to this profile", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    SegmentedButton(portalType == PortalType.STALKER, { portalType = PortalType.STALKER }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Stalker / MAG") }
+                    SegmentedButton(portalType == PortalType.XTREAM, { portalType = PortalType.XTREAM }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Xtream") }
+                }
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().focusRequester(nameFocus), label = { Text("Profile name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { urlFocus.requestFocus() }))
+                OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().focusRequester(urlFocus), label = { Text("Portal URL") }, placeholder = { Text("https://provider.example") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { credentialFocus.requestFocus() }))
+                if (portalType == PortalType.XTREAM) {
+                    OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus), label = { Text("Username") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { lastFocus.requestFocus() }))
+                    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().focusRequester(lastFocus), label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
+                } else {
+                    OutlinedTextField(mac, { mac = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus), label = { Text("MAC address") }, placeholder = { Text("00:1A:79:XX:XX:XX") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = if (advanced) ImeAction.Next else ImeAction.Done), keyboardActions = KeyboardActions(onNext = { lastFocus.requestFocus() }, onDone = { keyboard?.hide() }))
+                    TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
+                    if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
+                }
+                val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
+                Button(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text(if (saved == null) "Add profile" else "Save profile") }
+                Text("Only connect to services you are authorized to access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.navigationBarsPadding())
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegacyProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, loading: Boolean, connect: (PortalProfile) -> Unit, reconnect: () -> Unit, selectProfile: (PortalProfile) -> Unit, removeProfile: (PortalProfile) -> Unit) {
     var name by remember(saved) { mutableStateOf((saved?.name?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PROFILE_NAME).withoutConfigurationQuotes()) }
     var url by remember(saved) { mutableStateOf((saved?.portalUrl?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PORTAL_URL).withoutConfigurationQuotes()) }
     var mac by remember(saved) { mutableStateOf((saved?.macAddress?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_MAC_ADDRESS).withoutConfigurationQuotes()) }
@@ -157,10 +225,10 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp), contentAlignment = Alignment.Center) {
         val wide = maxWidth >= 720.dp
         Row(horizontalArrangement = Arrangement.spacedBy(56.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (wide) Column(Modifier.widthIn(max = 380.dp)) { Text("nikTv", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold); Text("Your portal, beautifully organized on every screen.", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (wide) Column(Modifier.widthIn(max = 380.dp)) { Text("NikTV", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold); Text("Your portal, beautifully organized on every screen.", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Card(Modifier.widthIn(max = 480.dp)) {
                 Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    if (!wide) Text("nikTv", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                    if (!wide) Text("NikTV", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
                     Text("Connect a portal", style = MaterialTheme.typography.headlineMedium)
                     if (profiles.isNotEmpty()) {
                         Text("Saved profiles", style = MaterialTheme.typography.titleMedium)
@@ -266,7 +334,7 @@ private fun CatalogScreen(
 @Composable
 private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openHome: () -> Unit, openFavorites: () -> Unit, modifier: Modifier) {
     Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("nikTv", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
+        Text("NikTV", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
         Spacer(Modifier.weight(1f))
         CatalogNavigationItem("Home", Icons.Default.Home, state.homeOpen, openHome, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         visibleCatalogTypes.forEach { type ->
@@ -726,7 +794,7 @@ private fun SettingsContent(
             }
         }
         Text(
-            "nikTv keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
+            "NikTV keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

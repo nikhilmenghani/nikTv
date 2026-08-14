@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 
 data class NikTvState(
     val profiles: List<PortalProfile> = emptyList(),
+    val profileEditorOpen: Boolean = false,
     val savedProfile: PortalProfile? = null,
     val session: PortalSession? = null,
     val selectedType: CatalogType = CatalogType.LIVE_TV,
@@ -90,7 +91,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun connect(profile: PortalProfile) = task {
         val session = portal.authenticate(profile)
         store.save(session)
-        _state.update { it.copy(session = session, savedProfile = session.profile) }
+        _state.update { it.copy(session = session, savedProfile = session.profile, profileEditorOpen = false) }
         loadTypeInternal(session, CatalogType.LIVE_TV)
     }
 
@@ -430,12 +431,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openSettings() = _state.update { it.copy(settingsOpen = true) }
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
-    fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false) }
-    fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false) }
+    fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }
+    fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
+    fun cancelProfileEditor() = _state.update { current ->
+        val fallback = current.profiles.firstOrNull()
+        current.copy(profileEditorOpen = false, savedProfile = fallback)
+    }
     fun switchProfile(profile: PortalProfile) = task {
         store.activate(profile)
         val session = store.sessionFor(profile) ?: portal.authenticate(profile).also { store.save(it) }
-        _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false,
+        _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), items = emptyList(),
             selectedSeries = null, browseCache = null, fullSearchItems = null, playbackUrls = emptyList()) }
         loadTypeInternal(session, CatalogType.LIVE_TV)
