@@ -85,7 +85,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             when {
                 state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::playNextEpisode, vm::savePlaybackProgress)
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                state.session == null -> ProfileScreen(state.savedProfile, state.loading, vm::connect, vm::reconnect)
+                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.loading, vm::connect, vm::reconnect, vm::switchProfile, vm::removeProfile)
                 else -> CatalogScreen(
                     state = state,
                     selectType = { vm.closeSearch(); vm.closeSettings(); vm.closeFavorites(); vm.closeHome(); vm.loadType(it) },
@@ -119,6 +119,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,openSearchResult = vm::openSearchResult
                     ,loadMoreSearch = vm::loadMoreSearch
                     ,setSearchCategory = vm::setSearchCategory
+                    ,addProfile = vm::addProfile
+                    ,switchProfile = vm::switchProfile
+                    ,removeProfile = vm::removeProfile
                 )
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -142,7 +145,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 }
 
 @Composable
-private fun ProfileScreen(saved: PortalProfile?, loading: Boolean, connect: (PortalProfile) -> Unit, reconnect: () -> Unit) {
+private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, loading: Boolean, connect: (PortalProfile) -> Unit, reconnect: () -> Unit, selectProfile: (PortalProfile) -> Unit, removeProfile: (PortalProfile) -> Unit) {
     var name by remember(saved) { mutableStateOf((saved?.name?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PROFILE_NAME).withoutConfigurationQuotes()) }
     var url by remember(saved) { mutableStateOf((saved?.portalUrl?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PORTAL_URL).withoutConfigurationQuotes()) }
     var mac by remember(saved) { mutableStateOf((saved?.macAddress?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_MAC_ADDRESS).withoutConfigurationQuotes()) }
@@ -159,6 +162,21 @@ private fun ProfileScreen(saved: PortalProfile?, loading: Boolean, connect: (Por
                 Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     if (!wide) Text("nikTv", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
                     Text("Connect a portal", style = MaterialTheme.typography.headlineMedium)
+                    if (profiles.isNotEmpty()) {
+                        Text("Saved profiles", style = MaterialTheme.typography.titleMedium)
+                        profiles.forEach { profile ->
+                            ListItem(
+                                headlineContent = { Text(profile.name) },
+                                supportingContent = { Text("${profile.portalType.displayName()} · ${profile.portalUrl}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingContent = { Icon(if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
+                                trailingContent = { Icon(Icons.Default.ChevronRight, "Open ${profile.name}") },
+                                modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { selectProfile(profile) },
+                                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+                            )
+                        }
+                        HorizontalDivider()
+                        Text("Add another profile", style = MaterialTheme.typography.titleMedium)
+                    }
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         SegmentedButton(portalType == PortalType.STALKER, { portalType = PortalType.STALKER }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Stalker / MAG") }
                         SegmentedButton(portalType == PortalType.XTREAM, { portalType = PortalType.XTREAM }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Xtream") }
@@ -217,6 +235,9 @@ private fun CatalogScreen(
     openSearchResult: (MediaItem) -> Unit,
     loadMoreSearch: () -> Unit,
     setSearchCategory: (String) -> Unit
+    ,addProfile: () -> Unit
+    ,switchProfile: (PortalProfile) -> Unit
+    ,removeProfile: (PortalProfile) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
@@ -227,13 +248,13 @@ private fun CatalogScreen(
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
@@ -605,12 +626,16 @@ private fun SettingsContent(
     closeSettings: () -> Unit,
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
+    addProfile: () -> Unit,
+    switchProfile: (PortalProfile) -> Unit,
+    removeProfile: (PortalProfile) -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
     modifier: Modifier
 ) {
     val profile = state.savedProfile ?: return
     val context = LocalContext.current
+    var pendingRemoval by remember { mutableStateOf<PortalProfile?>(null) }
     val deviceMacAddress = remember(context) { cast4kStyleDeviceMacAddress(context) }
     Scaffold(
         modifier = modifier,
@@ -625,6 +650,32 @@ private fun SettingsContent(
         Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        SettingsSection("Profiles") {
+            state.profiles.forEachIndexed { index, saved ->
+                ListItem(
+                    headlineContent = { Text(saved.name) },
+                    supportingContent = { Text("${saved.portalType.displayName()} · ${saved.portalUrl}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingContent = { Icon(if (saved.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
+                    trailingContent = {
+                        Row {
+                            if (saved == profile) Icon(Icons.Default.CheckCircle, "Active", tint = MaterialTheme.colorScheme.primary)
+                            else TextButton(onClick = { switchProfile(saved) }) { Text("Open") }
+                            IconButton(onClick = { pendingRemoval = saved }) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                if (index != state.profiles.lastIndex) HorizontalDivider()
+            }
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Add profile") },
+                supportingContent = { Text("Connect another Stalker or Xtream service") },
+                leadingContent = { Icon(Icons.Default.AddCircleOutline, null) },
+                modifier = Modifier.clickable(onClick = addProfile),
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
         SettingsSection("Connection") {
             SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
             HorizontalDivider()
@@ -652,8 +703,8 @@ private fun SettingsContent(
             )
             HorizontalDivider()
             ListItem(
-                headlineContent = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
-                supportingContent = { Text("Remove the saved profile and session from this device") },
+                headlineContent = { Text("Clear all app data", color = MaterialTheme.colorScheme.error) },
+                supportingContent = { Text("Remove every profile, cache, favorite, recent item, and session") },
                 leadingContent = { Icon(Icons.Default.Logout, null, tint = MaterialTheme.colorScheme.error) },
                 modifier = Modifier.clickable(onClick = logout),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -680,6 +731,15 @@ private fun SettingsContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     } }
+    pendingRemoval?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Remove ${target.name}?") },
+            text = { Text("This removes its saved credentials and session. Other profiles remain available.") },
+            confirmButton = { TextButton(onClick = { removeProfile(target); pendingRemoval = null }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") } }
+        )
+    }
 }
 
 @Composable
@@ -1002,6 +1062,7 @@ private fun MediaListItem(item: MediaItem, onClick: () -> Unit, onLongClick: () 
 }
 
 private fun CatalogType.icon() = when (this) { CatalogType.LIVE_TV -> Icons.Default.LiveTv; CatalogType.MOVIES -> Icons.Default.Movie; CatalogType.SERIES -> Icons.Default.VideoLibrary; CatalogType.RADIO -> Icons.Default.Radio }
+private fun PortalType.displayName() = when (this) { PortalType.STALKER -> "Stalker / MAG"; PortalType.XTREAM -> "Xtream Codes" }
 private fun CatalogType.itemLabel(count: Int) = when (this) {
     CatalogType.LIVE_TV -> if (count == 1) "channel" else "channels"
     CatalogType.MOVIES -> if (count == 1) "movie" else "movies"

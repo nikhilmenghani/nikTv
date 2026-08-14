@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 data class NikTvState(
+    val profiles: List<PortalProfile> = emptyList(),
     val savedProfile: PortalProfile? = null,
     val session: PortalSession? = null,
     val selectedType: CatalogType = CatalogType.LIVE_TV,
@@ -62,6 +63,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
         viewModelScope.launch { store.recentSearches.collect { searches -> _state.update { it.copy(recentSearches = searches) } } }
+        viewModelScope.launch { store.profiles.collect { profiles -> _state.update { it.copy(profiles = profiles) } } }
     }
 
     private fun restoreSession() = viewModelScope.launch {
@@ -105,7 +107,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = session.profile.cacheKey()
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         if (!forceRefresh) {
-            store.browseCatalog(type).first()?.takeIf { it.profileKey == profileKey }?.let { cached ->
+            store.browseCatalog(type, profileKey).first()?.let { cached ->
                 val selected = cached.categories.firstOrNull { it.id == preferredCategoryId }
                     ?: cached.categories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
                     ?: cached.categories.firstOrNull()
@@ -180,7 +182,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(fullSearchLoading = true) }
             if (!forceRefresh) {
-                store.searchCatalog(type).first()?.takeIf { it.profileKey == profileKey }?.let { cached ->
+                store.searchCatalog(type, profileKey).first()?.let { cached ->
                     _state.update { current ->
                         if (current.selectedType == type && current.selectedSeries == null)
                             current.copy(fullSearchItems = cached.items, fullSearchCachedAtMillis = cached.cachedAtMillis)
@@ -230,7 +232,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             else -> CatalogType.SERIES
         }
         val session = _state.value.session ?: return@launch
-        val cached = store.browseCatalog(catalogType).first()?.takeIf { it.profileKey == session.profile.cacheKey() }?.categories.orEmpty()
+        val cached = store.browseCatalog(catalogType, session.profile.cacheKey()).first()?.categories.orEmpty()
         if (cached.isNotEmpty()) _state.update { current -> if (current.searchType == type) current.copy(searchCategories = cached.distinctBy { it.id }) else current }
         else runCatching { portal.categories(session, catalogType) }.onSuccess { categories ->
             _state.update { current -> if (current.searchType == type) current.copy(searchCategories = categories.distinctBy { it.id }) else current }
@@ -293,8 +295,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             SearchContentType.SERIES -> CatalogType.SERIES
             else -> CatalogType.MOVIES
         }
-        val indexed = store.searchCatalog(catalogType).first()?.items.orEmpty()
-        val browsed = store.browseCatalog(catalogType).first()?.itemsByCategory?.values?.flatten().orEmpty()
+        val profileKey = _state.value.session?.profile?.cacheKey()
+        val indexed = store.searchCatalog(catalogType, profileKey).first()?.items.orEmpty()
+        val browsed = store.browseCatalog(catalogType, profileKey).first()?.itemsByCategory?.values?.flatten().orEmpty()
         val episodes = if (type == SearchContentType.EPISODES) {
             (_state.value.favorites.filter { it.kind == FavoriteKind.EPISODE }.map { it.media } +
                 _state.value.recentlyPlayed.filter { it.kind == FavoriteKind.EPISODE }.map { it.media } +
@@ -428,6 +431,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false) }
+    fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false) }
+    fun switchProfile(profile: PortalProfile) = task {
+        store.activate(profile)
+        val session = store.sessionFor(profile) ?: portal.authenticate(profile).also { store.save(it) }
+        _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false,
+            searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), items = emptyList(),
+            selectedSeries = null, browseCache = null, fullSearchItems = null, playbackUrls = emptyList()) }
+        loadTypeInternal(session, CatalogType.LIVE_TV)
+    }
+    fun removeProfile(profile: PortalProfile) = viewModelScope.launch {
+        store.removeProfile(profile)
+        if (_state.value.savedProfile?.cacheKey() == profile.cacheKey()) {
+            _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false) }
+        }
+    }
     fun openFavorites() = _state.update { it.copy(favoritesOpen = true, homeOpen = false, settingsOpen = false, searchOpen = false) }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
     fun openHome() = _state.update { it.copy(homeOpen = true, favoritesOpen = false, settingsOpen = false, searchOpen = false) }
