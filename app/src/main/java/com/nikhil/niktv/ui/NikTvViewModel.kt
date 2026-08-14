@@ -521,7 +521,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun PortalProfile.cacheKey() = "catalog-v4|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+    private fun PortalProfile.cacheKey() = "catalog-v5|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
     private fun String.episodeOrderFromTitle(): Int? = listOf(
         Regex("(?i)S\\d+[ ._-]*E(?:P(?:ISODE)?)?[ ._-]*(\\d+)"),
         Regex("(?i)\\bEP(?:ISODE)?[ ._:-]*(\\d+)"),

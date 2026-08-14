@@ -111,18 +111,16 @@ class StalkerPortalClient(private val context: Context) {
                 val o = node as? JsonObject ?: return@mapNotNull null
                 val id = o.string("id") ?: o.string("category_id") ?: return@mapNotNull null
                 val title = o.string("title") ?: o.string("name") ?: "Untitled"
-                // Many Stalker portals keep the useful classifier in `alias`
-                // while presenting a localized title that never says "Series".
-                if (type == CatalogType.SERIES && id != "*" &&
-                    !isSeriesCategory("$title ${o.string("alias").orEmpty()}")
-                ) return@mapNotNull null
+                val seriesCategory = isSeriesCategory("$title ${o.string("alias").orEmpty()}")
+                if (type == CatalogType.SERIES && id != "*" && !seriesCategory) return@mapNotNull null
+                if (type == CatalogType.MOVIES && id != "*" && seriesCategory) return@mapNotNull null
                 Category(id, title, type)
             }
-        // Stalker portals commonly expose movies and series through one VOD category
-        // endpoint. An explicit wildcard gives us a reliable first page, while item
-        // metadata below performs the actual movie/series separation.
-        if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
-            listOf(Category("*", if (type == CatalogType.MOVIES) "All movies" else "All series", type)) +
+        // This portal shares one VOD category endpoint but uses different listing
+        // request shapes. Keep the wildcard only for the Movies request; Series
+        // must start from a concrete Series category.
+        if (type == CatalogType.MOVIES) {
+            listOf(Category("*", "All movies", type)) +
                 portalCategories.filterNot { it.id == "*" }
         } else portalCategories
     }
@@ -141,11 +139,9 @@ class StalkerPortalClient(private val context: Context) {
             .payload().arrayFromData()
         listingNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
-                // Some Stalker portals use is_movie=true for every VOD row, while
-                // is_series is the authoritative discriminator for series.
-                val seriesItem = o.positiveMarker("is_series")
-                if (category.type == CatalogType.SERIES && !seriesItem) return@mapNotNull null
-                if (category.type == CatalogType.MOVIES && seriesItem) return@mapNotNull null
+                // Category selection and request shape are authoritative. This
+                // provider reports both is_movie=true and is_series=1 for Series,
+                // making row-level flags unsuitable for separating the two tabs.
                 val id = o.string("id") ?: o.string("movie_id") ?: return@mapNotNull null
                 MediaItem(
                     id,
@@ -650,8 +646,6 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
-    private fun JsonObject.positiveMarker(key: String): Boolean = string(key)?.trim()?.lowercase()
-        ?.let { it.isNotEmpty() && it !in setOf("0", "false", "no", "null") } == true
     private fun String.matchesSearchKeywords(query: String): Boolean {
         val titleWords = lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
         val keys = query.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
