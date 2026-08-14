@@ -145,14 +145,14 @@ class StalkerPortalClient(private val context: Context) {
     }
 
     /** One bounded server operation used by the dedicated search screen. */
-    suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int): PortalSearchPage = withContext(Dispatchers.IO) {
+    suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int, categoryId: String = "*"): PortalSearchPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             val catalogType = if (type == SearchContentType.SERIES) CatalogType.SERIES else CatalogType.MOVIES
             val matches = xtreamCatalog(session, catalogType, null).filter { it.title.matchesSearchKeywords(query) }
             return@withContext PortalSearchPage(matches, 1, false)
         }
         val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-            "type" to "vod", "action" to "get_ordered_list", "category" to "*",
+            "type" to "vod", "action" to "get_ordered_list", "category" to categoryId,
             "search" to query.trim(), "p" to page.coerceAtLeast(1).toString(), "fav" to "0", "sortby" to "added",
             "hd" to "0", "ended" to "0"
         )))

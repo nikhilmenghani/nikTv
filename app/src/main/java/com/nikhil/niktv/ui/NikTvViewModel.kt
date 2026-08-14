@@ -43,7 +43,9 @@ data class NikTvState(
     val searchUsedServer: Boolean = false,
     val recentSearches: List<RecentSearch> = emptyList(),
     val searchPage: Int = 0,
-    val searchHasMore: Boolean = false
+    val searchHasMore: Boolean = false,
+    val searchCategories: List<Category> = emptyList(),
+    val searchCategoryId: String = "*"
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -208,10 +210,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
-    fun openSearch() = _state.update { it.copy(searchOpen = true, settingsOpen = false, favoritesOpen = false) }
+    fun openSearch() {
+        _state.update { it.copy(searchOpen = true, settingsOpen = false, favoritesOpen = false) }
+        loadSearchCategories(_state.value.searchType)
+    }
     fun closeSearch() = _state.update { it.copy(searchOpen = false, searchServerLoading = false) }
     fun setSearchType(type: SearchContentType) = _state.update {
-        it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false, searchPage = 0, searchHasMore = false)
+        it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false, searchPage = 0,
+            searchHasMore = false, searchCategoryId = "*", searchCategories = emptyList())
+    }.also { loadSearchCategories(type) }
+    fun setSearchCategory(categoryId: String) = _state.update {
+        it.copy(searchCategoryId = categoryId, searchResults = emptyList(), searchUsedServer = false, searchPage = 0, searchHasMore = false)
+    }
+
+    private fun loadSearchCategories(type: SearchContentType) = viewModelScope.launch {
+        val catalogType = if (type == SearchContentType.MOVIES) CatalogType.MOVIES else CatalogType.SERIES
+        val session = _state.value.session ?: return@launch
+        val cached = store.browseCatalog(catalogType).first()?.takeIf { it.profileKey == session.profile.cacheKey() }?.categories.orEmpty()
+        if (cached.isNotEmpty()) _state.update { current -> if (current.searchType == type) current.copy(searchCategories = cached.distinctBy { it.id }) else current }
+        else runCatching { portal.categories(session, catalogType) }.onSuccess { categories ->
+            _state.update { current -> if (current.searchType == type) current.copy(searchCategories = categories.distinctBy { it.id }) else current }
+        }
     }
     fun setSearchQuery(query: String) = _state.update { it.copy(searchQuery = query) }
 
@@ -222,13 +241,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             rememberSearch(query, snapshot.searchType)
             val saved = store.pagedSearches.first().firstOrNull {
-                it.profileKey == snapshot.session?.profile?.cacheKey() && it.type == snapshot.searchType && it.query.equals(query, true)
+                it.profileKey == snapshot.session?.profile?.cacheKey() && it.type == snapshot.searchType &&
+                    it.categoryId == snapshot.searchCategoryId && it.query.equals(query, true)
             }
             val local = (localSearch(snapshot.searchType, query) + saved?.items.orEmpty()).distinctBy { it.id }
             _state.update { it.copy(searchResults = local, searchUsedServer = saved != null,
                 searchPage = saved?.lastPage ?: 0, searchHasMore = saved?.hasMore ?: false) }
             if (!forceServer && local.isNotEmpty()) return@launch
-            fetchSearchPage(query, snapshot.searchType, 1, emptyList())
+            fetchSearchPage(query, snapshot.searchType, snapshot.searchCategoryId, 1, emptyList())
         }
     }
 
@@ -236,17 +256,24 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = _state.value
         if (!snapshot.searchHasMore || snapshot.searchServerLoading || snapshot.searchQuery.isBlank()) return
         viewModelScope.launch {
-            fetchSearchPage(snapshot.searchQuery.trim(), snapshot.searchType, snapshot.searchPage + 1, snapshot.searchResults)
+            repeat(3) {
+                val current = _state.value
+                if (!current.searchHasMore || current.searchServerLoading) return@launch
+                val previousPage = current.searchPage
+                fetchSearchPage(current.searchQuery.trim(), current.searchType, current.searchCategoryId,
+                    current.searchPage + 1, current.searchResults)
+                if (_state.value.searchPage == previousPage) return@launch
+            }
         }
     }
 
-    private suspend fun fetchSearchPage(query: String, type: SearchContentType, page: Int, existing: List<MediaItem>) {
+    private suspend fun fetchSearchPage(query: String, type: SearchContentType, categoryId: String, page: Int, existing: List<MediaItem>) {
             _state.update { it.copy(searchServerLoading = true) }
             val session = requireNotNull(_state.value.session)
-            runCatching { portal.search(session, type, query, page) }
+            runCatching { portal.search(session, type, query, page, categoryId) }
                 .onSuccess { result ->
                     val combined = (existing + result.items).distinctBy { it.id }
-                    val cache = SearchResultCache(session.profile.cacheKey(), type, query, result.page, result.hasMore, combined)
+                    val cache = SearchResultCache(session.profile.cacheKey(), type, query, categoryId, result.page, result.hasMore, combined)
                     store.savePagedSearch(cache)
                     _state.update { current -> current.copy(searchResults = combined,
                         searchServerLoading = false, searchUsedServer = true,
@@ -266,7 +293,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 _state.value.items.filter { it.episodeNumber != null })
         } else emptyList()
         val source = if (type == SearchContentType.EPISODES) episodes else indexed + browsed
-        return source.distinctBy { it.id }.filter { it.title.matchesSearchKeywords(query) }
+        val categoryId = _state.value.searchCategoryId
+        return source.distinctBy { it.id }.filter { (categoryId == "*" || it.portalCategoryId == categoryId) && it.title.matchesSearchKeywords(query) }
     }
 
     private suspend fun rememberSearch(query: String, type: SearchContentType) {
@@ -274,7 +302,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.saveRecentSearches((listOf(entry) + _state.value.recentSearches.filterNot { it.key == entry.key }).take(20))
     }
     fun useRecentSearch(search: RecentSearch) {
-        _state.update { it.copy(searchQuery = search.query, searchType = search.type, searchOpen = true) }
+        _state.update { it.copy(searchQuery = search.query, searchType = search.type, searchOpen = true,
+            searchCategoryId = "*", searchCategories = emptyList(), searchResults = emptyList()) }
+        loadSearchCategories(search.type)
         search()
     }
     fun deleteRecentSearch(search: RecentSearch) = viewModelScope.launch {
@@ -389,9 +419,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false) }
-    fun openFavorites() = _state.update { it.copy(favoritesOpen = true, homeOpen = false, settingsOpen = false) }
+    fun openFavorites() = _state.update { it.copy(favoritesOpen = true, homeOpen = false, settingsOpen = false, searchOpen = false) }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
-    fun openHome() = _state.update { it.copy(homeOpen = true, favoritesOpen = false, settingsOpen = false) }
+    fun openHome() = _state.update { it.copy(homeOpen = true, favoritesOpen = false, settingsOpen = false, searchOpen = false) }
     fun closeHome() = _state.update { it.copy(homeOpen = false) }
 
     fun toggleFavorite(item: MediaItem) {

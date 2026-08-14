@@ -87,7 +87,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 state.session == null -> ProfileScreen(state.savedProfile, state.loading, vm::connect, vm::reconnect)
                 else -> CatalogScreen(
                     state = state,
-                    selectType = { vm.closeSettings(); vm.closeFavorites(); vm.closeHome(); vm.loadType(it) },
+                    selectType = { vm.closeSearch(); vm.closeSettings(); vm.closeFavorites(); vm.closeHome(); vm.loadType(it) },
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     closeSeries = vm::closeSeries,
@@ -117,6 +117,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,deleteRecentSearch = vm::deleteRecentSearch
                     ,openSearchResult = vm::openSearchResult
                     ,loadMoreSearch = vm::loadMoreSearch
+                    ,setSearchCategory = vm::setSearchCategory
                 )
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -213,7 +214,8 @@ private fun CatalogScreen(
     useRecentSearch: (RecentSearch) -> Unit,
     deleteRecentSearch: (RecentSearch) -> Unit,
     openSearchResult: (MediaItem) -> Unit,
-    loadMoreSearch: () -> Unit
+    loadMoreSearch: () -> Unit,
+    setSearchCategory: (String) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
@@ -225,13 +227,13 @@ private fun CatalogScreen(
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
+        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
+        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), false, true)
@@ -479,6 +481,7 @@ private fun SearchContent(
     state: NikTvState,
     close: () -> Unit,
     setType: (SearchContentType) -> Unit,
+    setCategory: (String) -> Unit,
     setQuery: (String) -> Unit,
     search: (Boolean) -> Unit,
     useRecent: (RecentSearch) -> Unit,
@@ -488,6 +491,7 @@ private fun SearchContent(
     modifier: Modifier,
     tv: Boolean
 ) {
+    var categoriesExpanded by rememberSaveable(state.searchType) { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
@@ -504,6 +508,27 @@ private fun SearchContent(
                     onClick = { setType(type) },
                     shape = SegmentedButtonDefaults.itemShape(index, SearchContentType.entries.size)
                 ) { Text(type.title) }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            val selectedCategory = state.searchCategories.firstOrNull { it.id == state.searchCategoryId }
+            AssistChip(
+                onClick = { categoriesExpanded = !categoriesExpanded },
+                label = { Text(selectedCategory?.title ?: "All categories", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(Icons.Default.FilterAlt, null, Modifier.size(18.dp)) },
+                trailingIcon = { Icon(if (categoriesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, Modifier.size(18.dp)) }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("Search only within a relevant category to avoid unrelated results.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        AnimatedVisibility(categoriesExpanded) {
+            Surface(Modifier.fillMaxWidth().heightIn(max = 220.dp), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                FlowRow(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    FilterChip(selected = state.searchCategoryId == "*", onClick = { setCategory("*"); categoriesExpanded = false }, label = { Text("All categories") })
+                    state.searchCategories.filter { it.id != "*" }.forEach { category ->
+                        FilterChip(selected = state.searchCategoryId == category.id, onClick = { setCategory(category.id); categoriesExpanded = false }, label = { Text(category.title) })
+                    }
+                }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -562,7 +587,7 @@ private fun SearchContent(
                         if (state.searchServerLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Default.ExpandMore, null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Load page ${state.searchPage + 1}")
+                        Text("Load up to 3 more pages")
                     }
                 } else if (state.searchUsedServer) item("all-pages-loaded") {
                     Text("All available result pages loaded", Modifier.fillMaxWidth().padding(16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
