@@ -3,6 +3,7 @@ package com.nikhil.niktv.ui
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -51,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.model.*
+import java.security.MessageDigest
 
 private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
@@ -277,6 +279,8 @@ private fun SettingsContent(
     modifier: Modifier
 ) {
     val profile = state.savedProfile ?: return
+    val context = LocalContext.current
+    val deviceMacAddress = remember(context) { cast4kStyleDeviceMacAddress(context) }
     Scaffold(
         modifier = modifier,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -296,6 +300,8 @@ private fun SettingsContent(
             SettingsValueRow(Icons.Default.Language, "Portal", profile.portalUrl)
             HorizontalDivider()
             SettingsValueRow(Icons.Default.Security, "Session", if (state.session != null) "Authenticated" else "Authentication required")
+            HorizontalDivider()
+            SettingsValueRow(Icons.Default.Wifi, "Device MAC Address", deviceMacAddress)
         }
         SettingsSection("Account actions") {
             ListItem(
@@ -618,4 +624,11 @@ private fun FavoriteKind.sectionTitle() = when (this) {
     FavoriteKind.MOVIE -> "Movies"
     FavoriteKind.SERIES -> "Series"
     FavoriteKind.EPISODE -> "Episodes"
+}
+
+private fun cast4kStyleDeviceMacAddress(context: android.content.Context): String {
+    val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
+    val hash = MessageDigest.getInstance("MD5").digest(androidId.toByteArray())
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    return "00:1E:99:${hash.substring(0, 6).chunked(2).joinToString(":")}".uppercase()
 }
