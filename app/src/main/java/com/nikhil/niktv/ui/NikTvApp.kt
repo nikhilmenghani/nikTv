@@ -398,12 +398,14 @@ private fun CatalogNavigationItem(
 @Composable
 private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
     val activity = LocalContext.current as? Activity
-    var filterExpanded by rememberSaveable(state.selectedType) { mutableStateOf(false) }
+    var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
+    var selectedSeason by rememberSaveable(state.selectedSeries?.id) { mutableStateOf<Int?>(null) }
     var searchVisible by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf(false) }
     var searchQuery by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf("") }
     val searchFocusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val searchableItems = if (searchVisible && searchQuery.isNotBlank() && state.selectedSeries == null) state.fullSearchItems ?: state.items else state.items
+    val seasonItems = if (state.selectedSeries != null && selectedSeason != null) state.items.filter { it.seasonNumber == selectedSeason } else state.items
+    val searchableItems = if (searchVisible && searchQuery.isNotBlank() && state.selectedSeries == null) state.fullSearchItems ?: state.items else seasonItems
     val filteredItems = remember(searchableItems, searchQuery) {
         val query = searchQuery.trim()
         if (query.isEmpty()) searchableItems else searchableItems.filter { item ->
@@ -440,13 +442,13 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (state.selectedSeries == null) IconButton(onClick = { filterExpanded = !filterExpanded }) {
-                Icon(Icons.Default.FilterAlt, if (filterExpanded) "Close category filters" else "Filter by category")
+            IconButton(onClick = { filterExpanded = !filterExpanded }) {
+                Icon(Icons.Default.FilterAlt, if (filterExpanded) "Close filters" else if (state.selectedSeries != null) "Filter by season" else "Filter by category")
             }
             IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
         AnimatedVisibility(
-            visible = filterExpanded && state.selectedSeries == null,
+            visible = filterExpanded,
             enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
             exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
         ) {
@@ -457,18 +459,28 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                 tonalElevation = 3.dp
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Filter ${state.selectedType.title}", style = MaterialTheme.typography.labelLarge)
+                    Text(if (state.selectedSeries != null) "Choose a season" else "Filter ${state.selectedType.title}", style = MaterialTheme.typography.labelLarge)
                     FlowRow(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        state.categories.forEach { category ->
+                        if (state.selectedSeries != null) {
                             FilterChip(
-                                selected = state.selectedCategory?.id == category.id,
-                                onClick = { selectCategory(category); filterExpanded = false },
-                                label = { Text(category.title) }
+                                selected = selectedSeason == null,
+                                onClick = { selectedSeason = null; filterExpanded = false },
+                                label = { Text("All seasons") }
                             )
+                            state.items.mapNotNull { it.seasonNumber }.distinct().sorted().forEach { season ->
+                                FilterChip(
+                                    selected = selectedSeason == season,
+                                    onClick = { selectedSeason = season; filterExpanded = false },
+                                    label = { Text("Season $season") }
+                                )
+                            }
+                        } else state.categories.forEach { category ->
+                            FilterChip(selected = state.selectedCategory?.id == category.id,
+                                onClick = { selectCategory(category); filterExpanded = false }, label = { Text(category.title) })
                         }
                     }
                 }
@@ -482,7 +494,18 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             )
         }
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 96.dp)) {
-            items(filteredItems, key = { it.id }) { item ->
+            val groupedItems = if (state.selectedSeries != null && selectedSeason == null)
+                filteredItems.groupBy { it.seasonNumber } else linkedMapOf(selectedSeason to filteredItems)
+            groupedItems.forEach { (season, episodes) ->
+                if (state.selectedSeries != null && selectedSeason == null) item("season-${season ?: "other"}") {
+                    Text(
+                        season?.let { "Season $it" } ?: "Other episodes",
+                        Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                items(episodes, key = { it.id }) { item ->
                 val kind = when {
                     state.selectedType == CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
                     state.selectedType == CatalogType.MOVIES -> FavoriteKind.MOVIE
@@ -490,6 +513,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                     else -> FavoriteKind.SERIES
                 }
                 MediaListItem(item, { play(item) }, { toggleFavorite(item) }, state.favorites.any { it.kind == kind && it.media.id == item.id }, tv)
+                }
             }
         }
     }
