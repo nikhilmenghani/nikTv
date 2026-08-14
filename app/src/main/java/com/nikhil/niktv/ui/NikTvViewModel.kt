@@ -18,7 +18,7 @@ data class NikTvState(
     val items: List<MediaItem> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
-    val nowPlaying: Pair<String, String>? = null,
+    val nowPlaying: PlayingMedia? = null,
     val restoring: Boolean = true,
     val settingsOpen: Boolean = false,
     val selectedSeries: MediaItem? = null,
@@ -27,7 +27,11 @@ data class NikTvState(
     val fullSearchCachedAtMillis: Long? = null,
     val favorites: List<FavoriteItem> = emptyList(),
     val favoritesOpen: Boolean = false,
-    val seriesOpenedFromFavorites: Boolean = false
+    val seriesOpenedFromFavorites: Boolean = false,
+    val recentlyPlayed: List<RecentItem> = emptyList(),
+    val homeOpen: Boolean = true,
+    val seriesOpenedFromHome: Boolean = false,
+    val playbackProgress: List<PlaybackProgress> = emptyList()
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -39,6 +43,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     init {
         restoreSession()
         viewModelScope.launch { store.favorites.collect { favorites -> _state.update { it.copy(favorites = favorites) } } }
+        viewModelScope.launch { store.recentlyPlayed.collect { recent -> _state.update { it.copy(recentlyPlayed = recent) } } }
+        viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
     }
 
     private fun restoreSession() = viewModelScope.launch {
@@ -95,10 +101,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.selectedType == CatalogType.SERIES && _state.value.selectedSeries == null) {
             task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(selectedSeries = item, items = emptyList(), seriesOpenedFromFavorites = false) }
+                _state.update { it.copy(selectedSeries = item, items = emptyList(), seriesOpenedFromFavorites = false, seriesOpenedFromHome = false) }
                 _state.update { it.copy(items = portal.episodes(session, item)) }
             }
-        } else play(item, _state.value.selectedType)
+        } else play(item, _state.value.selectedType, _state.value.selectedSeries, _state.value.items)
     }
 
     fun prepareFullSearch(forceRefresh: Boolean = false) {
@@ -144,13 +150,70 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
-    private fun play(item: MediaItem, type: CatalogType) = task {
-        val s = _state.value
-        val url = portal.playableUrl(requireNotNull(s.session), item, type)
-        _state.update { it.copy(nowPlaying = item.title to url) }
+    private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) = task {
+        playInternal(item, type, series, episodes)
+    }
+
+    private suspend fun playInternal(item: MediaItem, type: CatalogType, series: MediaItem?, episodes: List<MediaItem>) {
+        val session = requireNotNull(_state.value.session)
+        val url = portal.playableUrl(session, item, type)
+        val orderedEpisodes = if (type == CatalogType.SERIES) episodes.sortedWith(
+            compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
+        ) else emptyList()
+        val nextEpisode = orderedEpisodes.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
+            ?.let { orderedEpisodes.getOrNull(it + 1) }
+        val progressKey = "${type.name}:${item.id}"
+        val saved = _state.value.playbackProgress.firstOrNull { it.key == progressKey }
+        val resumePosition = saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L } ?: 0L
+        _state.update { it.copy(nowPlaying = PlayingMedia(item, url, nextEpisode, series, orderedEpisodes, resumePosition, progressKey)) }
+        recordRecent(item, type, series)
+    }
+
+    fun savePlaybackProgress(key: String, positionMillis: Long, durationMillis: Long) {
+        if (key.isBlank()) return
+        viewModelScope.launch {
+            val current = _state.value.playbackProgress
+            val updated = if (durationMillis > 0L && positionMillis >= durationMillis - 5_000L) {
+                current.filterNot { it.key == key }
+            } else {
+                (listOf(PlaybackProgress(key, positionMillis.coerceAtLeast(0L), durationMillis)) + current.filterNot { it.key == key })
+                    .take(MAX_PROGRESS_ITEMS)
+            }
+            _state.update { it.copy(playbackProgress = updated) }
+            store.savePlaybackProgress(updated)
+        }
+    }
+
+    fun playNextEpisode() {
+        val playing = _state.value.nowPlaying ?: return
+        val next = playing.nextEpisode ?: return
+        viewModelScope.launch {
+            runCatching { playInternal(next, CatalogType.SERIES, playing.series, playing.episodeQueue) }
+                .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not play the next episode") } }
+        }
+    }
+
+    private suspend fun recordRecent(item: MediaItem, type: CatalogType, series: MediaItem?) {
+        val additions = buildList {
+            if (type == CatalogType.SERIES && series != null) add(RecentItem(FavoriteKind.SERIES, series))
+            add(RecentItem(when (type) {
+                CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
+                CatalogType.MOVIES -> FavoriteKind.MOVIE
+                CatalogType.SERIES -> FavoriteKind.EPISODE
+                CatalogType.RADIO -> FavoriteKind.CHANNEL
+            }, item, series))
+        }
+        val updated = (additions + _state.value.recentlyPlayed)
+            .distinctBy { it.key }.take(MAX_RECENT_ITEMS)
+        _state.update { it.copy(recentlyPlayed = updated) }
+        store.saveRecentlyPlayed(updated)
     }
 
     fun closeSeries() = task {
+        if (_state.value.seriesOpenedFromHome) {
+            _state.update { it.copy(selectedSeries = null, seriesOpenedFromHome = false, homeOpen = true) }
+            return@task
+        }
         if (_state.value.seriesOpenedFromFavorites) {
             _state.update { it.copy(selectedSeries = null, seriesOpenedFromFavorites = false, favoritesOpen = true) }
             return@task
@@ -166,8 +229,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false) }
-    fun openFavorites() = _state.update { it.copy(favoritesOpen = true, settingsOpen = false) }
+    fun openFavorites() = _state.update { it.copy(favoritesOpen = true, homeOpen = false, settingsOpen = false) }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
+    fun openHome() = _state.update { it.copy(homeOpen = true, favoritesOpen = false, settingsOpen = false) }
+    fun closeHome() = _state.update { it.copy(homeOpen = false) }
 
     fun toggleFavorite(item: MediaItem) {
         val snapshot = _state.value
@@ -193,11 +258,29 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         when (favorite.kind) {
             FavoriteKind.CHANNEL -> play(favorite.media, CatalogType.LIVE_TV)
             FavoriteKind.MOVIE -> play(favorite.media, CatalogType.MOVIES)
-            FavoriteKind.EPISODE -> play(favorite.media, CatalogType.SERIES)
+            FavoriteKind.EPISODE -> task {
+                val episodes = favorite.series?.let { portal.episodes(requireNotNull(_state.value.session), it) }.orEmpty()
+                playInternal(favorite.media, CatalogType.SERIES, favorite.series, episodes)
+            }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
                 _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = favorite.media, seriesOpenedFromFavorites = true, items = emptyList()) }
                 _state.update { it.copy(items = portal.episodes(session, favorite.media)) }
+            }
+        }
+    }
+    fun openRecent(recent: RecentItem) {
+        when (recent.kind) {
+            FavoriteKind.CHANNEL -> play(recent.media, CatalogType.LIVE_TV)
+            FavoriteKind.MOVIE -> play(recent.media, CatalogType.MOVIES)
+            FavoriteKind.EPISODE -> task {
+                val episodes = recent.series?.let { portal.episodes(requireNotNull(_state.value.session), it) }.orEmpty()
+                playInternal(recent.media, CatalogType.SERIES, recent.series, episodes)
+            }
+            FavoriteKind.SERIES -> task {
+                val session = requireNotNull(_state.value.session)
+                _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = emptyList()) }
+                _state.update { it.copy(items = portal.episodes(session, recent.media)) }
             }
         }
     }
@@ -213,8 +296,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun PortalProfile.cacheKey() = "$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+    private fun String.episodeOrderFromTitle(): Int? = listOf(
+        Regex("(?i)S\\d+[ ._-]*E(?:P(?:ISODE)?)?[ ._-]*(\\d+)"),
+        Regex("(?i)\\bEP(?:ISODE)?[ ._:-]*(\\d+)"),
+        Regex("(?i)\\bE[ ._:-]*(\\d+)"),
+        Regex("\\b(\\d+)\\b")
+    ).firstNotNullOfOrNull { it.findAll(this).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull() }
 
     companion object {
         private const val SEARCH_CACHE_TTL_MILLIS = 30 * 60 * 1000L
+        private const val MAX_RECENT_ITEMS = 100
+        private const val MAX_PROGRESS_ITEMS = 200
     }
 }

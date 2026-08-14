@@ -55,6 +55,34 @@ data class FavoriteItem(
 }
 
 @Serializable
+data class RecentItem(
+    val kind: FavoriteKind,
+    val media: MediaItem,
+    val series: MediaItem? = null,
+    val playedAtMillis: Long = System.currentTimeMillis()
+) {
+    val key: String get() = "${kind.name}:${media.id}"
+}
+
+data class PlayingMedia(
+    val media: MediaItem,
+    val url: String,
+    val nextEpisode: MediaItem? = null,
+    val series: MediaItem? = null,
+    val episodeQueue: List<MediaItem> = emptyList(),
+    val resumePositionMillis: Long = 0L,
+    val progressKey: String = ""
+)
+
+@Serializable
+data class PlaybackProgress(
+    val key: String,
+    val positionMillis: Long,
+    val durationMillis: Long,
+    val updatedAtMillis: Long = System.currentTimeMillis()
+)
+
+@Serializable
 data class PortalSession(
     val profile: PortalProfile,
     val token: String,

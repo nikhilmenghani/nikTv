@@ -66,12 +66,12 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     MaterialTheme(colorScheme = NikColors) {
         Surface(Modifier.fillMaxSize()) {
             when {
-                state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer)
+                state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::playNextEpisode, vm::savePlaybackProgress)
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.session == null -> ProfileScreen(state.savedProfile, state.loading, vm::connect, vm::reconnect)
                 else -> CatalogScreen(
                     state = state,
-                    selectType = { vm.closeSettings(); vm.closeFavorites(); vm.loadType(it) },
+                    selectType = { vm.closeSettings(); vm.closeFavorites(); vm.closeHome(); vm.loadType(it) },
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     closeSeries = vm::closeSeries,
@@ -79,6 +79,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     refreshFullSearch = vm::refreshFullSearch,
                     openFavorites = vm::openFavorites,
                     closeFavorites = vm::closeFavorites,
+                    openHome = vm::openHome,
+                    openRecent = vm::openRecent,
                     openFavorite = vm::openFavorite,
                     toggleFavorite = vm::toggleFavorite,
                     toggleFavoriteEntry = { vm.toggleFavorite(it) },
@@ -162,6 +164,8 @@ private fun CatalogScreen(
     refreshFullSearch: () -> Unit,
     openFavorites: () -> Unit,
     closeFavorites: () -> Unit,
+    openHome: () -> Unit,
+    openRecent: (RecentItem) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
     toggleFavoriteEntry: (FavoriteItem) -> Unit,
@@ -178,25 +182,28 @@ private fun CatalogScreen(
     BackHandler(enabled = state.favoritesOpen && !state.settingsOpen, onBack = closeFavorites)
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
-        NavigationPanel(state, selectType, openFavorites, Modifier.width(220.dp).fillMaxHeight())
+        NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        else if (state.homeOpen) HomeContent(state, openRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        else if (state.homeOpen) HomeContent(state, openRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), false, true)
-        if (!state.settingsOpen) CatalogBottomNavigation(state, selectType, openFavorites)
+        if (!state.settingsOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
     }
 }
 
 @Composable
-private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit, modifier: Modifier) {
+private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openHome: () -> Unit, openFavorites: () -> Unit, modifier: Modifier) {
     Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("nikTv", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
         Spacer(Modifier.weight(1f))
+        CatalogNavigationItem("Home", Icons.Default.Home, state.homeOpen, openHome, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         visibleCatalogTypes.forEach { type ->
-            CatalogNavigationItem(type.title, type.icon(), !state.favoritesOpen && state.selectedType == type, { selectType(type) }, Modifier.fillMaxWidth(), alwaysShowLabel = true)
+            CatalogNavigationItem(type.title, type.icon(), !state.homeOpen && !state.favoritesOpen && state.selectedType == type, { selectType(type) }, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         }
         CatalogNavigationItem("Favorites", Icons.Default.Favorite, state.favoritesOpen, openFavorites, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         Spacer(Modifier.weight(1f))
@@ -204,14 +211,18 @@ private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit
 }
 
 @Composable
-private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit) {
+private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit, openHome: () -> Unit, openFavorites: () -> Unit) {
     Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
         Row(
             Modifier.widthIn(max = 448.dp).fillMaxWidth().height(76.dp).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            CatalogNavigationItem(
+                "Home", Icons.Default.Home, state.homeOpen, openHome,
+                (if (state.homeOpen) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
+            )
             visibleCatalogTypes.forEach { type ->
-                val selected = !state.favoritesOpen && state.selectedType == type
+                val selected = !state.homeOpen && !state.favoritesOpen && state.selectedType == type
                 CatalogNavigationItem(
                     label = type.title,
                     icon = type.icon(),
@@ -224,6 +235,53 @@ private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType)
                 "Favorites", Icons.Default.Favorite, state.favoritesOpen, openFavorites,
                 (if (state.favoritesOpen) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
             )
+        }
+    }
+}
+
+@Composable
+private fun HomeContent(
+    state: NikTvState,
+    openRecent: (RecentItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
+    openSettings: () -> Unit,
+    modifier: Modifier,
+    tv: Boolean
+) {
+    val groups = FavoriteKind.entries.mapNotNull { kind ->
+        state.recentlyPlayed.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
+    }
+    Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Home", style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Text("Recently played", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (groups.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.History, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Nothing played yet", style = MaterialTheme.typography.titleMedium)
+                Text("Your recently played media will appear here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
+            groups.forEach { (kind, recentItems) ->
+                item("recent-header-${kind.name}") {
+                    Text(kind.sectionTitle(), Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                items(recentItems, key = { it.key }) { recent ->
+                    val favorite = FavoriteItem(recent.kind, recent.media, recent.series)
+                    MediaListItem(
+                        recent.media,
+                        { openRecent(recent) },
+                        { toggleFavorite(favorite) },
+                        state.favorites.any { it.key == favorite.key },
+                        tv
+                    )
+                }
+            }
         }
     }
 }

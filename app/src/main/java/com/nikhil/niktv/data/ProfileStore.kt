@@ -9,6 +9,8 @@ import com.nikhil.niktv.model.PortalSession
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.SearchCatalogCache
 import com.nikhil.niktv.model.FavoriteItem
+import com.nikhil.niktv.model.RecentItem
+import com.nikhil.niktv.model.PlaybackProgress
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -19,6 +21,8 @@ class ProfileStore(private val context: Context) {
     private val key = stringPreferencesKey("active_profile")
     private val sessionKey = stringPreferencesKey("active_session")
     private val favoritesKey = stringPreferencesKey("favorites")
+    private val recentKey = stringPreferencesKey("recently_played")
+    private val progressKey = stringPreferencesKey("playback_progress")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         prefs[key]?.let { runCatching { Json.decodeFromString<PortalProfile>(it) }.getOrNull() }
     }
@@ -27,6 +31,12 @@ class ProfileStore(private val context: Context) {
     }
     val favorites: Flow<List<FavoriteItem>> = context.dataStore.data.map { prefs ->
         prefs[favoritesKey]?.let { runCatching { Json.decodeFromString<List<FavoriteItem>>(it) }.getOrNull() }.orEmpty()
+    }
+    val recentlyPlayed: Flow<List<RecentItem>> = context.dataStore.data.map { prefs ->
+        prefs[recentKey]?.let { runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull() }.orEmpty()
+    }
+    val playbackProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
+        prefs[progressKey]?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
     }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
         it[key] = Json.encodeToString(session.profile)
@@ -46,10 +56,18 @@ class ProfileStore(private val context: Context) {
     suspend fun saveFavorites(items: List<FavoriteItem>) = context.dataStore.edit {
         it[favoritesKey] = Json.encodeToString(items)
     }
+    suspend fun saveRecentlyPlayed(items: List<RecentItem>) = context.dataStore.edit {
+        it[recentKey] = Json.encodeToString(items)
+    }
+    suspend fun savePlaybackProgress(items: List<PlaybackProgress>) = context.dataStore.edit {
+        it[progressKey] = Json.encodeToString(items)
+    }
     suspend fun clear() = context.dataStore.edit {
         it.remove(key)
         it.remove(sessionKey)
         CatalogType.entries.forEach { type -> it.remove(stringPreferencesKey("search_catalog_${type.name.lowercase()}")) }
         it.remove(favoritesKey)
+        it.remove(recentKey)
+        it.remove(progressKey)
     }
 }
