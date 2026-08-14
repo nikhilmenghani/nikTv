@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +43,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -407,6 +409,8 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
     val filterMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(240.dp)
     var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
     var selectedSeason by rememberSaveable(state.selectedSeries?.id) { mutableStateOf<Int?>(null) }
+    var episodeSortDescending by rememberSaveable(state.selectedSeries?.id) { mutableStateOf(false) }
+    var sortExpanded by rememberSaveable(state.selectedSeries?.id) { mutableStateOf(false) }
     var searchVisible by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf(false) }
     var searchQuery by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf("") }
     val searchFocusRequester = remember { FocusRequester() }
@@ -417,6 +421,25 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
         val query = searchQuery.trim()
         if (query.isEmpty()) searchableItems else searchableItems.filter { item ->
             item.title.contains(query, ignoreCase = true)
+        }
+    }
+    val displayedItems = remember(filteredItems, state.selectedSeries, episodeSortDescending) {
+        if (state.selectedSeries == null) filteredItems else {
+            val titleComparator = Comparator<MediaItem> { first, second ->
+                val firstNumber = first.title.episodeNumberFromTitle()
+                val secondNumber = second.title.episodeNumberFromTitle()
+                when {
+                    firstNumber != null && secondNumber != null && firstNumber != secondNumber -> firstNumber.compareTo(secondNumber)
+                    firstNumber != null && secondNumber == null -> -1
+                    firstNumber == null && secondNumber != null -> 1
+                    else -> naturalTitleCompare(first.title, second.title)
+                }
+            }.let { if (episodeSortDescending) it.reversed() else it }
+
+            if (selectedSeason != null) filteredItems.sortedWith(titleComparator)
+            else filteredItems.groupBy { it.seasonNumber }.entries
+                .sortedWith(compareBy({ it.key == null }, { it.key ?: Int.MAX_VALUE }))
+                .flatMap { (_, episodes) -> episodes.sortedWith(titleComparator) }
         }
     }
     val resultCount = if (searchQuery.isBlank()) searchableItems.size else filteredItems.size
@@ -442,7 +465,13 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                 IconButton(onClick = closeSeries) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to series") }
             }
             Column(Modifier.weight(1f)) {
-                Text(state.selectedSeries?.title ?: state.selectedType.title, style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    state.selectedSeries?.title ?: state.selectedType.title,
+                    style = when { state.selectedSeries != null -> MaterialTheme.typography.headlineMedium; tv -> MaterialTheme.typography.displaySmall; else -> MaterialTheme.typography.headlineLarge },
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     "$resultCount ${if (state.selectedSeries != null) resultCount.episodeLabel() else state.selectedType.itemLabel(resultCount)}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -451,6 +480,25 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             }
             IconButton(onClick = { filterExpanded = !filterExpanded }) {
                 Icon(Icons.Default.FilterAlt, if (filterExpanded) "Close filters" else if (state.selectedSeries != null) "Filter by season" else "Filter by category")
+            }
+            if (state.selectedSeries != null) Box {
+                IconButton(onClick = { sortExpanded = true }) {
+                    Icon(Icons.AutoMirrored.Filled.Sort, "Sort episodes")
+                }
+                DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Ascending") },
+                        onClick = { episodeSortDescending = false; sortExpanded = false },
+                        leadingIcon = { Icon(Icons.Default.ArrowUpward, null) },
+                        trailingIcon = if (!episodeSortDescending) {{ Icon(Icons.Default.Check, null) }} else null
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Descending") },
+                        onClick = { episodeSortDescending = true; sortExpanded = false },
+                        leadingIcon = { Icon(Icons.Default.ArrowDownward, null) },
+                        trailingIcon = if (episodeSortDescending) {{ Icon(Icons.Default.Check, null) }} else null
+                    )
+                }
             }
             IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
@@ -502,7 +550,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
         }
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 96.dp)) {
             val groupedItems = if (state.selectedSeries != null && selectedSeason == null)
-                filteredItems.groupBy { it.seasonNumber } else linkedMapOf(selectedSeason to filteredItems)
+                displayedItems.groupBy { it.seasonNumber } else linkedMapOf(selectedSeason to displayedItems)
             groupedItems.forEach { (season, episodes) ->
                 if (state.selectedSeries != null && selectedSeason == null) item("season-${season ?: "other"}") {
                     Text(
@@ -624,6 +672,33 @@ private fun FavoriteKind.sectionTitle() = when (this) {
     FavoriteKind.MOVIE -> "Movies"
     FavoriteKind.SERIES -> "Series"
     FavoriteKind.EPISODE -> "Episodes"
+}
+
+private fun String.episodeNumberFromTitle(): Int? {
+    val patterns = listOf(
+        Regex("(?i)S\\d+[ ._-]*E(?:P(?:ISODE)?)?[ ._-]*(\\d+)"),
+        Regex("(?i)\\bEP(?:ISODE)?[ ._:-]*(\\d+)"),
+        Regex("(?i)\\bE[ ._:-]*(\\d+)"),
+        Regex("\\b(\\d+)\\b")
+    )
+    return patterns.firstNotNullOfOrNull { pattern ->
+        pattern.findAll(this).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
+    }
+}
+
+private fun naturalTitleCompare(first: String, second: String): Int {
+    val tokenPattern = Regex("\\d+|\\D+")
+    val firstTokens = tokenPattern.findAll(first.lowercase()).map { it.value }.toList()
+    val secondTokens = tokenPattern.findAll(second.lowercase()).map { it.value }.toList()
+    for (index in 0 until minOf(firstTokens.size, secondTokens.size)) {
+        val firstToken = firstTokens[index]
+        val secondToken = secondTokens[index]
+        val comparison = if (firstToken.all(Char::isDigit) && secondToken.all(Char::isDigit))
+            (firstToken.toLongOrNull() ?: Long.MAX_VALUE).compareTo(secondToken.toLongOrNull() ?: Long.MAX_VALUE)
+        else firstToken.compareTo(secondToken)
+        if (comparison != 0) return comparison
+    }
+    return firstTokens.size.compareTo(secondTokens.size)
 }
 
 private fun cast4kStyleDeviceMacAddress(context: android.content.Context): String {
