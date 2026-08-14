@@ -108,6 +108,11 @@ class StalkerPortalClient(private val context: Context) {
             }
     }
 
+    suspend fun fullCatalog(session: PortalSession, type: CatalogType, categories: List<Category>): List<MediaItem> = withContext(Dispatchers.IO) {
+        if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamCatalog(session, type, null)
+        categories.flatMap { category -> catalog(session, category) }.distinctBy { it.id }
+    }
+
     suspend fun playableUrl(session: PortalSession, item: MediaItem, type: CatalogType): String = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             return@withContext item.command ?: error("This item has no playback URL")
@@ -189,19 +194,22 @@ class StalkerPortalClient(private val context: Context) {
         }
     }
 
-    private fun xtreamCatalog(session: PortalSession, category: Category): List<MediaItem> {
-        val action = when (category.type) {
+    private fun xtreamCatalog(session: PortalSession, category: Category): List<MediaItem> =
+        xtreamCatalog(session, category.type, category.id)
+
+    private fun xtreamCatalog(session: PortalSession, type: CatalogType, categoryId: String?): List<MediaItem> {
+        val action = when (type) {
             CatalogType.LIVE_TV -> "get_live_streams"
             CatalogType.MOVIES -> "get_vod_streams"
             CatalogType.SERIES -> "get_series"
             CatalogType.RADIO -> return emptyList()
         }
         val profile = session.profile
-        return xtreamRequest(profile, action, category.id).array().mapNotNull { node ->
+        return xtreamRequest(profile, action, categoryId).array().mapNotNull { node ->
             val o = node as? JsonObject ?: return@mapNotNull null
             val id = o.string("stream_id") ?: o.string("series_id") ?: return@mapNotNull null
             val extension = o.string("container_extension") ?: "mp4"
-            val url = when (category.type) {
+            val url = when (type) {
                 CatalogType.LIVE_TV -> "${profile.portalUrl}/live/${encode(profile.username)}/${encode(profile.password)}/$id.ts"
                 CatalogType.MOVIES -> "${profile.portalUrl}/movie/${encode(profile.username)}/${encode(profile.password)}/$id.$extension"
                 else -> null

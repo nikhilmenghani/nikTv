@@ -7,9 +7,6 @@ import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.data.StalkerPortalClient
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 data class NikTvState(
@@ -124,12 +121,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             runCatching {
-                coroutineScope {
-                    val categoryResults = categories.map { category -> async { runCatching { portal.catalog(session, category) } } }.awaitAll()
-                    val failures = categoryResults.mapNotNull { it.exceptionOrNull() }
-                    if (failures.isNotEmpty()) error("${failures.size} of ${categories.size} categories could not be loaded. ${failures.first().message.orEmpty()}")
-                    categoryResults.flatMap { it.getOrThrow() }.distinctBy { it.id }
-                }
+                portal.fullCatalog(session, type, categories)
             }.onSuccess { results ->
                 val cachedAt = System.currentTimeMillis()
                 store.saveSearchCatalog(SearchCatalogCache(profileKey, type, cachedAt, results))

@@ -347,7 +347,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
     val filteredItems = remember(searchableItems, searchQuery) {
         val query = searchQuery.trim()
         if (query.isEmpty()) searchableItems else searchableItems.filter { item ->
-            item.title.contains(query, ignoreCase = true) || item.description?.contains(query, ignoreCase = true) == true
+            item.title.contains(query, ignoreCase = true)
         }
     }
     val resultCount = if (searchQuery.isBlank()) searchableItems.size else filteredItems.size
