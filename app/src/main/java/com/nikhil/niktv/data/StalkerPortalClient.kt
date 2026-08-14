@@ -105,15 +105,18 @@ class StalkerPortalClient(private val context: Context) {
             CatalogType.LIVE_TV -> "get_genres"; CatalogType.MOVIES, CatalogType.SERIES -> "get_categories"; CatalogType.RADIO -> "get_genres"
         }
         val requestType = if (type == CatalogType.MOVIES || type == CatalogType.SERIES) "vod" else type.apiType
-        val portalCategories = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action)))
-            .payload().array().mapNotNull { node ->
+        val categoryNodes = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action)))
+            .payload().array()
+        val portalCategories = categoryNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
                 val id = o.string("id") ?: o.string("category_id") ?: return@mapNotNull null
-                Category(id, o.string("title") ?: o.string("name") ?: "Untitled", type)
-            }.filter { category ->
-                if (type != CatalogType.MOVIES && type != CatalogType.SERIES) true
-                else if (type == CatalogType.MOVIES) true
-                else category.id == "*" || isSeriesCategory(category.title)
+                val title = o.string("title") ?: o.string("name") ?: "Untitled"
+                // Many Stalker portals keep the useful classifier in `alias`
+                // while presenting a localized title that never says "Series".
+                if (type == CatalogType.SERIES && id != "*" &&
+                    !isSeriesCategory("$title ${o.string("alias").orEmpty()}")
+                ) return@mapNotNull null
+                Category(id, title, type)
             }
         // Stalker portals commonly expose movies and series through one VOD category
         // endpoint. An explicit wildcard gives us a reliable first page, while item
@@ -130,17 +133,17 @@ class StalkerPortalClient(private val context: Context) {
         val categoryKey = if (category.type == CatalogType.LIVE_TV || category.type == CatalogType.RADIO) "genre" else "category"
         val requestType = if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) "vod" else category.type.apiType
         val listingParams = mutableMapOf("type" to requestType, "action" to action, categoryKey to category.id, "p" to "1")
-        if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) listingParams += mapOf(
+        if (category.type == CatalogType.MOVIES) listingParams += mapOf(
             "movie_id" to "0", "season_id" to "0", "episode_id" to "0", "fav" to "0",
             "sortby" to "added", "hd" to "0", "ended" to "0", "search" to ""
         )
-        request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams))
-            .payload().arrayFromData().mapNotNull { node ->
+        val listingNodes = request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams))
+            .payload().arrayFromData()
+        listingNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
-                // Cast4K gives precedence to the explicit is_movie flag. Some
-                // portals populate is_series inconsistently on mixed VOD results.
-                val movieItem = o.boolish("is_movie")
-                val seriesItem = o.boolish("is_series") && !movieItem
+                // Some Stalker portals use is_movie=true for every VOD row, while
+                // is_series is the authoritative discriminator for series.
+                val seriesItem = o.positiveMarker("is_series")
                 if (category.type == CatalogType.SERIES && !seriesItem) return@mapNotNull null
                 if (category.type == CatalogType.MOVIES && seriesItem) return@mapNotNull null
                 val id = o.string("id") ?: o.string("movie_id") ?: return@mapNotNull null
@@ -647,6 +650,8 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
+    private fun JsonObject.positiveMarker(key: String): Boolean = string(key)?.trim()?.lowercase()
+        ?.let { it.isNotEmpty() && it !in setOf("0", "false", "no", "null") } == true
     private fun String.matchesSearchKeywords(query: String): Boolean {
         val titleWords = lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
         val keys = query.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)

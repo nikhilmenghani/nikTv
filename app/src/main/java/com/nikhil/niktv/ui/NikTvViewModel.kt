@@ -387,15 +387,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun recordRecent(item: MediaItem, type: CatalogType, series: MediaItem?) {
         val additions = buildList {
-            if (type == CatalogType.SERIES && series != null) add(RecentItem(FavoriteKind.SERIES, series))
-            add(RecentItem(when (type) {
+            if (type == CatalogType.SERIES && series != null) {
+                add(RecentItem(FavoriteKind.SERIES, series, lastPlayed = item))
+            } else add(RecentItem(when (type) {
                 CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
                 CatalogType.MOVIES -> FavoriteKind.MOVIE
-                CatalogType.SERIES -> FavoriteKind.EPISODE
+                CatalogType.SERIES -> FavoriteKind.SERIES
                 CatalogType.RADIO -> FavoriteKind.CHANNEL
             }, item, series))
         }
-        val updated = (additions + _state.value.recentlyPlayed)
+        val updated = (additions + _state.value.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE })
             .distinctBy { it.key }.take(MAX_RECENT_ITEMS)
         _state.update { it.copy(recentlyPlayed = updated) }
         store.saveRecentlyPlayed(updated)
@@ -490,13 +491,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = emptyList()) }
-                _state.update { it.copy(items = portal.episodes(session, recent.media)) }
+                val episodes = portal.episodes(session, recent.media)
+                val resumeEpisode = recent.lastPlayed?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
+                if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes)
+                else {
+                    _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = episodes) }
+                }
             }
         }
     }
     fun removeRecent(recent: RecentItem) = viewModelScope.launch {
         val updated = _state.value.recentlyPlayed.filterNot { it.key == recent.key }
+        _state.update { it.copy(recentlyPlayed = updated) }
+        store.saveRecentlyPlayed(updated)
+    }
+    fun clearRecent(kind: FavoriteKind) = viewModelScope.launch {
+        val updated = _state.value.recentlyPlayed.filterNot { it.kind == kind }
         _state.update { it.copy(recentlyPlayed = updated) }
         store.saveRecentlyPlayed(updated)
     }
@@ -511,7 +521,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun PortalProfile.cacheKey() = "catalog-v3|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+    private fun PortalProfile.cacheKey() = "catalog-v4|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
     private fun String.episodeOrderFromTitle(): Int? = listOf(
         Regex("(?i)S\\d+[ ._-]*E(?:P(?:ISODE)?)?[ ._-]*(\\d+)"),
         Regex("(?i)\\bEP(?:ISODE)?[ ._:-]*(\\d+)"),

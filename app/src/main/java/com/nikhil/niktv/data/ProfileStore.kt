@@ -51,7 +51,13 @@ class ProfileStore(private val context: Context) {
         prefs[favoritesKey]?.let { runCatching { Json.decodeFromString<List<FavoriteItem>>(it) }.getOrNull() }.orEmpty()
     }
     val recentlyPlayed: Flow<List<RecentItem>> = context.dataStore.data.map { prefs ->
-        prefs[recentKey]?.let { runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull() }.orEmpty()
+        val stored = prefs[recentKey]?.let { runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull() }.orEmpty()
+        stored.filterNot { it.kind == com.nikhil.niktv.model.FavoriteKind.EPISODE }.map { recent ->
+            if (recent.kind != com.nikhil.niktv.model.FavoriteKind.SERIES || recent.lastPlayed != null) recent
+            else stored.firstOrNull { it.kind == com.nikhil.niktv.model.FavoriteKind.EPISODE && it.series?.id == recent.media.id }
+                ?.let { recent.copy(lastPlayed = it.media, playedAtMillis = maxOf(recent.playedAtMillis, it.playedAtMillis)) }
+                ?: recent
+        }
     }
     val playbackProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
         prefs[progressKey]?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()

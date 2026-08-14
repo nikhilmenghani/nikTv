@@ -108,6 +108,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     openHome = vm::openHome,
                     openRecent = vm::openRecent,
                     removeRecent = vm::removeRecent,
+                    clearRecent = vm::clearRecent,
                     openFavorite = vm::openFavorite,
                     toggleFavorite = vm::toggleFavorite,
                     toggleFavoriteEntry = { vm.toggleFavorite(it) },
@@ -325,6 +326,7 @@ private fun CatalogScreen(
     openHome: () -> Unit,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    clearRecent: (FavoriteKind) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
     toggleFavoriteEntry: (FavoriteItem) -> Unit,
@@ -359,13 +361,13 @@ private fun CatalogScreen(
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
-        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
+        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
-        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
+        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), false, true)
         if (!state.settingsOpen && !state.searchOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
@@ -437,14 +439,16 @@ private fun HomeContent(
     state: NikTvState,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    clearRecent: (FavoriteKind) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     openSettings: () -> Unit,
     openSearch: () -> Unit,
     modifier: Modifier,
     tv: Boolean
 ) {
-    val groups = FavoriteKind.entries.mapNotNull { kind ->
-        state.recentlyPlayed.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
+    val visibleRecents = state.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE }
+    val groups = FavoriteKind.entries.filterNot { it == FavoriteKind.EPISODE }.mapNotNull { kind ->
+        visibleRecents.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
     }
     Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -465,7 +469,12 @@ private fun HomeContent(
         } else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
             groups.forEach { (kind, recentItems) ->
                 item("recent-header-${kind.name}") {
-                    Text(kind.sectionTitle(), Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Row(Modifier.fillMaxWidth().padding(start = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(kind.sectionTitle(), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        TextButton(onClick = { clearRecent(kind) }) {
+                            Icon(Icons.Default.DeleteSweep, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Clear all")
+                        }
+                    }
                 }
                 items(recentItems, key = { it.key }) { recent ->
                     val favorite = FavoriteItem(recent.kind, recent.media, recent.series)
@@ -563,17 +572,46 @@ private fun HomeContent(
                             scaleY = cardScale
                             alpha = cardAlpha
                         }) {
-                            MediaListItem(
-                                recent.media,
-                                { openRecent(recent) },
-                                { toggleFavorite(favorite) },
-                                state.favorites.any { it.key == favorite.key },
-                                tv
-                            )
+                            RecentMediaListItem(recent, { openRecent(recent) }, { toggleFavorite(favorite) }, state.favorites.any { it.key == favorite.key })
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RecentMediaListItem(recent: RecentItem, open: () -> Unit, favorite: () -> Unit, isFavorite: Boolean) {
+    val icon = when (recent.kind) {
+        FavoriteKind.CHANNEL -> Icons.Default.LiveTv
+        FavoriteKind.MOVIE -> Icons.Default.Movie
+        FavoriteKind.SERIES -> Icons.Default.VideoLibrary
+        FavoriteKind.EPISODE -> Icons.Default.PlayCircle
+    }
+    val resumeLabel = recent.lastPlayed?.let { episode ->
+        listOfNotNull(episode.seasonNumber?.let { "Season $it" }, episode.episodeNumber?.let { "Episode $it" })
+            .takeIf { it.isNotEmpty() }?.joinToString(" · ") ?: episode.title
+    }
+    Surface(
+        onClick = open,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(Modifier.size(48.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer) }
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(recent.media.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                Text(resumeLabel?.let { "Resume · $it" } ?: recent.kind.sectionTitle().removeSuffix("s"), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = favorite) {
+                Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, if (isFavorite) "Remove favorite" else "Add favorite")
+            }
+            Icon(Icons.Default.PlayArrow, "Play", tint = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -1199,16 +1237,16 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
 @Composable
 private fun MediaListItem(item: MediaItem, onClick: () -> Unit, onLongClick: () -> Unit, isFavorite: Boolean, tv: Boolean) {
     var focused by remember { mutableStateOf(false) }
-    Card(modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick).onFocusChanged { focused = it.isFocused }.then(if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier), shape = RoundedCornerShape(12.dp)) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                item.logo,
-                item.title,
-                Modifier.width(if (tv) 120.dp else 96.dp).aspectRatio(16f / 10f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF202938)),
-                contentScale = ContentScale.Crop
-            )
-            Column(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 6.dp)) {
-                Text(item.title, maxLines = 2, style = if (tv) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium)
+    Card(modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick).onFocusChanged { focused = it.isFocused }.then(if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)) else Modifier), shape = RoundedCornerShape(16.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(Modifier.size(48.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(if (item.seasonNumber != null || item.episodeNumber != null) Icons.Default.PlayCircle else Icons.Default.SmartDisplay,
+                        null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = if (tv) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                 item.description?.takeIf(String::isNotBlank)?.let {
                     Text(it, maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

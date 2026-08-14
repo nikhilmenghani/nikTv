@@ -105,6 +105,7 @@ data class RecentItem(
     val kind: FavoriteKind,
     val media: MediaItem,
     val series: MediaItem? = null,
+    val lastPlayed: MediaItem? = null,
     val playedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "${kind.name}:${media.id}"
