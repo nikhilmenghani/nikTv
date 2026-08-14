@@ -9,6 +9,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -16,6 +20,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.*
@@ -34,6 +40,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -41,6 +48,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,6 +64,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.model.*
 import java.security.MessageDigest
+import kotlinx.coroutines.delay
 
 private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
@@ -281,32 +291,108 @@ private fun HomeContent(
                 }
                 items(recentItems, key = { it.key }) { recent ->
                     val favorite = FavoriteItem(recent.kind, recent.media, recent.series)
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            if (value != SwipeToDismissBoxValue.Settled) removeRecent(recent)
-                            value != SwipeToDismissBoxValue.Settled
-                        }
+                    val dismissState = rememberSwipeToDismissBoxState()
+                    var pointerPressed by remember { mutableStateOf(false) }
+                    val dismissing = dismissState.targetValue != SwipeToDismissBoxValue.Settled
+                    val swipeFromStart = dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
+                    val cardScale by animateFloatAsState(
+                        targetValue = if (dismissing) 0.96f else 1f,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+                        label = "recent card scale"
                     )
+                    val cardAlpha by animateFloatAsState(
+                        targetValue = if (dismissing) 0.72f else 1f,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+                        label = "recent card alpha"
+                    )
+                    val deleteScale by animateFloatAsState(
+                        targetValue = if (dismissing) 1.15f else 0.72f,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+                        label = "delete icon scale"
+                    )
+                    val deleteRotation by animateFloatAsState(
+                        targetValue = if (!dismissing) 0f else if (swipeFromStart) -10f else 10f,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+                        label = "delete icon rotation"
+                    )
+                    val backgroundCorner by animateDpAsState(
+                        targetValue = if (dismissing) 28.dp else 12.dp,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+                        label = "delete background shape"
+                    )
+                    val backgroundColor by animateColorAsState(
+                        targetValue = if (dismissing) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+                        label = "delete background color"
+                    )
+                    LaunchedEffect(pointerPressed, dismissState.targetValue) {
+                        if (!pointerPressed && dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
+                            delay(180)
+                            if (!pointerPressed && dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
+                                removeRecent(recent)
+                            }
+                        }
+                    }
                     SwipeToDismissBox(
+                        modifier = Modifier.pointerInput(recent.key) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                pointerPressed = true
+                                try {
+                                    do {
+                                        val event = awaitPointerEvent(PointerEventPass.Final)
+                                    } while (event.changes.any { it.pressed })
+                                } finally {
+                                    pointerPressed = false
+                                }
+                            }
+                        },
                         state = dismissState,
                         backgroundContent = {
                             Box(
-                                Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 20.dp),
-                                contentAlignment = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd
+                                Modifier.fillMaxSize().clip(RoundedCornerShape(backgroundCorner)).background(backgroundColor).padding(horizontal = 20.dp),
+                                contentAlignment = if (swipeFromStart) Alignment.CenterStart else Alignment.CenterEnd
                             ) {
-                                Icon(Icons.Default.Delete, "Remove from recently played", tint = MaterialTheme.colorScheme.onErrorContainer)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    if (!swipeFromStart) {
+                                        AnimatedVisibility(dismissing, enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
+                                            Text("Remove", color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
+                                        }
+                                    }
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        "Remove from recently played",
+                                        Modifier.graphicsLayer {
+                                            scaleX = deleteScale
+                                            scaleY = deleteScale
+                                            rotationZ = deleteRotation
+                                        },
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    if (swipeFromStart) {
+                                        AnimatedVisibility(dismissing, enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
+                                            Text("Remove", color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
+                                        }
+                                    }
+                                }
                             }
                         },
                         enableDismissFromStartToEnd = true,
                         enableDismissFromEndToStart = true
                     ) {
-                        MediaListItem(
-                            recent.media,
-                            { openRecent(recent) },
-                            { toggleFavorite(favorite) },
-                            state.favorites.any { it.key == favorite.key },
-                            tv
-                        )
+                        Box(Modifier.graphicsLayer {
+                            scaleX = cardScale
+                            scaleY = cardScale
+                            alpha = cardAlpha
+                        }) {
+                            MediaListItem(
+                                recent.media,
+                                { openRecent(recent) },
+                                { toggleFavorite(favorite) },
+                                state.favorites.any { it.key == favorite.key },
+                                tv
+                            )
+                        }
                     }
                 }
             }
