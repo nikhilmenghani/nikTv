@@ -147,12 +147,18 @@ class StalkerPortalClient(private val context: Context) {
     /** One bounded server operation used by the dedicated search screen. */
     suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int, categoryId: String = "*"): PortalSearchPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
-            val catalogType = if (type == SearchContentType.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+            val catalogType = when (type) {
+                SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
+                SearchContentType.SERIES -> CatalogType.SERIES
+                else -> CatalogType.MOVIES
+            }
             val matches = xtreamCatalog(session, catalogType, null).filter { it.title.matchesSearchKeywords(query) }
             return@withContext PortalSearchPage(matches, 1, false)
         }
+        val live = type == SearchContentType.LIVE_TV
         val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-            "type" to "vod", "action" to "get_ordered_list", "category" to categoryId,
+            "type" to if (live) "itv" else "vod", "action" to "get_ordered_list",
+            (if (live) "genre" else "category") to categoryId,
             "search" to query.trim(), "p" to page.coerceAtLeast(1).toString(), "fav" to "0", "sortby" to "added",
             "hd" to "0", "ended" to "0"
         )))
@@ -165,6 +171,7 @@ class StalkerPortalClient(private val context: Context) {
                 item.string("type").equals("series", ignoreCase = true) || item.string("name").orEmpty().contains("series", ignoreCase = true)
             val episode = item.boolish("is_episode") || item.string("episode_id") != null
             val matchesType = when (type) {
+                SearchContentType.LIVE_TV -> true
                 SearchContentType.SERIES -> series && !episode
                 SearchContentType.MOVIES -> !series && !episode
                 SearchContentType.EPISODES -> episode
@@ -174,7 +181,7 @@ class StalkerPortalClient(private val context: Context) {
                 portalAssetUrl(session, item.string("logo") ?: item.string("screenshot_uri") ?: item.string("pic")),
                 item.string("cmd"), item.string("description") ?: item.string("genres_str"),
                 item.string("season_number")?.toIntOrNull(), item.string("episode")?.toIntOrNull(),
-                item.string("season_id"), item.string("category_id"), item.string("episode_id"))
+                item.string("season_id"), item.string("category_id") ?: item.string("genre_id") ?: categoryId, item.string("episode_id"))
         }.filter { it.title.matchesSearchKeywords(query) }.distinctBy { it.id }
         val metadata = payload as? JsonObject
         val maxPage = metadata?.string("max_page")?.toIntOrNull()

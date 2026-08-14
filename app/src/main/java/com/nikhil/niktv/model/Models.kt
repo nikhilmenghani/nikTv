@@ -22,7 +22,11 @@ enum class CatalogType(val title: String, val apiType: String) {
 }
 
 @Serializable
-enum class SearchContentType(val title: String) { SERIES("Series"), MOVIES("Movies"), EPISODES("Episodes") }
+enum class SearchContentType(val title: String) {
+    LIVE_TV("Live TV"), SERIES("Series"), MOVIES("Movies"),
+    /** Retained only so older on-device caches remain readable. */
+    EPISODES("Episodes")
+}
 
 @Serializable
 data class RecentSearch(

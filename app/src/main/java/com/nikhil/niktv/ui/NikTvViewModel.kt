@@ -224,7 +224,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadSearchCategories(type: SearchContentType) = viewModelScope.launch {
-        val catalogType = if (type == SearchContentType.MOVIES) CatalogType.MOVIES else CatalogType.SERIES
+        val catalogType = when (type) {
+            SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
+            SearchContentType.MOVIES -> CatalogType.MOVIES
+            else -> CatalogType.SERIES
+        }
         val session = _state.value.session ?: return@launch
         val cached = store.browseCatalog(catalogType).first()?.takeIf { it.profileKey == session.profile.cacheKey() }?.categories.orEmpty()
         if (cached.isNotEmpty()) _state.update { current -> if (current.searchType == type) current.copy(searchCategories = cached.distinctBy { it.id }) else current }
@@ -284,7 +288,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun localSearch(type: SearchContentType, query: String): List<MediaItem> {
-        val catalogType = if (type == SearchContentType.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+        val catalogType = when (type) {
+            SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
+            SearchContentType.SERIES -> CatalogType.SERIES
+            else -> CatalogType.MOVIES
+        }
         val indexed = store.searchCatalog(catalogType).first()?.items.orEmpty()
         val browsed = store.browseCatalog(catalogType).first()?.itemsByCategory?.values?.flatten().orEmpty()
         val episodes = if (type == SearchContentType.EPISODES) {
@@ -312,6 +320,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun openSearchResult(item: MediaItem) {
         when (_state.value.searchType) {
+            SearchContentType.LIVE_TV -> play(item, CatalogType.LIVE_TV)
             SearchContentType.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
                 _state.update { it.copy(searchOpen = false, homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = item, items = emptyList()) }

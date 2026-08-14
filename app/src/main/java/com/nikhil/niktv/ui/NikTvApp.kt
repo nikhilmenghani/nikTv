@@ -69,6 +69,7 @@ import kotlinx.coroutines.delay
 
 private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
 private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
     if (value.length >= 2 && ((value.first() == '"' && value.last() == '"') ||
             (value.first() == '\'' && value.last() == '\''))) value.substring(1, value.length - 1).trim()
@@ -502,11 +503,11 @@ private fun SearchContent(
         }
         Spacer(Modifier.height(8.dp))
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            SearchContentType.entries.forEachIndexed { index, type ->
+            visibleSearchTypes.forEachIndexed { index, type ->
                 SegmentedButton(
                     selected = state.searchType == type,
                     onClick = { setType(type) },
-                    shape = SegmentedButtonDefaults.itemShape(index, SearchContentType.entries.size)
+                    shape = SegmentedButtonDefaults.itemShape(index, visibleSearchTypes.size)
                 ) { Text(type.title) }
             }
         }
@@ -552,7 +553,7 @@ private fun SearchContent(
         if (state.recentSearches.isNotEmpty() && state.searchResults.isEmpty()) {
             Text("Recent searches", Modifier.padding(top = 16.dp, bottom = 6.dp), style = MaterialTheme.typography.titleMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                state.recentSearches.forEach { recent ->
+                state.recentSearches.filter { it.type in visibleSearchTypes }.forEach { recent ->
                     InputChip(
                         selected = false,
                         onClick = { useRecent(recent) },
