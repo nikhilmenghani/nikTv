@@ -56,8 +56,18 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         Surface(Modifier.fillMaxSize()) {
             when {
                 state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer)
+                state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.session == null -> ProfileScreen(state.savedProfile, state.loading, vm::connect, vm::reconnect)
-                else -> CatalogScreen(state, vm::loadType, vm::loadCategory, vm::play, vm::logout)
+                else -> CatalogScreen(
+                    state = state,
+                    selectType = { vm.closeSettings(); vm.loadType(it) },
+                    selectCategory = vm::loadCategory,
+                    play = vm::play,
+                    openSettings = vm::openSettings,
+                    reauthenticate = vm::reauthenticate,
+                    editProfile = vm::editProfile,
+                    logout = vm::logout
+                )
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             state.error?.let { error ->
@@ -122,21 +132,32 @@ private fun ProfileScreen(saved: PortalProfile?, loading: Boolean, connect: (Por
 }
 
 @Composable
-private fun CatalogScreen(state: NikTvState, selectType: (CatalogType) -> Unit, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, logout: () -> Unit) {
+private fun CatalogScreen(
+    state: NikTvState,
+    selectType: (CatalogType) -> Unit,
+    selectCategory: (Category) -> Unit,
+    play: (MediaItem) -> Unit,
+    openSettings: () -> Unit,
+    reauthenticate: () -> Unit,
+    editProfile: () -> Unit,
+    logout: () -> Unit
+) {
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val wide = configuration.screenWidthDp >= 720
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
-        NavigationPanel(state, selectType, logout, Modifier.width(220.dp).fillMaxHeight())
-        CatalogContent(state, selectCategory, play, Modifier.weight(1f), isTv)
+        NavigationPanel(state, selectType, openSettings, Modifier.width(220.dp).fillMaxHeight())
+        if (state.settingsOpen) SettingsContent(state, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        else CatalogContent(state, selectCategory, play, Modifier.weight(1f), isTv)
     } else Column(Modifier.fillMaxSize()) {
-        CatalogContent(state, selectCategory, play, Modifier.weight(1f), false)
-        CatalogBottomNavigation(state, selectType)
+        if (state.settingsOpen) SettingsContent(state, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        else CatalogContent(state, selectCategory, play, Modifier.weight(1f), false)
+        CatalogBottomNavigation(state, selectType, openSettings)
     }
 }
 
 @Composable
-private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, logout: () -> Unit, modifier: Modifier) {
+private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openSettings: () -> Unit, modifier: Modifier) {
     Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("nikTv", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
         Spacer(Modifier.weight(1f))
@@ -144,19 +165,19 @@ private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit
             CatalogNavigationItem(type.title, type.icon(), state.selectedType == type, { selectType(type) }, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         }
         Spacer(Modifier.weight(1f))
-        CatalogNavigationItem("Profiles", Icons.Default.Logout, false, logout, Modifier.fillMaxWidth(), alwaysShowLabel = true)
+        CatalogNavigationItem("Settings", Icons.Default.Settings, state.settingsOpen, openSettings, Modifier.fillMaxWidth(), alwaysShowLabel = true)
     }
 }
 
 @Composable
-private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit) {
+private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit, openSettings: () -> Unit) {
     Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
         Row(
             Modifier.widthIn(max = 448.dp).fillMaxWidth().height(76.dp).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             CatalogType.entries.forEach { type ->
-                val selected = state.selectedType == type
+                val selected = !state.settingsOpen && state.selectedType == type
                 CatalogNavigationItem(
                     label = type.title,
                     icon = type.icon(),
@@ -165,8 +186,92 @@ private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType)
                     modifier = (if (selected) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
                 )
             }
+            CatalogNavigationItem(
+                label = "Settings",
+                icon = Icons.Default.Settings,
+                selected = state.settingsOpen,
+                onClick = openSettings,
+                modifier = (if (state.settingsOpen) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
+            )
         }
     }
+}
+
+@Composable
+private fun SettingsContent(
+    state: NikTvState,
+    reauthenticate: () -> Unit,
+    editProfile: () -> Unit,
+    logout: () -> Unit,
+    modifier: Modifier
+) {
+    val profile = state.savedProfile ?: return
+    Column(
+        modifier.statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("Settings", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        SettingsSection("Connection") {
+            SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
+            HorizontalDivider()
+            SettingsValueRow(Icons.Default.Language, "Portal", profile.portalUrl)
+            HorizontalDivider()
+            SettingsValueRow(Icons.Default.Security, "Session", if (state.session != null) "Authenticated" else "Authentication required")
+        }
+        SettingsSection("Account actions") {
+            ListItem(
+                headlineContent = { Text("Re-authenticate") },
+                supportingContent = { Text("Request a fresh session token using the saved profile") },
+                leadingContent = { Icon(Icons.Default.Refresh, null) },
+                modifier = Modifier.clickable(onClick = reauthenticate),
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Edit connection") },
+                supportingContent = { Text("Change portal address or credentials") },
+                leadingContent = { Icon(Icons.Default.Edit, null) },
+                modifier = Modifier.clickable(onClick = editProfile),
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
+                supportingContent = { Text("Remove the saved profile and session from this device") },
+                leadingContent = { Icon(Icons.Default.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                modifier = Modifier.clickable(onClick = logout),
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
+        Text(
+            "nikTv keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Surface(
+            Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            content = { Column(content = content) }
+        )
+    }
+}
+
+@Composable
+private fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
+    ListItem(
+        headlineContent = { Text(label) },
+        supportingContent = { Text(value, maxLines = 2) },
+        leadingContent = { Icon(icon, null) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    )
 }
 
 @Composable
