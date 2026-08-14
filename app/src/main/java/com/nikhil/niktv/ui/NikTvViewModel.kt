@@ -20,7 +20,8 @@ data class NikTvState(
     val error: String? = null,
     val nowPlaying: Pair<String, String>? = null,
     val restoring: Boolean = true,
-    val settingsOpen: Boolean = false
+    val settingsOpen: Boolean = false,
+    val selectedSeries: MediaItem? = null
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -67,7 +68,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType) {
         val categories = portal.categories(session, type)
-        _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = null, items = emptyList()) }
+        _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = null, items = emptyList(), selectedSeries = null) }
         categories.firstOrNull()?.let { category ->
             _state.update { it.copy(selectedCategory = category) }
             _state.update { it.copy(items = portal.catalog(session, category)) }
@@ -76,15 +77,32 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
-        _state.update { it.copy(selectedCategory = category, items = emptyList()) }
+        _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
         val items = portal.catalog(session, category)
         _state.update { it.copy(items = items) }
     }
 
-    fun play(item: MediaItem) = task {
+    fun openMedia(item: MediaItem) {
+        if (_state.value.selectedType == CatalogType.SERIES && _state.value.selectedSeries == null) {
+            task {
+                val session = requireNotNull(_state.value.session)
+                _state.update { it.copy(selectedSeries = item, items = emptyList()) }
+                _state.update { it.copy(items = portal.episodes(session, item)) }
+            }
+        } else play(item)
+    }
+
+    private fun play(item: MediaItem) = task {
         val s = _state.value
         val url = portal.playableUrl(requireNotNull(s.session), item, s.selectedType)
         _state.update { it.copy(nowPlaying = item.title to url) }
+    }
+
+    fun closeSeries() = task {
+        val category = requireNotNull(_state.value.selectedCategory)
+        val session = requireNotNull(_state.value.session)
+        _state.update { it.copy(selectedSeries = null, items = emptyList()) }
+        _state.update { it.copy(items = portal.catalog(session, category)) }
     }
 
     fun closePlayer() = _state.update { it.copy(nowPlaying = null) }

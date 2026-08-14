@@ -21,7 +21,15 @@ enum class CatalogType(val title: String, val apiType: String) {
 }
 
 data class Category(val id: String, val title: String, val type: CatalogType)
-data class MediaItem(val id: String, val title: String, val logo: String?, val command: String?, val description: String? = null)
+data class MediaItem(
+    val id: String,
+    val title: String,
+    val logo: String?,
+    val command: String?,
+    val description: String? = null,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null
+)
 
 @Serializable
 data class PortalSession(

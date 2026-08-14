@@ -110,11 +110,55 @@ class StalkerPortalClient(private val context: Context) {
 
     suspend fun playableUrl(session: PortalSession, item: MediaItem, type: CatalogType): String = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
-            return@withContext item.command ?: error(if (type == CatalogType.SERIES) "Episode browsing is the next Xtream milestone" else "This Xtream item has no playback URL")
+            return@withContext item.command ?: error("This item has no playback URL")
         }
         val cmd = item.command ?: error("This item has no playback command")
-        val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to type.apiType, "action" to "create_link", "cmd" to cmd, "series" to "0", "forced_storage" to "undefined", "disable_ad" to "0", "download" to "0")))
+        val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to if (type == CatalogType.SERIES) "vod" else type.apiType, "action" to "create_link", "cmd" to cmd, "series" to (item.episodeNumber?.toString() ?: "0"), "forced_storage" to "undefined", "disable_ad" to "0", "download" to "0")))
         response.payload().string("cmd")?.removePrefix("ffmpeg ") ?: error("Portal did not provide a playback URL")
+    }
+
+    suspend fun episodes(session: PortalSession, series: MediaItem): List<MediaItem> = withContext(Dispatchers.IO) {
+        if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamEpisodes(session, series)
+        val baseParams = mapOf(
+            "type" to "series", "action" to "get_ordered_list", "movie_id" to series.id,
+            "category" to series.id, "season_id" to "0", "episode_id" to "0", "p" to "1"
+        )
+        val initial = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams))
+            .payload().arrayFromData()
+        val direct = stalkerEpisodeItems(initial, series)
+        if (direct.isNotEmpty()) return@withContext direct
+
+        initial.mapNotNull { node -> (node as? JsonObject)?.string("season_id") ?: (node as? JsonObject)?.string("id") }
+            .distinct()
+            .flatMap { seasonId ->
+                val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams + ("season_id" to seasonId)))
+                stalkerEpisodeItems(response.payload().arrayFromData(), series, seasonId.toIntOrNull())
+            }
+            .distinctBy { it.id }
+            .sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title }))
+    }
+
+    private fun stalkerEpisodeItems(nodes: List<JsonElement>, series: MediaItem, fallbackSeason: Int? = null): List<MediaItem> =
+        nodes.flatMap { node ->
+            val item = node as? JsonObject ?: return@flatMap emptyList()
+            val season = item.string("season")?.toIntOrNull() ?: item.string("season_id")?.toIntOrNull() ?: fallbackSeason
+            val command = item.string("cmd")
+            val numbered = (item["series"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull?.toIntOrNull() }.orEmpty()
+            if (numbered.isNotEmpty() && command != null) numbered.map { episode ->
+                MediaItem("${series.id}:$season:$episode", episodeTitle(season, episode), series.logo, command, series.description, season, episode)
+            } else {
+                val episode = item.string("episode")?.toIntOrNull() ?: item.string("episode_id")?.toIntOrNull()
+                val id = item.string("id") ?: item.string("episode_id")
+                if (id != null && command != null && (episode != null || season != null)) listOf(
+                    MediaItem(id, item.string("name") ?: item.string("title") ?: episodeTitle(season, episode), item.string("screenshot_uri") ?: series.logo, command, item.string("description"), season, episode)
+                ) else emptyList()
+            }
+        }.distinctBy { it.id }
+
+    private fun episodeTitle(season: Int?, episode: Int?): String = when {
+        season != null && episode != null -> "Season $season · Episode $episode"
+        episode != null -> "Episode $episode"
+        else -> "Episode"
     }
 
     private fun authenticateXtream(profile: PortalProfile): PortalSession {
@@ -166,11 +210,43 @@ class StalkerPortalClient(private val context: Context) {
         }
     }
 
-    private fun xtreamRequest(profile: PortalProfile, action: String? = null, categoryId: String? = null): JsonElement {
+    private fun xtreamEpisodes(session: PortalSession, series: MediaItem): List<MediaItem> {
+        val profile = session.profile
+        val response = xtreamRequest(profile, action = "get_series_info", seriesId = series.id) as? JsonObject
+            ?: error("Xtream server returned invalid series information")
+        val episodes = response["episodes"] ?: error("This series has no episode information")
+        return flattenXtreamEpisodes(episodes).mapNotNull { (seasonHint, node) ->
+            val id = node.string("id") ?: node.string("episode_id") ?: return@mapNotNull null
+            val season = node.string("season")?.toIntOrNull() ?: node.string("season_number")?.toIntOrNull() ?: seasonHint
+            val episode = node.string("episode_num")?.toIntOrNull() ?: node.string("episode_number")?.toIntOrNull()
+            val extension = node.string("container_extension") ?: "mp4"
+            val info = node["info"] as? JsonObject
+            MediaItem(
+                id = id,
+                title = node.string("title") ?: episodeTitle(season, episode),
+                logo = info?.string("movie_image") ?: series.logo,
+                command = "${profile.portalUrl}/series/${encode(profile.username)}/${encode(profile.password)}/$id.$extension",
+                description = info?.string("plot") ?: info?.string("releasedate"),
+                seasonNumber = season,
+                episodeNumber = episode
+            )
+        }.distinctBy { it.id }.sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title }))
+    }
+
+    private fun flattenXtreamEpisodes(element: JsonElement, seasonHint: Int? = null): List<Pair<Int?, JsonObject>> = when (element) {
+        is JsonArray -> element.flatMap { flattenXtreamEpisodes(it, seasonHint) }
+        is JsonObject -> {
+            if (element.string("id") != null || element.string("episode_id") != null) listOf(seasonHint to element)
+            else element.flatMap { (key, value) -> flattenXtreamEpisodes(value, key.toIntOrNull() ?: seasonHint) }
+        }
+        else -> emptyList()
+    }
+
+    private fun xtreamRequest(profile: PortalProfile, action: String? = null, categoryId: String? = null, seriesId: String? = null): JsonElement {
         val url = "${profile.portalUrl}/player_api.php".toHttpUrl().newBuilder()
             .addQueryParameter("username", profile.username)
             .addQueryParameter("password", profile.password)
-            .apply { action?.let { addQueryParameter("action", it) }; categoryId?.let { addQueryParameter("category_id", it) } }
+            .apply { action?.let { addQueryParameter("action", it) }; categoryId?.let { addQueryParameter("category_id", it) }; seriesId?.let { addQueryParameter("series_id", it) } }
             .build()
         val request = Request.Builder().url(url).header("User-Agent", "nikTv/0.1 Android").header("Accept", "application/json").build()
         http.newCall(request).execute().use { response ->

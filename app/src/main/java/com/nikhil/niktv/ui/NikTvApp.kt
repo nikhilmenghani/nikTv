@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -62,7 +63,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     state = state,
                     selectType = { vm.closeSettings(); vm.loadType(it) },
                     selectCategory = vm::loadCategory,
-                    play = vm::play,
+                    play = vm::openMedia,
+                    closeSeries = vm::closeSeries,
                     openSettings = vm::openSettings,
                     reauthenticate = vm::reauthenticate,
                     editProfile = vm::editProfile,
@@ -137,6 +139,7 @@ private fun CatalogScreen(
     selectType: (CatalogType) -> Unit,
     selectCategory: (Category) -> Unit,
     play: (MediaItem) -> Unit,
+    closeSeries: () -> Unit,
     openSettings: () -> Unit,
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
@@ -145,13 +148,14 @@ private fun CatalogScreen(
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val wide = configuration.screenWidthDp >= 720
+    BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openSettings, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, reauthenticate, editProfile, logout, Modifier.weight(1f))
-        else CatalogContent(state, selectCategory, play, Modifier.weight(1f), isTv)
+        else CatalogContent(state, selectCategory, play, closeSeries, Modifier.weight(1f), isTv)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, reauthenticate, editProfile, logout, Modifier.weight(1f))
-        else CatalogContent(state, selectCategory, play, Modifier.weight(1f), false)
+        else CatalogContent(state, selectCategory, play, closeSeries, Modifier.weight(1f), false)
         CatalogBottomNavigation(state, selectType, openSettings)
     }
 }
@@ -317,24 +321,27 @@ private fun CatalogNavigationItem(
 }
 
 @Composable
-private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, modifier: Modifier, tv: Boolean) {
+private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, closeSeries: () -> Unit, modifier: Modifier, tv: Boolean) {
     var filterExpanded by rememberSaveable(state.selectedType) { mutableStateOf(false) }
     Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (state.selectedSeries != null) {
+                IconButton(onClick = closeSeries) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to series") }
+            }
             Column(Modifier.weight(1f)) {
-                Text(state.selectedType.title, style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Text(state.selectedSeries?.title ?: state.selectedType.title, style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                 Text(
-                    "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}",
+                    "${state.items.size} ${if (state.selectedSeries != null) state.items.size.episodeLabel() else state.selectedType.itemLabel(state.items.size)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = { filterExpanded = !filterExpanded }) {
+            if (state.selectedSeries == null) IconButton(onClick = { filterExpanded = !filterExpanded }) {
                 Icon(Icons.Default.FilterAlt, if (filterExpanded) "Close category filters" else "Filter by category")
             }
         }
         AnimatedVisibility(
-            visible = filterExpanded,
+            visible = filterExpanded && state.selectedSeries == null,
             enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
             exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
         ) {
@@ -399,3 +406,4 @@ private fun CatalogType.itemLabel(count: Int) = when (this) {
     CatalogType.SERIES -> if (count == 1) "series" else "series"
     CatalogType.RADIO -> if (count == 1) "station" else "stations"
 }
+private fun Int.episodeLabel() = if (this == 1) "episode" else "episodes"
