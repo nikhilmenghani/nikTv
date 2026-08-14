@@ -31,7 +31,9 @@ data class NikTvState(
     val recentlyPlayed: List<RecentItem> = emptyList(),
     val homeOpen: Boolean = true,
     val seriesOpenedFromHome: Boolean = false,
-    val playbackProgress: List<PlaybackProgress> = emptyList()
+    val playbackProgress: List<PlaybackProgress> = emptyList(),
+    val cacheIntervalMinutes: Int = 60,
+    val browseCache: BrowseCatalogCache? = null
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -45,6 +47,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.favorites.collect { favorites -> _state.update { it.copy(favorites = favorites) } } }
         viewModelScope.launch { store.recentlyPlayed.collect { recent -> _state.update { it.copy(recentlyPlayed = recent) } } }
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
+        viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
     }
 
     private fun restoreSession() = viewModelScope.launch {
@@ -81,20 +84,56 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         loadTypeInternal(session, type)
     }
 
-    private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType) {
-        val categories = portal.categories(session, type)
-        _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = null, items = emptyList(), selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null) }
-        categories.firstOrNull()?.let { category ->
-            _state.update { it.copy(selectedCategory = category) }
-            _state.update { it.copy(items = portal.catalog(session, category)) }
+    private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType, forceRefresh: Boolean = false, preferredCategoryId: String? = null) {
+        val profileKey = session.profile.cacheKey()
+        val maxAge = _state.value.cacheIntervalMinutes * 60_000L
+        if (!forceRefresh) {
+            store.browseCatalog(type).first()?.takeIf {
+                it.profileKey == profileKey && System.currentTimeMillis() - it.cachedAtMillis < maxAge
+            }?.let { cached ->
+                val selected = cached.categories.firstOrNull { it.id == preferredCategoryId } ?: cached.categories.firstOrNull()
+                _state.update { it.copy(
+                    selectedType = type, categories = cached.categories, selectedCategory = selected,
+                    items = selected?.let { category -> cached.itemsByCategory[category.id] }.orEmpty(),
+                    selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null, browseCache = cached
+                ) }
+                if (selected == null || cached.itemsByCategory.containsKey(selected.id)) return
+            }
         }
+        val categories = portal.categories(session, type)
+        val selected = categories.firstOrNull { it.id == preferredCategoryId } ?: categories.firstOrNull()
+        val items = selected?.let { portal.catalog(session, it) }.orEmpty()
+        val cache = BrowseCatalogCache(profileKey, type, System.currentTimeMillis(), categories,
+            selected?.let { mapOf(it.id to items) }.orEmpty())
+        store.saveBrowseCatalog(cache)
+        _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = selected, items = items,
+            selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null, browseCache = cache) }
     }
 
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
-        val items = portal.catalog(session, category)
+        val cached = _state.value.browseCache?.takeIf { it.type == category.type }?.itemsByCategory?.get(category.id)
+        val items = cached ?: portal.catalog(session, category)
+        if (cached == null) {
+            val existing = _state.value.browseCache
+            if (existing != null && existing.type == category.type) {
+                val updated = existing.copy(itemsByCategory = existing.itemsByCategory + (category.id to items))
+                store.saveBrowseCatalog(updated)
+                _state.update { it.copy(browseCache = updated) }
+            }
+        }
         _state.update { it.copy(items = items) }
+    }
+
+    fun refreshCatalog() = task {
+        val snapshot = _state.value
+        loadTypeInternal(requireNotNull(snapshot.session), snapshot.selectedType, forceRefresh = true,
+            preferredCategoryId = snapshot.selectedCategory?.id)
+    }
+
+    fun setCacheIntervalMinutes(minutes: Int) = viewModelScope.launch {
+        store.setCacheIntervalMinutes(minutes)
     }
 
     fun openMedia(item: MediaItem) {
@@ -115,8 +154,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val categories = snapshot.categories
         val profileKey = session.profile.cacheKey()
         val now = System.currentTimeMillis()
+        val searchCacheTtl = snapshot.cacheIntervalMinutes * 60_000L
         if (!forceRefresh && snapshot.fullSearchItems != null &&
-            now - (snapshot.fullSearchCachedAtMillis ?: 0L) < SEARCH_CACHE_TTL_MILLIS) return
+            now - (snapshot.fullSearchCachedAtMillis ?: 0L) < searchCacheTtl) return
         viewModelScope.launch {
             _state.update { it.copy(fullSearchLoading = true) }
             if (!forceRefresh) {
@@ -126,7 +166,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             current.copy(fullSearchItems = cached.items, fullSearchCachedAtMillis = cached.cachedAtMillis)
                         else current
                     }
-                    if (now - cached.cachedAtMillis < SEARCH_CACHE_TTL_MILLIS) {
+                    if (now - cached.cachedAtMillis < searchCacheTtl) {
                         _state.update { it.copy(fullSearchLoading = false) }
                         return@launch
                     }
@@ -304,7 +344,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     ).firstNotNullOfOrNull { it.findAll(this).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull() }
 
     companion object {
-        private const val SEARCH_CACHE_TTL_MILLIS = 30 * 60 * 1000L
         private const val MAX_RECENT_ITEMS = 100
         private const val MAX_PROGRESS_ITEMS = 200
     }

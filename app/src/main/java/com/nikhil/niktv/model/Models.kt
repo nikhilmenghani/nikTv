@@ -21,6 +21,7 @@ enum class CatalogType(val title: String, val apiType: String) {
     LIVE_TV("Live TV", "itv"), MOVIES("Movies", "vod"), SERIES("Series", "series"), RADIO("Radio", "radio")
 }
 
+@Serializable
 data class Category(val id: String, val title: String, val type: CatalogType)
 @Serializable
 data class MediaItem(
@@ -39,6 +40,15 @@ data class SearchCatalogCache(
     val type: CatalogType,
     val cachedAtMillis: Long,
     val items: List<MediaItem>
+)
+
+@Serializable
+data class BrowseCatalogCache(
+    val profileKey: String,
+    val type: CatalogType,
+    val cachedAtMillis: Long,
+    val categories: List<Category>,
+    val itemsByCategory: Map<String, List<MediaItem>>
 )
 
 @Serializable

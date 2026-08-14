@@ -77,6 +77,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     closeSeries = vm::closeSeries,
                     prepareFullSearch = vm::prepareFullSearch,
                     refreshFullSearch = vm::refreshFullSearch,
+                    refreshCatalog = vm::refreshCatalog,
                     openFavorites = vm::openFavorites,
                     closeFavorites = vm::closeFavorites,
                     openHome = vm::openHome,
@@ -88,7 +89,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     closeSettings = vm::closeSettings,
                     reauthenticate = vm::reauthenticate,
                     editProfile = vm::editProfile,
-                    logout = vm::logout
+                    logout = vm::logout,
+                    setCacheIntervalMinutes = vm::setCacheIntervalMinutes
                 )
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -162,6 +164,7 @@ private fun CatalogScreen(
     closeSeries: () -> Unit,
     prepareFullSearch: () -> Unit,
     refreshFullSearch: () -> Unit,
+    refreshCatalog: () -> Unit,
     openFavorites: () -> Unit,
     closeFavorites: () -> Unit,
     openHome: () -> Unit,
@@ -173,7 +176,8 @@ private fun CatalogScreen(
     closeSettings: () -> Unit,
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
-    logout: () -> Unit
+    logout: () -> Unit,
+    setCacheIntervalMinutes: (Int) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
@@ -183,15 +187,15 @@ private fun CatalogScreen(
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
         else if (state.homeOpen) HomeContent(state, openRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), isTv, false)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
         else if (state.homeOpen) HomeContent(state, openRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), false, true)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, Modifier.weight(1f), false, true)
         if (!state.settingsOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
     }
 }
@@ -336,6 +340,7 @@ private fun SettingsContent(
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
     logout: () -> Unit,
+    setCacheIntervalMinutes: (Int) -> Unit,
     modifier: Modifier
 ) {
     val profile = state.savedProfile ?: return
@@ -387,6 +392,21 @@ private fun SettingsContent(
                 modifier = Modifier.clickable(onClick = logout),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
+        }
+        SettingsSection("Catalog cache") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Refresh interval", style = MaterialTheme.typography.titleMedium)
+                Text("Categories and media lists are stored on this device and refreshed after this interval.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf(30 to "30m", 60 to "1h", 360 to "6h", 1440 to "24h").forEachIndexed { index, (minutes, label) ->
+                        SegmentedButton(
+                            selected = state.cacheIntervalMinutes == minutes,
+                            onClick = { setCacheIntervalMinutes(minutes) },
+                            shape = SegmentedButtonDefaults.itemShape(index, 4)
+                        ) { Text(label) }
+                    }
+                }
+            }
         }
         Text(
             "nikTv keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
@@ -462,7 +482,7 @@ private fun CatalogNavigationItem(
 }
 
 @Composable
-private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
+private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, refreshCatalog: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
     val activity = LocalContext.current as? Activity
     val filterMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(240.dp)
     var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
@@ -557,6 +577,9 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                         trailingIcon = if (episodeSortDescending) {{ Icon(Icons.Default.Check, null) }} else null
                     )
                 }
+            }
+            if (state.selectedSeries == null) IconButton(onClick = refreshCatalog) {
+                Icon(Icons.Default.Refresh, "Refresh ${state.selectedType.title}")
             }
             IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         }
@@ -671,7 +694,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                         }
                     },
                     supportingText = {
-                        Text(if (state.fullSearchLoading) "Loading all categories…" else if (state.selectedSeries == null) "Searching all ${state.selectedType.searchLabel()} · refreshes every 30 minutes" else "Searching this series")
+                        Text(if (state.fullSearchLoading) "Loading all categories…" else if (state.selectedSeries == null) "Searching all ${state.selectedType.searchLabel()} · refreshes every ${state.cacheIntervalMinutes.intervalLabel()}" else "Searching this series")
                     },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -730,6 +753,11 @@ private fun FavoriteKind.sectionTitle() = when (this) {
     FavoriteKind.MOVIE -> "Movies"
     FavoriteKind.SERIES -> "Series"
     FavoriteKind.EPISODE -> "Episodes"
+}
+private fun Int.intervalLabel() = when {
+    this < 60 -> "${this}m"
+    this % 60 == 0 -> "${this / 60}h"
+    else -> "${this}m"
 }
 
 private fun String.episodeNumberFromTitle(): Int? {
