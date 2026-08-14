@@ -82,6 +82,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     closeFavorites = vm::closeFavorites,
                     openHome = vm::openHome,
                     openRecent = vm::openRecent,
+                    removeRecent = vm::removeRecent,
                     openFavorite = vm::openFavorite,
                     toggleFavorite = vm::toggleFavorite,
                     toggleFavoriteEntry = { vm.toggleFavorite(it) },
@@ -169,6 +170,7 @@ private fun CatalogScreen(
     closeFavorites: () -> Unit,
     openHome: () -> Unit,
     openRecent: (RecentItem) -> Unit,
+    removeRecent: (RecentItem) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
     toggleFavoriteEntry: (FavoriteItem) -> Unit,
@@ -188,12 +190,12 @@ private fun CatalogScreen(
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.homeOpen) HomeContent(state, openRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
+        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.homeOpen) HomeContent(state, openRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
+        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, Modifier.weight(1f), false, true)
         if (!state.settingsOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
@@ -243,10 +245,12 @@ private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType)
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeContent(
     state: NikTvState,
     openRecent: (RecentItem) -> Unit,
+    removeRecent: (RecentItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     openSettings: () -> Unit,
     modifier: Modifier,
@@ -277,13 +281,33 @@ private fun HomeContent(
                 }
                 items(recentItems, key = { it.key }) { recent ->
                     val favorite = FavoriteItem(recent.kind, recent.media, recent.series)
-                    MediaListItem(
-                        recent.media,
-                        { openRecent(recent) },
-                        { toggleFavorite(favorite) },
-                        state.favorites.any { it.key == favorite.key },
-                        tv
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { value ->
+                            if (value != SwipeToDismissBoxValue.Settled) removeRecent(recent)
+                            value != SwipeToDismissBoxValue.Settled
+                        }
                     )
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        backgroundContent = {
+                            Box(
+                                Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 20.dp),
+                                contentAlignment = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd
+                            ) {
+                                Icon(Icons.Default.Delete, "Remove from recently played", tint = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                        },
+                        enableDismissFromStartToEnd = true,
+                        enableDismissFromEndToStart = true
+                    ) {
+                        MediaListItem(
+                            recent.media,
+                            { openRecent(recent) },
+                            { toggleFavorite(favorite) },
+                            state.favorites.any { it.key == favorite.key },
+                            tv
+                        )
+                    }
                 }
             }
         }

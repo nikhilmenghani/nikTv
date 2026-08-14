@@ -324,6 +324,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+    fun removeRecent(recent: RecentItem) = viewModelScope.launch {
+        val updated = _state.value.recentlyPlayed.filterNot { it.key == recent.key }
+        _state.update { it.copy(recentlyPlayed = updated) }
+        store.saveRecentlyPlayed(updated)
+    }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }
 
