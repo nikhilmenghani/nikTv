@@ -13,6 +13,7 @@ import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.model.BrowseCatalogCache
+import com.nikhil.niktv.model.PlaybackUrl
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -25,6 +26,7 @@ class ProfileStore(private val context: Context) {
     private val favoritesKey = stringPreferencesKey("favorites")
     private val recentKey = stringPreferencesKey("recently_played")
     private val progressKey = stringPreferencesKey("playback_progress")
+    private val playbackUrlsKey = stringPreferencesKey("playback_urls")
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         prefs[key]?.let { runCatching { Json.decodeFromString<PortalProfile>(it) }.getOrNull() }
@@ -40,6 +42,9 @@ class ProfileStore(private val context: Context) {
     }
     val playbackProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
         prefs[progressKey]?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
+    }
+    val playbackUrls: Flow<List<PlaybackUrl>> = context.dataStore.data.map { prefs ->
+        prefs[playbackUrlsKey]?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
@@ -66,6 +71,9 @@ class ProfileStore(private val context: Context) {
     suspend fun savePlaybackProgress(items: List<PlaybackProgress>) = context.dataStore.edit {
         it[progressKey] = Json.encodeToString(items)
     }
+    suspend fun savePlaybackUrls(items: List<PlaybackUrl>) = context.dataStore.edit {
+        it[playbackUrlsKey] = Json.encodeToString(items)
+    }
     fun browseCatalog(type: CatalogType): Flow<BrowseCatalogCache?> {
         val browseKey = stringPreferencesKey("browse_catalog_${type.name.lowercase()}")
         return context.dataStore.data.map { prefs ->
@@ -85,5 +93,6 @@ class ProfileStore(private val context: Context) {
         it.remove(favoritesKey)
         it.remove(recentKey)
         it.remove(progressKey)
+        it.remove(playbackUrlsKey)
     }
 }

@@ -1,3 +1,14 @@
+fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+val defaultProfileName = providers.gradleProperty("NIKTV_DEFAULT_PROFILE_NAME")
+    .orElse(providers.environmentVariable("NIKTV_DEFAULT_PROFILE_NAME")).orElse("")
+val defaultPortalUrl = providers.gradleProperty("NIKTV_DEFAULT_PORTAL_URL")
+    .orElse(providers.environmentVariable("NIKTV_DEFAULT_PORTAL_URL")).orElse("")
+val defaultMacAddress = providers.gradleProperty("NIKTV_DEFAULT_MAC_ADDRESS")
+    .orElse(providers.environmentVariable("NIKTV_DEFAULT_MAC_ADDRESS")).orElse("")
+val defaultSerialNumber = providers.gradleProperty("NIKTV_DEFAULT_SERIAL_NUMBER")
+    .orElse(providers.environmentVariable("NIKTV_DEFAULT_SERIAL_NUMBER")).orElse("")
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,6 +25,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "DEFAULT_PROFILE_NAME", defaultProfileName.get().asBuildConfigString())
+        buildConfigField("String", "DEFAULT_PORTAL_URL", defaultPortalUrl.get().asBuildConfigString())
+        buildConfigField("String", "DEFAULT_MAC_ADDRESS", defaultMacAddress.get().asBuildConfigString())
+        buildConfigField("String", "DEFAULT_SERIAL_NUMBER", defaultSerialNumber.get().asBuildConfigString())
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -39,6 +54,7 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     implementation("androidx.media3:media3-exoplayer:1.8.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

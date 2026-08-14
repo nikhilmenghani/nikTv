@@ -31,7 +31,10 @@ data class MediaItem(
     val command: String?,
     val description: String? = null,
     val seasonNumber: Int? = null,
-    val episodeNumber: Int? = null
+    val episodeNumber: Int? = null,
+    val portalSeasonId: String? = null,
+    val portalCategoryId: String? = null,
+    val portalEpisodeId: String? = null
 )
 
 @Serializable
@@ -93,6 +96,13 @@ data class PlaybackProgress(
 )
 
 @Serializable
+data class PlaybackUrl(
+    val key: String,
+    val url: String,
+    val resolvedAtMillis: Long = System.currentTimeMillis()
+)
+
+@Serializable
 data class PortalSession(
     val profile: PortalProfile,
     val token: String,
@@ -100,5 +110,6 @@ data class PortalSession(
     val serialNumber: String,
     val metrics: String,
     val hardwareVersion2: String,
-    val random: String? = null
+    val random: String? = null,
+    val authenticatedAtMillis: Long = System.currentTimeMillis()
 )

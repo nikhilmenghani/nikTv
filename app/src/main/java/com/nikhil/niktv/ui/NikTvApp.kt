@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.model.*
 import java.security.MessageDigest
 import kotlinx.coroutines.delay
@@ -126,14 +127,14 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 
 @Composable
 private fun ProfileScreen(saved: PortalProfile?, loading: Boolean, connect: (PortalProfile) -> Unit, reconnect: () -> Unit) {
-    var name by remember(saved) { mutableStateOf(saved?.name.orEmpty()) }
-    var url by remember(saved) { mutableStateOf(saved?.portalUrl.orEmpty()) }
-    var mac by remember(saved) { mutableStateOf(saved?.macAddress.orEmpty()) }
-    var serial by remember(saved) { mutableStateOf(saved?.serialNumber.orEmpty()) }
+    var name by remember(saved) { mutableStateOf(saved?.name?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PROFILE_NAME) }
+    var url by remember(saved) { mutableStateOf(saved?.portalUrl?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PORTAL_URL) }
+    var mac by remember(saved) { mutableStateOf(saved?.macAddress?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_MAC_ADDRESS) }
+    var serial by remember(saved) { mutableStateOf(saved?.serialNumber?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_SERIAL_NUMBER) }
     var portalType by remember(saved) { mutableStateOf(saved?.portalType ?: PortalType.STALKER) }
     var username by remember(saved) { mutableStateOf(saved?.username.orEmpty()) }
     var password by remember(saved) { mutableStateOf(saved?.password.orEmpty()) }
-    var advanced by remember(saved) { mutableStateOf(saved?.serialNumber?.isNotBlank() == true) }
+    var advanced by remember(saved) { mutableStateOf((saved?.serialNumber ?: BuildConfig.DEFAULT_SERIAL_NUMBER).isNotBlank()) }
     BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp), contentAlignment = Alignment.Center) {
         val wide = maxWidth >= 720.dp
         Row(horizontalArrangement = Arrangement.spacedBy(56.dp), verticalAlignment = Alignment.CenterVertically) {

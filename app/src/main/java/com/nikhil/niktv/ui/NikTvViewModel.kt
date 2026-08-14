@@ -32,6 +32,7 @@ data class NikTvState(
     val homeOpen: Boolean = true,
     val seriesOpenedFromHome: Boolean = false,
     val playbackProgress: List<PlaybackProgress> = emptyList(),
+    val playbackUrls: List<PlaybackUrl> = emptyList(),
     val cacheIntervalMinutes: Int = 60,
     val browseCache: BrowseCatalogCache? = null
 )
@@ -47,6 +48,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.favorites.collect { favorites -> _state.update { it.copy(favorites = favorites) } } }
         viewModelScope.launch { store.recentlyPlayed.collect { recent -> _state.update { it.copy(recentlyPlayed = recent) } } }
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
+        viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
     }
 
@@ -59,7 +61,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(savedProfile = profile) }
         runCatching {
             val saved = store.activeSession.first()?.takeIf { it.profile == profile }
-            val session = saved?.takeIf { runCatching { portal.categories(it, CatalogType.LIVE_TV) }.isSuccess }
+            val session = saved?.takeIf {
+                System.currentTimeMillis() - it.authenticatedAtMillis < SESSION_MAX_AGE_MS &&
+                    runCatching { portal.categories(it, CatalogType.LIVE_TV) }.isSuccess
+            }
                 ?: portal.authenticate(profile).also { store.save(it) }
             _state.update { it.copy(session = session, savedProfile = session.profile) }
             loadTypeInternal(session, CatalogType.LIVE_TV)
@@ -91,7 +96,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             store.browseCatalog(type).first()?.takeIf {
                 it.profileKey == profileKey && System.currentTimeMillis() - it.cachedAtMillis < maxAge
             }?.let { cached ->
-                val selected = cached.categories.firstOrNull { it.id == preferredCategoryId } ?: cached.categories.firstOrNull()
+                val selected = cached.categories.firstOrNull { it.id == preferredCategoryId }
+                    ?: cached.categories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
+                    ?: cached.categories.firstOrNull()
                 _state.update { it.copy(
                     selectedType = type, categories = cached.categories, selectedCategory = selected,
                     items = selected?.let { category -> cached.itemsByCategory[category.id] }.orEmpty(),
@@ -101,7 +108,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         val categories = portal.categories(session, type)
-        val selected = categories.firstOrNull { it.id == preferredCategoryId } ?: categories.firstOrNull()
+        val selected = categories.firstOrNull { it.id == preferredCategoryId }
+            ?: categories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
+            ?: categories.firstOrNull()
         val items = selected?.let { portal.catalog(session, it) }.orEmpty()
         val cache = BrowseCatalogCache(profileKey, type, System.currentTimeMillis(), categories,
             selected?.let { mapOf(it.id to items) }.orEmpty())
@@ -195,8 +204,23 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun playInternal(item: MediaItem, type: CatalogType, series: MediaItem?, episodes: List<MediaItem>) {
-        val session = requireNotNull(_state.value.session)
-        val url = portal.playableUrl(session, item, type)
+        var session = requireNotNull(_state.value.session)
+        if (session.profile.portalType == PortalType.STALKER &&
+            System.currentTimeMillis() - session.authenticatedAtMillis >= SESSION_MAX_AGE_MS) {
+            session = refreshSession(session.profile)
+        }
+        val urlKey = "${type.name}:${item.id}"
+        val cachedUrl = _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
+        val url = cachedUrl ?: runCatching { portal.playableUrl(session, item, type) }.getOrElse { firstError ->
+            if (session.profile.portalType != PortalType.STALKER) throw firstError
+            session = refreshSession(session.profile)
+            portal.playableUrl(session, item, type)
+        }.also { resolved ->
+            val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
+                .take(MAX_PLAYBACK_URLS)
+            _state.update { it.copy(playbackUrls = updated) }
+            store.savePlaybackUrls(updated)
+        }
         val orderedEpisodes = if (type == CatalogType.SERIES) episodes.sortedWith(
             compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
         ) else emptyList()
@@ -207,6 +231,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val resumePosition = saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L } ?: 0L
         _state.update { it.copy(nowPlaying = PlayingMedia(item, url, nextEpisode, series, orderedEpisodes, resumePosition, progressKey)) }
         recordRecent(item, type, series)
+    }
+
+    private suspend fun refreshSession(profile: PortalProfile): PortalSession {
+        val refreshed = portal.authenticate(profile)
+        store.save(refreshed)
+        _state.update { it.copy(session = refreshed, savedProfile = refreshed.profile) }
+        return refreshed
     }
 
     fun savePlaybackProgress(key: String, positionMillis: Long, durationMillis: Long) {
@@ -340,7 +371,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun PortalProfile.cacheKey() = "$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+    private fun PortalProfile.cacheKey() = "catalog-v3|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
     private fun String.episodeOrderFromTitle(): Int? = listOf(
         Regex("(?i)S\\d+[ ._-]*E(?:P(?:ISODE)?)?[ ._-]*(\\d+)"),
         Regex("(?i)\\bEP(?:ISODE)?[ ._:-]*(\\d+)"),
@@ -351,5 +382,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val MAX_RECENT_ITEMS = 100
         private const val MAX_PROGRESS_ITEMS = 200
+        private const val MAX_PLAYBACK_URLS = 500
+        private const val SESSION_MAX_AGE_MS = 15 * 60_000L
     }
 }

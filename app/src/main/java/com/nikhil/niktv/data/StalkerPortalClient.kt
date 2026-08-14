@@ -88,23 +88,38 @@ class StalkerPortalClient(private val context: Context) {
         val action = when (type) {
             CatalogType.LIVE_TV -> "get_genres"; CatalogType.MOVIES, CatalogType.SERIES -> "get_categories"; CatalogType.RADIO -> "get_genres"
         }
-        request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to type.apiType, "action" to action)))
+        val requestType = if (type == CatalogType.MOVIES || type == CatalogType.SERIES) "vod" else type.apiType
+        request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action)))
             .payload().array().mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
                 val id = o.string("id") ?: o.string("category_id") ?: return@mapNotNull null
                 Category(id, o.string("title") ?: o.string("name") ?: "Untitled", type)
+            }.filter { category ->
+                if (type != CatalogType.MOVIES && type != CatalogType.SERIES) true
+                else category.id == "*" || isSeriesCategory(category.title) == (type == CatalogType.SERIES)
             }
     }
 
     suspend fun catalog(session: PortalSession, category: Category): List<MediaItem> = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamCatalog(session, category)
-        val action = if (category.type == CatalogType.LIVE_TV || category.type == CatalogType.RADIO) "get_ordered_list" else "get_ordered_list"
+        val action = "get_ordered_list"
         val categoryKey = if (category.type == CatalogType.LIVE_TV || category.type == CatalogType.RADIO) "genre" else "category"
-        request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to category.type.apiType, "action" to action, categoryKey to category.id, "p" to "1")))
+        val requestType = if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) "vod" else category.type.apiType
+        request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action, categoryKey to category.id, "p" to "1")))
             .payload().arrayFromData().mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
+                val seriesItem = o.boolish("is_series")
+                if (category.type == CatalogType.SERIES && !seriesItem) return@mapNotNull null
+                if (category.type == CatalogType.MOVIES && seriesItem) return@mapNotNull null
                 val id = o.string("id") ?: o.string("movie_id") ?: return@mapNotNull null
-                MediaItem(id, o.string("name") ?: o.string("title") ?: "Untitled", o.string("logo") ?: o.string("screenshot_uri"), o.string("cmd"), o.string("description"))
+                MediaItem(
+                    id,
+                    o.string("name") ?: o.string("title") ?: "Untitled",
+                    portalAssetUrl(session, o.string("logo") ?: o.string("screenshot_uri") ?: o.string("pic")),
+                    o.string("cmd"),
+                    o.string("description") ?: o.string("genres_str"),
+                    portalCategoryId = category.id
+                )
             }
     }
 
@@ -118,14 +133,46 @@ class StalkerPortalClient(private val context: Context) {
             return@withContext item.command ?: error("This item has no playback URL")
         }
         val cmd = item.command ?: error("This item has no playback command")
-        val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to if (type == CatalogType.SERIES) "vod" else type.apiType, "action" to "create_link", "cmd" to cmd, "series" to (item.episodeNumber?.toString() ?: "0"), "forced_storage" to "undefined", "disable_ad" to "0", "download" to "0")))
-        response.payload().string("cmd")?.removePrefix("ffmpeg ") ?: error("Portal did not provide a playback URL")
+        val movieId = item.id.substringBefore(':')
+        val detail = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+            "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
+            "season_id" to item.portalSeasonId.orEmpty(), "episode_id" to item.portalEpisodeId.orEmpty(),
+            "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
+            "hd" to "0", "ended" to "0", "p" to "1"
+        ))).payload().arrayFromData().firstOrNull() as? JsonObject
+        val internalFileId = detail?.string("id")
+        val playbackCommand = internalFileId?.let { "/media/file_$it.mpg" } ?: cmd
+        val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+            "type" to if (type == CatalogType.SERIES) "vod" else type.apiType,
+            "action" to "create_link",
+            "cmd" to playbackCommand,
+            "series" to (item.episodeNumber?.toString() ?: "0"),
+            "download" to "0",
+            "disable_ad" to "0",
+            "force_ch_link_check" to "0"
+        )))
+        val payload = response.payload()
+        val playbackUrl = payload.string("cmd")
+            ?.removePrefix("ffmpeg ")
+            ?.removePrefix("ffrt ")
+            ?.trim()
+        if (playbackUrl.isNullOrBlank()) {
+            val portalError = payload.string("error")?.takeIf { it.isNotBlank() && it != "0" }
+            error(
+                when (portalError) {
+                    "nothing_to_play" -> "The IPTV portal could not reach a VOD storage server for this video. Please try again shortly."
+                    null -> "The IPTV portal returned an empty playback link"
+                    else -> "The IPTV portal could not create a playback link: $portalError"
+                }
+            )
+        }
+        playbackUrl
     }
 
     suspend fun episodes(session: PortalSession, series: MediaItem): List<MediaItem> = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamEpisodes(session, series)
         val baseParams = mapOf(
-            "type" to "series", "action" to "get_ordered_list", "movie_id" to series.id,
+            "type" to "vod", "action" to "get_ordered_list", "movie_id" to series.id,
             "category" to series.id, "season_id" to "0", "episode_id" to "0", "p" to "1"
         )
         val initial = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams))
@@ -133,29 +180,42 @@ class StalkerPortalClient(private val context: Context) {
         val direct = stalkerEpisodeItems(initial, series)
         if (direct.isNotEmpty()) return@withContext direct
 
-        initial.mapNotNull { node -> (node as? JsonObject)?.string("season_id") ?: (node as? JsonObject)?.string("id") }
-            .distinct()
-            .flatMap { seasonId ->
+        initial.mapNotNull { node ->
+            val season = node as? JsonObject ?: return@mapNotNull null
+            val seasonId = season.string("season_id") ?: season.string("id") ?: return@mapNotNull null
+            seasonId to (season.string("season_number")?.toIntOrNull() ?: season.string("season")?.toIntOrNull())
+        }.distinctBy { it.first }
+            .flatMap { (seasonId, seasonNumber) ->
                 val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams + ("season_id" to seasonId)))
-                stalkerEpisodeItems(response.payload().arrayFromData(), series, seasonId.toIntOrNull())
+                stalkerEpisodeItems(response.payload().arrayFromData(), series, seasonNumber, seasonId)
             }
             .distinctBy { it.id }
             .sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title }))
     }
 
-    private fun stalkerEpisodeItems(nodes: List<JsonElement>, series: MediaItem, fallbackSeason: Int? = null): List<MediaItem> =
+    private fun stalkerEpisodeItems(nodes: List<JsonElement>, series: MediaItem, fallbackSeason: Int? = null, portalSeasonId: String? = null): List<MediaItem> =
         nodes.flatMap { node ->
             val item = node as? JsonObject ?: return@flatMap emptyList()
-            val season = item.string("season")?.toIntOrNull() ?: item.string("season_id")?.toIntOrNull() ?: fallbackSeason
-            val command = item.string("cmd")
+            if (item.boolish("is_season")) return@flatMap emptyList()
+            val season = item.string("season_number")?.toIntOrNull() ?: item.string("season")?.toIntOrNull() ?: fallbackSeason
+            val command = item.string("cmd") ?: series.command
             val numbered = (item["series"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull?.toIntOrNull() }.orEmpty()
-            if (numbered.isNotEmpty() && command != null) numbered.map { episode ->
-                MediaItem("${series.id}:$season:$episode", episodeTitle(season, episode), series.logo, command, series.description, season, episode)
+            val explicitEpisode = item.string("series_number")?.toIntOrNull() ?: item.string("episode")?.toIntOrNull() ?: item.string("episode_id")?.toIntOrNull()
+            if (item.boolish("is_episode") && command != null && explicitEpisode != null) {
+                listOf(MediaItem(
+                    "${series.id}:$season:$explicitEpisode", item.string("name") ?: episodeTitle(season, explicitEpisode),
+                    series.logo, command, series.description, season, explicitEpisode, portalSeasonId ?: item.string("season_id"),
+                    series.portalCategoryId, item.string("id") ?: item.string("episode_id")
+                ))
+            } else if (numbered.isNotEmpty() && command != null) numbered.map { episode ->
+                MediaItem("${series.id}:$season:$episode", episodeTitle(season, episode), series.logo, command, series.description, season, episode,
+                    portalSeasonId ?: item.string("season_id"), series.portalCategoryId, item.string("id") ?: item.string("episode_id"))
             } else {
-                val episode = item.string("episode")?.toIntOrNull() ?: item.string("episode_id")?.toIntOrNull()
+                val episode = explicitEpisode
                 val id = item.string("id") ?: item.string("episode_id")
                 if (id != null && command != null && (episode != null || season != null)) listOf(
-                    MediaItem(id, item.string("name") ?: item.string("title") ?: episodeTitle(season, episode), item.string("screenshot_uri") ?: series.logo, command, item.string("description"), season, episode)
+                    MediaItem(id, item.string("name") ?: item.string("title") ?: episodeTitle(season, episode), item.string("screenshot_uri") ?: series.logo, command, item.string("description"), season, episode,
+                        portalSeasonId ?: item.string("season_id"), series.portalCategoryId, id)
                 ) else emptyList()
             }
         }.distinctBy { it.id }
@@ -272,17 +332,29 @@ class StalkerPortalClient(private val context: Context) {
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
     private fun request(profile: PortalProfile, endpointUrl: String, session: PortalSession?, params: Map<String, String>): JsonElement {
-        val endpoint = endpointUrl.toHttpUrl().newBuilder().apply { params.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
+        val endpoint = endpointUrl.toHttpUrl().newBuilder().apply {
+            params.forEach { (key, value) ->
+                // Cast4K's Retrofit declaration marks the Stalker `cmd` value as
+                // encoded. Preserve command paths such as /media/123.mpg exactly.
+                if (key == "cmd") addEncodedQueryParameter(key, value)
+                else addQueryParameter(key, value)
+            }
+        }.build()
         cookies.seedPortalCookies(endpoint, profile.macAddress)
         val builder = Request.Builder()
             .url(endpoint)
-            .header("User-Agent", USER_AGENT)
-            .header("X-User-Agent", "Model: MAG250; Link: WiFi")
+            .addHeader("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux armv7l; en-US)")
+            .addHeader("User-Agent", USER_AGENT)
+            .header("X-User-Agent", "Model: MAG424; Link: WiFi")
+            .header("Language", "en-US")
             .header("Accept", "application/json, text/javascript, */*; q=0.01")
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Referer", portalReferer(endpoint))
             .header("Connection", "keep-alive")
-        session?.let { builder.header("Authorization", "Bearer ${it.token}") }
+        session?.let {
+            builder.header("Authorization", "Bearer ${it.token}")
+            builder.header("X-Token", it.token)
+        }
         http.newCall(builder.build()).execute().use { response ->
             val body = response.body?.string().orEmpty()
             val diagnostic = buildDiagnostic(endpointUrl, params, response.code, response.header("Content-Type"), body, profile, session)
@@ -405,6 +477,15 @@ class StalkerPortalClient(private val context: Context) {
         require(hex.length == 12) { "MAC address must contain 12 hexadecimal characters" }
         return hex.chunked(2).joinToString(":")
     }
+    private fun isSeriesCategory(title: String): Boolean {
+        val normalized = title.uppercase()
+        return listOf("SERIES", "TV SHOW", "TV SERIAL", "WEB SERIES", "NATOK").any(normalized::contains)
+    }
+    private fun portalAssetUrl(session: PortalSession, value: String?): String? {
+        val asset = value?.trim()?.takeIf(String::isNotBlank) ?: return null
+        if (asset.startsWith("http://") || asset.startsWith("https://")) return asset
+        return runCatching { session.profile.portalUrl.toHttpUrl().resolve(asset)?.toString() }.getOrNull() ?: asset
+    }
     private fun authorizedParams(session: PortalSession, specific: Map<String, String>) = specific + mapOf(
         "auth_second_step" to "1", "not_valid_token" to "0", "metrics" to session.metrics,
         "hw_version" to HW_VERSION, "hw_version_2" to session.hardwareVersion2,
@@ -438,8 +519,9 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.arrayFromData(): List<JsonElement> = ((this as? JsonObject)?.get("data") ?: this).array()
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+    private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
     companion object {
-        private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 MAG250 stbapp ver: 4 rev: 2721 Mobile Safari/533.3"
+        private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Mobile Safari/533.3"
         private const val MAG_VER = "ImageDescription: 2.20.02-pub-424; ImageDate: Fri May 8 15:39:55 UTC 2020; PORTAL version: 5.6.2; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x588"
         private const val HW_VERSION = "1.7-BD-00"
         private const val API_SIGNATURE = "262"
