@@ -1,0 +1,75 @@
+name: Android Release Build
+
+on:
+  push:
+    branches: [main]
+    paths: [release.txt]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: niktv-stable-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: zulu
+          cache: gradle
+      - name: Read release version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < release.txt)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "release.txt must contain x.y.z"; exit 1; }
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((10#$MAJOR * 1000000 + 10#$MINOR * 1000 + 10#$PATCH))" >> "$GITHUB_ENV"
+      - name: Apply version
+        run: |
+          sed -i "s/versionName = \".*\"/versionName = \"${VERSION}\"/" app/build.gradle.kts
+          sed -i "s/versionCode = .*/versionCode = ${VERSION_CODE}/" app/build.gradle.kts
+      - name: Configure signing
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" ]] || { echo "KEYSTORE and KEYSTORE_PASSWORD are required"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/niktv.keystore"
+          ALIAS=$(keytool -list -v -keystore "$RUNNER_TEMP/niktv.keystore" -storepass "$KEYSTORE_PASSWORD" | sed -n 's/^Alias name: //p' | head -n 1)
+          [[ -n "$ALIAS" ]] || { echo "Could not determine key alias"; exit 1; }
+          echo "RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/niktv.keystore" >> "$GITHUB_ENV"
+          echo "RELEASE_KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
+      - name: Build signed release APK
+        env:
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          NIKTV_DEFAULT_PROFILE_NAME: ${{ secrets.NIKTV_DEFAULT_PROFILE_NAME }}
+          NIKTV_DEFAULT_PORTAL_URL: ${{ secrets.NIKTV_DEFAULT_PORTAL_URL }}
+          NIKTV_DEFAULT_MAC_ADDRESS: ${{ secrets.NIKTV_DEFAULT_MAC_ADDRESS }}
+          NIKTV_DEFAULT_SERIAL_NUMBER: ${{ secrets.NIKTV_DEFAULT_SERIAL_NUMBER }}
+          NIKTV_XTREAM_PROFILE_NAME: ${{ secrets.NIKTV_XTREAM_PROFILE_NAME }}
+          NIKTV_XTREAM_PORTAL_URL: ${{ secrets.NIKTV_XTREAM_PORTAL_URL }}
+          NIKTV_XTREAM_USERNAME: ${{ secrets.NIKTV_XTREAM_USERNAME }}
+          NIKTV_XTREAM_PASSWORD: ${{ secrets.NIKTV_XTREAM_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease
+      - name: Rename APK
+        run: mv app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/NikTV-${TAG}.apk"
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/NikTV-${{ env.TAG }}.apk
+          tag_name: ${{ env.TAG }}
+          name: NikTV ${{ env.VERSION }}
+          prerelease: false
+          generate_release_notes: true

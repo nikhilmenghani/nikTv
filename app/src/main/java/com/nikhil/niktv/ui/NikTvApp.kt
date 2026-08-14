@@ -67,8 +67,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.model.*
+import com.nikhil.niktv.update.AppUpdates
+import com.nikhil.niktv.update.UpdateInfo
 import java.security.MessageDigest
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
@@ -129,15 +132,27 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             state.error?.let { error ->
+                val authorizationExpired = error.isAuthorizationFailureText()
+                var showDiagnostics by remember(error) { mutableStateOf(!authorizationExpired) }
                 AlertDialog(
                     onDismissRequest = vm::dismissError,
-                    confirmButton = { TextButton(onClick = { clipboard.setText(AnnotatedString(error)) }) { Text("Copy diagnostics") } },
+                    confirmButton = {
+                        if (authorizationExpired) Button(onClick = { vm.dismissError(); vm.reauthenticate() }) { Text("Re-authenticate") }
+                        else TextButton(onClick = { clipboard.setText(AnnotatedString(error)) }) { Text("Copy diagnostics") }
+                    },
                     dismissButton = { TextButton(onClick = vm::dismissError) { Text("Close") } },
-                    title = { Text("Portal diagnostics") },
+                    title = { Text(if (authorizationExpired) "Session expired" else "Portal diagnostics") },
                     text = {
-                        SelectionContainer {
-                            Box(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
-                                Text(error, style = MaterialTheme.typography.bodySmall)
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (authorizationExpired) {
+                                Text("The portal rejected the saved authorization token even though the HTTP request completed. Your profile credentials are still saved; request a fresh session to continue.")
+                                if (!showDiagnostics) TextButton(onClick = { showDiagnostics = true }) { Icon(Icons.Default.Info, null); Spacer(Modifier.width(8.dp)); Text("Show diagnostics") }
+                            }
+                            if (showDiagnostics) SelectionContainer {
+                                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(error, style = MaterialTheme.typography.bodySmall)
+                                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(error)) }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(8.dp)); Text("Copy diagnostics") }
+                                }
                             }
                         }
                     }
@@ -171,14 +186,38 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
         }
         return
     }
-    var name by remember(saved, editorOpen) { mutableStateOf(saved?.name.orEmpty()) }
-    var url by remember(saved, editorOpen) { mutableStateOf(saved?.portalUrl.orEmpty()) }
-    var mac by remember(saved, editorOpen) { mutableStateOf(saved?.macAddress.orEmpty()) }
-    var serial by remember(saved, editorOpen) { mutableStateOf(saved?.serialNumber.orEmpty()) }
+    val stalkerDefaults = remember { PortalProfile(
+        BuildConfig.DEFAULT_PROFILE_NAME.withoutConfigurationQuotes(),
+        BuildConfig.DEFAULT_PORTAL_URL.withoutConfigurationQuotes(),
+        BuildConfig.DEFAULT_MAC_ADDRESS.withoutConfigurationQuotes(),
+        BuildConfig.DEFAULT_SERIAL_NUMBER.withoutConfigurationQuotes(),
+        PortalType.STALKER
+    ) }
+    val xtreamDefaults = remember { PortalProfile(
+        BuildConfig.XTREAM_PROFILE_NAME.withoutConfigurationQuotes(),
+        BuildConfig.XTREAM_PORTAL_URL.withoutConfigurationQuotes(),
+        macAddress = "",
+        portalType = PortalType.XTREAM,
+        username = BuildConfig.XTREAM_USERNAME.withoutConfigurationQuotes(),
+        password = BuildConfig.XTREAM_PASSWORD.withoutConfigurationQuotes()
+    ) }
+    val initial = saved ?: stalkerDefaults
+    var name by remember(saved, editorOpen) { mutableStateOf(initial.name) }
+    var url by remember(saved, editorOpen) { mutableStateOf(initial.portalUrl) }
+    var mac by remember(saved, editorOpen) { mutableStateOf(initial.macAddress) }
+    var serial by remember(saved, editorOpen) { mutableStateOf(initial.serialNumber) }
     var portalType by remember(saved, editorOpen) { mutableStateOf(saved?.portalType ?: PortalType.STALKER) }
-    var username by remember(saved, editorOpen) { mutableStateOf(saved?.username.orEmpty()) }
-    var password by remember(saved, editorOpen) { mutableStateOf(saved?.password.orEmpty()) }
-    var advanced by remember(saved, editorOpen) { mutableStateOf(saved?.serialNumber?.isNotBlank() == true) }
+    var username by remember(saved, editorOpen) { mutableStateOf(initial.username) }
+    var password by remember(saved, editorOpen) { mutableStateOf(initial.password) }
+    var advanced by remember(saved, editorOpen) { mutableStateOf(initial.serialNumber.isNotBlank()) }
+    fun useDefaults(type: PortalType) {
+        portalType = type
+        if (saved != null) return
+        val defaults = if (type == PortalType.STALKER) stalkerDefaults else xtreamDefaults
+        name = defaults.name; url = defaults.portalUrl; mac = defaults.macAddress
+        serial = defaults.serialNumber; username = defaults.username; password = defaults.password
+        advanced = defaults.serialNumber.isNotBlank()
+    }
     val nameFocus = remember { FocusRequester() }; val urlFocus = remember { FocusRequester() }
     val credentialFocus = remember { FocusRequester() }; val lastFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -190,8 +229,8 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     Column { Text(if (saved == null) "Add profile" else "Edit ${saved.name}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Credentials stay local to this profile", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SegmentedButton(portalType == PortalType.STALKER, { portalType = PortalType.STALKER }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Stalker / MAG") }
-                    SegmentedButton(portalType == PortalType.XTREAM, { portalType = PortalType.XTREAM }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Xtream") }
+                    SegmentedButton(portalType == PortalType.STALKER, { useDefaults(PortalType.STALKER) }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Stalker / MAG") }
+                    SegmentedButton(portalType == PortalType.XTREAM, { useDefaults(PortalType.XTREAM) }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Xtream") }
                 }
                 OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().focusRequester(nameFocus), label = { Text("Profile name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { urlFocus.requestFocus() }))
                 OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().focusRequester(urlFocus), label = { Text("Portal URL") }, placeholder = { Text("https://provider.example") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { credentialFocus.requestFocus() }))
@@ -703,7 +742,11 @@ private fun SettingsContent(
 ) {
     val profile = state.savedProfile ?: return
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var pendingRemoval by remember { mutableStateOf<PortalProfile?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateMessage by remember { mutableStateOf<String?>(null) }
+    var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     val deviceMacAddress = remember(context) { cast4kStyleDeviceMacAddress(context) }
     Scaffold(
         modifier = modifier,
@@ -793,6 +836,27 @@ private fun SettingsContent(
                 }
             }
         }
+        SettingsSection("App updates") {
+            ListItem(
+                headlineContent = { Text("NikTV ${BuildConfig.VERSION_NAME}") },
+                supportingContent = { Text(updateMessage ?: "Updates are checked on startup and every 24 hours") },
+                leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
+                trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
+                modifier = Modifier.clickable(enabled = !checkingUpdate) {
+                    checkingUpdate = true; updateMessage = "Checking for updates…"
+                    scope.launch {
+                        runCatching { AppUpdates.check() }
+                            .onSuccess { update ->
+                                availableUpdate = update
+                                updateMessage = if (update == null) "You're up to date" else "Version ${update.version} is available"
+                            }
+                            .onFailure { updateMessage = "Could not check: ${it.message}" }
+                        checkingUpdate = false
+                    }
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
         Text(
             "NikTV keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
             style = MaterialTheme.typography.bodySmall,
@@ -806,6 +870,15 @@ private fun SettingsContent(
             text = { Text("This removes its saved credentials and session. Other profiles remain available.") },
             confirmButton = { TextButton(onClick = { removeProfile(target); pendingRemoval = null }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") } }
+        )
+    }
+    availableUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { availableUpdate = null },
+            title = { Text("NikTV ${update.version} is available") },
+            text = { Text("Download the signed APK now. Android will ask you to confirm installation when it is ready.") },
+            confirmButton = { Button(onClick = { AppUpdates.download(context, update); updateMessage = "Downloading ${update.version}…"; availableUpdate = null }) { Text("Download") } },
+            dismissButton = { TextButton(onClick = { availableUpdate = null }) { Text("Later") } }
         )
     }
 }
@@ -1131,6 +1204,8 @@ private fun MediaListItem(item: MediaItem, onClick: () -> Unit, onLongClick: () 
 
 private fun CatalogType.icon() = when (this) { CatalogType.LIVE_TV -> Icons.Default.LiveTv; CatalogType.MOVIES -> Icons.Default.Movie; CatalogType.SERIES -> Icons.Default.VideoLibrary; CatalogType.RADIO -> Icons.Default.Radio }
 private fun PortalType.displayName() = when (this) { PortalType.STALKER -> "Stalker / MAG"; PortalType.XTREAM -> "Xtream Codes" }
+private fun String.isAuthorizationFailureText() =
+    contains("Authorization failed", ignoreCase = true) || contains("HTTP status: 401") || contains("HTTP status: 403")
 private fun CatalogType.itemLabel(count: Int) = when (this) {
     CatalogType.LIVE_TV -> if (count == 1) "channel" else "channels"
     CatalogType.MOVIES -> if (count == 1) "movie" else "movies"

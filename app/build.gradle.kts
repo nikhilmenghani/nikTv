@@ -20,6 +20,14 @@ val defaultMacAddress = providers.gradleProperty("NIKTV_DEFAULT_MAC_ADDRESS")
     .orElse(providers.environmentVariable("NIKTV_DEFAULT_MAC_ADDRESS")).orElse("")
 val defaultSerialNumber = providers.gradleProperty("NIKTV_DEFAULT_SERIAL_NUMBER")
     .orElse(providers.environmentVariable("NIKTV_DEFAULT_SERIAL_NUMBER")).orElse("")
+val xtreamProfileName = providers.gradleProperty("NIKTV_XTREAM_PROFILE_NAME")
+    .orElse(providers.environmentVariable("NIKTV_XTREAM_PROFILE_NAME")).orElse("")
+val xtreamPortalUrl = providers.gradleProperty("NIKTV_XTREAM_PORTAL_URL")
+    .orElse(providers.environmentVariable("NIKTV_XTREAM_PORTAL_URL")).orElse("")
+val xtreamUsername = providers.gradleProperty("NIKTV_XTREAM_USERNAME")
+    .orElse(providers.environmentVariable("NIKTV_XTREAM_USERNAME")).orElse("")
+val xtreamPassword = providers.gradleProperty("NIKTV_XTREAM_PASSWORD")
+    .orElse(providers.environmentVariable("NIKTV_XTREAM_PASSWORD")).orElse("")
 
 plugins {
     id("com.android.application")
@@ -41,6 +49,33 @@ android {
         buildConfigField("String", "DEFAULT_PORTAL_URL", defaultPortalUrl.get().asBuildConfigString())
         buildConfigField("String", "DEFAULT_MAC_ADDRESS", defaultMacAddress.get().asBuildConfigString())
         buildConfigField("String", "DEFAULT_SERIAL_NUMBER", defaultSerialNumber.get().asBuildConfigString())
+        buildConfigField("String", "XTREAM_PROFILE_NAME", xtreamProfileName.get().asBuildConfigString())
+        buildConfigField("String", "XTREAM_PORTAL_URL", xtreamPortalUrl.get().asBuildConfigString())
+        buildConfigField("String", "XTREAM_USERNAME", xtreamUsername.get().asBuildConfigString())
+        buildConfigField("String", "XTREAM_PASSWORD", xtreamPassword.get().asBuildConfigString())
+    }
+    signingConfigs {
+        create("automation") {
+            val path = providers.environmentVariable("RELEASE_KEYSTORE_PATH").orNull
+                ?: providers.environmentVariable("DEV_KEYSTORE_PATH").orNull
+            if (!path.isNullOrBlank()) {
+                storeFile = file(path)
+                storePassword = providers.environmentVariable("RELEASE_KEYSTORE_PASSWORD").orNull
+                    ?: providers.environmentVariable("DEV_KEYSTORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").orNull
+                    ?: providers.environmentVariable("DEV_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").orNull
+                    ?: providers.environmentVariable("DEV_KEY_PASSWORD").orNull
+            }
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            if (providers.environmentVariable("DEV_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")
+        }
+        getByName("release") {
+            if (providers.environmentVariable("RELEASE_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")
+        }
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -60,6 +95,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.datastore:datastore-preferences:1.2.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
