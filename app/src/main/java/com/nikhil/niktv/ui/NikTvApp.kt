@@ -67,12 +67,17 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 state.session == null -> ProfileScreen(state.savedProfile, state.loading, vm::connect, vm::reconnect)
                 else -> CatalogScreen(
                     state = state,
-                    selectType = { vm.closeSettings(); vm.loadType(it) },
+                    selectType = { vm.closeSettings(); vm.closeFavorites(); vm.loadType(it) },
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     closeSeries = vm::closeSeries,
                     prepareFullSearch = vm::prepareFullSearch,
                     refreshFullSearch = vm::refreshFullSearch,
+                    openFavorites = vm::openFavorites,
+                    closeFavorites = vm::closeFavorites,
+                    openFavorite = vm::openFavorite,
+                    toggleFavorite = vm::toggleFavorite,
+                    toggleFavoriteEntry = { vm.toggleFavorite(it) },
                     openSettings = vm::openSettings,
                     closeSettings = vm::closeSettings,
                     reauthenticate = vm::reauthenticate,
@@ -151,6 +156,11 @@ private fun CatalogScreen(
     closeSeries: () -> Unit,
     prepareFullSearch: () -> Unit,
     refreshFullSearch: () -> Unit,
+    openFavorites: () -> Unit,
+    closeFavorites: () -> Unit,
+    openFavorite: (FavoriteItem) -> Unit,
+    toggleFavorite: (MediaItem) -> Unit,
+    toggleFavoriteEntry: (FavoriteItem) -> Unit,
     openSettings: () -> Unit,
     closeSettings: () -> Unit,
     reauthenticate: () -> Unit,
@@ -161,39 +171,43 @@ private fun CatalogScreen(
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val wide = configuration.screenWidthDp >= 720
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
+    BackHandler(enabled = state.favoritesOpen && !state.settingsOpen, onBack = closeFavorites)
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
-        NavigationPanel(state, selectType, Modifier.width(220.dp).fillMaxHeight())
+        NavigationPanel(state, selectType, openFavorites, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
-        else CatalogContent(state, selectCategory, play, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), isTv, false)
+        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), isTv)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, Modifier.weight(1f))
-        else CatalogContent(state, selectCategory, play, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), false, true)
-        if (!state.settingsOpen) CatalogBottomNavigation(state, selectType)
+        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, Modifier.weight(1f), false)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, openSettings, Modifier.weight(1f), false, true)
+        if (!state.settingsOpen) CatalogBottomNavigation(state, selectType, openFavorites)
     }
 }
 
 @Composable
-private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, modifier: Modifier) {
+private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit, modifier: Modifier) {
     Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("nikTv", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
         Spacer(Modifier.weight(1f))
         visibleCatalogTypes.forEach { type ->
-            CatalogNavigationItem(type.title, type.icon(), state.selectedType == type, { selectType(type) }, Modifier.fillMaxWidth(), alwaysShowLabel = true)
+            CatalogNavigationItem(type.title, type.icon(), !state.favoritesOpen && state.selectedType == type, { selectType(type) }, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         }
+        CatalogNavigationItem("Favorites", Icons.Default.Favorite, state.favoritesOpen, openFavorites, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         Spacer(Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit) {
+private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit) {
     Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
         Row(
             Modifier.widthIn(max = 448.dp).fillMaxWidth().height(76.dp).padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             visibleCatalogTypes.forEach { type ->
-                val selected = state.selectedType == type
+                val selected = !state.favoritesOpen && state.selectedType == type
                 CatalogNavigationItem(
                     label = type.title,
                     icon = type.icon(),
@@ -201,6 +215,52 @@ private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType)
                     onClick = { selectType(type) },
                     modifier = (if (selected) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
                 )
+            }
+            CatalogNavigationItem(
+                "Favorites", Icons.Default.Favorite, state.favoritesOpen, openFavorites,
+                (if (state.favoritesOpen) Modifier.weight(1f) else Modifier.width(64.dp)).fillMaxHeight()
+            )
+        }
+    }
+}
+
+@Composable
+private fun FavoritesContent(
+    state: NikTvState,
+    openFavorite: (FavoriteItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
+    openSettings: () -> Unit,
+    modifier: Modifier,
+    tv: Boolean
+) {
+    val groups = FavoriteKind.entries.mapNotNull { kind ->
+        state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
+    }
+    Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Favorites", style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Text("${state.favorites.size} saved", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (groups.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.FavoriteBorder, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("No favorites yet", style = MaterialTheme.typography.titleMedium)
+                    Text("Press and hold any media item to add it here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
+            groups.forEach { (kind, favorites) ->
+                item("header-${kind.name}") {
+                    Text(kind.sectionTitle(), Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                items(favorites, key = { it.key }) { favorite ->
+                    MediaListItem(favorite.media, { openFavorite(favorite) }, { toggleFavorite(favorite) }, true, tv)
+                }
             }
         }
     }
@@ -336,7 +396,7 @@ private fun CatalogNavigationItem(
 }
 
 @Composable
-private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
+private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, openSettings: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
     val activity = LocalContext.current as? Activity
     var filterExpanded by rememberSaveable(state.selectedType) { mutableStateOf(false) }
     var searchVisible by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf(false) }
@@ -422,7 +482,15 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             )
         }
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 96.dp)) {
-            items(filteredItems, key = { it.id }) { item -> MediaListItem(item, play, tv) }
+            items(filteredItems, key = { it.id }) { item ->
+                val kind = when {
+                    state.selectedType == CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
+                    state.selectedType == CatalogType.MOVIES -> FavoriteKind.MOVIE
+                    state.selectedSeries != null -> FavoriteKind.EPISODE
+                    else -> FavoriteKind.SERIES
+                }
+                MediaListItem(item, { play(item) }, { toggleFavorite(item) }, state.favorites.any { it.kind == kind && it.media.id == item.id }, tv)
+            }
         }
     }
         if (!searchVisible) {
@@ -481,10 +549,11 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaListItem(item: MediaItem, play: (MediaItem) -> Unit, tv: Boolean) {
+private fun MediaListItem(item: MediaItem, onClick: () -> Unit, onLongClick: () -> Unit, isFavorite: Boolean, tv: Boolean) {
     var focused by remember { mutableStateOf(false) }
-    Card(onClick = { play(item) }, modifier = Modifier.onFocusChanged { focused = it.isFocused }.then(if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier), shape = RoundedCornerShape(12.dp)) {
+    Card(modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick).onFocusChanged { focused = it.isFocused }.then(if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)) else Modifier), shape = RoundedCornerShape(12.dp)) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
                 item.logo,
@@ -498,6 +567,8 @@ private fun MediaListItem(item: MediaItem, play: (MediaItem) -> Unit, tv: Boolea
                     Text(it, maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            if (isFavorite) Icon(Icons.Default.Favorite, contentDescription = "Favorite", tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
             Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         }
     }
@@ -517,3 +588,9 @@ private fun CatalogType.searchLabel() = when (this) {
     CatalogType.RADIO -> "stations"
 }
 private fun Int.episodeLabel() = if (this == 1) "episode" else "episodes"
+private fun FavoriteKind.sectionTitle() = when (this) {
+    FavoriteKind.CHANNEL -> "Channels"
+    FavoriteKind.MOVIE -> "Movies"
+    FavoriteKind.SERIES -> "Series"
+    FavoriteKind.EPISODE -> "Episodes"
+}

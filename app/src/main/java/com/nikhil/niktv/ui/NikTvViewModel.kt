@@ -24,7 +24,10 @@ data class NikTvState(
     val selectedSeries: MediaItem? = null,
     val fullSearchItems: List<MediaItem>? = null,
     val fullSearchLoading: Boolean = false,
-    val fullSearchCachedAtMillis: Long? = null
+    val fullSearchCachedAtMillis: Long? = null,
+    val favorites: List<FavoriteItem> = emptyList(),
+    val favoritesOpen: Boolean = false,
+    val seriesOpenedFromFavorites: Boolean = false
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -33,7 +36,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(NikTvState())
     val state: StateFlow<NikTvState> = _state.asStateFlow()
 
-    init { restoreSession() }
+    init {
+        restoreSession()
+        viewModelScope.launch { store.favorites.collect { favorites -> _state.update { it.copy(favorites = favorites) } } }
+    }
 
     private fun restoreSession() = viewModelScope.launch {
         val profile = store.activeProfile.first()
@@ -89,10 +95,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.selectedType == CatalogType.SERIES && _state.value.selectedSeries == null) {
             task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(selectedSeries = item, items = emptyList()) }
+                _state.update { it.copy(selectedSeries = item, items = emptyList(), seriesOpenedFromFavorites = false) }
                 _state.update { it.copy(items = portal.episodes(session, item)) }
             }
-        } else play(item)
+        } else play(item, _state.value.selectedType)
     }
 
     fun prepareFullSearch(forceRefresh: Boolean = false) {
@@ -138,13 +144,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
-    private fun play(item: MediaItem) = task {
+    private fun play(item: MediaItem, type: CatalogType) = task {
         val s = _state.value
-        val url = portal.playableUrl(requireNotNull(s.session), item, s.selectedType)
+        val url = portal.playableUrl(requireNotNull(s.session), item, type)
         _state.update { it.copy(nowPlaying = item.title to url) }
     }
 
     fun closeSeries() = task {
+        if (_state.value.seriesOpenedFromFavorites) {
+            _state.update { it.copy(selectedSeries = null, seriesOpenedFromFavorites = false, favoritesOpen = true) }
+            return@task
+        }
         val category = requireNotNull(_state.value.selectedCategory)
         val session = requireNotNull(_state.value.session)
         _state.update { it.copy(selectedSeries = null, items = emptyList()) }
@@ -156,6 +166,41 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false) }
+    fun openFavorites() = _state.update { it.copy(favoritesOpen = true, settingsOpen = false) }
+    fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
+
+    fun toggleFavorite(item: MediaItem) {
+        val snapshot = _state.value
+        val kind = when {
+            snapshot.selectedType == CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
+            snapshot.selectedType == CatalogType.MOVIES -> FavoriteKind.MOVIE
+            snapshot.selectedSeries != null -> FavoriteKind.EPISODE
+            else -> FavoriteKind.SERIES
+        }
+        toggleFavorite(FavoriteItem(kind, item, if (kind == FavoriteKind.EPISODE) snapshot.selectedSeries else null))
+    }
+
+    fun toggleFavorite(favorite: FavoriteItem) = viewModelScope.launch {
+        val updated = _state.value.favorites.toMutableList().apply {
+            val index = indexOfFirst { it.key == favorite.key }
+            if (index >= 0) removeAt(index) else add(favorite)
+        }
+        _state.update { it.copy(favorites = updated) }
+        store.saveFavorites(updated)
+    }
+
+    fun openFavorite(favorite: FavoriteItem) {
+        when (favorite.kind) {
+            FavoriteKind.CHANNEL -> play(favorite.media, CatalogType.LIVE_TV)
+            FavoriteKind.MOVIE -> play(favorite.media, CatalogType.MOVIES)
+            FavoriteKind.EPISODE -> play(favorite.media, CatalogType.SERIES)
+            FavoriteKind.SERIES -> task {
+                val session = requireNotNull(_state.value.session)
+                _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = favorite.media, seriesOpenedFromFavorites = true, items = emptyList()) }
+                _state.update { it.copy(items = portal.episodes(session, favorite.media)) }
+            }
+        }
+    }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }
 

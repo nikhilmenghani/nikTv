@@ -42,6 +42,19 @@ data class SearchCatalogCache(
 )
 
 @Serializable
+enum class FavoriteKind { CHANNEL, MOVIE, SERIES, EPISODE }
+
+@Serializable
+data class FavoriteItem(
+    val kind: FavoriteKind,
+    val media: MediaItem,
+    val series: MediaItem? = null,
+    val addedAtMillis: Long = System.currentTimeMillis()
+) {
+    val key: String get() = "${kind.name}:${media.id}"
+}
+
+@Serializable
 data class PortalSession(
     val profile: PortalProfile,
     val token: String,
