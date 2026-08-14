@@ -57,7 +57,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<NikTvState> = _state.asStateFlow()
 
     init {
-        restoreSession()
+        prepareProfileChooser()
         viewModelScope.launch { store.favorites.collect { favorites -> _state.update { it.copy(favorites = favorites) } } }
         viewModelScope.launch { store.recentlyPlayed.collect { recent -> _state.update { it.copy(recentlyPlayed = recent) } } }
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
@@ -67,25 +67,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.profiles.collect { profiles -> _state.update { it.copy(profiles = profiles) } } }
     }
 
-    private fun restoreSession() = viewModelScope.launch {
-        val profile = store.activeProfile.first()
-        if (profile == null) {
-            _state.update { it.copy(restoring = false) }
-            return@launch
-        }
-        _state.update { it.copy(savedProfile = profile) }
-        runCatching {
-            val saved = store.activeSession.first()?.takeIf { it.profile == profile }
-            // Keep the saved session without probing the portal. Cached browsing
-            // should remain available, and an actual 401/403 refreshes on demand.
-            val session = saved ?: portal.authenticate(profile).also { store.save(it) }
-            _state.update { it.copy(session = session, savedProfile = session.profile) }
-            loadTypeInternal(session, CatalogType.LIVE_TV)
-        }.onFailure { error ->
-            store.clearSession()
-            _state.update { it.copy(error = error.message ?: "Could not restore the saved session") }
-        }
-        _state.update { it.copy(restoring = false) }
+    private fun prepareProfileChooser() = viewModelScope.launch {
+        // A cold app launch always starts at the profile chooser. Authentication is
+        // restored only after the viewer deliberately chooses a profile.
+        val profiles = store.profiles.first()
+        _state.update { it.copy(profiles = profiles, session = null, savedProfile = null,
+            profileEditorOpen = profiles.isEmpty(), restoring = false) }
     }
 
     fun connect(profile: PortalProfile) = task {
@@ -108,7 +95,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = session.profile.cacheKey()
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         if (!forceRefresh) {
-            store.browseCatalog(type, profileKey).first()?.let { cached ->
+            store.browseCatalog(type, profileKey).first()?.takeIf { it.categories.isNotEmpty() }?.let { cached ->
                 val selected = cached.categories.firstOrNull { it.id == preferredCategoryId }
                     ?: cached.categories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
                     ?: cached.categories.firstOrNull()
@@ -118,7 +105,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null, browseCache = cached
                 ) }
                 val fresh = System.currentTimeMillis() - cached.cachedAtMillis < maxAge
-                if (fresh && (selected == null || cached.itemsByCategory.containsKey(selected.id))) return
+                val hasUsableSelection = selected != null && cached.itemsByCategory[selected.id].orEmpty().isNotEmpty()
+                if (fresh && hasUsableSelection) return
             }
         }
         val categories = portal.categories(session, type)
@@ -128,7 +116,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val items = selected?.let { portal.catalog(session, it) }.orEmpty()
         val cache = BrowseCatalogCache(profileKey, type, System.currentTimeMillis(), categories,
             selected?.let { mapOf(it.id to items) }.orEmpty())
-        store.saveBrowseCatalog(cache)
+        // Do not let a transient empty portal response poison this profile's cache.
+        if (categories.isNotEmpty() && items.isNotEmpty()) store.saveBrowseCatalog(cache)
         _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = selected, items = items,
             selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null, browseCache = cache) }
     }

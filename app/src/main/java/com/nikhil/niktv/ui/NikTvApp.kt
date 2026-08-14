@@ -74,6 +74,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
+private val XtreamColors = darkColorScheme(primary = Color(0xFF35D0BA), secondary = Color(0xFF72A7FF), background = Color(0xFF071310), surface = Color(0xFF10201D))
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
 private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
@@ -86,7 +87,8 @@ private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
-    MaterialTheme(colorScheme = NikColors) {
+    val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
+    MaterialTheme(colorScheme = profileColors) {
         Surface(Modifier.fillMaxSize()) {
             when {
                 state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::playNextEpisode, vm::savePlaybackProgress)
@@ -374,6 +376,22 @@ private fun CatalogScreen(
 private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openHome: () -> Unit, openFavorites: () -> Unit, modifier: Modifier) {
     Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("NikTV", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
+        state.savedProfile?.let { profile ->
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.padding(horizontal = 8.dp)
+            ) {
+                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                        Text(profile.portalType.displayName(), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
         Spacer(Modifier.weight(1f))
         CatalogNavigationItem("Home", Icons.Default.Home, state.homeOpen, openHome, Modifier.fillMaxWidth(), alwaysShowLabel = true)
         visibleCatalogTypes.forEach { type ->

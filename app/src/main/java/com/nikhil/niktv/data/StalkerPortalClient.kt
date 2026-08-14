@@ -105,15 +105,23 @@ class StalkerPortalClient(private val context: Context) {
             CatalogType.LIVE_TV -> "get_genres"; CatalogType.MOVIES, CatalogType.SERIES -> "get_categories"; CatalogType.RADIO -> "get_genres"
         }
         val requestType = if (type == CatalogType.MOVIES || type == CatalogType.SERIES) "vod" else type.apiType
-        request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action)))
+        val portalCategories = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action)))
             .payload().array().mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
                 val id = o.string("id") ?: o.string("category_id") ?: return@mapNotNull null
                 Category(id, o.string("title") ?: o.string("name") ?: "Untitled", type)
             }.filter { category ->
                 if (type != CatalogType.MOVIES && type != CatalogType.SERIES) true
-                else category.id == "*" || isSeriesCategory(category.title) == (type == CatalogType.SERIES)
+                else if (type == CatalogType.MOVIES) true
+                else category.id == "*" || isSeriesCategory(category.title)
             }
+        // Stalker portals commonly expose movies and series through one VOD category
+        // endpoint. An explicit wildcard gives us a reliable first page, while item
+        // metadata below performs the actual movie/series separation.
+        if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
+            listOf(Category("*", if (type == CatalogType.MOVIES) "All movies" else "All series", type)) +
+                portalCategories.filterNot { it.id == "*" }
+        } else portalCategories
     }
 
     suspend fun catalog(session: PortalSession, category: Category): List<MediaItem> = withContext(Dispatchers.IO) {
@@ -121,10 +129,18 @@ class StalkerPortalClient(private val context: Context) {
         val action = "get_ordered_list"
         val categoryKey = if (category.type == CatalogType.LIVE_TV || category.type == CatalogType.RADIO) "genre" else "category"
         val requestType = if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) "vod" else category.type.apiType
-        request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action, categoryKey to category.id, "p" to "1")))
+        val listingParams = mutableMapOf("type" to requestType, "action" to action, categoryKey to category.id, "p" to "1")
+        if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) listingParams += mapOf(
+            "movie_id" to "0", "season_id" to "0", "episode_id" to "0", "fav" to "0",
+            "sortby" to "added", "hd" to "0", "ended" to "0", "search" to ""
+        )
+        request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams))
             .payload().arrayFromData().mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
-                val seriesItem = o.boolish("is_series")
+                // Cast4K gives precedence to the explicit is_movie flag. Some
+                // portals populate is_series inconsistently on mixed VOD results.
+                val movieItem = o.boolish("is_movie")
+                val seriesItem = o.boolish("is_series") && !movieItem
                 if (category.type == CatalogType.SERIES && !seriesItem) return@mapNotNull null
                 if (category.type == CatalogType.MOVIES && seriesItem) return@mapNotNull null
                 val id = o.string("id") ?: o.string("movie_id") ?: return@mapNotNull null
