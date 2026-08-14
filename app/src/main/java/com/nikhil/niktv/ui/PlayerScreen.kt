@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.view.ScaleGestureDetector
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -16,13 +17,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
@@ -37,7 +35,6 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
     var videoOffset by remember(media.progressKey) { mutableStateOf(Offset.Zero) }
-    var videoSize by remember { mutableStateOf(IntSize.Zero) }
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
@@ -89,10 +86,29 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
         AndroidView(
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
+                    val playerView = this
                     this.player = player
                     useController = true
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     var lastFocus = Offset.Zero
+                    var lastTouch = Offset.Zero
+                    fun applyVideoTransform() {
+                        videoSurfaceView?.apply {
+                            scaleX = videoScale
+                            scaleY = videoScale
+                            translationX = videoOffset.x
+                            translationY = videoOffset.y
+                        }
+                    }
+                    fun moveVideoBy(delta: Offset) {
+                        val maxX = playerView.width * (videoScale - 1f) / 2f
+                        val maxY = playerView.height * (videoScale - 1f) / 2f
+                        videoOffset = Offset(
+                            (videoOffset.x + delta.x).coerceIn(-maxX, maxX),
+                            (videoOffset.y + delta.y).coerceIn(-maxY, maxY)
+                        )
+                        applyVideoTransform()
+                    }
                     val scaleDetector = ScaleGestureDetector(viewContext, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
                             lastFocus = Offset(detector.focusX, detector.focusY)
@@ -104,9 +120,9 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                             val focus = Offset(detector.focusX, detector.focusY)
                             if (newScale == 1f) videoOffset = Offset.Zero
                             else {
-                                val maxX = videoSize.width * (newScale - 1f) / 2f
-                                val maxY = videoSize.height * (newScale - 1f) / 2f
                                 val pan = focus - lastFocus
+                                val maxX = playerView.width * (newScale - 1f) / 2f
+                                val maxY = playerView.height * (newScale - 1f) / 2f
                                 videoOffset = Offset(
                                     (videoOffset.x + pan.x).coerceIn(-maxX, maxX),
                                     (videoOffset.y + pan.y).coerceIn(-maxY, maxY)
@@ -114,27 +130,41 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                             }
                             videoScale = newScale
                             lastFocus = focus
+                            applyVideoTransform()
                             return true
                         }
                     })
                     setOnTouchListener { _, event ->
                         scaleDetector.onTouchEvent(event)
-                        scaleDetector.isInProgress || event.pointerCount > 1
+                        var panned = false
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> lastTouch = Offset(event.x, event.y)
+                            MotionEvent.ACTION_POINTER_DOWN -> lastTouch = Offset(event.x, event.y)
+                            MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && videoScale > 1f && !scaleDetector.isInProgress) {
+                                val current = Offset(event.x, event.y)
+                                val delta = current - lastTouch
+                                if (delta.getDistance() > 1f) {
+                                    moveVideoBy(delta)
+                                    panned = true
+                                }
+                                lastTouch = current
+                            }
+                        }
+                        scaleDetector.isInProgress || event.pointerCount > 1 || panned
                     }
                 }
             },
             update = { playerView ->
                 if (playerView.player !== player) playerView.player = player
-            },
-            modifier = Modifier
-                .fillMaxSize()
-                .onSizeChanged { videoSize = it }
-                .graphicsLayer {
+                playerView.videoSurfaceView?.apply {
                     scaleX = videoScale
                     scaleY = videoScale
                     translationX = videoOffset.x
                     translationY = videoOffset.y
                 }
+            },
+            modifier = Modifier
+                .fillMaxSize()
         )
         Text(
             media.media.title,
