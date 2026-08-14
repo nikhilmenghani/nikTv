@@ -116,6 +116,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,useRecentSearch = vm::useRecentSearch
                     ,deleteRecentSearch = vm::deleteRecentSearch
                     ,openSearchResult = vm::openSearchResult
+                    ,loadMoreSearch = vm::loadMoreSearch
                 )
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -211,7 +212,8 @@ private fun CatalogScreen(
     search: (Boolean) -> Unit,
     useRecentSearch: (RecentSearch) -> Unit,
     deleteRecentSearch: (RecentSearch) -> Unit,
-    openSearchResult: (MediaItem) -> Unit
+    openSearchResult: (MediaItem) -> Unit,
+    loadMoreSearch: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
@@ -223,13 +225,13 @@ private fun CatalogScreen(
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, Modifier.weight(1f), isTv)
+        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
         if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
-        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, Modifier.weight(1f), false)
+        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), false, true)
@@ -482,6 +484,7 @@ private fun SearchContent(
     useRecent: (RecentSearch) -> Unit,
     deleteRecent: (RecentSearch) -> Unit,
     openResult: (MediaItem) -> Unit,
+    loadMore: () -> Unit,
     modifier: Modifier,
     tv: Boolean
 ) {
@@ -547,12 +550,22 @@ private fun SearchContent(
         }
         if (state.searchResults.isNotEmpty()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("${state.searchResults.size} results${if (state.searchUsedServer) " · server checked" else " · cached"}", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${state.searchResults.size} results${if (state.searchUsedServer) " · through page ${state.searchPage}" else " · cached"}", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = { search(true) }, enabled = !state.searchServerLoading) { Text("Search server") }
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                 items(state.searchResults, key = { "search-${state.searchType}-${it.id}" }) { item ->
                     MediaListItem(item, { openResult(item) }, {}, false, tv)
+                }
+                if (state.searchHasMore) item("load-more-${state.searchPage}") {
+                    OutlinedButton(onClick = loadMore, enabled = !state.searchServerLoading, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        if (state.searchServerLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.ExpandMore, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Load page ${state.searchPage + 1}")
+                    }
+                } else if (state.searchUsedServer) item("all-pages-loaded") {
+                    Text("All available result pages loaded", Modifier.fillMaxWidth().padding(16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

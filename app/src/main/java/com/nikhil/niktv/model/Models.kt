@@ -32,6 +32,23 @@ data class RecentSearch(
 ) { val key: String get() = "${type.name}:${query.lowercase()}" }
 
 @Serializable
+data class SearchResultCache(
+    val profileKey: String,
+    val type: SearchContentType,
+    val query: String,
+    val lastPage: Int,
+    val hasMore: Boolean,
+    val items: List<MediaItem>,
+    val cachedAtMillis: Long = System.currentTimeMillis()
+) { val key: String get() = "${profileKey}|${type.name}|${query.trim().lowercase()}" }
+
+data class PortalSearchPage(
+    val items: List<MediaItem>,
+    val page: Int,
+    val hasMore: Boolean
+)
+
+@Serializable
 data class Category(val id: String, val title: String, val type: CatalogType)
 @Serializable
 data class MediaItem(

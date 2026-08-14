@@ -145,18 +145,20 @@ class StalkerPortalClient(private val context: Context) {
     }
 
     /** One bounded server operation used by the dedicated search screen. */
-    suspend fun search(session: PortalSession, type: SearchContentType, query: String): List<MediaItem> = withContext(Dispatchers.IO) {
+    suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int): PortalSearchPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             val catalogType = if (type == SearchContentType.SERIES) CatalogType.SERIES else CatalogType.MOVIES
-            return@withContext xtreamCatalog(session, catalogType, null)
-                .filter { it.title.contains(query, ignoreCase = true) }
+            val matches = xtreamCatalog(session, catalogType, null).filter { it.title.matchesSearchKeywords(query) }
+            return@withContext PortalSearchPage(matches, 1, false)
         }
         val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
             "type" to "vod", "action" to "get_ordered_list", "category" to "*",
-            "search" to query.trim(), "p" to "1", "fav" to "0", "sortby" to "added",
+            "search" to query.trim(), "p" to page.coerceAtLeast(1).toString(), "fav" to "0", "sortby" to "added",
             "hd" to "0", "ended" to "0"
         )))
-        response.payload().arrayFromData().mapNotNull { node ->
+        val payload = response.payload()
+        val data = payload.arrayFromData()
+        val items = data.mapNotNull { node ->
             val item = node as? JsonObject ?: return@mapNotNull null
             val id = item.string("id") ?: item.string("movie_id") ?: return@mapNotNull null
             val series = item.boolish("is_series") || item.string("series") == "1" ||
@@ -173,7 +175,20 @@ class StalkerPortalClient(private val context: Context) {
                 item.string("cmd"), item.string("description") ?: item.string("genres_str"),
                 item.string("season_number")?.toIntOrNull(), item.string("episode")?.toIntOrNull(),
                 item.string("season_id"), item.string("category_id"), item.string("episode_id"))
-        }.filter { it.title.contains(query, ignoreCase = true) }.distinctBy { it.id }
+        }.filter { it.title.matchesSearchKeywords(query) }.distinctBy { it.id }
+        val metadata = payload as? JsonObject
+        val maxPage = metadata?.string("max_page")?.toIntOrNull()
+            ?: metadata?.string("total_pages")?.toIntOrNull()
+        val total = metadata?.string("total_items")?.toIntOrNull()
+            ?: metadata?.string("total")?.toIntOrNull()
+        val pageSize = metadata?.string("items_per_page")?.toIntOrNull()
+            ?: metadata?.string("per_page")?.toIntOrNull()
+        val hasMore = when {
+            maxPage != null -> page < maxPage
+            total != null && pageSize != null -> page * pageSize < total
+            else -> data.isNotEmpty()
+        }
+        PortalSearchPage(items, page, hasMore)
     }
 
     suspend fun playableUrl(session: PortalSession, item: MediaItem, type: CatalogType): String = withContext(Dispatchers.IO) {
@@ -608,6 +623,11 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
+    private fun String.matchesSearchKeywords(query: String): Boolean {
+        val titleWords = lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
+        val keys = query.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
+        return keys.isNotEmpty() && keys.all { key -> titleWords.any { word -> word.contains(key) } }
+    }
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Mobile Safari/533.3"
         private const val MAG_VER = "ImageDescription: 2.20.02-pub-424; ImageDate: Fri May 8 15:39:55 UTC 2020; PORTAL version: 5.6.2; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x588"

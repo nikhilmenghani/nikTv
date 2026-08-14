@@ -15,6 +15,7 @@ import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.model.BrowseCatalogCache
 import com.nikhil.niktv.model.PlaybackUrl
 import com.nikhil.niktv.model.RecentSearch
+import com.nikhil.niktv.model.SearchResultCache
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
@@ -30,6 +31,7 @@ class ProfileStore(private val context: Context) {
     private val playbackUrlsKey = stringPreferencesKey("playback_urls")
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
+    private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         prefs[key]?.let { runCatching { Json.decodeFromString<PortalProfile>(it) }.getOrNull() }
     }
@@ -51,6 +53,9 @@ class ProfileStore(private val context: Context) {
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
     val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
         prefs[recentSearchesKey]?.let { runCatching { Json.decodeFromString<List<RecentSearch>>(it) }.getOrNull() }.orEmpty()
+    }
+    val pagedSearches: Flow<List<SearchResultCache>> = context.dataStore.data.map { prefs ->
+        prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
     }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
         it[key] = Json.encodeToString(session.profile)
@@ -93,6 +98,10 @@ class ProfileStore(private val context: Context) {
     suspend fun saveRecentSearches(items: List<RecentSearch>) = context.dataStore.edit {
         it[recentSearchesKey] = Json.encodeToString(items)
     }
+    suspend fun savePagedSearch(cache: SearchResultCache) = context.dataStore.edit { prefs ->
+        val current = prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
+        prefs[pagedSearchesKey] = Json.encodeToString((listOf(cache) + current.filterNot { it.key == cache.key }).take(40))
+    }
     suspend fun clear() = context.dataStore.edit {
         it.remove(key)
         it.remove(sessionKey)
@@ -103,5 +112,6 @@ class ProfileStore(private val context: Context) {
         it.remove(progressKey)
         it.remove(playbackUrlsKey)
         it.remove(recentSearchesKey)
+        it.remove(pagedSearchesKey)
     }
 }

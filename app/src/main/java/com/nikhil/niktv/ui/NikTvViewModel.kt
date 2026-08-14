@@ -41,7 +41,9 @@ data class NikTvState(
     val searchResults: List<MediaItem> = emptyList(),
     val searchServerLoading: Boolean = false,
     val searchUsedServer: Boolean = false,
-    val recentSearches: List<RecentSearch> = emptyList()
+    val recentSearches: List<RecentSearch> = emptyList(),
+    val searchPage: Int = 0,
+    val searchHasMore: Boolean = false
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -209,7 +211,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openSearch() = _state.update { it.copy(searchOpen = true, settingsOpen = false, favoritesOpen = false) }
     fun closeSearch() = _state.update { it.copy(searchOpen = false, searchServerLoading = false) }
     fun setSearchType(type: SearchContentType) = _state.update {
-        it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false)
+        it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false, searchPage = 0, searchHasMore = false)
     }
     fun setSearchQuery(query: String) = _state.update { it.copy(searchQuery = query) }
 
@@ -219,20 +221,39 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (query.isBlank() || snapshot.searchServerLoading) return
         viewModelScope.launch {
             rememberSearch(query, snapshot.searchType)
-            val local = localSearch(snapshot.searchType, query)
-            _state.update { it.copy(searchResults = local, searchUsedServer = false) }
+            val saved = store.pagedSearches.first().firstOrNull {
+                it.profileKey == snapshot.session?.profile?.cacheKey() && it.type == snapshot.searchType && it.query.equals(query, true)
+            }
+            val local = (localSearch(snapshot.searchType, query) + saved?.items.orEmpty()).distinctBy { it.id }
+            _state.update { it.copy(searchResults = local, searchUsedServer = saved != null,
+                searchPage = saved?.lastPage ?: 0, searchHasMore = saved?.hasMore ?: false) }
             if (!forceServer && local.isNotEmpty()) return@launch
+            fetchSearchPage(query, snapshot.searchType, 1, emptyList())
+        }
+    }
+
+    fun loadMoreSearch() {
+        val snapshot = _state.value
+        if (!snapshot.searchHasMore || snapshot.searchServerLoading || snapshot.searchQuery.isBlank()) return
+        viewModelScope.launch {
+            fetchSearchPage(snapshot.searchQuery.trim(), snapshot.searchType, snapshot.searchPage + 1, snapshot.searchResults)
+        }
+    }
+
+    private suspend fun fetchSearchPage(query: String, type: SearchContentType, page: Int, existing: List<MediaItem>) {
             _state.update { it.copy(searchServerLoading = true) }
-            runCatching { portal.search(requireNotNull(_state.value.session), snapshot.searchType, query) }
-                .onSuccess { server ->
-                    _state.update { current -> current.copy(
-                        searchResults = (local + server).distinctBy { it.id },
-                        searchServerLoading = false, searchUsedServer = true
-                    ) }
+            val session = requireNotNull(_state.value.session)
+            runCatching { portal.search(session, type, query, page) }
+                .onSuccess { result ->
+                    val combined = (existing + result.items).distinctBy { it.id }
+                    val cache = SearchResultCache(session.profile.cacheKey(), type, query, result.page, result.hasMore, combined)
+                    store.savePagedSearch(cache)
+                    _state.update { current -> current.copy(searchResults = combined,
+                        searchServerLoading = false, searchUsedServer = true,
+                        searchPage = result.page, searchHasMore = result.hasMore) }
                 }.onFailure { error ->
                     _state.update { it.copy(searchServerLoading = false, error = error.message ?: "Server search failed") }
                 }
-        }
     }
 
     private suspend fun localSearch(type: SearchContentType, query: String): List<MediaItem> {
@@ -245,7 +266,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 _state.value.items.filter { it.episodeNumber != null })
         } else emptyList()
         val source = if (type == SearchContentType.EPISODES) episodes else indexed + browsed
-        return source.distinctBy { it.id }.filter { it.title.contains(query, ignoreCase = true) }
+        return source.distinctBy { it.id }.filter { it.title.matchesSearchKeywords(query) }
     }
 
     private suspend fun rememberSearch(query: String, type: SearchContentType) {
@@ -446,6 +467,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         Regex("(?i)\\bE[ ._:-]*(\\d+)"),
         Regex("\\b(\\d+)\\b")
     ).firstNotNullOfOrNull { it.findAll(this).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull() }
+
+    private fun String.matchesSearchKeywords(query: String): Boolean {
+        val words = lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
+        val keys = query.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
+        return keys.isNotEmpty() && keys.all { key -> words.any { word -> word.contains(key) } }
+    }
 
     private fun Throwable.isAuthenticationFailure(): Boolean = message.orEmpty().let { text ->
         text.contains("Authorization failed", ignoreCase = true) ||
