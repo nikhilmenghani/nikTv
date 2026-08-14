@@ -196,15 +196,16 @@ class StalkerPortalClient(private val context: Context) {
             return@withContext item.command ?: error("This item has no playback URL")
         }
         val cmd = item.command ?: error("This item has no playback command")
-        val movieId = item.id.substringBefore(':')
-        val detail = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-            "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
-            "season_id" to item.portalSeasonId.orEmpty(), "episode_id" to item.portalEpisodeId.orEmpty(),
-            "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
-            "hd" to "0", "ended" to "0", "p" to "1"
-        ))).payload().arrayFromData().firstOrNull() as? JsonObject
-        val internalFileId = detail?.string("id")
-        val playbackCommand = internalFileId?.let { "/media/file_$it.mpg" } ?: cmd
+        val playbackCommand = if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
+            val movieId = item.id.substringBefore(':')
+            val detail = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+                "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
+                "season_id" to item.portalSeasonId.orEmpty(), "episode_id" to item.portalEpisodeId.orEmpty(),
+                "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
+                "hd" to "0", "ended" to "0", "p" to "1"
+            ))).payload().arrayFromData().firstOrNull() as? JsonObject
+            detail?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd
+        } else cmd
         val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
             "type" to if (type == CatalogType.SERIES) "vod" else type.apiType,
             "action" to "create_link",
