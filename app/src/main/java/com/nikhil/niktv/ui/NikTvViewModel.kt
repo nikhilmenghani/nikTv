@@ -350,8 +350,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         ) else emptyList()
         val nextEpisode = orderedEpisodes.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
             ?.let { orderedEpisodes.getOrNull(it + 1) }
-        val progressKey = "${type.name}:${item.id}"
+        // Use a profile-scoped, content-based key so resume survives session/token refreshes.
+        val progressKey = progressKeyFor(session.profile, item, type, series)
+        val legacyProgressKey = legacyProgressKeyFor(item, type)
+        // Keep backward compatibility with already-saved progress entries.
         val saved = _state.value.playbackProgress.firstOrNull { it.key == progressKey }
+            ?: _state.value.playbackProgress
+                .asSequence()
+                .filter { it.key == legacyProgressKey }
+                .maxByOrNull { it.updatedAtMillis }
         val resumePosition = saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L } ?: 0L
         _state.update { it.copy(nowPlaying = PlayingMedia(item, url, nextEpisode, series, orderedEpisodes, resumePosition, progressKey)) }
         recordRecent(item, type, series)
@@ -525,6 +532,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun PortalProfile.cacheKey() = "catalog-v5|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+    private fun progressKeyFor(profile: PortalProfile, item: MediaItem, type: CatalogType, series: MediaItem?): String {
+        // Keep keys bounded for storage while still differentiating profile/type/media.
+        val base = buildString {
+            append("progress-v2|")
+            append(profile.cacheKey())
+            append('|')
+            append(type.name)
+            append('|')
+            append(stableMediaKeyPart(item, type, series))
+        }
+        return if (base.length <= 240) base else base.take(240)
+    }
+    private fun legacyProgressKeyFor(item: MediaItem, type: CatalogType): String = "${type.name}:${item.id}"
+    private fun stableMediaKeyPart(item: MediaItem, type: CatalogType, series: MediaItem?): String {
+        val normalizedTitle = item.title.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "-").trim('-')
+        // Fingerprint the command path (without query params) to avoid volatile-token mismatches.
+        val commandFingerprint = item.command.orEmpty()
+            .substringAfter(' ')
+            .substringBefore('?')
+            .substringAfter("://", missingDelimiterValue = item.command.orEmpty().substringAfter(' ').substringBefore('?'))
+            .substringAfter('/')
+            .lowercase()
+            .replace(Regex("[^\\p{L}\\p{N}/._-]+"), "")
+            .take(64)
+        return when (type) {
+            CatalogType.SERIES -> "series:${series?.id ?: item.id}|s:${item.seasonNumber ?: -1}|e:${item.episodeNumber ?: -1}|$normalizedTitle|$commandFingerprint"
+            CatalogType.MOVIES -> "movie:$normalizedTitle|$commandFingerprint"
+            else -> "item:${item.id}"
+        }
+    }
     private fun String.episodeOrderFromTitle(): Int? = listOf(
         Regex("(?i)S\\d+[ ._-]*E(?:P(?:ISODE)?)?[ ._-]*(\\d+)"),
         Regex("(?i)\\bEP(?:ISODE)?[ ._:-]*(\\d+)"),
