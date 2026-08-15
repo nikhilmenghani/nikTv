@@ -1,9 +1,12 @@
 package com.nikhil.niktv.ui
 
+import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -55,7 +58,9 @@ import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.update.AppUpdates
+import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
+import com.nikhil.niktv.update.formatDownloadBytes
 import java.security.MessageDigest
 import kotlinx.coroutines.launch
 
@@ -72,7 +77,13 @@ private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
+    LaunchedEffect(pendingUpdate, state.session, state.restoring) {
+        if (pendingUpdate != null && state.session != null && !state.restoring) {
+            vm.openSettings()
+        }
+    }
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     MaterialTheme(colorScheme = profileColors) {
         Surface(Modifier.fillMaxSize()) {
@@ -981,7 +992,7 @@ private fun ModernSearchScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ModernSettingsScreen(
     state: NikTvState,
@@ -1001,8 +1012,78 @@ private fun ModernSettingsScreen(
     var pendingRemoval by remember { mutableStateOf<PortalProfile?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
+    var downloadActionMessage by remember { mutableStateOf<String?>(null) }
     var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    val downloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
+    val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
+    val performDownload: (UpdateInfo) -> Unit = { update ->
+        downloadActionMessage = null
+        runCatching { AppUpdates.download(context, update) }
+            .onSuccess {
+                updateMessage = "Downloading ${update.version}…"
+                availableUpdate = null
+            }
+            .onFailure {
+                downloadActionMessage = it.message ?: "Could not start the update download"
+                updateMessage = "Could not start download: ${it.message}"
+            }
+    }
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val update = pendingPermissionUpdate
+        if ((granted || AppUpdates.canWritePublicDownloads(context)) && update != null) {
+            pendingPermissionUpdate = null
+            performDownload(update)
+        } else {
+            downloadActionMessage =
+                "${AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE} Select Allow & download to request it again."
+            updateMessage = AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE
+        }
+    }
+    fun requestUpdateDownload(update: UpdateInfo) {
+        if (AppUpdates.canWritePublicDownloads(context)) {
+            performDownload(update)
+        } else {
+            pendingPermissionUpdate = update
+            downloadActionMessage = AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE
+            storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+    LaunchedEffect(pendingUpdate) {
+        pendingUpdate?.let { update ->
+            availableUpdate = update
+            updateMessage = "Version ${update.version} needs storage permission to download"
+            downloadActionMessage = AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE
+        }
+    }
     val deviceMacAddress = remember(context) { cast4kStyleDeviceMacAddress(context) }
+    val downloadStatus = when (val download = downloadState) {
+        UpdateDownloadState.Idle ->
+            updateMessage ?: "Updates are checked on startup and every 24 hours"
+        is UpdateDownloadState.Queued ->
+            "NikTV ${download.version} is queued in Android Download Manager"
+        is UpdateDownloadState.Downloading ->
+            "Downloading NikTV ${download.version}" +
+                (download.percent?.let { " · $it%" } ?: "")
+        is UpdateDownloadState.Paused -> download.reason
+        is UpdateDownloadState.Ready -> if (download.awaitingUnknownSourcesPermission) {
+            "Allow NikTV to install unknown apps, then return here and select Install again"
+        } else {
+            "NikTV ${download.version} is ready to install"
+        }
+        is UpdateDownloadState.Installing -> "Opening Android's package installer…"
+        is UpdateDownloadState.InstallerLaunched ->
+            "Android's installer was opened. Complete installation there, or select Install again."
+        is UpdateDownloadState.Failed -> download.message
+    }
+    val downloadedBytes = when (val download = downloadState) {
+        is UpdateDownloadState.Downloading -> download.bytesDownloaded to download.totalBytes
+        is UpdateDownloadState.Paused -> download.bytesDownloaded to download.totalBytes
+        is UpdateDownloadState.Queued -> 0L to null
+        else -> null
+    }
     Scaffold(
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
         containerColor = Color(0xFF090909),
@@ -1115,25 +1196,120 @@ private fun ModernSettingsScreen(
             }
         }
         SettingsSection("App updates") {
-            ListItem(
-                headlineContent = { Text("NikTV ${BuildConfig.VERSION_NAME}") },
-                supportingContent = { Text(updateMessage ?: "Updates are checked on startup and every 24 hours") },
-                leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
-                trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
-                modifier = Modifier.clickable(enabled = !checkingUpdate) {
-                    checkingUpdate = true; updateMessage = "Checking for updates…"
-                    scope.launch {
-                        runCatching { AppUpdates.check() }
-                            .onSuccess { update ->
-                                availableUpdate = update
-                                updateMessage = if (update == null) "You're up to date" else "Version ${update.version} is available"
+            Column {
+                ListItem(
+                    headlineContent = { Text("NikTV ${BuildConfig.VERSION_NAME}") },
+                    supportingContent = {
+                        Column {
+                            Text(downloadStatus)
+                            if (downloadState !is UpdateDownloadState.Idle && updateMessage != null) {
+                                Text(updateMessage!!)
                             }
-                            .onFailure { updateMessage = "Could not check: ${it.message}" }
-                        checkingUpdate = false
+                        }
+                    },
+                    leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
+                    trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
+                    modifier = Modifier.clickable(enabled = !checkingUpdate) {
+                        checkingUpdate = true; updateMessage = "Checking for updates…"
+                        scope.launch {
+                            runCatching { AppUpdates.check() }
+                                .onSuccess { update ->
+                                    availableUpdate = update
+                                    updateMessage = if (update == null) "You're up to date" else "Version ${update.version} is available"
+                                }
+                                .onFailure { updateMessage = "Could not check: ${it.message}" }
+                            checkingUpdate = false
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                when (val download = downloadState) {
+                    is UpdateDownloadState.Queued -> {
+                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
                     }
-                },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
+                    is UpdateDownloadState.Downloading -> {
+                        if (download.totalBytes != null) {
+                            LinearProgressIndicator(
+                                progress = { (download.percent ?: 0) / 100f },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                            )
+                        } else {
+                            LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                        }
+                    }
+                    is UpdateDownloadState.Paused -> {
+                        if (download.totalBytes != null) {
+                            LinearProgressIndicator(
+                                progress = {
+                                    (download.bytesDownloaded.toFloat() / download.totalBytes)
+                                        .coerceIn(0f, 1f)
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                            )
+                        }
+                    }
+                    else -> Unit
+                }
+                downloadedBytes?.let { (bytes, total) ->
+                    Text(
+                        buildString {
+                            append("Downloaded ${formatDownloadBytes(bytes)}")
+                            total?.let { append(" of ${formatDownloadBytes(it)}") }
+                        },
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (downloadState is UpdateDownloadState.Ready ||
+                    downloadState is UpdateDownloadState.InstallerLaunched
+                ) {
+                    val version = when (val download = downloadState) {
+                        is UpdateDownloadState.Ready -> download.version
+                        is UpdateDownloadState.InstallerLaunched -> download.version
+                        else -> ""
+                    }
+                    Text(
+                        "Saved in ${AppUpdates.savedLocation(version)}",
+                        Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(onClick = {
+                            downloadActionMessage = null
+                            runCatching { AppUpdates.install(context) }
+                                .onFailure { downloadActionMessage = it.message }
+                        }) { Text("Install") }
+                        OutlinedButton(onClick = {
+                            downloadActionMessage = null
+                            runCatching { AppUpdates.openDownloads(context) }
+                                .onFailure { downloadActionMessage = it.message }
+                        }) { Text("Open Downloads") }
+                    }
+                }
+                if (downloadState is UpdateDownloadState.Failed) {
+                    Button(
+                        onClick = {
+                            val failed = downloadState as UpdateDownloadState.Failed
+                            requestUpdateDownload(UpdateInfo(failed.version, failed.downloadUrl))
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) { Text("Retry download") }
+                }
+                downloadActionMessage?.let {
+                    Text(
+                        it,
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
         }
         Text(
             "NikTV keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
@@ -1154,9 +1330,32 @@ private fun ModernSettingsScreen(
         AlertDialog(
             onDismissRequest = { availableUpdate = null },
             title = { Text("NikTV ${update.version} is available") },
-            text = { Text("Download the signed APK now. Android will ask you to confirm installation when it is ready.") },
-            confirmButton = { Button(onClick = { AppUpdates.download(context, update); updateMessage = "Downloading ${update.version}…"; availableUpdate = null }) { Text("Download") } },
-            dismissButton = { TextButton(onClick = { availableUpdate = null }) { Text("Later") } }
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Download the signed APK to ${AppUpdates.savedLocation(update.version)}. Android will ask you to confirm installation when it is ready.")
+                    downloadActionMessage?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { requestUpdateDownload(update) },
+                    enabled = AppUpdates.canStartDownload(update)
+                ) {
+                    Text(
+                        if (AppUpdates.canWritePublicDownloads(context)) "Download"
+                        else "Allow & download"
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    AppUpdates.dismissPendingUpdate(update)
+                    availableUpdate = null
+                    pendingPermissionUpdate = null
+                }) { Text("Later") }
+            },
         )
     }
 }
