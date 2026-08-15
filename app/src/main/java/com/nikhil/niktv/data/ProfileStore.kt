@@ -37,6 +37,7 @@ class ProfileStore(private val context: Context) {
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
     private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
     private val uiExperienceKey = stringPreferencesKey("ui_experience")
+    private val categoryFiltersKey = stringPreferencesKey("category_filters")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         val identity = prefs[activeProfileKey]
@@ -76,6 +77,9 @@ class ProfileStore(private val context: Context) {
     }
     val pagedSearches: Flow<List<SearchResultCache>> = context.dataStore.data.map { prefs ->
         prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
+    }
+    val categoryFilters: Flow<Map<String, List<String>>> = context.dataStore.data.map { prefs ->
+        prefs[categoryFiltersKey]?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
     }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
         val profiles = decodeProfiles(it[profilesKey], it[key])
@@ -158,6 +162,16 @@ class ProfileStore(private val context: Context) {
         val current = prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
         prefs[pagedSearchesKey] = Json.encodeToString((listOf(cache) + current.filterNot { it.key == cache.key }).take(40))
     }
+    suspend fun saveCategoryFilter(profileKey: String, type: CatalogType, categoryIds: List<String>) = context.dataStore.edit { prefs ->
+        val existing = prefs[categoryFiltersKey]?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
+        val filterKey = "$profileKey|${type.name}"
+        prefs[categoryFiltersKey] = Json.encodeToString(existing + (filterKey to categoryIds))
+    }
+    suspend fun clearCategoryFilter(profileKey: String, type: CatalogType) = context.dataStore.edit { prefs ->
+        val existing = prefs[categoryFiltersKey]?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
+        val filterKey = "$profileKey|${type.name}"
+        prefs[categoryFiltersKey] = Json.encodeToString(existing - filterKey)
+    }
     suspend fun clear() = context.dataStore.edit {
         it.remove(key)
         it.remove(sessionKey)
@@ -173,6 +187,7 @@ class ProfileStore(private val context: Context) {
         it.remove(recentSearchesKey)
         it.remove(pagedSearchesKey)
         it.remove(uiExperienceKey)
+        it.remove(categoryFiltersKey)
     }
 
     private fun decodeProfiles(raw: String?, legacy: String?): List<PortalProfile> =

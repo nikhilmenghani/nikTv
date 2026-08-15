@@ -63,6 +63,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
@@ -135,6 +137,18 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,addProfile = vm::addProfile
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
+                    ,openCategoryManager = vm::openCategoryManager
+                )
+            }
+            if (state.categoryManagerOpen) {
+                CategoryManagerDialog(
+                    state = state,
+                    close = vm::closeCategoryManager,
+                    setType = vm::setCategoryManagerType,
+                    toggleCategory = { type, id -> vm.toggleCategoryFilter(type, id) },
+                    selectAll = { vm.selectAllCategories(it) },
+                    deselectAll = { vm.deselectAllCategories(it) },
+                    setFilter = { type, list -> vm.setCategoryFilter(type, list) }
                 )
             }
             if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -354,6 +368,7 @@ private fun CatalogScreen(
     ,addProfile: () -> Unit
     ,switchProfile: (PortalProfile) -> Unit
     ,removeProfile: (PortalProfile) -> Unit
+    ,openCategoryManager: (CatalogType) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
@@ -363,22 +378,22 @@ private fun CatalogScreen(
     BackHandler(enabled = state.favoritesOpen && !state.settingsOpen, onBack = closeFavorites)
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
     if (state.uiExperience == UiExperience.MODERN && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries == null) {
-        ModernBrowseScreen(state, selectType, selectCategory, play, openHome, openRecent, openFavorite, openFavorites, openSearch, openSettings, refreshCatalog)
+        ModernBrowseScreen(state, selectType, selectCategory, play, openHome, openRecent, openFavorite, openFavorites, openSearch, openSettings, refreshCatalog, openCategoryManager)
         return
     }
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, openCategoryManager, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), isTv, false)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, openCategoryManager, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, openCategoryManager, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), false, true)
+        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, openCategoryManager, Modifier.weight(1f), false, true)
         if (!state.settingsOpen && !state.searchOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
     }
 }
@@ -395,7 +410,8 @@ private fun ModernBrowseScreen(
     openFavorites: () -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
-    refreshCatalog: () -> Unit
+    refreshCatalog: () -> Unit,
+    openCategoryManager: (CatalogType) -> Unit
 ) {
     val home = state.homeOpen
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
@@ -409,8 +425,19 @@ private fun ModernBrowseScreen(
                 ModernHero(hero, if (home && recent != null) {{ openRecent(recent) }} else null,
                     if (!home && hero != null) {{ play(hero) }} else null, state.savedProfile?.name.orEmpty())
             }
-            if (!home && state.categories.isNotEmpty()) item("modern-categories") {
+            if (!home) item("modern-categories") {
+                val profileKey = state.savedProfile?.cacheKey()
+                val filterKey = "$profileKey|${state.selectedType.name}"
+                val isFiltered = state.categoryFilters.containsKey(filterKey)
                 LazyRow(contentPadding = PaddingValues(horizontal = 28.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        AssistChip(
+                            onClick = { openCategoryManager(state.selectedType) },
+                            label = { Text(if (isFiltered) "Filtered (${state.categories.size})" else "Categories") },
+                            leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(18.dp)) },
+                            colors = if (isFiltered) AssistChipDefaults.assistChipColors(labelColor = MaterialTheme.colorScheme.primary) else AssistChipDefaults.assistChipColors()
+                        )
+                    }
                     items(state.categories, key = { it.id }) { category ->
                         FilterChip(selected = state.selectedCategory?.id == category.id, onClick = { selectCategory(category) }, label = { Text(category.title) })
                     }
@@ -429,6 +456,21 @@ private fun ModernBrowseScreen(
                     val entries = recents.filter { it.kind == kind }
                     if (entries.isNotEmpty()) item("recent-${kind.name}") {
                         ModernRail("Recently Played ${kind.sectionTitle()}", entries, { it.media }, openRecent)
+                    }
+                }
+            } else if (state.categories.isEmpty()) {
+                item("modern-empty-categories") {
+                    Box(Modifier.fillParentMaxHeight(.45f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Icon(Icons.Default.FilterListOff, null, Modifier.size(48.dp), tint = Color.LightGray)
+                            Text("No categories enabled for ${state.selectedType.title}", color = Color.White.copy(alpha = .86f), style = MaterialTheme.typography.titleMedium)
+                            Text("Adjust your category filters to include channels or media.", color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
+                            Button(onClick = { openCategoryManager(state.selectedType) }) {
+                                Icon(Icons.Default.Tune, null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Manage ${state.selectedType.title} categories")
+                            }
+                        }
                     }
                 }
             } else if (state.items.isNotEmpty()) {
@@ -936,6 +978,7 @@ private fun SettingsContent(
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
     setUiExperience: (UiExperience) -> Unit,
+    openCategoryManager: (CatalogType) -> Unit,
     modifier: Modifier
 ) {
     val profile = state.savedProfile ?: return
@@ -984,6 +1027,31 @@ private fun SettingsContent(
                 modifier = Modifier.clickable(onClick = addProfile),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
+        }
+        SettingsSection("Category Filters") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Content Visibility", style = MaterialTheme.typography.titleMedium)
+                Text("Choose which categories to include for Live TV, Movies, and Series.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                visibleCatalogTypes.forEachIndexed { index, type ->
+                    val raw = state.rawCategoriesByType[type].orEmpty().ifEmpty { if (state.selectedType == type) state.categories else emptyList() }
+                    val filterKey = "${profile.cacheKey()}|${type.name}"
+                    val enabledIds = state.categoryFilters[filterKey]
+                    val countSummary = when {
+                        raw.isEmpty() -> "Tap to configure"
+                        enabledIds == null -> "All ${raw.size} categories active"
+                        else -> "${enabledIds.size} of ${raw.size} categories active"
+                    }
+                    ListItem(
+                        headlineContent = { Text(type.title) },
+                        supportingContent = { Text(countSummary) },
+                        leadingContent = { Icon(type.icon(), null) },
+                        trailingContent = { Icon(Icons.Default.ChevronRight, "Configure ${type.title} categories") },
+                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { openCategoryManager(type) },
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+                    )
+                    if (index != visibleCatalogTypes.lastIndex) Spacer(Modifier.height(4.dp))
+                }
+            }
         }
         SettingsSection("Connection") {
             SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
@@ -1162,7 +1230,7 @@ private fun CatalogNavigationItem(
 }
 
 @Composable
-private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, refreshCatalog: () -> Unit, openSettings: () -> Unit, openSearch: () -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
+private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, refreshCatalog: () -> Unit, openSettings: () -> Unit, openSearch: () -> Unit, openCategoryManager: (CatalogType) -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
     val activity = LocalContext.current as? Activity
     val filterMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(240.dp)
     var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
@@ -1239,6 +1307,11 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             IconButton(onClick = { filterExpanded = !filterExpanded }) {
                 Icon(Icons.Default.FilterAlt, if (filterExpanded) "Close filters" else if (state.selectedSeries != null) "Filter by season" else "Filter by category")
             }
+            if (state.selectedSeries == null) {
+                IconButton(onClick = { openCategoryManager(state.selectedType) }) {
+                    Icon(Icons.Default.Tune, "Manage categories")
+                }
+            }
             if (state.selectedSeries != null) Box {
                 IconButton(onClick = { sortExpanded = true }) {
                     Icon(Icons.AutoMirrored.Filled.Sort, "Sort episodes")
@@ -1276,7 +1349,16 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
                 tonalElevation = 3.dp
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(if (state.selectedSeries != null) "Choose a season" else "Filter ${state.selectedType.title}", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (state.selectedSeries != null) "Choose a season" else "Filter ${state.selectedType.title}", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                        if (state.selectedSeries == null) {
+                            TextButton(onClick = { openCategoryManager(state.selectedType); filterExpanded = false }) {
+                                Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Manage categories")
+                            }
+                        }
+                    }
                     FlowRow(
                         Modifier.fillMaxWidth().heightIn(max = filterMaxHeight).verticalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1304,7 +1386,20 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             }
         }
         Spacer(Modifier.height(12.dp))
-        if (filteredItems.isEmpty() && !state.loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (state.categories.isEmpty() && state.selectedSeries == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Default.FilterListOff, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("No categories enabled for ${state.selectedType.title}", style = MaterialTheme.typography.titleMedium)
+                    Text("Adjust your category filter settings to display content.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { openCategoryManager(state.selectedType) }) {
+                        Icon(Icons.Default.Tune, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Manage categories")
+                    }
+                }
+            }
+        } else if (filteredItems.isEmpty() && !state.loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
                 if (searchQuery.isBlank()) "No items returned by this category" else "No results for “${searchQuery.trim()}”",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1476,4 +1571,172 @@ private fun cast4kStyleDeviceMacAddress(context: android.content.Context): Strin
     val hash = MessageDigest.getInstance("MD5").digest(androidId.toByteArray())
         .joinToString("") { "%02x".format(it.toInt() and 0xff) }
     return "00:1E:99:${hash.substring(0, 6).chunked(2).joinToString(":")}".uppercase()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryManagerDialog(
+    state: NikTvState,
+    close: () -> Unit,
+    setType: (CatalogType) -> Unit,
+    toggleCategory: (CatalogType, String) -> Unit,
+    selectAll: (CatalogType) -> Unit,
+    deselectAll: (CatalogType) -> Unit,
+    setFilter: (CatalogType, List<String>) -> Unit
+) {
+    val type = state.categoryManagerType
+    val profile = state.savedProfile
+    val profileKey = profile?.cacheKey()
+    val raw = state.rawCategoriesByType[type].orEmpty().ifEmpty { if (state.selectedType == type) state.categories else emptyList() }
+    val filterKey = "$profileKey|${type.name}"
+    val enabledIds = state.categoryFilters[filterKey]
+    val currentEnabledSet = remember(enabledIds, raw) {
+        enabledIds?.toSet() ?: raw.map { it.id }.toSet()
+    }
+    var searchQuery by rememberSaveable(type) { mutableStateOf("") }
+    val filteredRaw = remember(raw, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isBlank()) raw else raw.filter { it.title.contains(query, ignoreCase = true) }
+    }
+
+    Dialog(
+        onDismissRequest = close,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .fillMaxHeight(0.88f)
+                .widthIn(max = 680.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(Modifier.fillMaxSize().padding(24.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Category Filters", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                        Text("Choose which categories to show in NikTV", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = close) { Icon(Icons.Default.Close, "Close") }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    visibleCatalogTypes.forEachIndexed { index, catalogType ->
+                        SegmentedButton(
+                            selected = type == catalogType,
+                            onClick = { setType(catalogType) },
+                            shape = SegmentedButtonDefaults.itemShape(index, visibleCatalogTypes.size)
+                        ) {
+                            Text(catalogType.title)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search ${type.title.lowercase()} categories…") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = if (searchQuery.isNotEmpty()) {{
+                        IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, "Clear search") }
+                    }} else null,
+                    singleLine = true,
+                    shape = RoundedCornerShape(20.dp)
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    val enabledCount = currentEnabledSet.size
+                    val totalCount = raw.size
+                    Text(
+                        text = if (searchQuery.isNotBlank()) "${filteredRaw.size} matching · $enabledCount of $totalCount active"
+                               else "$enabledCount of $totalCount active",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    TextButton(onClick = { selectAll(type) }) {
+                        Text("Select All")
+                    }
+                    TextButton(onClick = { deselectAll(type) }) {
+                        Text("Deselect All")
+                    }
+                    if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
+                        TextButton(onClick = {
+                            val newEnabled = (currentEnabledSet + filteredRaw.map { it.id }).toList()
+                            setFilter(type, newEnabled)
+                        }) {
+                            Text("Select Matching")
+                        }
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                if (raw.isEmpty()) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator()
+                            Text("Loading categories…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else if (filteredRaw.isEmpty()) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("No categories match “${searchQuery.trim()}”", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                    ) {
+                        items(filteredRaw, key = { it.id }) { category ->
+                            val selected = category.id in currentEnabledSet
+                            Surface(
+                                onClick = { toggleCategory(type, category.id) },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceContainerLow,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = selected,
+                                        onCheckedChange = { toggleCategory(type, category.id) }
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(
+                                        text = category.title,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                Button(
+                    onClick = close,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Text("Apply & Close")
+                }
+            }
+        }
+    }
 }

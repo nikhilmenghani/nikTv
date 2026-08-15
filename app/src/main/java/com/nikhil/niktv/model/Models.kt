@@ -11,7 +11,9 @@ data class PortalProfile(
     val portalType: PortalType = PortalType.STALKER,
     val username: String = "",
     val password: String = ""
-)
+) {
+    fun cacheKey(): String = "catalog-v5|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+}
 
 @Serializable
 enum class PortalType { STALKER, XTREAM }

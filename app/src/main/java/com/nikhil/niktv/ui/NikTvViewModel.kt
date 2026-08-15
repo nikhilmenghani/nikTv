@@ -16,6 +16,7 @@ data class NikTvState(
     val session: PortalSession? = null,
     val selectedType: CatalogType = CatalogType.LIVE_TV,
     val categories: List<Category> = emptyList(),
+    val rawCategoriesByType: Map<CatalogType, List<Category>> = emptyMap(),
     val selectedCategory: Category? = null,
     val items: List<MediaItem> = emptyList(),
     val loading: Boolean = false,
@@ -48,7 +49,10 @@ data class NikTvState(
     val searchPage: Int = 0,
     val searchHasMore: Boolean = false,
     val searchCategories: List<Category> = emptyList(),
-    val searchCategoryId: String = "*"
+    val searchCategoryId: String = "*",
+    val categoryFilters: Map<String, List<String>> = emptyMap(),
+    val categoryManagerOpen: Boolean = false,
+    val categoryManagerType: CatalogType = CatalogType.LIVE_TV
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -67,6 +71,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.uiExperience.collect { value -> _state.update { it.copy(uiExperience = value) } } }
         viewModelScope.launch { store.recentSearches.collect { searches -> _state.update { it.copy(recentSearches = searches) } } }
         viewModelScope.launch { store.profiles.collect { profiles -> _state.update { it.copy(profiles = profiles) } } }
+        viewModelScope.launch {
+            store.categoryFilters.collect { filters ->
+                val snapshot = _state.value
+                val profileKey = snapshot.session?.profile?.cacheKey()
+                val raw = snapshot.rawCategoriesByType[snapshot.selectedType] ?: snapshot.categories
+                val filtered = filterCategories(raw, profileKey, snapshot.selectedType, filters)
+                val selected = if (snapshot.selectedCategory != null && filtered.any { it.id == snapshot.selectedCategory.id }) {
+                    snapshot.selectedCategory
+                } else {
+                    filtered.firstOrNull { snapshot.selectedType != CatalogType.SERIES || it.id != "*" }
+                        ?: filtered.firstOrNull()
+                }
+                val needsReload = selected != snapshot.selectedCategory
+                _state.update { it.copy(categoryFilters = filters, categories = filtered, selectedCategory = selected) }
+                if (needsReload && selected != null && snapshot.session != null) {
+                    loadCategory(selected)
+                }
+            }
+        }
     }
 
     private fun prepareProfileChooser() = viewModelScope.launch {
@@ -96,32 +119,56 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType, forceRefresh: Boolean = false, preferredCategoryId: String? = null) {
         val profileKey = session.profile.cacheKey()
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
+        var rawCategories: List<Category>? = null
+        var cachedItems: Map<String, List<MediaItem>> = emptyMap()
+        var cachedBrowse: BrowseCatalogCache? = null
+
         if (!forceRefresh) {
             store.browseCatalog(type, profileKey).first()?.takeIf { it.categories.isNotEmpty() }?.let { cached ->
-                val selected = cached.categories.firstOrNull { it.id == preferredCategoryId }
-                    ?: cached.categories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
-                    ?: cached.categories.firstOrNull()
-                _state.update { it.copy(
-                    selectedType = type, categories = cached.categories, selectedCategory = selected,
-                    items = selected?.let { category -> cached.itemsByCategory[category.id] }.orEmpty(),
-                    selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null, browseCache = cached
-                ) }
-                val fresh = System.currentTimeMillis() - cached.cachedAtMillis < maxAge
-                val hasUsableSelection = selected != null && cached.itemsByCategory[selected.id].orEmpty().isNotEmpty()
-                if (fresh && hasUsableSelection) return
+                rawCategories = cached.categories
+                cachedItems = cached.itemsByCategory
+                cachedBrowse = cached
             }
         }
-        val categories = portal.categories(session, type)
-        val selected = categories.firstOrNull { it.id == preferredCategoryId }
-            ?: categories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
-            ?: categories.firstOrNull()
-        val items = selected?.let { portal.catalog(session, it) }.orEmpty()
-        val cache = BrowseCatalogCache(profileKey, type, System.currentTimeMillis(), categories,
-            selected?.let { mapOf(it.id to items) }.orEmpty())
-        // Do not let a transient empty portal response poison this profile's cache.
-        if (categories.isNotEmpty() && items.isNotEmpty()) store.saveBrowseCatalog(cache)
-        _state.update { it.copy(selectedType = type, categories = categories, selectedCategory = selected, items = items,
-            selectedSeries = null, fullSearchItems = null, fullSearchCachedAtMillis = null, browseCache = cache) }
+        if (rawCategories == null) {
+            rawCategories = portal.categories(session, type)
+        }
+        val allCategories = rawCategories.orEmpty()
+        val filterKey = filterKey(profileKey, type)
+        val enabledIds = _state.value.categoryFilters[filterKey]
+        val filteredCategories = if (enabledIds == null) allCategories else allCategories.filter { it.id in enabledIds }
+        val selected = filteredCategories.firstOrNull { it.id == preferredCategoryId }
+            ?: filteredCategories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
+            ?: filteredCategories.firstOrNull()
+
+        val items = if (selected != null) {
+            val cachedForSelected = cachedItems[selected.id]
+            if (!forceRefresh && cachedBrowse != null && cachedForSelected != null && (System.currentTimeMillis() - cachedBrowse.cachedAtMillis < maxAge)) {
+                cachedForSelected
+            } else {
+                portal.catalog(session, selected)
+            }
+        } else emptyList()
+
+        val cache = cachedBrowse?.copy(categories = allCategories, itemsByCategory = if (selected != null) cachedItems + (selected.id to items) else cachedItems)
+            ?: BrowseCatalogCache(profileKey, type, System.currentTimeMillis(), allCategories, selected?.let { mapOf(it.id to items) }.orEmpty())
+
+        if (allCategories.isNotEmpty() && (selected == null || items.isNotEmpty())) store.saveBrowseCatalog(cache)
+
+        _state.update { current ->
+            val updatedRaw = current.rawCategoriesByType + (type to allCategories)
+            current.copy(
+                selectedType = type,
+                rawCategoriesByType = updatedRaw,
+                categories = filteredCategories,
+                selectedCategory = selected,
+                items = items,
+                selectedSeries = null,
+                fullSearchItems = null,
+                fullSearchCachedAtMillis = null,
+                browseCache = cache
+            )
+        }
     }
 
     fun loadCategory(category: Category) = task {
@@ -225,10 +272,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             else -> CatalogType.SERIES
         }
         val session = _state.value.session ?: return@launch
-        val cached = store.browseCatalog(catalogType, session.profile.cacheKey()).first()?.categories.orEmpty()
-        if (cached.isNotEmpty()) _state.update { current -> if (current.searchType == type) current.copy(searchCategories = cached.distinctBy { it.id }) else current }
-        else runCatching { portal.categories(session, catalogType) }.onSuccess { categories ->
-            _state.update { current -> if (current.searchType == type) current.copy(searchCategories = categories.distinctBy { it.id }) else current }
+        val profileKey = session.profile.cacheKey()
+        val cached = store.browseCatalog(catalogType, profileKey).first()?.categories.orEmpty()
+        val raw = if (cached.isNotEmpty()) cached else runCatching { portal.categories(session, catalogType) }.getOrDefault(emptyList())
+        val filtered = filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters)
+        _state.update { current ->
+            if (current.searchType == type) current.copy(searchCategories = filtered.distinctBy { it.id }) else current
         }
     }
     fun setSearchQuery(query: String) = _state.update { it.copy(searchQuery = query) }
@@ -437,11 +486,66 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val fallback = current.profiles.firstOrNull()
         current.copy(profileEditorOpen = false, savedProfile = fallback)
     }
+    fun openCategoryManager(type: CatalogType = _state.value.selectedType) {
+        _state.update { it.copy(categoryManagerOpen = true, categoryManagerType = type) }
+        loadRawCategoriesFor(type)
+    }
+    fun closeCategoryManager() = _state.update { it.copy(categoryManagerOpen = false) }
+    fun setCategoryManagerType(type: CatalogType) {
+        _state.update { it.copy(categoryManagerType = type) }
+        loadRawCategoriesFor(type)
+    }
+    fun loadRawCategoriesFor(type: CatalogType) {
+        val snapshot = _state.value
+        if (snapshot.rawCategoriesByType[type]?.isNotEmpty() == true) return
+        val session = snapshot.session ?: return
+        viewModelScope.launch {
+            val cached = store.browseCatalog(type, session.profile.cacheKey()).first()?.categories.orEmpty()
+            val categories = if (cached.isNotEmpty()) cached else runCatching { portal.categories(session, type) }.getOrDefault(emptyList())
+            if (categories.isNotEmpty()) {
+                _state.update { current ->
+                    val updated = current.rawCategoriesByType + (type to categories)
+                    current.copy(rawCategoriesByType = updated)
+                }
+            }
+        }
+    }
+    fun setCategoryFilter(type: CatalogType, enabledCategoryIds: List<String>) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        val raw = _state.value.rawCategoriesByType[type].orEmpty()
+        if (raw.isNotEmpty() && enabledCategoryIds.size >= raw.size && raw.all { it.id in enabledCategoryIds }) {
+            store.clearCategoryFilter(profileKey, type)
+        } else {
+            store.saveCategoryFilter(profileKey, type, enabledCategoryIds)
+        }
+    }
+    fun toggleCategoryFilter(type: CatalogType, categoryId: String) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        val raw = _state.value.rawCategoriesByType[type].orEmpty()
+        val filterKey = filterKey(profileKey, type)
+        val currentEnabled = _state.value.categoryFilters[filterKey] ?: raw.map { it.id }
+        val updated = if (categoryId in currentEnabled) {
+            currentEnabled - categoryId
+        } else {
+            currentEnabled + categoryId
+        }
+        setCategoryFilter(type, updated)
+    }
+    fun selectAllCategories(type: CatalogType) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        store.clearCategoryFilter(profileKey, type)
+    }
+    fun deselectAllCategories(type: CatalogType) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        store.saveCategoryFilter(profileKey, type, emptyList())
+    }
+
     fun switchProfile(profile: PortalProfile) = task {
         store.activate(profile)
         val session = store.sessionFor(profile) ?: portal.authenticate(profile).also { store.save(it) }
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
-            searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), items = emptyList(),
+            searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
+            categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, fullSearchItems = null, playbackUrls = emptyList()) }
         loadTypeInternal(session, CatalogType.LIVE_TV)
     }
@@ -531,7 +635,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun PortalProfile.cacheKey() = "catalog-v5|$portalType|${portalUrl.trimEnd('/')}|${username.ifBlank { macAddress }}"
+    private fun filterKey(profileKey: String, type: CatalogType): String = "$profileKey|${type.name}"
+    private fun filterCategories(raw: List<Category>, profileKey: String?, type: CatalogType, filters: Map<String, List<String>>): List<Category> {
+        if (profileKey == null) return raw
+        val key = filterKey(profileKey, type)
+        val enabledIds = filters[key] ?: return raw
+        val enabledSet = enabledIds.toSet()
+        return raw.filter { it.id in enabledSet }
+    }
     private fun progressKeyFor(profile: PortalProfile, item: MediaItem, type: CatalogType, series: MediaItem?): String {
         // Keep keys bounded for storage while still differentiating profile/type/media.
         val base = buildString {
