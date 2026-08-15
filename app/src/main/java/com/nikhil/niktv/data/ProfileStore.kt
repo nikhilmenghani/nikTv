@@ -36,6 +36,7 @@ class ProfileStore(private val context: Context) {
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
     private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
+    private val uiExperienceKey = stringPreferencesKey("ui_experience")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         val identity = prefs[activeProfileKey]
@@ -66,6 +67,10 @@ class ProfileStore(private val context: Context) {
         prefs[playbackUrlsKey]?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
+    val uiExperience: Flow<com.nikhil.niktv.model.UiExperience> = context.dataStore.data.map { prefs ->
+        prefs[uiExperienceKey]?.let { runCatching { com.nikhil.niktv.model.UiExperience.valueOf(it) }.getOrNull() }
+            ?: com.nikhil.niktv.model.UiExperience.MODERN
+    }
     val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
         prefs[recentSearchesKey]?.let { runCatching { Json.decodeFromString<List<RecentSearch>>(it) }.getOrNull() }.orEmpty()
     }
@@ -145,6 +150,7 @@ class ProfileStore(private val context: Context) {
         }
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
+    suspend fun setUiExperience(value: com.nikhil.niktv.model.UiExperience) = context.dataStore.edit { it[uiExperienceKey] = value.name }
     suspend fun saveRecentSearches(items: List<RecentSearch>) = context.dataStore.edit {
         it[recentSearchesKey] = Json.encodeToString(items)
     }
@@ -166,6 +172,7 @@ class ProfileStore(private val context: Context) {
         it.remove(playbackUrlsKey)
         it.remove(recentSearchesKey)
         it.remove(pagedSearchesKey)
+        it.remove(uiExperienceKey)
     }
 
     private fun decodeProfiles(raw: String?, legacy: String?): List<PortalProfile> =

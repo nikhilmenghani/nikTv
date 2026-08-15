@@ -41,6 +41,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -65,6 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import coil3.compose.SubcomposeAsyncImage
+import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.update.AppUpdates
@@ -118,6 +121,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     editProfile = vm::editProfile,
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
+                    ,setUiExperience = vm::setUiExperience
                     ,openSearch = vm::openSearch
                     ,closeSearch = vm::closeSearch
                     ,setSearchType = vm::setSearchType
@@ -336,6 +340,7 @@ private fun CatalogScreen(
     editProfile: () -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
+    setUiExperience: (UiExperience) -> Unit,
     openSearch: () -> Unit,
     closeSearch: () -> Unit,
     setSearchType: (SearchContentType) -> Unit,
@@ -357,15 +362,19 @@ private fun CatalogScreen(
     BackHandler(enabled = state.searchOpen, onBack = closeSearch)
     BackHandler(enabled = state.favoritesOpen && !state.settingsOpen, onBack = closeFavorites)
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
+    if (state.uiExperience == UiExperience.MODERN && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries == null) {
+        ModernBrowseScreen(state, selectType, selectCategory, play, openHome, openRecent, openFavorite, openFavorites, openSearch, openSettings, refreshCatalog)
+        return
+    }
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
         NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
         else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, Modifier.weight(1f), isTv, false)
     } else Column(Modifier.fillMaxSize()) {
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, Modifier.weight(1f))
+        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, Modifier.weight(1f))
         else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
         else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
         else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
@@ -373,6 +382,138 @@ private fun CatalogScreen(
         if (!state.settingsOpen && !state.searchOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
     }
 }
+
+@Composable
+private fun ModernBrowseScreen(
+    state: NikTvState,
+    selectType: (CatalogType) -> Unit,
+    selectCategory: (Category) -> Unit,
+    play: (MediaItem) -> Unit,
+    openHome: () -> Unit,
+    openRecent: (RecentItem) -> Unit,
+    openFavorite: (FavoriteItem) -> Unit,
+    openFavorites: () -> Unit,
+    openSearch: () -> Unit,
+    openSettings: () -> Unit,
+    refreshCatalog: () -> Unit
+) {
+    val home = state.homeOpen
+    val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
+    Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
+            item("modern-top") {
+                ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings)
+            }
+            item("modern-hero") {
+                val recent = state.recentlyPlayed.firstOrNull()
+                ModernHero(hero, if (home && recent != null) {{ openRecent(recent) }} else null,
+                    if (!home && hero != null) {{ play(hero) }} else null, state.savedProfile?.name.orEmpty())
+            }
+            if (!home && state.categories.isNotEmpty()) item("modern-categories") {
+                LazyRow(contentPadding = PaddingValues(horizontal = 28.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(state.categories, key = { it.id }) { category ->
+                        FilterChip(selected = state.selectedCategory?.id == category.id, onClick = { selectCategory(category) }, label = { Text(category.title) })
+                    }
+                    item { AssistChip(onClick = refreshCatalog, label = { Text("Refresh") }, leadingIcon = { Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)) }) }
+                }
+            }
+            if (home) {
+                val recents = state.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE }
+                if (recents.isNotEmpty()) item("continue") {
+                    ModernRail("Continue Watching", recents, { it.media }, openRecent)
+                }
+                if (state.favorites.isNotEmpty()) item("my-list") {
+                    ModernRail("My List", state.favorites, { it.media }, openFavorite)
+                }
+                FavoriteKind.entries.filterNot { it == FavoriteKind.EPISODE }.forEach { kind ->
+                    val entries = recents.filter { it.kind == kind }
+                    if (entries.isNotEmpty()) item("recent-${kind.name}") {
+                        ModernRail("Recently Played ${kind.sectionTitle()}", entries, { it.media }, openRecent)
+                    }
+                }
+            } else if (state.items.isNotEmpty()) {
+                item("catalog-rail") { ModernRail(state.selectedCategory?.title ?: state.selectedType.title, state.items, { it }, play) }
+                val favorites = state.favorites.filter { favorite ->
+                    when (state.selectedType) {
+                        CatalogType.LIVE_TV -> favorite.kind == FavoriteKind.CHANNEL
+                        CatalogType.MOVIES -> favorite.kind == FavoriteKind.MOVIE
+                        CatalogType.SERIES -> favorite.kind == FavoriteKind.SERIES
+                        CatalogType.RADIO -> false
+                    }
+                }
+                if (favorites.isNotEmpty()) item("catalog-list") { ModernRail("My List", favorites, { it.media }, openFavorite) }
+            } else item("modern-empty") {
+                Box(Modifier.fillParentMaxHeight(.45f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Nothing to show in this category", color = Color.White.copy(alpha = .72f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit, openSearch: () -> Unit, openSettings: () -> Unit) {
+    Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 28.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("N", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
+        Spacer(Modifier.width(24.dp))
+        TextButton(onClick = openHome) { Text("Home", color = if (home) Color.White else Color.LightGray, fontWeight = if (home) FontWeight.Bold else FontWeight.Normal) }
+        visibleCatalogTypes.forEach { type ->
+            TextButton(onClick = { selectType(type) }) { Text(type.title, color = if (!home && state.selectedType == type) Color.White else Color.LightGray, fontWeight = if (!home && state.selectedType == type) FontWeight.Bold else FontWeight.Normal) }
+        }
+        Spacer(Modifier.weight(1f))
+        state.savedProfile?.let { Text(it.name, color = Color.LightGray, style = MaterialTheme.typography.labelLarge, maxLines = 1) }
+        IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
+        IconButton(onClick = openFavorites) { Icon(Icons.Default.FavoriteBorder, "My List", tint = Color.White) }
+        IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
+    }
+}
+
+@Composable
+private fun ModernHero(item: MediaItem?, recentAction: (() -> Unit)?, catalogAction: (() -> Unit)?, profileName: String) {
+    Box(Modifier.fillMaxWidth().heightIn(min = 300.dp).height(42.vh())) {
+        if (item?.logo != null) AsyncImage(item.logo, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xFF090909), Color(0xCC090909), Color.Transparent))))
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color(0xFF090909)))))
+        Column(Modifier.align(Alignment.BottomStart).widthIn(max = 720.dp).padding(horizontal = 36.dp, vertical = 36.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(item?.title ?: "Welcome to NikTV", style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Black, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(item?.description?.takeIf(String::isNotBlank) ?: if (profileName.isBlank()) "Choose something to watch" else "Streaming from $profileName",
+                style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = .86f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val action = recentAction ?: catalogAction
+            if (action != null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = action, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(if (recentAction != null) "Resume" else "Play") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> ModernRail(title: String, entries: List<T>, media: (T) -> MediaItem, open: (T) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, Modifier.padding(horizontal = 28.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
+        LazyRow(contentPadding = PaddingValues(horizontal = 28.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(entries, key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry -> ModernPosterCard(media(entry)) { open(entry) } }
+        }
+    }
+}
+
+@Composable
+private fun ModernPosterCard(item: MediaItem, open: () -> Unit) {
+    Column(Modifier.width(180.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = open), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
+            if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
+            else SubcomposeAsyncImage(item.logo, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
+                when (painter.state.value) {
+                    is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                    else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
+                }
+            }
+        }
+        Text(item.title, color = Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun Int.vh(): androidx.compose.ui.unit.Dp = (LocalConfiguration.current.screenHeightDp * this / 100f).dp
 
 @Composable
 private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openHome: () -> Unit, openFavorites: () -> Unit, modifier: Modifier) {
@@ -794,6 +935,7 @@ private fun SettingsContent(
     removeProfile: (PortalProfile) -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
+    setUiExperience: (UiExperience) -> Unit,
     modifier: Modifier
 ) {
     val profile = state.savedProfile ?: return
@@ -888,6 +1030,21 @@ private fun SettingsContent(
                             onClick = { setCacheIntervalMinutes(minutes) },
                             shape = SegmentedButtonDefaults.itemShape(index, 4)
                         ) { Text(label) }
+                    }
+                }
+            }
+        }
+        SettingsSection("Appearance") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Browsing experience", style = MaterialTheme.typography.titleMedium)
+                Text("Modern uses cinematic artwork and horizontal collections. Legacy keeps the compact navigation layout.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    UiExperience.entries.forEachIndexed { index, experience ->
+                        SegmentedButton(
+                            selected = state.uiExperience == experience,
+                            onClick = { setUiExperience(experience) },
+                            shape = SegmentedButtonDefaults.itemShape(index, UiExperience.entries.size)
+                        ) { Text(experience.name.lowercase().replaceFirstChar(Char::uppercase)) }
                     }
                 }
             }

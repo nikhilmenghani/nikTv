@@ -1,11 +1,15 @@
 package com.nikhil.niktv.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.media.AudioManager
+import android.provider.Settings
 import android.view.ScaleGestureDetector
 import android.view.MotionEvent
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
@@ -13,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.StayCurrentPortrait
+import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
@@ -38,6 +44,8 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
+    var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
+    val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val player = remember(media.progressKey) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(media.url))
@@ -53,7 +61,17 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
         }
     }
     DisposableEffect(activity) {
-        onDispose { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+    LaunchedEffect(gestureFeedback) {
+        if (gestureFeedback != null) {
+            delay(800)
+            gestureFeedback = null
+        }
     }
     LaunchedEffect(player, media.nextEpisode, autoPlayCancelled) {
         if (media.nextEpisode == null || autoPlayCancelled) {
@@ -92,6 +110,10 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     var lastFocus = Offset.Zero
                     var lastTouch = Offset.Zero
+                    var gestureStartY = 0f
+                    var gestureStartValue = 0f
+                    var brightnessGesture = false
+                    var adjustingLevel = false
                     fun applyVideoTransform() {
                         videoSurfaceView?.apply {
                             scaleX = videoScale
@@ -138,19 +160,48 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                         scaleDetector.onTouchEvent(event)
                         var panned = false
                         when (event.actionMasked) {
-                            MotionEvent.ACTION_DOWN -> lastTouch = Offset(event.x, event.y)
-                            MotionEvent.ACTION_POINTER_DOWN -> lastTouch = Offset(event.x, event.y)
-                            MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && videoScale > 1f && !scaleDetector.isInProgress) {
-                                val current = Offset(event.x, event.y)
-                                val delta = current - lastTouch
-                                if (delta.getDistance() > 1f) {
-                                    moveVideoBy(delta)
-                                    panned = true
+                            MotionEvent.ACTION_DOWN -> {
+                                lastTouch = Offset(event.x, event.y)
+                                gestureStartY = event.y
+                                brightnessGesture = event.x < playerView.width / 2f
+                                adjustingLevel = false
+                                gestureStartValue = if (brightnessGesture) {
+                                    val windowValue = activity?.window?.attributes?.screenBrightness ?: -1f
+                                    if (windowValue >= 0f) windowValue else {
+                                        Settings.System.getInt(viewContext.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                    }
+                                } else {
+                                    audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() /
+                                        audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
                                 }
-                                lastTouch = current
+                            }
+                            MotionEvent.ACTION_POINTER_DOWN -> lastTouch = Offset(event.x, event.y)
+                            MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
+                                if (videoScale > 1f) {
+                                    val current = Offset(event.x, event.y)
+                                    val delta = current - lastTouch
+                                    if (delta.getDistance() > 1f) {
+                                        moveVideoBy(delta)
+                                        panned = true
+                                    }
+                                    lastTouch = current
+                                } else {
+                                    val deltaY = gestureStartY - event.y
+                                    if (adjustingLevel || kotlin.math.abs(deltaY) > 24f * resources.displayMetrics.density) {
+                                        adjustingLevel = true
+                                        val level = (gestureStartValue + deltaY / playerView.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                        if (brightnessGesture) {
+                                            activity?.window?.attributes = activity?.window?.attributes?.apply { screenBrightness = level.coerceAtLeast(0.01f) }
+                                        } else {
+                                            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (level * max).toInt(), 0)
+                                        }
+                                        gestureFeedback = brightnessGesture to level
+                                    }
+                                }
                             }
                         }
-                        scaleDetector.isInProgress || event.pointerCount > 1 || panned
+                        scaleDetector.isInProgress || event.pointerCount > 1 || panned || adjustingLevel
                     }
                 }
             },
@@ -166,6 +217,27 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
             modifier = Modifier
                 .fillMaxSize()
         )
+        gestureFeedback?.let { (isBrightness, level) ->
+            Surface(
+                modifier = Modifier.align(Alignment.Center),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 22.dp, vertical = 18.dp).width(180.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        if (isBrightness) Icons.Default.Brightness6 else Icons.Default.VolumeUp,
+                        contentDescription = null
+                    )
+                    Text(if (isBrightness) "Brightness" else "Volume", style = MaterialTheme.typography.labelLarge)
+                    LinearProgressIndicator(progress = { level }, modifier = Modifier.fillMaxWidth())
+                    Text("${(level * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
         Text(
             media.media.title,
             Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 20.dp, top = 16.dp, end = 72.dp),

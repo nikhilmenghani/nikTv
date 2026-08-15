@@ -16,6 +16,8 @@ data class PortalProfile(
 @Serializable
 enum class PortalType { STALKER, XTREAM }
 
+enum class UiExperience { MODERN, LEGACY }
+
 @Serializable
 enum class CatalogType(val title: String, val apiType: String) {
     LIVE_TV("Live TV", "itv"), MOVIES("Movies", "vod"), SERIES("Series", "series"), RADIO("Radio", "radio")
