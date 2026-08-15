@@ -38,7 +38,16 @@ data class RecentSearch(
     val query: String,
     val type: SearchContentType,
     val searchedAtMillis: Long = System.currentTimeMillis()
-) { val key: String get() = "${type.name}:${query.lowercase()}" }
+) { val key: String get() = "${type.name}:${query.normalizedSearchQuery()}" }
+
+private val searchWhitespace = Regex("\\s+")
+
+fun String.canonicalSearchQuery(): String = trim().replace(searchWhitespace, " ")
+
+fun String.normalizedSearchQuery(): String = canonicalSearchQuery().lowercase()
+
+fun List<RecentSearch>.deduplicatedRecentSearches(maxItems: Int = 20): List<RecentSearch> =
+    distinctBy { it.key }.take(maxItems)
 
 @Serializable
 data class SearchResultCache(

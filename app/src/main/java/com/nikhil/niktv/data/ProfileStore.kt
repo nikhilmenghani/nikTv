@@ -16,6 +16,8 @@ import com.nikhil.niktv.model.BrowseCatalogCache
 import com.nikhil.niktv.model.PlaybackUrl
 import com.nikhil.niktv.model.RecentSearch
 import com.nikhil.niktv.model.SearchResultCache
+import com.nikhil.niktv.model.canonicalSearchQuery
+import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -68,7 +70,7 @@ class ProfileStore(private val context: Context) {
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
     val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
-        prefs[recentSearchesKey]?.let { runCatching { Json.decodeFromString<List<RecentSearch>>(it) }.getOrNull() }.orEmpty()
+        decodeRecentSearches(prefs[recentSearchesKey]).deduplicatedRecentSearches()
     }
     val pagedSearches: Flow<List<SearchResultCache>> = context.dataStore.data.map { prefs ->
         prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
@@ -149,8 +151,18 @@ class ProfileStore(private val context: Context) {
         }
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
-    suspend fun saveRecentSearches(items: List<RecentSearch>) = context.dataStore.edit {
-        it[recentSearchesKey] = Json.encodeToString(items)
+    suspend fun addRecentSearch(search: RecentSearch) = context.dataStore.edit { prefs ->
+        val entry = search.copy(query = search.query.canonicalSearchQuery())
+        val current = decodeRecentSearches(prefs[recentSearchesKey])
+        prefs[recentSearchesKey] = Json.encodeToString(
+            (listOf(entry) + current.filterNot { it.key == entry.key }).deduplicatedRecentSearches()
+        )
+    }
+    suspend fun removeRecentSearch(search: RecentSearch) = context.dataStore.edit { prefs ->
+        val current = decodeRecentSearches(prefs[recentSearchesKey])
+        prefs[recentSearchesKey] = Json.encodeToString(
+            current.filterNot { it.key == search.key }.deduplicatedRecentSearches()
+        )
     }
     suspend fun savePagedSearch(cache: SearchResultCache) = context.dataStore.edit { prefs ->
         val current = prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
@@ -189,5 +201,7 @@ class ProfileStore(private val context: Context) {
     private fun decodeSessions(raw: String?, legacy: String?): List<PortalSession> =
         raw?.let { runCatching { Json.decodeFromString<List<PortalSession>>(it) }.getOrNull() }
             ?: legacy?.let { runCatching { listOf(Json.decodeFromString<PortalSession>(it)) }.getOrNull() }.orEmpty()
+    private fun decodeRecentSearches(raw: String?): List<RecentSearch> =
+        raw?.let { runCatching { Json.decodeFromString<List<RecentSearch>>(it) }.getOrNull() }.orEmpty()
     private fun PortalProfile.identity() = "$portalType|${portalUrl.trimEnd('/').lowercase()}|${username.ifBlank { macAddress }.lowercase()}"
 }

@@ -356,8 +356,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun rememberSearch(query: String, type: SearchContentType) {
-        val entry = RecentSearch(query, type)
-        store.saveRecentSearches((listOf(entry) + _state.value.recentSearches.filterNot { it.key == entry.key }).take(20))
+        store.addRecentSearch(RecentSearch(query, type))
     }
     fun useRecentSearch(search: RecentSearch) {
         _state.update { it.copy(searchQuery = search.query, searchType = search.type, searchOpen = true,
@@ -366,7 +365,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         search()
     }
     fun deleteRecentSearch(search: RecentSearch) = viewModelScope.launch {
-        store.saveRecentSearches(_state.value.recentSearches.filterNot { it.key == search.key })
+        store.removeRecentSearch(search)
     }
     fun openSearchResult(item: MediaItem) {
         when (_state.value.searchType) {
