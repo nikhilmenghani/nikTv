@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -377,8 +378,20 @@ private fun CatalogScreen(
     BackHandler(enabled = state.searchOpen, onBack = closeSearch)
     BackHandler(enabled = state.favoritesOpen && !state.settingsOpen, onBack = closeFavorites)
     BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
-    if (state.uiExperience == UiExperience.MODERN && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries == null) {
-        ModernBrowseScreen(state, selectType, selectCategory, play, openHome, openRecent, openFavorite, openFavorites, openSearch, openSettings, refreshCatalog, openCategoryManager)
+    if (state.uiExperience == UiExperience.MODERN && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen) {
+        if (state.selectedSeries != null) {
+            ModernSeriesDetailScreen(
+                state = state,
+                play = play,
+                closeSeries = closeSeries,
+                toggleFavorite = toggleFavorite,
+                openSearch = openSearch,
+                openSettings = openSettings,
+                refreshCatalog = refreshCatalog
+            )
+        } else {
+            ModernBrowseScreen(state, selectType, selectCategory, play, openHome, openRecent, openFavorite, openFavorites, openSearch, openSettings, refreshCatalog, openCategoryManager)
+        }
         return
     }
     if (wide || isTv) Row(Modifier.fillMaxSize()) {
@@ -1235,7 +1248,7 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
     val filterMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(240.dp)
     var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
     var selectedSeason by rememberSaveable(state.selectedSeries?.id) { mutableStateOf<Int?>(null) }
-    var episodeSortDescending by rememberSaveable(state.selectedSeries?.id) { mutableStateOf(false) }
+    var episodeSortDescending by rememberSaveable(state.selectedSeries?.id) { mutableStateOf(true) }
     var sortExpanded by rememberSaveable(state.selectedSeries?.id) { mutableStateOf(false) }
     var searchVisible by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf(false) }
     var searchQuery by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf("") }
@@ -1263,9 +1276,16 @@ private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit
             }.let { if (episodeSortDescending) it.reversed() else it }
 
             if (selectedSeason != null) filteredItems.sortedWith(titleComparator)
-            else filteredItems.groupBy { it.seasonNumber }.entries
-                .sortedWith(compareBy({ it.key == null }, { it.key ?: Int.MAX_VALUE }))
-                .flatMap { (_, episodes) -> episodes.sortedWith(titleComparator) }
+            else {
+                val seasonComparator = if (episodeSortDescending) {
+                    compareByDescending<Map.Entry<Int?, List<MediaItem>>> { it.key ?: -1 }
+                } else {
+                    compareBy<Map.Entry<Int?, List<MediaItem>>>({ it.key == null }, { it.key ?: Int.MAX_VALUE })
+                }
+                filteredItems.groupBy { it.seasonNumber }.entries
+                    .sortedWith(seasonComparator)
+                    .flatMap { (_, episodes) -> episodes.sortedWith(titleComparator) }
+            }
         }
     }
     val resultCount = if (searchQuery.isBlank()) searchableItems.size else filteredItems.size
@@ -1551,6 +1571,17 @@ private fun String.episodeNumberFromTitle(): Int? {
     }
 }
 
+private fun String.seasonNumberFromTitle(): Int? {
+    val patterns = listOf(
+        Regex("(?i)S(?:EASON)?[ ._-]*(\\d+)"),
+        Regex("(?i)S(\\d+)[ ._-]*E"),
+        Regex("(?i)Season[ ._-]*(\\d+)")
+    )
+    return patterns.firstNotNullOfOrNull { pattern ->
+        pattern.findAll(this).firstOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
+    }
+}
+
 private fun naturalTitleCompare(first: String, second: String): Int {
     val tokenPattern = Regex("\\d+|\\D+")
     val firstTokens = tokenPattern.findAll(first.lowercase()).map { it.value }.toList()
@@ -1564,6 +1595,29 @@ private fun naturalTitleCompare(first: String, second: String): Int {
         if (comparison != 0) return comparison
     }
     return firstTokens.size.compareTo(secondTokens.size)
+}
+
+private fun episodeComparator(descending: Boolean): Comparator<MediaItem> = Comparator { first, second ->
+    val firstSeason = first.seasonNumber ?: first.title.seasonNumberFromTitle()
+    val secondSeason = second.seasonNumber ?: second.title.seasonNumberFromTitle()
+    val seasonComp = when {
+        firstSeason != null && secondSeason != null && firstSeason != secondSeason -> firstSeason.compareTo(secondSeason)
+        firstSeason != null && secondSeason == null -> 1
+        firstSeason == null && secondSeason != null -> -1
+        else -> 0
+    }
+    if (seasonComp != 0) {
+        return@Comparator if (descending) -seasonComp else seasonComp
+    }
+    val firstEp = first.episodeNumber ?: first.title.episodeNumberFromTitle()
+    val secondEp = second.episodeNumber ?: second.title.episodeNumberFromTitle()
+    val epComp = when {
+        firstEp != null && secondEp != null && firstEp != secondEp -> firstEp.compareTo(secondEp)
+        firstEp != null && secondEp == null -> 1
+        firstEp == null && secondEp != null -> -1
+        else -> naturalTitleCompare(first.title, second.title)
+    }
+    if (descending) -epComp else epComp
 }
 
 private fun cast4kStyleDeviceMacAddress(context: android.content.Context): String {
@@ -1737,6 +1791,588 @@ private fun CategoryManagerDialog(
                     Text("Apply & Close")
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun ModernSeriesDetailScreen(
+    state: NikTvState,
+    play: (MediaItem) -> Unit,
+    closeSeries: () -> Unit,
+    toggleFavorite: (MediaItem) -> Unit,
+    openSearch: () -> Unit,
+    openSettings: () -> Unit,
+    refreshCatalog: () -> Unit
+) {
+    val series = state.selectedSeries ?: return
+    var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
+    var selectedSeason by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
+    var searchQuery by rememberSaveable(series.id) { mutableStateOf("") }
+    var seasonDropdownExpanded by remember { mutableStateOf(false) }
+
+    val isFavorite = remember(state.favorites, series) {
+        state.favorites.any { it.media.id == series.id && it.kind == FavoriteKind.SERIES }
+    }
+
+    val availableSeasons = remember(state.items) {
+        state.items.mapNotNull { it.seasonNumber }.distinct().sorted()
+    }
+
+    val comparator = remember(episodeSortDescending) {
+        episodeComparator(episodeSortDescending)
+    }
+
+    val seasonFilteredItems = remember(state.items, selectedSeason) {
+        if (selectedSeason == null) state.items
+        else state.items.filter { it.seasonNumber == selectedSeason }
+    }
+
+    val filteredEpisodes = remember(seasonFilteredItems, searchQuery, comparator, episodeSortDescending) {
+        val query = searchQuery.trim()
+        val baseList = if (query.isBlank()) seasonFilteredItems else {
+            seasonFilteredItems.filter { ep ->
+                ep.title.contains(query, ignoreCase = true) ||
+                    ep.description?.contains(query, ignoreCase = true) == true ||
+                    ep.episodeNumber?.toString() == query
+            }
+        }
+        if (selectedSeason != null) {
+            baseList.sortedWith(comparator)
+        } else {
+            val seasonComp = if (episodeSortDescending) {
+                compareByDescending<Map.Entry<Int?, List<MediaItem>>> { it.key ?: -1 }
+            } else {
+                compareBy<Map.Entry<Int?, List<MediaItem>>>({ it.key == null }, { it.key ?: Int.MAX_VALUE })
+            }
+            baseList.groupBy { it.seasonNumber }.entries
+                .sortedWith(seasonComp)
+                .flatMap { (_, eps) -> eps.sortedWith(comparator) }
+        }
+    }
+
+    val recentEpisode = remember(state.recentlyPlayed, state.playbackProgress, state.items, series) {
+        val recentWatched = state.recentlyPlayed.firstOrNull { it.series?.id == series.id }?.lastPlayed
+            ?.let { last -> state.items.firstOrNull { it.id == last.id } }
+        if (recentWatched != null) return@remember recentWatched
+        val lastProgress = state.playbackProgress
+            .filter { prog -> prog.key.contains(series.id) }
+            .maxByOrNull { it.updatedAtMillis }
+        if (lastProgress != null) {
+            state.items.firstOrNull { it.id in lastProgress.key }
+        } else null
+    }
+
+    val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) state.items.maxByOrNull { it.episodeNumber ?: it.title.episodeNumberFromTitle() ?: 0 } ?: state.items.firstOrNull()
+        else state.items.firstOrNull()
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 64.dp)
+        ) {
+            item("series-hero") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(340.dp)
+                ) {
+                    val backdropUrl = series.logo
+                    if (!backdropUrl.isNullOrBlank()) {
+                        SubcomposeAsyncImage(
+                            model = backdropUrl,
+                            contentDescription = series.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(320.dp)
+                        )
+                    } else {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(320.dp)
+                                .background(Brush.radialGradient(listOf(Color(0xFF1E293B), Color(0xFF090909))))
+                        )
+                    }
+
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0x99000000),
+                                        Color(0x22000000),
+                                        Color(0xDD090909),
+                                        Color(0xFF090909)
+                                    )
+                                )
+                            )
+                    )
+
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = closeSeries,
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to browse", tint = Color.White)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        IconButton(
+                            onClick = openSearch,
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.Search, "Search", tint = Color.White)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(
+                            onClick = openSettings,
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                        ) {
+                            Icon(Icons.Default.Settings, "Settings", tint = Color.White)
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = series.title,
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Black,
+                            color = Color.White,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+                            ) {
+                                Text(
+                                    text = "SERIES",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                            if (availableSeasons.isNotEmpty()) {
+                                Text(
+                                    text = "${availableSeasons.size} ${if (availableSeasons.size == 1) "Season" else "Seasons"}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color.LightGray
+                                )
+                                Text("•", color = Color.Gray)
+                            }
+                            Text(
+                                text = "${state.items.size} Episodes",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color.LightGray
+                            )
+                        }
+
+                        if (!series.description.isNullOrBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = series.description,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.8f),
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (primaryEpisodeToPlay != null) {
+                                Button(
+                                    onClick = { play(primaryEpisodeToPlay) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color.White,
+                                        contentColor = Color.Black
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, null, Modifier.size(24.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    val playLabel = when {
+                                        recentEpisode != null -> "Resume (${recentEpisode.title.take(20)})"
+                                        episodeSortDescending -> "Play Latest (${primaryEpisodeToPlay.title.take(18)})"
+                                        else -> "Play First Episode"
+                                    }
+                                    Text(playLabel, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            FilledTonalButton(
+                                onClick = { toggleFavorite(series) },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = if (isFavorite) MaterialTheme.colorScheme.primaryContainer else Color.White.copy(alpha = 0.15f),
+                                    contentColor = if (isFavorite) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+                                )
+                            ) {
+                                Icon(
+                                    if (isFavorite) Icons.Default.Check else Icons.Default.Add,
+                                    null,
+                                    Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (isFavorite) "In My List" else "My List")
+                            }
+
+                            IconButton(
+                                onClick = refreshCatalog,
+                                modifier = Modifier.background(Color.White.copy(alpha = 0.15f), CircleShape)
+                            ) {
+                                Icon(Icons.Default.Refresh, "Refresh episodes", tint = Color.White)
+                            }
+                        }
+                    }
+                }
+            }
+
+            item("series-controls") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (availableSeasons.size > 1) {
+                            Box {
+                                Surface(
+                                    onClick = { seasonDropdownExpanded = true },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFF1E2430),
+                                    contentColor = Color.White,
+                                    modifier = Modifier.height(42.dp)
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = selectedSeason?.let { "Season $it" } ?: "All Seasons",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Icon(Icons.Default.ArrowDropDown, null)
+                                    }
+                                }
+
+                                DropdownMenu(
+                                    expanded = seasonDropdownExpanded,
+                                    onDismissRequest = { seasonDropdownExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("All Seasons (${state.items.size} episodes)") },
+                                        onClick = { selectedSeason = null; seasonDropdownExpanded = false },
+                                        trailingIcon = if (selectedSeason == null) {{ Icon(Icons.Default.Check, null) }} else null
+                                    )
+                                    val orderedSeasons = if (episodeSortDescending) availableSeasons.reversed() else availableSeasons
+                                    orderedSeasons.forEach { season ->
+                                        val seasonEpCount = state.items.count { it.seasonNumber == season }
+                                        DropdownMenuItem(
+                                            text = { Text("Season $season ($seasonEpCount episodes)") },
+                                            onClick = { selectedSeason = season; seasonDropdownExpanded = false },
+                                            trailingIcon = if (selectedSeason == season) {{ Icon(Icons.Default.Check, null) }} else null
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Surface(
+                            onClick = { episodeSortDescending = !episodeSortDescending },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (episodeSortDescending) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color(0xFF1E2430),
+                            border = BorderStroke(1.dp, if (episodeSortDescending) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color.Transparent),
+                            contentColor = Color.White,
+                            modifier = Modifier.height(42.dp)
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    if (episodeSortDescending) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                                    null,
+                                    Modifier.size(18.dp),
+                                    tint = if (episodeSortDescending) MaterialTheme.colorScheme.primary else Color.White
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = if (episodeSortDescending) "Latest First" else "Oldest First",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (episodeSortDescending) MaterialTheme.colorScheme.primary else Color.White
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.weight(1f))
+
+                        Text(
+                            text = "${filteredEpisodes.size} episodes",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.Gray
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Search episode name or number…", color = Color.Gray) },
+                        leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.LightGray) },
+                        trailingIcon = if (searchQuery.isNotEmpty()) {{
+                            IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, "Clear", tint = Color.LightGray) }
+                        }} else null,
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color(0xFF141822),
+                            unfocusedContainerColor = Color(0xFF10141C),
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color(0xFF222B3D),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                }
+            }
+
+            if (state.items.isEmpty() && state.loading) {
+                item("episodes-loading") {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            Text("Loading episodes from server…", color = Color.LightGray)
+                        }
+                    }
+                }
+            } else if (filteredEpisodes.isEmpty()) {
+                item("episodes-empty") {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (searchQuery.isBlank()) "No episodes found for this series." else "No episodes matching “${searchQuery.trim()}”",
+                            color = Color.LightGray
+                        )
+                    }
+                }
+            } else {
+                items(filteredEpisodes, key = { it.id }) { episode ->
+                    val progress = remember(state.playbackProgress, episode.id) {
+                        state.playbackProgress.firstOrNull { prog ->
+                            prog.key.contains(episode.id)
+                        } ?: state.playbackProgress.firstOrNull { prog ->
+                            prog.key.endsWith(":${episode.id}")
+                        }
+                    }
+                    val isRecent = recentEpisode?.id == episode.id
+
+                    ModernEpisodeCard(
+                        episode = episode,
+                        series = series,
+                        progress = progress,
+                        isCurrentResume = isRecent,
+                        onClick = { play(episode) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModernEpisodeCard(
+    episode: MediaItem,
+    series: MediaItem,
+    progress: PlaybackProgress?,
+    isCurrentResume: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val progressFraction = remember(progress) {
+        if (progress != null && progress.durationMillis > 0L) {
+            (progress.positionMillis.toFloat() / progress.durationMillis.toFloat()).coerceIn(0f, 1f)
+        } else 0f
+    }
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (isCurrentResume) Color(0xFF1B2232) else Color(0xFF121620),
+        border = if (isCurrentResume) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(136.dp)
+                    .height(78.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF1E293B)),
+                contentAlignment = Alignment.Center
+            ) {
+                val imageUrl = episode.logo ?: series.logo
+                if (!imageUrl.isNullOrBlank()) {
+                    SubcomposeAsyncImage(
+                        model = imageUrl,
+                        contentDescription = episode.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.3f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.PlayCircle,
+                        contentDescription = null,
+                        modifier = Modifier.size(34.dp),
+                        tint = Color.White.copy(alpha = 0.9f)
+                    )
+                }
+
+                if (progressFraction > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(Color.Black.copy(alpha = 0.6f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progressFraction)
+                                .background(Color(0xFFE50914))
+                        )
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val epNumber = episode.episodeNumber ?: episode.title.episodeNumberFromTitle()
+                    val seasonNumber = episode.seasonNumber ?: episode.title.seasonNumberFromTitle()
+                    val badge = when {
+                        seasonNumber != null && epNumber != null -> "S${seasonNumber}:E${epNumber}"
+                        epNumber != null -> "EP $epNumber"
+                        else -> null
+                    }
+                    if (badge != null) {
+                        Text(
+                            text = badge,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    if (isCurrentResume) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = "LAST WATCHED",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = episode.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (!episode.description.isNullOrBlank()) {
+                    Text(
+                        text = episode.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.LightGray.copy(alpha = 0.8f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Icon(
+                Icons.Default.PlayArrow,
+                contentDescription = "Play ${episode.title}",
+                tint = Color.White.copy(alpha = 0.7f),
+                modifier = Modifier.size(24.dp)
+            )
         }
     }
 }

@@ -189,8 +189,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshCatalog() = task {
         val snapshot = _state.value
-        loadTypeInternal(requireNotNull(snapshot.session), snapshot.selectedType, forceRefresh = true,
-            preferredCategoryId = snapshot.selectedCategory?.id)
+        val series = snapshot.selectedSeries
+        val session = requireNotNull(snapshot.session)
+        if (series != null) {
+            _state.update { it.copy(items = emptyList()) }
+            val episodes = portal.episodes(session, series)
+            _state.update { it.copy(items = episodes) }
+        } else {
+            loadTypeInternal(session, snapshot.selectedType, forceRefresh = true,
+                preferredCategoryId = snapshot.selectedCategory?.id)
+        }
     }
 
     fun setCacheIntervalMinutes(minutes: Int) = viewModelScope.launch {
