@@ -219,12 +219,14 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
         )
         gestureFeedback?.let { (isBrightness, level) ->
             Surface(
-                modifier = Modifier.align(Alignment.Center),
+                modifier = Modifier
+                    .align(if (isBrightness) Alignment.CenterStart else Alignment.CenterEnd)
+                    .padding(horizontal = 20.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)
             ) {
                 Column(
-                    Modifier.padding(horizontal = 22.dp, vertical = 18.dp).width(180.dp),
+                    Modifier.padding(horizontal = 18.dp, vertical = 16.dp).width(136.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
