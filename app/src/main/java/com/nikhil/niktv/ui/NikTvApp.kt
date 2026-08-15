@@ -1,27 +1,11 @@
 package com.nikhil.niktv.ui
 
-import android.app.Activity
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.provider.Settings
-import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,13 +15,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -48,11 +32,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,11 +57,10 @@ import com.nikhil.niktv.model.*
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.update.UpdateInfo
 import java.security.MessageDigest
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val NikColors = darkColorScheme(primary = Color(0xFF9B87F5), secondary = Color(0xFF4FD1C5), background = Color(0xFF080B12), surface = Color(0xFF111827))
-private val XtreamColors = darkColorScheme(primary = Color(0xFF35D0BA), secondary = Color(0xFF72A7FF), background = Color(0xFF071310), surface = Color(0xFF10201D))
+private val NikColors = darkColorScheme(primary = Color(0xFFE50914), secondary = Color(0xFFE50914), background = Color(0xFF090909), surface = Color(0xFF111827))
+private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
 private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
@@ -106,8 +86,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     closeSeries = vm::closeSeries,
-                    prepareFullSearch = vm::prepareFullSearch,
-                    refreshFullSearch = vm::refreshFullSearch,
                     refreshCatalog = vm::refreshCatalog,
                     openFavorites = vm::openFavorites,
                     closeFavorites = vm::closeFavorites,
@@ -124,7 +102,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     editProfile = vm::editProfile,
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
-                    ,setUiExperience = vm::setUiExperience
                     ,openSearch = vm::openSearch
                     ,closeSearch = vm::closeSearch
                     ,setSearchType = vm::setSearchType
@@ -187,23 +164,22 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 @Composable
 private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit) {
     if (profiles.isNotEmpty() && !editorOpen) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text("Who's watching?", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-            Text("Choose an IPTV profile", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FlowRow(Modifier.widthIn(max = 760.dp).padding(top = 28.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(
+            Modifier.fillMaxSize().background(Color(0xFF090909)).statusBarsPadding().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text("N", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
+            Spacer(Modifier.height(24.dp))
+            Text("Who's watching?", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = Color.White)
+            Text("Choose an IPTV profile", color = Color.LightGray)
+            FlowRow(Modifier.widthIn(max = 900.dp).padding(top = 32.dp), horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 profiles.forEach { profile ->
-                    Column(Modifier.width(150.dp).clip(RoundedCornerShape(24.dp)).clickable { selectProfile(profile) }.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Surface(Modifier.size(112.dp), shape = RoundedCornerShape(28.dp), color = if (profile.portalType == PortalType.STALKER) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer) {
-                            Box(contentAlignment = Alignment.Center) { Icon(if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null, Modifier.size(52.dp)) }
-                        }
-                        Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                        Text(profile.portalType.displayName(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ProfileChooserTile(profile.name, profile.portalType.displayName(), if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key) {
+                        selectProfile(profile)
                     }
                 }
-                Column(Modifier.width(150.dp).clip(RoundedCornerShape(24.dp)).clickable(onClick = addProfile).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(Modifier.size(112.dp), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Add, "Add profile", Modifier.size(52.dp)) } }
-                    Text("Add profile", style = MaterialTheme.typography.titleMedium)
-                }
+                ProfileChooserTile("Add profile", "New connection", Icons.Default.Add, addProfile)
             }
         }
         return
@@ -243,8 +219,8 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     val nameFocus = remember { FocusRequester() }; val urlFocus = remember { FocusRequester() }
     val credentialFocus = remember { FocusRequester() }; val lastFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    Box(Modifier.fillMaxSize().statusBarsPadding().imePadding().padding(16.dp), contentAlignment = Alignment.Center) {
-        Card(Modifier.widthIn(max = 520.dp).fillMaxHeight()) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF090909)).statusBarsPadding().imePadding().padding(16.dp), contentAlignment = Alignment.Center) {
+        Card(Modifier.widthIn(max = 520.dp).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (profiles.isNotEmpty()) IconButton(onClick = cancelEditor) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to profiles") }
@@ -274,59 +250,25 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
 }
 
 @Composable
-private fun LegacyProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, loading: Boolean, connect: (PortalProfile) -> Unit, reconnect: () -> Unit, selectProfile: (PortalProfile) -> Unit, removeProfile: (PortalProfile) -> Unit) {
-    var name by remember(saved) { mutableStateOf((saved?.name?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PROFILE_NAME).withoutConfigurationQuotes()) }
-    var url by remember(saved) { mutableStateOf((saved?.portalUrl?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_PORTAL_URL).withoutConfigurationQuotes()) }
-    var mac by remember(saved) { mutableStateOf((saved?.macAddress?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_MAC_ADDRESS).withoutConfigurationQuotes()) }
-    var serial by remember(saved) { mutableStateOf((saved?.serialNumber?.takeIf(String::isNotBlank) ?: BuildConfig.DEFAULT_SERIAL_NUMBER).withoutConfigurationQuotes()) }
-    var portalType by remember(saved) { mutableStateOf(saved?.portalType ?: PortalType.STALKER) }
-    var username by remember(saved) { mutableStateOf(saved?.username.orEmpty()) }
-    var password by remember(saved) { mutableStateOf(saved?.password.orEmpty()) }
-    var advanced by remember(saved) { mutableStateOf((saved?.serialNumber ?: BuildConfig.DEFAULT_SERIAL_NUMBER).isNotBlank()) }
-    BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp), contentAlignment = Alignment.Center) {
-        val wide = maxWidth >= 720.dp
-        Row(horizontalArrangement = Arrangement.spacedBy(56.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (wide) Column(Modifier.widthIn(max = 380.dp)) { Text("NikTV", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold); Text("Your portal, beautifully organized on every screen.", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Card(Modifier.widthIn(max = 480.dp)) {
-                Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    if (!wide) Text("NikTV", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-                    Text("Connect a portal", style = MaterialTheme.typography.headlineMedium)
-                    if (profiles.isNotEmpty()) {
-                        Text("Saved profiles", style = MaterialTheme.typography.titleMedium)
-                        profiles.forEach { profile ->
-                            ListItem(
-                                headlineContent = { Text(profile.name) },
-                                supportingContent = { Text("${profile.portalType.displayName()} · ${profile.portalUrl}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                leadingContent = { Icon(if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
-                                trailingContent = { Icon(Icons.Default.ChevronRight, "Open ${profile.name}") },
-                                modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable { selectProfile(profile) },
-                                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-                            )
-                        }
-                        HorizontalDivider()
-                        Text("Add another profile", style = MaterialTheme.typography.titleMedium)
-                    }
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        SegmentedButton(portalType == PortalType.STALKER, { portalType = PortalType.STALKER }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Stalker / MAG") }
-                        SegmentedButton(portalType == PortalType.XTREAM, { portalType = PortalType.XTREAM }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Xtream") }
-                    }
-                    OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Profile name") }, singleLine = true)
-                    OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), label = { Text("Portal URL") }, placeholder = { Text("http://provider.example:8080") }, singleLine = true)
-                    if (portalType == PortalType.XTREAM) {
-                        OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("Username") }, singleLine = true)
-                        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-                    } else {
-                        OutlinedTextField(mac, { mac = it }, Modifier.fillMaxWidth(), label = { Text("MAC address") }, placeholder = { Text("00:1A:79:XX:XX:XX") }, singleLine = true)
-                        TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
-                        if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth(), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial already registered for this MAC. Leave blank to generate one.") }, singleLine = true)
-                    }
-                    val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
-                    Button(onClick = { connect(PortalProfile(name.withoutConfigurationQuotes(), url.withoutConfigurationQuotes(), mac.withoutConfigurationQuotes(), serial.withoutConfigurationQuotes(), portalType, username.withoutConfigurationQuotes(), password.withoutConfigurationQuotes())) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text("Authenticate") }
-                    if (saved != null) TextButton(onClick = reconnect, Modifier.fillMaxWidth()) { Text("Reconnect to ${saved.name}") }
-                    Text("Only connect to portals and media you are authorized to access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+private fun ProfileChooserTile(title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        Modifier.width(156.dp).onFocusChanged { focused = it.isFocused }
+            .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
+            .clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            Modifier.size(124.dp).clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF1F2937))
+                .border(if (focused) 4.dp else 2.dp, if (focused) Color(0xFFE50914) else Color(0xFF374151), RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, title, Modifier.size(56.dp), tint = if (focused) Color.White else Color.LightGray)
         }
+        Text(title, color = if (focused) Color.White else Color.LightGray, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+        Text(subtitle, color = Color.Gray, maxLines = 1, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -337,8 +279,6 @@ private fun CatalogScreen(
     selectCategory: (Category) -> Unit,
     play: (MediaItem) -> Unit,
     closeSeries: () -> Unit,
-    prepareFullSearch: () -> Unit,
-    refreshFullSearch: () -> Unit,
     refreshCatalog: () -> Unit,
     openFavorites: () -> Unit,
     closeFavorites: () -> Unit,
@@ -355,7 +295,6 @@ private fun CatalogScreen(
     editProfile: () -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
-    setUiExperience: (UiExperience) -> Unit,
     openSearch: () -> Unit,
     closeSearch: () -> Unit,
     setSearchType: (SearchContentType) -> Unit,
@@ -365,51 +304,110 @@ private fun CatalogScreen(
     deleteRecentSearch: (RecentSearch) -> Unit,
     openSearchResult: (MediaItem) -> Unit,
     loadMoreSearch: () -> Unit,
-    setSearchCategory: (String) -> Unit
-    ,addProfile: () -> Unit
-    ,switchProfile: (PortalProfile) -> Unit
-    ,removeProfile: (PortalProfile) -> Unit
-    ,openCategoryManager: (CatalogType) -> Unit
+    setSearchCategory: (String) -> Unit,
+    addProfile: () -> Unit,
+    switchProfile: (PortalProfile) -> Unit,
+    removeProfile: (PortalProfile) -> Unit,
+    openCategoryManager: (CatalogType) -> Unit
 ) {
     val configuration = LocalConfiguration.current
-    val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) || configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val wide = configuration.screenWidthDp >= 720
+
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
-    BackHandler(enabled = state.searchOpen, onBack = closeSearch)
-    BackHandler(enabled = state.favoritesOpen && !state.settingsOpen, onBack = closeFavorites)
-    BackHandler(enabled = state.selectedSeries != null && !state.settingsOpen, onBack = closeSeries)
-    if (state.uiExperience == UiExperience.MODERN && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen) {
-        if (state.selectedSeries != null) {
-            ModernSeriesDetailScreen(
+    BackHandler(enabled = !state.settingsOpen && state.searchOpen, onBack = closeSearch)
+    BackHandler(enabled = !state.settingsOpen && !state.searchOpen && state.favoritesOpen, onBack = closeFavorites)
+    BackHandler(
+        enabled = !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries != null,
+        onBack = closeSeries
+    )
+
+    // Determine the current content to show in the main pane
+    @Composable
+    fun MainContent(modifier: Modifier = Modifier) {
+        Box(modifier) {
+            when {
+                state.settingsOpen -> ModernSettingsScreen(
+                    state = state,
+                    closeSettings = closeSettings,
+                    reauthenticate = reauthenticate,
+                    editProfile = editProfile,
+                    addProfile = addProfile,
+                    switchProfile = switchProfile,
+                    removeProfile = removeProfile,
+                    logout = logout,
+                    setCacheIntervalMinutes = setCacheIntervalMinutes,
+                    openCategoryManager = openCategoryManager
+                )
+                state.searchOpen -> ModernSearchScreen(
+                    state = state,
+                    close = closeSearch,
+                    setType = setSearchType,
+                    setCategory = setSearchCategory,
+                    setQuery = setSearchQuery,
+                    search = search,
+                    useRecent = useRecentSearch,
+                    deleteRecent = deleteRecentSearch,
+                    openResult = openSearchResult,
+                    loadMore = loadMoreSearch
+                )
+                state.favoritesOpen -> ModernFavoritesScreen(
+                    state = state,
+                    openFavorite = openFavorite,
+                    toggleFavorite = toggleFavoriteEntry,
+                    openSearch = openSearch,
+                    openSettings = openSettings,
+                    closeFavorites = closeFavorites
+                )
+                state.selectedSeries != null -> ModernSeriesDetailScreen(
+                    state = state,
+                    play = play,
+                    closeSeries = closeSeries,
+                    toggleFavorite = toggleFavorite,
+                    openSearch = openSearch,
+                    openSettings = openSettings,
+                    refreshCatalog = refreshCatalog
+                )
+                else -> ModernBrowseScreen(
+                    state = state,
+                    selectType = selectType,
+                    selectCategory = selectCategory,
+                    play = play,
+                    openHome = openHome,
+                    openRecent = openRecent,
+                    removeRecent = removeRecent,
+                    clearRecent = clearRecent,
+                    openFavorite = openFavorite,
+                    openFavorites = openFavorites,
+                    openSearch = openSearch,
+                    openSettings = openSettings,
+                    refreshCatalog = refreshCatalog,
+                    openCategoryManager = openCategoryManager
+                )
+            }
+        }
+    }
+
+    if (wide || isTv) {
+        Row(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+            ModernSideRail(
                 state = state,
-                play = play,
-                closeSeries = closeSeries,
-                toggleFavorite = toggleFavorite,
+                selectType = selectType,
+                openHome = openHome,
+                openFavorites = openFavorites,
                 openSearch = openSearch,
                 openSettings = openSettings,
-                refreshCatalog = refreshCatalog
+                modifier = Modifier.width(72.dp).fillMaxHeight()
             )
-        } else {
-            ModernBrowseScreen(state, selectType, selectCategory, play, openHome, openRecent, openFavorite, openFavorites, openSearch, openSettings, refreshCatalog, openCategoryManager)
+            MainContent(Modifier.weight(1f).fillMaxHeight())
         }
-        return
-    }
-    if (wide || isTv) Row(Modifier.fillMaxSize()) {
-        NavigationPanel(state, selectType, openHome, openFavorites, Modifier.width(220.dp).fillMaxHeight())
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, openCategoryManager, Modifier.weight(1f))
-        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), isTv)
-        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
-        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), isTv)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, openCategoryManager, Modifier.weight(1f), isTv, false)
-    } else Column(Modifier.fillMaxSize()) {
-        if (state.settingsOpen) SettingsContent(state, closeSettings, reauthenticate, editProfile, addProfile, switchProfile, removeProfile, logout, setCacheIntervalMinutes, setUiExperience, openCategoryManager, Modifier.weight(1f))
-        else if (state.searchOpen) SearchContent(state, closeSearch, setSearchType, setSearchCategory, setSearchQuery, search, useRecentSearch, deleteRecentSearch, openSearchResult, loadMoreSearch, Modifier.weight(1f), false)
-        else if (state.homeOpen) HomeContent(state, openRecent, removeRecent, clearRecent, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
-        else if (state.favoritesOpen) FavoritesContent(state, openFavorite, toggleFavoriteEntry, openSettings, openSearch, Modifier.weight(1f), false)
-        else CatalogContent(state, selectCategory, play, toggleFavorite, closeSeries, prepareFullSearch, refreshFullSearch, refreshCatalog, openSettings, openSearch, openCategoryManager, Modifier.weight(1f), false, true)
-        if (!state.settingsOpen && !state.searchOpen) CatalogBottomNavigation(state, selectType, openHome, openFavorites)
+    } else {
+        MainContent(Modifier.fillMaxSize())
     }
 }
+
+
 
 @Composable
 private fun ModernBrowseScreen(
@@ -419,6 +417,8 @@ private fun ModernBrowseScreen(
     play: (MediaItem) -> Unit,
     openHome: () -> Unit,
     openRecent: (RecentItem) -> Unit,
+    removeRecent: (RecentItem) -> Unit,
+    clearRecent: (FavoriteKind) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     openFavorites: () -> Unit,
     openSearch: () -> Unit,
@@ -428,95 +428,217 @@ private fun ModernBrowseScreen(
 ) {
     val home = state.homeOpen
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
-    Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
-            item("modern-top") {
+    val configuration = LocalConfiguration.current
+    val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val isWide = configuration.screenWidthDp >= 720 || isTv
+    val columns = when {
+        state.selectedType == CatalogType.LIVE_TV -> if (isWide) 6 else 4
+        isWide -> 5
+        else -> 3
+    }
+    val aspectRatio = if (state.selectedType == CatalogType.LIVE_TV) 16f / 9f else 2f / 3f
+    val gridSpan: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+
+    ModernGrid(
+        columns = columns,
+        modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
+        contentPadding = PaddingValues(bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+            if (!isWide) item("modern-top", span = gridSpan) {
                 ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings)
             }
-            item("modern-hero") {
+            item("modern-hero", span = gridSpan) {
                 val recent = state.recentlyPlayed.firstOrNull()
                 ModernHero(hero, if (home && recent != null) {{ openRecent(recent) }} else null,
                     if (!home && hero != null) {{ play(hero) }} else null, state.savedProfile?.name.orEmpty())
             }
-            if (!home) item("modern-categories") {
+            if (!home) item("modern-categories", span = gridSpan) {
                 val profileKey = state.savedProfile?.cacheKey()
                 val filterKey = "$profileKey|${state.selectedType.name}"
                 val isFiltered = state.categoryFilters.containsKey(filterKey)
-                LazyRow(contentPadding = PaddingValues(horizontal = 28.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item {
-                        AssistChip(
-                            onClick = { openCategoryManager(state.selectedType) },
-                            label = { Text(if (isFiltered) "Filtered (${state.categories.size})" else "Categories") },
-                            leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(18.dp)) },
-                            colors = if (isFiltered) AssistChipDefaults.assistChipColors(labelColor = MaterialTheme.colorScheme.primary) else AssistChipDefaults.assistChipColors()
-                        )
+                Surface(color = Color(0xFF111111), shadowElevation = 8.dp) {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        item {
+                            AssistChip(
+                                onClick = { openCategoryManager(state.selectedType) },
+                                label = { Text(if (isFiltered) "Filtered (${state.categories.size})" else "Categories") },
+                                leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(16.dp)) }
+                            )
+                        }
+                        items(state.categories, key = { it.id }) { category ->
+                            val selected = state.selectedCategory?.id == category.id
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                TextButton(onClick = { selectCategory(category) }) {
+                                    Text(category.title, color = if (selected) Color.White else Color.LightGray)
+                                }
+                                Box(Modifier.width(30.dp).height(3.dp).background(if (selected) Color(0xFFE50914) else Color.Transparent))
+                            }
+                        }
+                        item {
+                            AssistChip(onClick = refreshCatalog, label = { Text("Refresh") }, leadingIcon = {
+                                Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
+                            })
+                        }
                     }
-                    items(state.categories, key = { it.id }) { category ->
-                        FilterChip(selected = state.selectedCategory?.id == category.id, onClick = { selectCategory(category) }, label = { Text(category.title) })
-                    }
-                    item { AssistChip(onClick = refreshCatalog, label = { Text("Refresh") }, leadingIcon = { Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)) }) }
                 }
             }
             if (home) {
                 val recents = state.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE }
-                if (recents.isNotEmpty()) item("continue") {
-                    ModernRail("Continue Watching", recents, { it.media }, openRecent)
+                if (recents.isNotEmpty()) item("continue", span = gridSpan) {
+                    ModernRail(
+                        "Continue Watching", recents, { it.media }, openRecent,
+                        progress = { recent -> state.playbackProgress.progressFor(recent.lastPlayed ?: recent.media) },
+                        remove = removeRecent
+                    )
                 }
-                if (state.favorites.isNotEmpty()) item("my-list") {
-                    ModernRail("My List", state.favorites, { it.media }, openFavorite)
+                if (state.favorites.isNotEmpty()) item("my-list", span = gridSpan) {
+                    ModernRail(
+                        "My List", state.favorites, { it.media }, openFavorite,
+                        aspectRatio = { favorite -> if (favorite.kind == FavoriteKind.CHANNEL) 16f / 9f else 2f / 3f }
+                    )
                 }
                 FavoriteKind.entries.filterNot { it == FavoriteKind.EPISODE }.forEach { kind ->
                     val entries = recents.filter { it.kind == kind }
-                    if (entries.isNotEmpty()) item("recent-${kind.name}") {
-                        ModernRail("Recently Played ${kind.sectionTitle()}", entries, { it.media }, openRecent)
+                    if (entries.isNotEmpty()) item("recent-${kind.name}", span = gridSpan) {
+                        ModernRail(
+                            "Recently Played ${kind.sectionTitle()}", entries, { it.media }, openRecent,
+                            aspectRatio = { if (kind == FavoriteKind.CHANNEL) 16f / 9f else 2f / 3f },
+                            remove = removeRecent,
+                            clear = { clearRecent(kind) }
+                        )
+                    }
+                }
+                if (recents.isEmpty() && state.favorites.isEmpty()) item("home-empty", span = gridSpan) {
+                    Box(Modifier.fillMaxWidth().height(260.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Icon(Icons.Default.PlayCircle, null, Modifier.size(64.dp), tint = Color.DarkGray)
+                            Text("Nothing watched yet", color = Color.LightGray, style = MaterialTheme.typography.titleMedium)
+                            Text("Browse Live TV, Movies, or Series to get started", color = Color.Gray)
+                        }
                     }
                 }
             } else if (state.categories.isEmpty()) {
-                item("modern-empty-categories") {
-                    Box(Modifier.fillParentMaxHeight(.45f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                item("modern-empty-categories", span = gridSpan) {
+                    Box(Modifier.fillMaxWidth().height(260.dp).padding(24.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Icon(Icons.Default.FilterListOff, null, Modifier.size(48.dp), tint = Color.LightGray)
-                            Text("No categories enabled for ${state.selectedType.title}", color = Color.White.copy(alpha = .86f), style = MaterialTheme.typography.titleMedium)
-                            Text("Adjust your category filters to include channels or media.", color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
-                            Button(onClick = { openCategoryManager(state.selectedType) }) {
-                                Icon(Icons.Default.Tune, null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Manage ${state.selectedType.title} categories")
-                            }
+                            Text("No categories enabled for ${state.selectedType.title}", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                            Text("Adjust your category filters to include content.", color = Color.LightGray)
+                            Button(onClick = { openCategoryManager(state.selectedType) }) { Text("Manage categories") }
                         }
                     }
                 }
             } else if (state.items.isNotEmpty()) {
-                item("catalog-rail") { ModernRail(state.selectedCategory?.title ?: state.selectedType.title, state.items, { it }, play) }
-                val favorites = state.favorites.filter { favorite ->
-                    when (state.selectedType) {
-                        CatalogType.LIVE_TV -> favorite.kind == FavoriteKind.CHANNEL
-                        CatalogType.MOVIES -> favorite.kind == FavoriteKind.MOVIE
-                        CatalogType.SERIES -> favorite.kind == FavoriteKind.SERIES
-                        CatalogType.RADIO -> false
-                    }
+                item("catalog-header", span = gridSpan) {
+                    ModernSectionHeader(
+                        state.selectedCategory?.title ?: state.selectedType.title,
+                        "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}"
+                    )
                 }
-                if (favorites.isNotEmpty()) item("catalog-list") { ModernRail("My List", favorites, { it.media }, openFavorite) }
-            } else item("modern-empty") {
-                Box(Modifier.fillParentMaxHeight(.45f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                val typeFavorites = state.favorites.filter {
+                    (state.selectedType == CatalogType.LIVE_TV && it.kind == FavoriteKind.CHANNEL) ||
+                        (state.selectedType == CatalogType.MOVIES && it.kind == FavoriteKind.MOVIE) ||
+                        (state.selectedType == CatalogType.SERIES && it.kind == FavoriteKind.SERIES)
+                }
+                if (typeFavorites.isNotEmpty()) item("catalog-favorites", span = gridSpan) {
+                    ModernRail("My List", typeFavorites, { it.media }, openFavorite, aspectRatio = { aspectRatio })
+                }
+                items(state.items, key = { "catalog-${state.selectedType}-${it.id}" }) { item ->
+                    ModernPosterCard(item, aspectRatio, Modifier.padding(horizontal = 4.dp), onClick = { play(item) })
+                }
+            } else item("modern-empty", span = gridSpan) {
+                Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
                     Text("Nothing to show in this category", color = Color.White.copy(alpha = .72f))
                 }
             }
+    }
+}
+
+@Composable
+private fun ModernGrid(
+    columns: Int,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(16.dp),
+    verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(12.dp),
+    horizontalArrangement: Arrangement.Horizontal = Arrangement.spacedBy(10.dp),
+    content: LazyGridScope.() -> Unit
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(columns),
+        modifier = modifier,
+        contentPadding = contentPadding,
+        verticalArrangement = verticalArrangement,
+        horizontalArrangement = horizontalArrangement,
+        content = content
+    )
+}
+
+@Composable
+private fun ModernSectionHeader(title: String, subtitle: String? = null, action: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
+            subtitle?.let { Text(it, color = Color.Gray, style = MaterialTheme.typography.labelMedium) }
+        }
+        action?.invoke()
+    }
+}
+
+@Composable
+private fun ModernSideRail(
+    state: NikTvState,
+    selectType: (CatalogType) -> Unit,
+    openHome: () -> Unit,
+    openFavorites: () -> Unit,
+    openSearch: () -> Unit,
+    openSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(modifier, color = Color(0xFF070707), shadowElevation = 12.dp) {
+        Column(Modifier.statusBarsPadding().navigationBarsPadding().padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("N", style = MaterialTheme.typography.headlineLarge, color = Color(0xFFE50914), fontWeight = FontWeight.Black)
+            Spacer(Modifier.weight(1f))
+            ModernRailButton(Icons.Default.Home, "Home", state.homeOpen, openHome)
+            visibleCatalogTypes.forEach { type ->
+                ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && state.selectedType == type) { selectType(type) }
+            }
+            ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen, openFavorites)
+            Spacer(Modifier.weight(1f))
+            ModernRailButton(Icons.Default.Search, "Search", state.searchOpen, openSearch)
+            ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, openSettings)
         }
     }
 }
 
 @Composable
+private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.padding(vertical = 4.dp).semantics { role = Role.Tab; this.selected = selected }
+            .then(if (selected) Modifier.border(2.dp, Color(0xFFE50914), CircleShape) else Modifier)
+    ) {
+        Icon(icon, label, tint = if (selected) Color.White else Color.Gray)
+    }
+}
+
+@Composable
 private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit, openSearch: () -> Unit, openSettings: () -> Unit) {
-    Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 28.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("N", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
-        Spacer(Modifier.width(24.dp))
-        TextButton(onClick = openHome) { Text("Home", color = if (home) Color.White else Color.LightGray, fontWeight = if (home) FontWeight.Bold else FontWeight.Normal) }
+    Row(Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("N", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
+        Spacer(Modifier.width(8.dp))
+        TextButton(onClick = openHome) { Text("Home", color = if (home) Color.White else Color.Gray) }
         visibleCatalogTypes.forEach { type ->
-            TextButton(onClick = { selectType(type) }) { Text(type.title, color = if (!home && state.selectedType == type) Color.White else Color.LightGray, fontWeight = if (!home && state.selectedType == type) FontWeight.Bold else FontWeight.Normal) }
+            TextButton(onClick = { selectType(type) }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Text(type.title, color = if (!home && state.selectedType == type) Color.White else Color.Gray, style = MaterialTheme.typography.labelMedium)
+            }
         }
         Spacer(Modifier.weight(1f))
-        state.savedProfile?.let { Text(it.name, color = Color.LightGray, style = MaterialTheme.typography.labelLarge, maxLines = 1) }
         IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
         IconButton(onClick = openFavorites) { Icon(Icons.Default.FavoriteBorder, "My List", tint = Color.White) }
         IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
@@ -525,36 +647,75 @@ private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit,
 
 @Composable
 private fun ModernHero(item: MediaItem?, recentAction: (() -> Unit)?, catalogAction: (() -> Unit)?, profileName: String) {
-    Box(Modifier.fillMaxWidth().heightIn(min = 300.dp).height(42.vh())) {
+    Box(Modifier.fillMaxWidth().heightIn(min = 300.dp).height(50.vh())) {
         if (item?.logo != null) AsyncImage(item.logo, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xFF090909), Color(0xCC090909), Color.Transparent))))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color(0xFF090909)))))
-        Column(Modifier.align(Alignment.BottomStart).widthIn(max = 720.dp).padding(horizontal = 36.dp, vertical = 36.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.align(Alignment.BottomStart).widthIn(max = 720.dp).padding(horizontal = 28.dp, vertical = 30.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(item?.title ?: "Welcome to NikTV", style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Black, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(item?.description?.takeIf(String::isNotBlank) ?: if (profileName.isBlank()) "Choose something to watch" else "Streaming from $profileName",
                 style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = .86f), maxLines = 2, overflow = TextOverflow.Ellipsis)
             val action = recentAction ?: catalogAction
-            if (action != null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = action, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(if (recentAction != null) "Resume" else "Play") }
+            if (action != null) Button(onClick = action, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
+                Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(if (recentAction != null) "Resume" else "Play")
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun <T> ModernRail(title: String, entries: List<T>, media: (T) -> MediaItem, open: (T) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, Modifier.padding(horizontal = 28.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
-        LazyRow(contentPadding = PaddingValues(horizontal = 28.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(entries, key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry -> ModernPosterCard(media(entry)) { open(entry) } }
+private fun <T> ModernRail(
+    title: String,
+    entries: List<T>,
+    media: (T) -> MediaItem,
+    open: (T) -> Unit,
+    aspectRatio: (T) -> Float = { 16f / 9f },
+    progress: (T) -> PlaybackProgress? = { null },
+    remove: ((T) -> Unit)? = null,
+    clear: (() -> Unit)? = null
+) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
+        LazyRow(contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(entries, key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry ->
+                ModernPosterCard(
+                    item = media(entry),
+                    aspectRatio = aspectRatio(entry),
+                    modifier = Modifier.width(180.dp),
+                    progress = progress(entry),
+                    onClick = { open(entry) },
+                    onLongClick = remove?.let { { it(entry) } }
+                ) {
+                    if (remove != null) Text("Hold to remove", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                }
+            }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ModernPosterCard(item: MediaItem, open: () -> Unit) {
-    Column(Modifier.width(180.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = open), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
+private fun ModernPosterCard(
+    item: MediaItem,
+    aspectRatio: Float,
+    modifier: Modifier = Modifier,
+    progress: PlaybackProgress? = null,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    footer: (@Composable () -> Unit)? = null
+) {
+    var focused by remember { mutableStateOf(false) }
+    val fraction = if (progress != null && progress.durationMillis > 0L)
+        (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
+    Column(
+        modifier.onFocusChanged { focused = it.isFocused }
+            .graphicsLayer { scaleX = if (focused) 1.04f else 1f; scaleY = if (focused) 1.04f else 1f }
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
+            .border(if (focused) 3.dp else 0.dp, Color(0xFFE50914), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
             if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
             else SubcomposeAsyncImage(item.logo, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
                 when (painter.state.value) {
@@ -562,303 +723,127 @@ private fun ModernPosterCard(item: MediaItem, open: () -> Unit) {
                     else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
                 }
             }
+            if (fraction > 0f) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0xFF333333))) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Color(0xFFE50914)))
+            }
         }
         Text(item.title, color = Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        footer?.invoke()
     }
 }
+
+private fun List<PlaybackProgress>.progressFor(item: MediaItem): PlaybackProgress? =
+    firstOrNull { it.key.contains(item.id) }
 
 @Composable
 private fun Int.vh(): androidx.compose.ui.unit.Dp = (LocalConfiguration.current.screenHeightDp * this / 100f).dp
 
 @Composable
-private fun NavigationPanel(state: NikTvState, selectType: (CatalogType) -> Unit, openHome: () -> Unit, openFavorites: () -> Unit, modifier: Modifier) {
-    Column(modifier.statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("NikTV", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
-        state.savedProfile?.let { profile ->
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.padding(horizontal = 8.dp)
-            ) {
-                Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Column {
-                        Text(profile.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
-                        Text(profile.portalType.displayName(), style = MaterialTheme.typography.labelSmall)
-                    }
+private fun ModernFavoritesScreen(
+    state: NikTvState,
+    openFavorite: (FavoriteItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
+    openSearch: () -> Unit,
+    openSettings: () -> Unit,
+    closeFavorites: () -> Unit
+) {
+    val groups = FavoriteKind.entries.mapNotNull { kind ->
+        state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
+    }
+    val wide = LocalConfiguration.current.screenWidthDp >= 720
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(12),
+        modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
+            ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings)
+        }
+        if (groups.isEmpty()) item("favorites-empty", span = { GridItemSpan(maxLineSpan) }) {
+            Box(Modifier.fillMaxWidth().height(360.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.FavoriteBorder, null, Modifier.size(48.dp), tint = Color.Gray)
+                    Text("No favorites yet", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    Text("Press and hold any media item to add it here", color = Color.Gray)
                 }
             }
-        }
-        Spacer(Modifier.weight(1f))
-        CatalogNavigationItem("Home", Icons.Default.Home, state.homeOpen, openHome, Modifier.fillMaxWidth(), alwaysShowLabel = true)
-        visibleCatalogTypes.forEach { type ->
-            CatalogNavigationItem(type.title, type.icon(), !state.homeOpen && !state.favoritesOpen && state.selectedType == type, { selectType(type) }, Modifier.fillMaxWidth(), alwaysShowLabel = true)
-        }
-        CatalogNavigationItem("Favorites", Icons.Default.Favorite, state.favoritesOpen, openFavorites, Modifier.fillMaxWidth(), alwaysShowLabel = true)
-        Spacer(Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun CatalogBottomNavigation(state: NikTvState, selectType: (CatalogType) -> Unit, openHome: () -> Unit, openFavorites: () -> Unit) {
-    Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
-        Row(
-            Modifier.widthIn(max = 448.dp).fillMaxWidth().height(76.dp).padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            CatalogNavigationItem(
-                "Home", Icons.Default.Home, state.homeOpen, openHome,
-                (if (state.homeOpen) Modifier.weight(1f) else Modifier.width(48.dp)).fillMaxHeight()
-            )
-            visibleCatalogTypes.forEach { type ->
-                val selected = !state.homeOpen && !state.favoritesOpen && state.selectedType == type
-                CatalogNavigationItem(
-                    label = type.title,
-                    icon = type.icon(),
-                    selected = selected,
-                    onClick = { selectType(type) },
-                    modifier = (if (selected) Modifier.weight(1f) else Modifier.width(48.dp)).fillMaxHeight()
-                )
+        } else {
+            groups.forEach { (kind, favorites) ->
+                item("header-${kind.name}", span = { GridItemSpan(maxLineSpan) }) {
+                    ModernSectionHeader(kind.sectionTitle(), "${favorites.size} saved")
+                }
+                items(
+                    items = favorites,
+                    key = { it.key },
+                    span = { favorite ->
+                        val portrait = favorite.kind != FavoriteKind.CHANNEL && favorite.kind != FavoriteKind.EPISODE
+                        GridItemSpan(when {
+                            portrait && wide -> 3
+                            portrait -> 4
+                            wide -> 2
+                            else -> 3
+                        })
+                    }
+                ) { favorite ->
+                    val portrait = favorite.kind != FavoriteKind.CHANNEL && favorite.kind != FavoriteKind.EPISODE
+                    ModernFavoriteCard(
+                        favorite = favorite,
+                        aspectRatio = if (portrait) 2f / 3f else 16f / 9f,
+                        open = { openFavorite(favorite) },
+                        remove = { toggleFavorite(favorite) }
+                    )
+                }
             }
-            CatalogNavigationItem(
-                "Favorites", Icons.Default.Favorite, state.favoritesOpen, openFavorites,
-                (if (state.favoritesOpen) Modifier.weight(1f) else Modifier.width(48.dp)).fillMaxHeight()
-            )
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeContent(
-    state: NikTvState,
-    openRecent: (RecentItem) -> Unit,
-    removeRecent: (RecentItem) -> Unit,
-    clearRecent: (FavoriteKind) -> Unit,
-    toggleFavorite: (FavoriteItem) -> Unit,
-    openSettings: () -> Unit,
-    openSearch: () -> Unit,
-    modifier: Modifier,
-    tv: Boolean
+private fun ModernFavoriteCard(
+    favorite: FavoriteItem,
+    aspectRatio: Float,
+    open: () -> Unit,
+    remove: () -> Unit
 ) {
-    val visibleRecents = state.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE }
-    val groups = FavoriteKind.entries.filterNot { it == FavoriteKind.EPISODE }.mapNotNull { kind ->
-        visibleRecents.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
-    }
-    Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Home", style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-                Text("Recently played", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
-            IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
-        }
-        Spacer(Modifier.height(12.dp))
-        if (groups.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Default.History, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Nothing played yet", style = MaterialTheme.typography.titleMedium)
-                Text("Your recently played media will appear here", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
-            groups.forEach { (kind, recentItems) ->
-                item("recent-header-${kind.name}") {
-                    Row(Modifier.fillMaxWidth().padding(start = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(kind.sectionTitle(), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                        TextButton(onClick = { clearRecent(kind) }) {
-                            Icon(Icons.Default.DeleteSweep, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Clear all")
-                        }
-                    }
-                }
-                items(recentItems, key = { it.key }) { recent ->
-                    val favorite = FavoriteItem(recent.kind, recent.media, recent.series)
-                    val dismissState = rememberSwipeToDismissBoxState()
-                    var pointerPressed by remember { mutableStateOf(false) }
-                    val dismissing = dismissState.targetValue != SwipeToDismissBoxValue.Settled
-                    val swipeFromStart = dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
-                    val cardScale by animateFloatAsState(
-                        targetValue = if (dismissing) 0.96f else 1f,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
-                        label = "recent card scale"
-                    )
-                    val cardAlpha by animateFloatAsState(
-                        targetValue = if (dismissing) 0.72f else 1f,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-                        label = "recent card alpha"
-                    )
-                    val deleteScale by animateFloatAsState(
-                        targetValue = if (dismissing) 1.15f else 0.72f,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-                        label = "delete icon scale"
-                    )
-                    val deleteRotation by animateFloatAsState(
-                        targetValue = if (!dismissing) 0f else if (swipeFromStart) -10f else 10f,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-                        label = "delete icon rotation"
-                    )
-                    val backgroundCorner by animateDpAsState(
-                        targetValue = if (dismissing) 28.dp else 12.dp,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
-                        label = "delete background shape"
-                    )
-                    val backgroundColor by animateColorAsState(
-                        targetValue = if (dismissing) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-                        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-                        label = "delete background color"
-                    )
-                    LaunchedEffect(pointerPressed, dismissState.targetValue) {
-                        if (!pointerPressed && dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
-                            delay(180)
-                            if (!pointerPressed && dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
-                                removeRecent(recent)
-                            }
-                        }
-                    }
-                    SwipeToDismissBox(
-                        modifier = Modifier.pointerInput(recent.key) {
-                            awaitEachGesture {
-                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                pointerPressed = true
-                                try {
-                                    do {
-                                        val event = awaitPointerEvent(PointerEventPass.Final)
-                                    } while (event.changes.any { it.pressed })
-                                } finally {
-                                    pointerPressed = false
-                                }
-                            }
-                        },
-                        state = dismissState,
-                        backgroundContent = {
-                            Box(
-                                Modifier.fillMaxSize().clip(RoundedCornerShape(backgroundCorner)).background(backgroundColor).padding(horizontal = 20.dp),
-                                contentAlignment = if (swipeFromStart) Alignment.CenterStart else Alignment.CenterEnd
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    if (!swipeFromStart) {
-                                        AnimatedVisibility(dismissing, enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
-                                            Text("Remove", color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
-                                        }
-                                    }
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        "Remove from recently played",
-                                        Modifier.graphicsLayer {
-                                            scaleX = deleteScale
-                                            scaleY = deleteScale
-                                            rotationZ = deleteRotation
-                                        },
-                                        tint = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                    if (swipeFromStart) {
-                                        AnimatedVisibility(dismissing, enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
-                                            Text("Remove", color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        enableDismissFromStartToEnd = true,
-                        enableDismissFromEndToStart = true
-                    ) {
-                        Box(Modifier.graphicsLayer {
-                            scaleX = cardScale
-                            scaleY = cardScale
-                            alpha = cardAlpha
-                        }) {
-                            RecentMediaListItem(recent, { openRecent(recent) }, { toggleFavorite(favorite) }, state.favorites.any { it.key == favorite.key })
-                        }
-                    }
-                }
-            }
+    val dismissState = rememberSwipeToDismissBoxState()
+    var removed by remember(favorite.key) { mutableStateOf(false) }
+    LaunchedEffect(dismissState.currentValue) {
+        if (!removed && dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
+            removed = true
+            remove()
         }
     }
-}
-
-@Composable
-private fun RecentMediaListItem(recent: RecentItem, open: () -> Unit, favorite: () -> Unit, isFavorite: Boolean) {
-    val icon = when (recent.kind) {
-        FavoriteKind.CHANNEL -> Icons.Default.LiveTv
-        FavoriteKind.MOVIE -> Icons.Default.Movie
-        FavoriteKind.SERIES -> Icons.Default.VideoLibrary
-        FavoriteKind.EPISODE -> Icons.Default.PlayCircle
-    }
-    val resumeLabel = recent.lastPlayed?.let { episode ->
-        listOfNotNull(episode.seasonNumber?.let { "Season $it" }, episode.episodeNumber?.let { "Episode $it" })
-            .takeIf { it.isNotEmpty() }?.joinToString(" · ") ?: episode.title
-    }
-    Surface(
-        onClick = open,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)).background(Color(0xFF7F1D1D)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Delete, "Remove ${favorite.media.title}", tint = Color.White)
+            }
+        }
     ) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(Modifier.size(48.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer) }
-            }
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(recent.media.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                Text(resumeLabel?.let { "Resume · $it" } ?: recent.kind.sectionTitle().removeSuffix("s"), maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = favorite) {
-                Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, if (isFavorite) "Remove favorite" else "Add favorite")
-            }
-            Icon(Icons.Default.PlayArrow, "Play", tint = MaterialTheme.colorScheme.primary)
-        }
+        ModernPosterCard(favorite.media, aspectRatio, Modifier.fillMaxWidth(), onClick = open, onLongClick = remove)
     }
 }
 
 @Composable
-private fun FavoritesContent(
-    state: NikTvState,
-    openFavorite: (FavoriteItem) -> Unit,
-    toggleFavorite: (FavoriteItem) -> Unit,
-    openSettings: () -> Unit,
-    openSearch: () -> Unit,
-    modifier: Modifier,
-    tv: Boolean
-) {
-    val groups = FavoriteKind.entries.mapNotNull { kind ->
-        state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
-    }
-    Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Favorites", style = if (tv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-                Text("${state.favorites.size} saved", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
-            IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
-        }
-        Spacer(Modifier.height(12.dp))
-        if (groups.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.FavoriteBorder, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("No favorites yet", style = MaterialTheme.typography.titleMedium)
-                    Text("Press and hold any media item to add it here", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        } else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 32.dp)) {
-            groups.forEach { (kind, favorites) ->
-                item("header-${kind.name}") {
-                    Text(kind.sectionTitle(), Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                }
-                items(favorites, key = { it.key }) { favorite ->
-                    MediaListItem(favorite.media, { openFavorite(favorite) }, { toggleFavorite(favorite) }, true, tv)
-                }
-            }
-        }
+private fun ModernScreenTopBar(title: String, close: () -> Unit, openSearch: (() -> Unit)? = null, openSettings: (() -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
+        openSearch?.let { IconButton(onClick = it) { Icon(Icons.Default.Search, "Search", tint = Color.White) } }
+        openSettings?.let { IconButton(onClick = it) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) } }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SearchContent(
+private fun ModernSearchScreen(
     state: NikTvState,
     close: () -> Unit,
     setType: (SearchContentType) -> Unit,
@@ -868,27 +853,30 @@ private fun SearchContent(
     useRecent: (RecentSearch) -> Unit,
     deleteRecent: (RecentSearch) -> Unit,
     openResult: (MediaItem) -> Unit,
-    loadMore: () -> Unit,
-    modifier: Modifier,
-    tv: Boolean
+    loadMore: () -> Unit
 ) {
     var categoriesExpanded by rememberSaveable(state.searchType) { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val wide = LocalConfiguration.current.screenWidthDp >= 720
+    val columns = if (state.searchType == SearchContentType.LIVE_TV) {
+        if (wide) 6 else 4
+    } else {
+        if (wide) 5 else 3
+    }
+    val aspectRatio = if (state.searchType == SearchContentType.LIVE_TV) 16f / 9f else 2f / 3f
     LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
-    Column(modifier.statusBarsPadding().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Search", Modifier.weight(1f), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        }
+    Column(Modifier.fillMaxSize().background(Color(0xFF090909)).padding(horizontal = 16.dp)) {
+        ModernScreenTopBar("Search", close)
         Spacer(Modifier.height(8.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            visibleSearchTypes.forEachIndexed { index, type ->
-                SegmentedButton(
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(visibleSearchTypes) { type ->
+                FilterChip(
                     selected = state.searchType == type,
                     onClick = { setType(type) },
-                    shape = SegmentedButtonDefaults.itemShape(index, visibleSearchTypes.size)
-                ) { Text(type.title) }
+                    label = { Text(type.title) },
+                    leadingIcon = { Icon(if (type == SearchContentType.LIVE_TV) Icons.Default.LiveTv else if (type == SearchContentType.MOVIES) Icons.Default.Movie else Icons.Default.VideoLibrary, null) }
+                )
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -900,10 +888,10 @@ private fun SearchContent(
                 trailingIcon = { Icon(if (categoriesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, Modifier.size(18.dp)) }
             )
             Spacer(Modifier.width(8.dp))
-            Text("Search only within a relevant category to avoid unrelated results.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Filter by category", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
         }
         AnimatedVisibility(categoriesExpanded) {
-            Surface(Modifier.fillMaxWidth().heightIn(max = 220.dp), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Surface(Modifier.fillMaxWidth().heightIn(max = 220.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFF111827)) {
                 FlowRow(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     FilterChip(selected = state.searchCategoryId == "*", onClick = { setCategory("*"); categoriesExpanded = false }, label = { Text("All categories") })
                     state.searchCategories.filter { it.id != "*" }.forEach { category ->
@@ -928,7 +916,15 @@ private fun SearchContent(
                         Icon(Icons.Default.ArrowForward, "Search")
                     }
                 }
-            }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = Color(0xFF111827),
+                unfocusedContainerColor = Color(0xFF111827),
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedBorderColor = Color(0xFFE50914),
+                cursorColor = Color(0xFFE50914)
+            )
         )
         if (state.recentSearches.isNotEmpty() && state.searchResults.isEmpty()) {
             Text("Recent searches", Modifier.padding(top = 16.dp, bottom = 6.dp), style = MaterialTheme.typography.titleMedium)
@@ -938,6 +934,7 @@ private fun SearchContent(
                         selected = false,
                         onClick = { useRecent(recent) },
                         label = { Text(recent.query) },
+                        colors = InputChipDefaults.inputChipColors(containerColor = Color(0xFF111827), labelColor = Color.LightGray),
                         trailingIcon = {
                             Icon(Icons.Default.Close, "Delete ${recent.query}", Modifier.size(18.dp).clickable { deleteRecent(recent) })
                         }
@@ -951,26 +948,32 @@ private fun SearchContent(
             Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("No cached results", style = MaterialTheme.typography.titleMedium)
                 Text("Search the portal once for this title. Requests are rate-limited for account safety.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = { search(true) }) { Icon(Icons.Default.CloudDownload, null); Spacer(Modifier.width(8.dp)); Text("Search server") }
+                OutlinedButton(onClick = { search(true) }, border = BorderStroke(1.dp, Color.Gray)) { Icon(Icons.Default.CloudDownload, null); Spacer(Modifier.width(8.dp)); Text("Search server") }
             }
         }
         if (state.searchResults.isNotEmpty()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("${state.searchResults.size} results${if (state.searchUsedServer) " · through page ${state.searchPage}" else " · cached"}", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = { search(true) }, enabled = !state.searchServerLoading) { Text("Search server") }
+                OutlinedButton(onClick = { search(true) }, enabled = !state.searchServerLoading, border = BorderStroke(1.dp, Color.Gray)) { Text("Search server") }
             }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+            ModernGrid(
+                columns = columns,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 items(state.searchResults, key = { "search-${state.searchType}-${it.id}" }) { item ->
-                    MediaListItem(item, { openResult(item) }, {}, false, tv)
+                    ModernPosterCard(item, aspectRatio, onClick = { openResult(item) })
                 }
-                if (state.searchHasMore) item("load-more-${state.searchPage}") {
+                if (state.searchHasMore) item("load-more-${state.searchPage}", span = { GridItemSpan(maxLineSpan) }) {
                     OutlinedButton(onClick = loadMore, enabled = !state.searchServerLoading, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                         if (state.searchServerLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Default.ExpandMore, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Load up to 3 more pages")
                     }
-                } else if (state.searchUsedServer) item("all-pages-loaded") {
+                } else if (state.searchUsedServer) item("all-pages-loaded", span = { GridItemSpan(maxLineSpan) }) {
                     Text("All available result pages loaded", Modifier.fillMaxWidth().padding(16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -980,7 +983,7 @@ private fun SearchContent(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsContent(
+private fun ModernSettingsScreen(
     state: NikTvState,
     closeSettings: () -> Unit,
     reauthenticate: () -> Unit,
@@ -990,9 +993,7 @@ private fun SettingsContent(
     removeProfile: (PortalProfile) -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
-    setUiExperience: (UiExperience) -> Unit,
-    openCategoryManager: (CatalogType) -> Unit,
-    modifier: Modifier
+    openCategoryManager: (CatalogType) -> Unit
 ) {
     val profile = state.savedProfile ?: return
     val context = LocalContext.current
@@ -1003,13 +1004,11 @@ private fun SettingsContent(
     var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     val deviceMacAddress = remember(context) { cast4kStyleDeviceMacAddress(context) }
     Scaffold(
-        modifier = modifier,
+        modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
+        containerColor = Color(0xFF090909),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            LargeTopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = { IconButton(onClick = closeSettings) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
-            )
+            ModernScreenTopBar("Settings", closeSettings)
         }
     ) { padding -> Column(
         Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
@@ -1115,21 +1114,6 @@ private fun SettingsContent(
                 }
             }
         }
-        SettingsSection("Appearance") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Browsing experience", style = MaterialTheme.typography.titleMedium)
-                Text("Modern uses cinematic artwork and horizontal collections. Legacy keeps the compact navigation layout.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    UiExperience.entries.forEachIndexed { index, experience ->
-                        SegmentedButton(
-                            selected = state.uiExperience == experience,
-                            onClick = { setUiExperience(experience) },
-                            shape = SegmentedButtonDefaults.itemShape(index, UiExperience.entries.size)
-                        ) { Text(experience.name.lowercase().replaceFirstChar(Char::uppercase)) }
-                    }
-                }
-            }
-        }
         SettingsSection("App updates") {
             ListItem(
                 headlineContent = { Text("NikTV ${BuildConfig.VERSION_NAME}") },
@@ -1184,7 +1168,7 @@ private fun SettingsSection(title: String, content: @Composable ColumnScope.() -
         Surface(
             Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            color = Color(0xFF111827),
             content = { Column(content = content) }
         )
     }
@@ -1200,336 +1184,6 @@ private fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
     )
 }
 
-@Composable
-private fun CatalogNavigationItem(
-    label: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    alwaysShowLabel: Boolean = false
-) {
-    val containerColor by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
-        label = "catalogNavigationContainer"
-    )
-    val contentColor by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-        label = "catalogNavigationContent"
-    )
-    Surface(
-        onClick = onClick,
-        modifier = modifier.semantics { role = Role.Tab; this.selected = selected },
-        shape = RoundedCornerShape(20.dp),
-        color = containerColor,
-        contentColor = contentColor,
-        tonalElevation = if (selected) 2.dp else 0.dp
-    ) {
-        Row(
-            Modifier.padding(horizontal = if (selected || alwaysShowLabel) 18.dp else 12.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(icon, contentDescription = if (selected || alwaysShowLabel) null else label, Modifier.size(if (selected || alwaysShowLabel) 24.dp else 22.dp))
-            AnimatedVisibility(
-                visible = selected || alwaysShowLabel,
-                enter = fadeIn() + expandHorizontally(),
-                exit = fadeOut() + shrinkHorizontally()
-            ) {
-                Text(label, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-}
-
-@Composable
-private fun CatalogContent(state: NikTvState, selectCategory: (Category) -> Unit, play: (MediaItem) -> Unit, toggleFavorite: (MediaItem) -> Unit, closeSeries: () -> Unit, prepareFullSearch: () -> Unit, refreshFullSearch: () -> Unit, refreshCatalog: () -> Unit, openSettings: () -> Unit, openSearch: () -> Unit, openCategoryManager: (CatalogType) -> Unit, modifier: Modifier, tv: Boolean, hasBottomNavigation: Boolean) {
-    val activity = LocalContext.current as? Activity
-    val filterMaxHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.55f).coerceAtLeast(240.dp)
-    var filterExpanded by rememberSaveable(state.selectedType, state.selectedSeries?.id) { mutableStateOf(false) }
-    var selectedSeason by rememberSaveable(state.selectedSeries?.id) { mutableStateOf<Int?>(null) }
-    var episodeSortDescending by rememberSaveable(state.selectedSeries?.id) { mutableStateOf(true) }
-    var sortExpanded by rememberSaveable(state.selectedSeries?.id) { mutableStateOf(false) }
-    var searchVisible by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf(false) }
-    var searchQuery by rememberSaveable(state.selectedType, state.selectedCategory?.id, state.selectedSeries?.id) { mutableStateOf("") }
-    val searchFocusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    val seasonItems = if (state.selectedSeries != null && selectedSeason != null) state.items.filter { it.seasonNumber == selectedSeason } else state.items
-    val searchableItems = if (searchVisible && searchQuery.isNotBlank() && state.selectedSeries == null) state.fullSearchItems ?: state.items else seasonItems
-    val filteredItems = remember(searchableItems, searchQuery) {
-        val query = searchQuery.trim()
-        if (query.isEmpty()) searchableItems else searchableItems.filter { item ->
-            item.title.contains(query, ignoreCase = true)
-        }
-    }
-    val displayedItems = remember(filteredItems, state.selectedSeries, episodeSortDescending) {
-        if (state.selectedSeries == null) filteredItems else {
-            val titleComparator = Comparator<MediaItem> { first, second ->
-                val firstNumber = first.title.episodeNumberFromTitle()
-                val secondNumber = second.title.episodeNumberFromTitle()
-                when {
-                    firstNumber != null && secondNumber != null && firstNumber != secondNumber -> firstNumber.compareTo(secondNumber)
-                    firstNumber != null && secondNumber == null -> -1
-                    firstNumber == null && secondNumber != null -> 1
-                    else -> naturalTitleCompare(first.title, second.title)
-                }
-            }.let { if (episodeSortDescending) it.reversed() else it }
-
-            if (selectedSeason != null) filteredItems.sortedWith(titleComparator)
-            else {
-                val seasonComparator = if (episodeSortDescending) {
-                    compareByDescending<Map.Entry<Int?, List<MediaItem>>> { it.key ?: -1 }
-                } else {
-                    compareBy<Map.Entry<Int?, List<MediaItem>>>({ it.key == null }, { it.key ?: Int.MAX_VALUE })
-                }
-                filteredItems.groupBy { it.seasonNumber }.entries
-                    .sortedWith(seasonComparator)
-                    .flatMap { (_, episodes) -> episodes.sortedWith(titleComparator) }
-            }
-        }
-    }
-    val resultCount = if (searchQuery.isBlank()) searchableItems.size else filteredItems.size
-    val searchTarget = if (state.selectedSeries != null) "episodes" else state.selectedType.searchLabel()
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    LaunchedEffect(searchVisible) {
-        if (searchVisible) {
-            searchFocusRequester.requestFocus()
-            keyboard?.show()
-        }
-    }
-    DisposableEffect(searchVisible, activity) {
-        if (!searchVisible || activity == null) return@DisposableEffect onDispose { }
-        val window = activity.window
-        val previousSoftInputMode = window.attributes.softInputMode
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
-        onDispose { window.setSoftInputMode(previousSoftInputMode) }
-    }
-    Box(modifier.statusBarsPadding()) {
-    Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 16.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (state.selectedSeries != null) {
-                IconButton(onClick = closeSeries) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to series") }
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    state.selectedSeries?.title ?: state.selectedType.title,
-                    style = when { state.selectedSeries != null -> MaterialTheme.typography.headlineMedium; tv -> MaterialTheme.typography.displaySmall; else -> MaterialTheme.typography.headlineLarge },
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "$resultCount ${if (state.selectedSeries != null) resultCount.episodeLabel() else state.selectedType.itemLabel(resultCount)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            IconButton(onClick = { filterExpanded = !filterExpanded }) {
-                Icon(Icons.Default.FilterAlt, if (filterExpanded) "Close filters" else if (state.selectedSeries != null) "Filter by season" else "Filter by category")
-            }
-            if (state.selectedSeries == null) {
-                IconButton(onClick = { openCategoryManager(state.selectedType) }) {
-                    Icon(Icons.Default.Tune, "Manage categories")
-                }
-            }
-            if (state.selectedSeries != null) Box {
-                IconButton(onClick = { sortExpanded = true }) {
-                    Icon(Icons.AutoMirrored.Filled.Sort, "Sort episodes")
-                }
-                DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Ascending") },
-                        onClick = { episodeSortDescending = false; sortExpanded = false },
-                        leadingIcon = { Icon(Icons.Default.ArrowUpward, null) },
-                        trailingIcon = if (!episodeSortDescending) {{ Icon(Icons.Default.Check, null) }} else null
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Descending") },
-                        onClick = { episodeSortDescending = true; sortExpanded = false },
-                        leadingIcon = { Icon(Icons.Default.ArrowDownward, null) },
-                        trailingIcon = if (episodeSortDescending) {{ Icon(Icons.Default.Check, null) }} else null
-                    )
-                }
-            }
-            if (state.selectedSeries == null) IconButton(onClick = refreshCatalog) {
-                Icon(Icons.Default.Refresh, "Refresh ${state.selectedType.title}")
-            }
-            IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
-            IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
-        }
-        AnimatedVisibility(
-            visible = filterExpanded,
-            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
-        ) {
-            Surface(
-                Modifier.fillMaxWidth().padding(top = 12.dp),
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 3.dp
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (state.selectedSeries != null) "Choose a season" else "Filter ${state.selectedType.title}", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                        if (state.selectedSeries == null) {
-                            TextButton(onClick = { openCategoryManager(state.selectedType); filterExpanded = false }) {
-                                Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Manage categories")
-                            }
-                        }
-                    }
-                    FlowRow(
-                        Modifier.fillMaxWidth().heightIn(max = filterMaxHeight).verticalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        if (state.selectedSeries != null) {
-                            FilterChip(
-                                selected = selectedSeason == null,
-                                onClick = { selectedSeason = null; filterExpanded = false },
-                                label = { Text("All seasons") }
-                            )
-                            state.items.mapNotNull { it.seasonNumber }.distinct().sorted().forEach { season ->
-                                FilterChip(
-                                    selected = selectedSeason == season,
-                                    onClick = { selectedSeason = season; filterExpanded = false },
-                                    label = { Text("Season $season") }
-                                )
-                            }
-                        } else state.categories.forEach { category ->
-                            FilterChip(selected = state.selectedCategory?.id == category.id,
-                                onClick = { selectCategory(category); filterExpanded = false }, label = { Text(category.title) })
-                        }
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        if (state.categories.isEmpty() && state.selectedSeries == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.FilterListOff, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("No categories enabled for ${state.selectedType.title}", style = MaterialTheme.typography.titleMedium)
-                    Text("Adjust your category filter settings to display content.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = { openCategoryManager(state.selectedType) }) {
-                        Icon(Icons.Default.Tune, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Manage categories")
-                    }
-                }
-            }
-        } else if (filteredItems.isEmpty() && !state.loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                if (searchQuery.isBlank()) "No items returned by this category" else "No results for “${searchQuery.trim()}”",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 96.dp)) {
-            val groupedItems = if (state.selectedSeries != null && selectedSeason == null)
-                displayedItems.groupBy { it.seasonNumber } else linkedMapOf(selectedSeason to displayedItems)
-            groupedItems.forEach { (season, episodes) ->
-                if (state.selectedSeries != null && selectedSeason == null) item("season-${season ?: "other"}") {
-                    Text(
-                        season?.let { "Season $it" } ?: "Other episodes",
-                        Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                items(episodes, key = { it.id }) { item ->
-                val kind = when {
-                    state.selectedType == CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
-                    state.selectedType == CatalogType.MOVIES -> FavoriteKind.MOVIE
-                    state.selectedSeries != null -> FavoriteKind.EPISODE
-                    else -> FavoriteKind.SERIES
-                }
-                MediaListItem(item, { play(item) }, { toggleFavorite(item) }, state.favorites.any { it.kind == kind && it.media.id == item.id }, tv)
-                }
-            }
-        }
-    }
-        if (false) {
-            ExtendedFloatingActionButton(
-                onClick = { searchVisible = true; prepareFullSearch() },
-                icon = { Icon(Icons.Default.Search, null) },
-                text = { Text("Search $searchTarget") },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
-            )
-        }
-        AnimatedVisibility(
-            visible = searchVisible,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .imePadding()
-                .offset(y = if (hasBottomNavigation && imeVisible) 76.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() else 0.dp)
-                .padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
-            enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
-            exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut()
-        ) {
-            Surface(shape = RoundedCornerShape(28.dp), tonalElevation = 6.dp, shadowElevation = 8.dp) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier.fillMaxWidth().focusRequester(searchFocusRequester),
-                    singleLine = true,
-                    shape = RoundedCornerShape(28.dp),
-                    placeholder = { Text("Search $searchTarget") },
-                    leadingIcon = { Icon(Icons.Default.Search, "Search", tint = MaterialTheme.colorScheme.primary) },
-                    trailingIcon = {
-                        Row {
-                            if (state.selectedSeries == null) IconButton(onClick = refreshFullSearch, enabled = !state.fullSearchLoading) {
-                                Icon(Icons.Default.Refresh, "Refresh all categories")
-                            }
-                            IconButton(onClick = {
-                                if (searchQuery.isNotEmpty()) searchQuery = ""
-                                else { searchVisible = false; keyboard?.hide() }
-                            }) {
-                                Icon(Icons.Default.Close, if (searchQuery.isNotEmpty()) "Clear search" else "Close search")
-                            }
-                        }
-                    },
-                    supportingText = {
-                        Text(if (state.fullSearchLoading) "Loading all categories…" else if (state.selectedSeries == null) "Searching all ${state.selectedType.searchLabel()} · refreshes every ${state.cacheIntervalMinutes.intervalLabel()}" else "Searching this series")
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                        cursorColor = MaterialTheme.colorScheme.primary
-                    )
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun MediaListItem(item: MediaItem, onClick: () -> Unit, onLongClick: () -> Unit, isFavorite: Boolean, tv: Boolean) {
-    var focused by remember { mutableStateOf(false) }
-    Card(modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick).onFocusChanged { focused = it.isFocused }.then(if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)) else Modifier), shape = RoundedCornerShape(16.dp)) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(Modifier.size(48.dp), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(if (item.seasonNumber != null || item.episodeNumber != null) Icons.Default.PlayCircle else Icons.Default.SmartDisplay,
-                        null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-            }
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = if (tv) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                item.description?.takeIf(String::isNotBlank)?.let {
-                    Text(it, maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            if (isFavorite) Icon(Icons.Default.Favorite, contentDescription = "Favorite", tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
 private fun CatalogType.icon() = when (this) { CatalogType.LIVE_TV -> Icons.Default.LiveTv; CatalogType.MOVIES -> Icons.Default.Movie; CatalogType.SERIES -> Icons.Default.VideoLibrary; CatalogType.RADIO -> Icons.Default.Radio }
 private fun PortalType.displayName() = when (this) { PortalType.STALKER -> "Stalker / MAG"; PortalType.XTREAM -> "Xtream Codes" }
 private fun String.isAuthorizationFailureText() =
@@ -1540,25 +1194,12 @@ private fun CatalogType.itemLabel(count: Int) = when (this) {
     CatalogType.SERIES -> if (count == 1) "series" else "series"
     CatalogType.RADIO -> if (count == 1) "station" else "stations"
 }
-private fun CatalogType.searchLabel() = when (this) {
-    CatalogType.LIVE_TV -> "channels"
-    CatalogType.MOVIES -> "movies"
-    CatalogType.SERIES -> "series"
-    CatalogType.RADIO -> "stations"
-}
-private fun Int.episodeLabel() = if (this == 1) "episode" else "episodes"
 private fun FavoriteKind.sectionTitle() = when (this) {
     FavoriteKind.CHANNEL -> "Channels"
     FavoriteKind.MOVIE -> "Movies"
     FavoriteKind.SERIES -> "Series"
     FavoriteKind.EPISODE -> "Episodes"
 }
-private fun Int.intervalLabel() = when {
-    this < 60 -> "${this}m"
-    this % 60 == 0 -> "${this / 60}h"
-    else -> "${this}m"
-}
-
 private fun String.episodeNumberFromTitle(): Int? {
     val patterns = listOf(
         Regex("(?i)S\\d+[ ._-]*E(?:P(?:ISODE)?)?[ ._-]*(\\d+)"),

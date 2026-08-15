@@ -37,7 +37,6 @@ data class NikTvState(
     val playbackProgress: List<PlaybackProgress> = emptyList(),
     val playbackUrls: List<PlaybackUrl> = emptyList(),
     val cacheIntervalMinutes: Int = 60,
-    val uiExperience: UiExperience = UiExperience.MODERN,
     val browseCache: BrowseCatalogCache? = null,
     val searchOpen: Boolean = false,
     val searchType: SearchContentType = SearchContentType.SERIES,
@@ -68,7 +67,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
-        viewModelScope.launch { store.uiExperience.collect { value -> _state.update { it.copy(uiExperience = value) } } }
         viewModelScope.launch { store.recentSearches.collect { searches -> _state.update { it.copy(recentSearches = searches) } } }
         viewModelScope.launch { store.profiles.collect { profiles -> _state.update { it.copy(profiles = profiles) } } }
         viewModelScope.launch {
@@ -204,7 +202,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun setCacheIntervalMinutes(minutes: Int) = viewModelScope.launch {
         store.setCacheIntervalMinutes(minutes)
     }
-    fun setUiExperience(value: UiExperience) = viewModelScope.launch { store.setUiExperience(value) }
 
     fun openMedia(item: MediaItem) {
         if (_state.value.selectedType == CatalogType.SERIES && _state.value.selectedSeries == null) {

@@ -18,7 +18,8 @@ data class PortalProfile(
 @Serializable
 enum class PortalType { STALKER, XTREAM }
 
-enum class UiExperience { MODERN, LEGACY }
+
+
 
 @Serializable
 enum class CatalogType(val title: String, val apiType: String) {
