@@ -704,7 +704,9 @@ private fun ModernBrowseScreen(
                 if (state.favorites.isNotEmpty()) item("my-list", span = gridSpan) {
                     ModernRail(
                         "My List", state.favorites, { it.media }, openFavorite,
-                        subtitle = { favorite -> listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle).joinToString(" · ") }
+                        subtitle = { favorite -> listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle).joinToString(" · ") },
+                        titleMaxLines = Int.MAX_VALUE,
+                        subtitleMaxLines = 2
                     )
                 }
                 FavoriteKind.entries.filterNot { it == FavoriteKind.EPISODE }.forEach { kind ->
@@ -781,7 +783,7 @@ private fun ModernBrowseScreen(
                         )
                     }
                 }
-                if (state.selectedType in setOf(CatalogType.MOVIES, CatalogType.SERIES) && state.catalogHasMore) {
+                if (state.selectedType in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) && state.catalogHasMore) {
                     item("catalog-load-more", span = gridSpan) {
                         Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
                             Button(
@@ -798,7 +800,11 @@ private fun ModernBrowseScreen(
                                 } else {
                                     Icon(Icons.Default.Add, null, Modifier.size(20.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Load more titles", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        if (state.selectedType == CatalogType.LIVE_TV) "Load more channels" else "Load more titles",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                         }
@@ -1125,9 +1131,8 @@ private fun ModernFavoritesScreen(
     val groups = FavoriteKind.entries.mapNotNull { kind ->
         state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
     }
-    val wide = LocalConfiguration.current.screenWidthDp >= 720
     LazyVerticalGrid(
-        columns = GridCells.Fixed(12),
+        columns = GridCells.Adaptive(180.dp),
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1151,10 +1156,7 @@ private fun ModernFavoritesScreen(
                 }
                 items(
                     items = favorites,
-                    key = { it.key },
-                    span = { favorite ->
-                        GridItemSpan(if (wide) 2 else 4)
-                    }
+                    key = { it.key }
                 ) { favorite ->
                     ModernFavoriteCard(
                         favorite = favorite,
@@ -1187,19 +1189,37 @@ private fun ModernFavoriteCard(
     SwipeToDismissBox(
         state = dismissState,
         backgroundContent = {
-            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)).background(Color(0xFF7F1D1D)), contentAlignment = Alignment.Center) {
+            val removalArmed = dismissState.targetValue != SwipeToDismissBoxValue.Settled
+            Box(
+                Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
+                    .background(if (removalArmed) Color(0xFF7F1D1D) else Color(0xFF090909)),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(Icons.Default.Delete, "Remove ${favorite.media.title}", tint = Color.White)
             }
         }
     ) {
-        ModernPosterCard(favorite.media, aspectRatio, Modifier.fillMaxWidth(), onClick = open, onLongClick = remove) {
-            Text(
-                listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle?.takeIf { it.isNotBlank() }).joinToString(" · "),
-                color = Color.Gray,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = Color(0xFF090909)
+        ) {
+            ModernPosterCard(
+                item = favorite.media,
+                aspectRatio = aspectRatio,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                onClick = open,
+                onLongClick = remove,
+                titleMaxLines = Int.MAX_VALUE
+            ) {
+                Text(
+                    listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle?.takeIf { it.isNotBlank() }).joinToString(" · "),
+                    color = Color(0xFFB3B3B3),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
@@ -1584,11 +1604,16 @@ private fun ModernSettingsScreen(
                 Text("Categories and media lists are stored on this device and refreshed after this interval.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     listOf(30 to "30m", 60 to "1h", 360 to "6h", 1440 to "24h").forEachIndexed { index, (minutes, label) ->
+                        val intervalShape = when (index) {
+                            0 -> RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp)
+                            3 -> RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp)
+                            else -> RoundedCornerShape(0.dp)
+                        }
                         SegmentedButton(
                             selected = state.cacheIntervalMinutes == minutes,
                             onClick = { setCacheIntervalMinutes(minutes) },
-                            modifier = Modifier.remoteFocusFrame(SegmentedButtonDefaults.itemShape(index, 4)),
-                            shape = SegmentedButtonDefaults.itemShape(index, 4)
+                            modifier = Modifier.remoteFocusFrame(intervalShape),
+                            shape = intervalShape
                         ) { Text(label) }
                     }
                 }

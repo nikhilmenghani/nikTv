@@ -354,7 +354,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = snapshot.session ?: return
         val category = snapshot.selectedCategory ?: return
         if (snapshot.catalogLoadingMore || !snapshot.catalogHasMore ||
-            snapshot.selectedType !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) return
+            snapshot.selectedType !in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) return
         viewModelScope.launch {
             _state.update { it.copy(catalogLoadingMore = true) }
             runCatching { portal.catalogPage(session, category, snapshot.catalogPage + 1) }
