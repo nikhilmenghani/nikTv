@@ -64,6 +64,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.BuildConfig
+import com.nikhil.niktv.data.artworkRequest
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.update.UpdateDownloadState
@@ -702,8 +703,9 @@ private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit,
 
 @Composable
 private fun ModernHero(item: MediaItem?, recentAction: (() -> Unit)?, catalogAction: (() -> Unit)?, profileName: String) {
+    val context = LocalContext.current
     Box(Modifier.fillMaxWidth().heightIn(min = 300.dp).height(50.vh())) {
-        if (item?.logo != null) AsyncImage(item.logo, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (item?.logo != null) AsyncImage(artworkRequest(context, item), item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xFF090909), Color(0xCC090909), Color.Transparent))))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color(0xFF090909)))))
         Column(Modifier.align(Alignment.BottomStart).widthIn(max = 720.dp).padding(horizontal = 28.dp, vertical = 30.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -761,6 +763,8 @@ private fun ModernPosterCard(
     footer: (@Composable () -> Unit)? = null
 ) {
     var focused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
     val fraction = if (progress != null && progress.durationMillis > 0L)
         (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
     Column(
@@ -772,7 +776,7 @@ private fun ModernPosterCard(
         Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
             .border(if (focused) 3.dp else 0.dp, Color(0xFFE50914), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
             if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
-            else SubcomposeAsyncImage(item.logo, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
+            else SubcomposeAsyncImage(artworkModel, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
                 when (painter.state.value) {
                     is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
                     else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
@@ -1977,7 +1981,7 @@ private fun ModernSeriesDetailScreen(
                     val backdropUrl = series.logo
                     if (!backdropUrl.isNullOrBlank()) {
                         SubcomposeAsyncImage(
-                            model = backdropUrl,
+                            model = artworkRequest(LocalContext.current, series),
                             contentDescription = series.title,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -2364,7 +2368,7 @@ private fun ModernEpisodeCard(
                 val imageUrl = episode.logo ?: series.logo
                 if (!imageUrl.isNullOrBlank()) {
                     SubcomposeAsyncImage(
-                        model = imageUrl,
+                        model = artworkRequest(LocalContext.current, episode.copy(logo = imageUrl)),
                         contentDescription = episode.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

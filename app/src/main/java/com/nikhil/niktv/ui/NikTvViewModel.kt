@@ -5,9 +5,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.data.StalkerPortalClient
+import com.nikhil.niktv.data.prefetchArtwork
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class NikTvState(
     val profiles: List<PortalProfile> = emptyList(),
@@ -126,13 +128,24 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
      * TTL, so choosing a profile cannot fan out into a burst of portal calls.
      */
     private suspend fun preloadDashboard(session: PortalSession) {
-        updateProfileLoad(0.32f, "Loading Movies…")
+        updateProfileLoad(0.30f, "Loading Movies…")
         loadTypeInternal(session, CatalogType.MOVIES)
-        updateProfileLoad(0.56f, "Loading Series…")
+        warmVisibleArtwork(0.40f, "Preparing Movies artwork…")
+        updateProfileLoad(0.48f, "Loading Series…")
         loadTypeInternal(session, CatalogType.SERIES)
-        updateProfileLoad(0.80f, "Loading Live TV…")
+        warmVisibleArtwork(0.60f, "Preparing Series artwork…")
+        updateProfileLoad(0.68f, "Loading Live TV…")
         loadTypeInternal(session, CatalogType.LIVE_TV)
+        warmVisibleArtwork(0.82f, "Preparing Live TV artwork…")
+        updateProfileLoad(0.92f, "Preparing your dashboard…")
+        val homeArtwork = _state.value.recentlyPlayed.map { it.media } + _state.value.favorites.map { it.media }
+        withTimeoutOrNull(5_000L) { prefetchArtwork(getApplication(), homeArtwork, limit = 8) }
         updateProfileLoad(1f, "Opening dashboard…")
+    }
+
+    private suspend fun warmVisibleArtwork(progress: Float, message: String) {
+        updateProfileLoad(progress, message)
+        withTimeoutOrNull(5_000L) { prefetchArtwork(getApplication(), _state.value.items, limit = 8) }
     }
 
     private fun updateProfileLoad(progress: Float, message: String) =
