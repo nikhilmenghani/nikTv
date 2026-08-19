@@ -500,6 +500,7 @@ private fun CatalogScreen(
                     clearRecent = clearRecent,
                     openWatchedEpisode = openWatchedEpisode,
                     toggleFavorite = toggleFavorite,
+                    toggleFavoriteEntry = toggleFavoriteEntry,
                     setBrowseLayout = setBrowseLayout,
                     openFavorite = openFavorite,
                     openFavorites = openFavorites,
@@ -569,6 +570,7 @@ private fun ModernBrowseScreen(
     clearRecent: (FavoriteKind) -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
+    toggleFavoriteEntry: (FavoriteItem) -> Unit,
     setBrowseLayout: (BrowseLayout) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     openFavorites: () -> Unit,
@@ -578,7 +580,6 @@ private fun ModernBrowseScreen(
     openCategoryManager: (CatalogType) -> Unit
 ) {
     val home = state.homeOpen
-    var actionItem by remember { mutableStateOf<MediaItem?>(null) }
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
@@ -663,7 +664,11 @@ private fun ModernBrowseScreen(
                     ModernRail(
                         "Continue Watching", recents, { it.media }, openRecent,
                         progress = { recent -> state.playbackProgress.progressFor(recent.lastPlayed ?: recent.media) },
-                        remove = removeRecent
+                        remove = removeRecent,
+                        isFavorite = { recent -> state.favorites.any { it.kind == recent.kind && it.media.id == recent.media.id } },
+                        toggleFavorite = { recent ->
+                            toggleFavoriteEntry(FavoriteItem(recent.kind, recent.media, recent.series))
+                        }
                     )
                 }
                 if (state.favorites.isNotEmpty()) item("my-list", span = gridSpan) {
@@ -678,6 +683,10 @@ private fun ModernBrowseScreen(
                         ModernRail(
                             "Recently Played ${kind.sectionTitle()}", entries, { it.media }, openRecent,
                             remove = removeRecent,
+                            isFavorite = { recent -> state.favorites.any { it.kind == recent.kind && it.media.id == recent.media.id } },
+                            toggleFavorite = { recent ->
+                                toggleFavoriteEntry(FavoriteItem(recent.kind, recent.media, recent.series))
+                            },
                             clear = { clearRecent(kind) }
                         )
                     }
@@ -723,9 +732,21 @@ private fun ModernBrowseScreen(
                     span = { if (state.browseLayout == BrowseLayout.LIST) GridItemSpan(maxLineSpan) else GridItemSpan(1) }
                 ) { item ->
                     if (state.browseLayout == BrowseLayout.LIST) {
-                        ModernMediaListCard(item, onClick = { play(item) }, onLongClick = { actionItem = item })
+                        ModernMediaListCard(
+                            item,
+                            onClick = { play(item) },
+                            isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
+                            toggleFavorite = { toggleFavorite(item) }
+                        )
                     } else {
-                        ModernPosterCard(item, aspectRatio, Modifier.padding(horizontal = 4.dp), onClick = { play(item) }, onLongClick = { actionItem = item })
+                        ModernPosterCard(
+                            item,
+                            aspectRatio,
+                            Modifier.padding(horizontal = 4.dp),
+                            onClick = { play(item) },
+                            isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
+                            toggleFavorite = { toggleFavorite(item) }
+                        )
                     }
                 }
             } else item("modern-empty", span = gridSpan) {
@@ -733,14 +754,6 @@ private fun ModernBrowseScreen(
                     Text("Nothing to show in this category", color = Color.White.copy(alpha = .72f))
                 }
             }
-    }
-    actionItem?.let { item ->
-        MediaActionDialog(
-            item = item,
-            isFavorite = state.favorites.any { favorite -> favorite.media.id == item.id },
-            dismiss = { actionItem = null },
-            toggleFavorite = { toggleFavorite(item); actionItem = null }
-        )
     }
 }
 
@@ -861,7 +874,9 @@ private fun <T> ModernRail(
     clear: (() -> Unit)? = null,
     subtitle: (T) -> String? = { null },
     titleMaxLines: Int = 1,
-    subtitleMaxLines: Int = 1
+    subtitleMaxLines: Int = 1,
+    isFavorite: (T) -> Boolean = { false },
+    toggleFavorite: ((T) -> Unit)? = null
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
@@ -873,8 +888,10 @@ private fun <T> ModernRail(
                     modifier = Modifier.width(180.dp),
                     progress = progress(entry),
                     onClick = { open(entry) },
-                    onLongClick = remove?.let { { it(entry) } },
-                    titleMaxLines = titleMaxLines
+                    titleMaxLines = titleMaxLines,
+                    isFavorite = isFavorite(entry),
+                    toggleFavorite = toggleFavorite?.let { action -> { action(entry) } },
+                    removeAction = remove?.let { action -> { action(entry) } }
                 ) {
                     subtitle(entry)?.takeIf { it.isNotBlank() }?.let {
                         Text(
@@ -885,7 +902,6 @@ private fun <T> ModernRail(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    if (remove != null) Text("Hold to remove", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -902,9 +918,13 @@ private fun ModernPosterCard(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     titleMaxLines: Int = 1,
+    isFavorite: Boolean = false,
+    toggleFavorite: (() -> Unit)? = null,
+    removeAction: (() -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null
 ) {
     var focused by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
     val fraction = if (progress != null && progress.durationMillis > 0L)
@@ -912,7 +932,12 @@ private fun ModernPosterCard(
     Column(
         modifier.onFocusChanged { focused = it.isFocused }
             .graphicsLayer { scaleX = if (focused) 1.04f else 1f; scaleY = if (focused) 1.04f else 1f }
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (toggleFavorite != null || removeAction != null) {
+                    { menuOpen = true }
+                } else onLongClick
+            ),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
@@ -937,18 +962,45 @@ private fun ModernPosterCard(
             overflow = TextOverflow.Ellipsis
         )
         footer?.invoke()
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = Color(0xFF202020),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            toggleFavorite?.let { action ->
+                DropdownMenuItem(
+                    text = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
+                    leadingIcon = { Icon(if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder, null) },
+                    onClick = { menuOpen = false; action() }
+                )
+            }
+            removeAction?.let { action ->
+                DropdownMenuItem(
+                    text = { Text("Remove from recent") },
+                    leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                    onClick = { menuOpen = false; action() }
+                )
+            }
+        }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ModernMediaListCard(item: MediaItem, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun ModernMediaListCard(
+    item: MediaItem,
+    onClick: () -> Unit,
+    isFavorite: Boolean,
+    toggleFavorite: () -> Unit
+) {
     var focused by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
             .onFocusChanged { focused = it.isFocused }
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         shape = RoundedCornerShape(12.dp),
         color = if (focused) Color(0xFF292929) else Color(0xFF171717),
         border = if (focused) BorderStroke(2.dp, Color(0xFFE50914)) else null
@@ -966,30 +1018,19 @@ private fun ModernMediaListCard(item: MediaItem, onClick: () -> Unit, onLongClic
             }
             Icon(Icons.Default.PlayArrow, null, tint = if (focused) Color.White else Color.Gray)
         }
-    }
-}
-
-@Composable
-private fun MediaActionDialog(item: MediaItem, isFavorite: Boolean, dismiss: () -> Unit, toggleFavorite: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = dismiss,
-        icon = { Icon(Icons.Default.MoreHoriz, null) },
-        title = { Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        text = {
-            ListItem(
-                headlineContent = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
-                supportingContent = { Text("Saved only for the active profile") },
-                leadingContent = { Icon(if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder, null) },
-                modifier = Modifier.clickable(onClick = toggleFavorite),
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = Color(0xFF202020),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            DropdownMenuItem(
+                text = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
+                leadingIcon = { Icon(if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder, null) },
+                onClick = { menuOpen = false; toggleFavorite() }
             )
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } },
-        containerColor = Color(0xFF181818),
-        titleContentColor = Color.White,
-        textContentColor = Color.White
-    )
+        }
+    }
 }
 
 private fun List<PlaybackProgress>.progressFor(item: MediaItem): PlaybackProgress? =
@@ -1650,6 +1691,11 @@ private fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
 }
 
 private fun CatalogType.icon() = when (this) { CatalogType.LIVE_TV -> Icons.Default.LiveTv; CatalogType.MOVIES -> Icons.Default.Movie; CatalogType.SERIES -> Icons.Default.VideoLibrary; CatalogType.RADIO -> Icons.Default.Radio }
+private fun CatalogType.favoriteKind() = when (this) {
+    CatalogType.LIVE_TV, CatalogType.RADIO -> FavoriteKind.CHANNEL
+    CatalogType.MOVIES -> FavoriteKind.MOVIE
+    CatalogType.SERIES -> FavoriteKind.SERIES
+}
 private fun PortalType.displayName() = when (this) { PortalType.STALKER -> "Stalker / MAG"; PortalType.XTREAM -> "Xtream Codes" }
 private fun String.isAuthorizationFailureText() =
     contains("Authorization failed", ignoreCase = true) || contains("HTTP status: 401") || contains("HTTP status: 403")

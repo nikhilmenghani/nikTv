@@ -466,7 +466,7 @@ fun PlayerScreen(
                             valueRange = 0f..duration.toFloat(),
                             colors = SliderDefaults.colors(thumbColor = Color(0xFFE50914), activeTrackColor = Color(0xFFE50914), inactiveTrackColor = Color.White.copy(alpha = .35f))
                         )
-                    } else {
+                    } else if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(9.dp).clip(RoundedCornerShape(50)).background(Color(0xFFE50914)))
                             Spacer(Modifier.width(8.dp))

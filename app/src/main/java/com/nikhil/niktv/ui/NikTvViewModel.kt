@@ -573,18 +573,29 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         playInternal(item, type, series, episodes)
     }
 
-    private suspend fun playInternal(item: MediaItem, type: CatalogType, series: MediaItem?, episodes: List<MediaItem>) {
+    private suspend fun playInternal(
+        item: MediaItem,
+        type: CatalogType,
+        series: MediaItem?,
+        episodes: List<MediaItem>,
+        forceFreshUrl: Boolean = false
+    ) {
         var session = requireNotNull(_state.value.session)
         val urlKey = "${type.name}:${item.id}"
-        // Live links are commonly session-bound and may point at an old stream
-        // window. Always resolve them immediately before playback.
-        val cachedUrl = if (type == CatalogType.LIVE_TV) null else _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
+        // Stalker create_link results are signed/session-bound and can expire after playback.
+        // Only Xtream VOD paths are stable enough to reuse. Retry always bypasses every cache.
+        val mayReuseUrl = !forceFreshUrl &&
+            type != CatalogType.LIVE_TV &&
+            session.profile.portalType == PortalType.XTREAM
+        val cachedUrl = if (mayReuseUrl) {
+            _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
+        } else null
         val url = cachedUrl ?: runCatching { portal.playableUrl(session, item, type) }.getOrElse { firstError ->
             if (session.profile.portalType != PortalType.STALKER || !firstError.isAuthenticationFailure()) throw firstError
             session = refreshSession(session.profile)
             portal.playableUrl(session, item, type)
         }.also { resolved ->
-            if (type != CatalogType.LIVE_TV) {
+            if (type != CatalogType.LIVE_TV && session.profile.portalType == PortalType.XTREAM) {
                 val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
                     .take(MAX_PLAYBACK_URLS)
                 _state.update { it.copy(playbackUrls = updated) }
@@ -704,7 +715,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = _state.value.nowPlaying ?: return
         viewModelScope.launch {
             _state.update { it.copy(nowPlaying = null, error = null) }
-            runCatching { playInternal(playing.media, playing.catalogType, playing.series, playing.episodeQueue) }
+            runCatching {
+                playInternal(
+                    playing.media,
+                    playing.catalogType,
+                    playing.series,
+                    playing.episodeQueue,
+                    forceFreshUrl = true
+                )
+            }
                 .onFailure { error -> _state.update { it.copy(error = error.message ?: "Playback retry failed") } }
         }
     }
