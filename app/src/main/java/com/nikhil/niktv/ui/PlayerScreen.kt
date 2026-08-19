@@ -54,13 +54,16 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.ui.PlayerView
 import com.nikhil.niktv.R
 import com.nikhil.niktv.model.PlayingMedia
 import kotlinx.coroutines.delay
 
+@UnstableApi
 @Composable
 fun PlayerScreen(
     media: PlayingMedia,
@@ -106,6 +109,7 @@ fun PlayerScreen(
             // Some TV devices advertise a hardware decoder that later rejects or
             // stalls on a stream. Let Media3 try the next compatible decoder.
             .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(FailedDecoderRegistry.selector(context))
         ExoPlayer.Builder(context, renderersFactory).build().apply {
             setMediaItem(MediaItem.fromUri(media.url))
             if (media.resumePositionMillis > 0L) seekTo(media.resumePositionMillis)
@@ -122,9 +126,13 @@ fun PlayerScreen(
             }
             override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
             override fun onPlayerError(error: PlaybackException) {
+                val failedDecoder = FailedDecoderRegistry.record(context, error)
                 playbackError = buildString {
                     append(error.errorCodeName.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase))
                     error.cause?.message?.takeIf { it.isNotBlank() }?.let { append("\n"); append(it) }
+                    failedDecoder?.let {
+                        append("\nNikTV will avoid $it and use an alternate decoder when you retry.")
+                    }
                 }
                 controlsVisible = true
             }
@@ -679,6 +687,33 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+}
+
+private object FailedDecoderRegistry {
+    private val failedNames = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val decoderPattern = Regex("decoder failed:\\s*([^,\\s]+)", RegexOption.IGNORE_CASE)
+
+    fun selector(context: Context): MediaCodecSelector {
+        failedNames += context.getSharedPreferences("player_decoder_fallbacks", Context.MODE_PRIVATE)
+            .getStringSet("failed_decoders", emptySet()).orEmpty()
+        return MediaCodecSelector { mimeType, secure, tunneling ->
+        val candidates = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, secure, tunneling)
+        val filtered = candidates.filterNot { it.name.lowercase() in failedNames }
+        // Never turn a recoverable decoder error into an immediate no-decoder error.
+        if (filtered.isEmpty()) candidates else filtered
+        }
+    }
+
+    fun record(context: Context, error: Throwable): String? {
+        val messages = generateSequence(error as Throwable?) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString("\n")
+        val decoder = decoderPattern.find(messages)?.groupValues?.getOrNull(1) ?: return null
+        failedNames += decoder.lowercase()
+        context.getSharedPreferences("player_decoder_fallbacks", Context.MODE_PRIVATE).edit()
+            .putStringSet("failed_decoders", failedNames.toSet()).apply()
+        return decoder
     }
 }
 
