@@ -543,7 +543,8 @@ private fun CatalogScreen(
                 openFavorites = openFavorites,
                 openSearch = openSearch,
                 openSettings = openSettings,
-                modifier = Modifier.width(72.dp).fillMaxHeight()
+                expanded = isTv,
+                modifier = Modifier.width(if (isTv) 196.dp else 72.dp).fillMaxHeight()
             )
             MainContent(Modifier.weight(1f).fillMaxHeight())
         }
@@ -856,46 +857,78 @@ private fun ModernSideRail(
     openFavorites: () -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
+    expanded: Boolean,
     modifier: Modifier = Modifier
 ) {
     Surface(modifier, color = Color(0xFF070707), shadowElevation = 12.dp) {
-        Column(Modifier.statusBarsPadding().navigationBarsPadding().padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("N", style = MaterialTheme.typography.headlineLarge, color = Color(0xFFE50914), fontWeight = FontWeight.Black)
-            Spacer(Modifier.weight(1f))
-            ModernRailButton(Icons.Default.Home, "Home", state.homeOpen, openHome)
-            visibleCatalogTypes.forEach { type ->
-                ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && state.selectedType == type) { selectType(type) }
+        Column(
+            Modifier.statusBarsPadding().navigationBarsPadding()
+                .padding(horizontal = if (expanded) 10.dp else 6.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = if (expanded) 12.dp else 0.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+            ) {
+                Text("N", style = MaterialTheme.typography.headlineLarge, color = Color(0xFFE50914), fontWeight = FontWeight.Black)
+                if (expanded) {
+                    Spacer(Modifier.width(12.dp))
+                    Text("NikTV", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
             }
-            ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen, openFavorites)
             Spacer(Modifier.weight(1f))
-            ModernRailButton(Icons.Default.Search, "Search", state.searchOpen, openSearch)
-            ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, openSettings)
+            ModernRailButton(Icons.Default.Home, "Home", state.homeOpen, expanded, openHome)
+            visibleCatalogTypes.forEach { type ->
+                ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && state.selectedType == type, expanded) { selectType(type) }
+            }
+            ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen, expanded, openFavorites)
+            Spacer(Modifier.weight(1f))
+            ModernRailButton(Icons.Default.Search, "Search", state.searchOpen, expanded, openSearch)
+            ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
         }
     }
 }
 
 @Composable
-private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean, expanded: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    IconButton(
+    val shape = RoundedCornerShape(10.dp)
+    Surface(
         onClick = onClick,
-        modifier = Modifier.padding(vertical = 4.dp)
+        modifier = Modifier.fillMaxWidth().height(50.dp).padding(vertical = 3.dp)
             .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer {
-                scaleX = if (focused) 1.18f else 1f
-                scaleY = if (focused) 1.18f else 1f
-            }
             .semantics { role = Role.Tab; this.selected = selected }
-            .then(
-                if (focused) Modifier
-                    .shadow(14.dp, CircleShape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
-                    .background(Color(0xFF3A0A0D), CircleShape)
-                    .border(4.dp, Color(0xFFFF3340), CircleShape)
-                else if (selected) Modifier.border(2.dp, Color(0xFFE50914), CircleShape)
-                else Modifier
-            )
+            .then(if (focused) Modifier.shadow(12.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier),
+        shape = shape,
+        color = when {
+            focused -> Color(0xFF3A0A0D)
+            selected -> Color(0xFF241012)
+            else -> Color.Transparent
+        },
+        border = when {
+            focused -> BorderStroke(3.dp, Color(0xFFFF3340))
+            selected -> BorderStroke(1.dp, Color(0xFFE50914))
+            else -> null
+        }
     ) {
-        Icon(icon, label, tint = if (focused || selected) Color.White else Color.Gray)
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = if (expanded) 14.dp else 0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+        ) {
+            Icon(icon, label, Modifier.size(24.dp), tint = if (focused || selected) Color.White else Color.Gray)
+            if (expanded) {
+                Spacer(Modifier.width(14.dp))
+                Text(
+                    label,
+                    color = if (focused || selected) Color.White else Color.LightGray,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (focused || selected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
 
