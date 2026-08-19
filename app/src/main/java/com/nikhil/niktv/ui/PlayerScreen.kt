@@ -49,7 +49,14 @@ import com.nikhil.niktv.model.PlayingMedia
 import kotlinx.coroutines.delay
 
 @Composable
-fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, onPlayNext: () -> Unit, onProgress: (String, Long, Long) -> Unit) {
+fun PlayerScreen(
+    media: PlayingMedia,
+    onBack: () -> Unit,
+    onRetry: () -> Unit,
+    onPlayPrevious: () -> Unit,
+    onPlayNext: () -> Unit,
+    onProgress: (String, Long, Long) -> Unit
+) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
@@ -179,7 +186,11 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
         if (focusMode) focusMode = false else onBack()
     }
     Box(Modifier.fillMaxSize().clipToBounds()) {
-        AndroidView(
+        // AndroidView instances survive recomposition by default. When autoplay advances to
+        // another episode, recreate PlayerView so its touch/key listeners capture the new
+        // episode's player and Compose control state instead of the disposed episode's state.
+        key(media.progressKey) {
+            AndroidView(
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
                     val playerView = this
@@ -287,9 +298,20 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
                                 controlsVisible = true
                                 true
                             }
-                            KeyEvent.KEYCODE_DPAD_UP,
+                            KeyEvent.KEYCODE_DPAD_UP -> {
+                                controlsVisible = true
+                                if (media.previousEpisode != null && !advancing) {
+                                    advancing = true
+                                    onPlayPrevious()
+                                }
+                                true
+                            }
                             KeyEvent.KEYCODE_DPAD_DOWN -> {
                                 controlsVisible = true
+                                if (media.nextEpisode != null && !advancing) {
+                                    advancing = true
+                                    onPlayNext()
+                                }
                                 true
                             }
                             else -> false
@@ -370,9 +392,10 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
                     translationY = videoOffset.y
                 }
             },
-            modifier = Modifier
-                .fillMaxSize()
-        )
+                modifier = Modifier
+                    .fillMaxSize()
+            )
+        }
         if (controlsVisible) {
             Box(
                 Modifier.fillMaxSize().background(
@@ -400,9 +423,17 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
                 if (playbackError == null && !startupTimedOut) {
                     Row(
                         Modifier.align(Alignment.Center),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (media.previousEpisode != null) IconButton(onClick = {
+                            if (!advancing) {
+                                advancing = true
+                                onPlayPrevious()
+                            }
+                        }) {
+                            Icon(Icons.Default.SkipPrevious, "Previous episode", Modifier.size(34.dp), tint = Color.White)
+                        }
                         if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) {
                             Icon(Icons.Default.Replay10, "Back 10 seconds", Modifier.size(38.dp), tint = Color.White)
                         }
@@ -413,6 +444,14 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
                         ) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", Modifier.size(42.dp)) }
                         if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }) {
                             Icon(Icons.Default.Forward10, "Forward 10 seconds", Modifier.size(38.dp), tint = Color.White)
+                        }
+                        if (media.nextEpisode != null) IconButton(onClick = {
+                            if (!advancing) {
+                                advancing = true
+                                onPlayNext()
+                            }
+                        }) {
+                            Icon(Icons.Default.SkipNext, "Next episode", Modifier.size(34.dp), tint = Color.White)
                         }
                     }
                 }

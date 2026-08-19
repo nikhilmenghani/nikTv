@@ -115,7 +115,14 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     MaterialTheme(colorScheme = profileColors) {
         Surface(Modifier.fillMaxSize()) {
             when {
-                state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::retryPlayback, vm::playNextEpisode, vm::savePlaybackProgress)
+                state.nowPlaying != null -> PlayerScreen(
+                    state.nowPlaying!!,
+                    vm::closePlayer,
+                    vm::retryPlayback,
+                    vm::playPreviousEpisode,
+                    vm::playNextEpisode,
+                    vm::savePlaybackProgress
+                )
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.profileLoadProgress != null -> ProfileLoadingScreen(
                     profileName = state.savedProfile?.name,
@@ -637,8 +644,18 @@ private fun ModernBrowseScreen(
                 val newEpisodes = state.watchedSeries.flatMap { watched -> watched.newEpisodes.map { watched to it } }
                 if (newEpisodes.isNotEmpty()) item("watch-list-updates", span = gridSpan) {
                     ModernRail(
-                        "New Episodes", newEpisodes, { it.second }, { (watched, episode) -> openWatchedEpisode(watched, episode) },
-                        progress = { (_, episode) -> state.playbackProgress.progressFor(episode) }
+                        "New Episodes",
+                        newEpisodes,
+                        media = { (watched, episode) ->
+                            if (episode.logo.isNullOrBlank() && !watched.series.logo.isNullOrBlank()) {
+                                episode.copy(logo = watched.series.logo)
+                            } else episode
+                        },
+                        open = { (watched, episode) -> openWatchedEpisode(watched, episode) },
+                        progress = { (_, episode) -> state.playbackProgress.progressFor(episode) },
+                        subtitle = { (watched, _) -> watched.series.title },
+                        titleMaxLines = Int.MAX_VALUE,
+                        subtitleMaxLines = 2
                     )
                 }
                 val recents = state.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE }
@@ -842,7 +859,9 @@ private fun <T> ModernRail(
     progress: (T) -> PlaybackProgress? = { null },
     remove: ((T) -> Unit)? = null,
     clear: (() -> Unit)? = null,
-    subtitle: (T) -> String? = { null }
+    subtitle: (T) -> String? = { null },
+    titleMaxLines: Int = 1,
+    subtitleMaxLines: Int = 1
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
@@ -854,10 +873,17 @@ private fun <T> ModernRail(
                     modifier = Modifier.width(180.dp),
                     progress = progress(entry),
                     onClick = { open(entry) },
-                    onLongClick = remove?.let { { it(entry) } }
+                    onLongClick = remove?.let { { it(entry) } },
+                    titleMaxLines = titleMaxLines
                 ) {
                     subtitle(entry)?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, color = Color.Gray, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            it,
+                            color = Color.Gray,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = subtitleMaxLines,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     if (remove != null) Text("Hold to remove", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                 }
@@ -875,6 +901,7 @@ private fun ModernPosterCard(
     progress: PlaybackProgress? = null,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    titleMaxLines: Int = 1,
     footer: (@Composable () -> Unit)? = null
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -903,10 +930,10 @@ private fun ModernPosterCard(
         }
         Text(
             item.title,
-            modifier = if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
+            modifier = if (focused && titleMaxLines == 1) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
             color = Color.White,
             style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
+            maxLines = titleMaxLines,
             overflow = TextOverflow.Ellipsis
         )
         footer?.invoke()

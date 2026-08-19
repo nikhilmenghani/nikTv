@@ -594,8 +594,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val orderedEpisodes = if (type == CatalogType.SERIES) episodes.sortedWith(
             compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
         ) else emptyList()
-        val nextEpisode = orderedEpisodes.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
-            ?.let { orderedEpisodes.getOrNull(it + 1) }
+        val episodeIndex = orderedEpisodes.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
+        val previousEpisode = episodeIndex?.let { orderedEpisodes.getOrNull(it - 1) }
+        val nextEpisode = episodeIndex?.let { orderedEpisodes.getOrNull(it + 1) }
         // Use a profile-scoped, content-based key so resume survives session/token refreshes.
         val progressKey = progressKeyFor(session.profile, item, type, series)
         val legacyProgressKey = legacyProgressKeyFor(item, type)
@@ -606,7 +607,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 .filter { it.key == legacyProgressKey }
                 .maxByOrNull { it.updatedAtMillis }
         val resumePosition = saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L } ?: 0L
-        _state.update { it.copy(nowPlaying = PlayingMedia(item, url, type, nextEpisode, series, orderedEpisodes, resumePosition, progressKey)) }
+        _state.update {
+            it.copy(
+                nowPlaying = PlayingMedia(
+                    media = item,
+                    url = url,
+                    catalogType = type,
+                    previousEpisode = previousEpisode,
+                    nextEpisode = nextEpisode,
+                    series = series,
+                    episodeQueue = orderedEpisodes,
+                    resumePositionMillis = resumePosition,
+                    progressKey = progressKey
+                )
+            )
+        }
         recordRecent(item, type, series)
     }
 
@@ -638,6 +653,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { playInternal(next, CatalogType.SERIES, playing.series, playing.episodeQueue) }
                 .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not play the next episode") } }
+        }
+    }
+
+    fun playPreviousEpisode() {
+        val playing = _state.value.nowPlaying ?: return
+        val previous = playing.previousEpisode ?: return
+        viewModelScope.launch {
+            runCatching { playInternal(previous, CatalogType.SERIES, playing.series, playing.episodeQueue) }
+                .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not play the previous episode") } }
         }
     }
 
