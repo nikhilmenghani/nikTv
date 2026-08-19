@@ -158,7 +158,7 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(player, media.nextEpisode, autoPlayCancelled) {
-        if (media.nextEpisode == null || autoPlayCancelled) {
+        if (media.catalogType != com.nikhil.niktv.model.CatalogType.SERIES || media.nextEpisode == null || autoPlayCancelled) {
             remainingSeconds = null
             return@LaunchedEffect
         }
@@ -324,10 +324,22 @@ fun PlayerScreen(
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_RIGHT,
-                            KeyEvent.KEYCODE_DPAD_LEFT,
-                            KeyEvent.KEYCODE_DPAD_UP,
-                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> {
                                 controlsVisible = true
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_UP -> {
+                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV && media.previousEpisode != null && !advancing) {
+                                    advancing = true
+                                    onPlayPrevious()
+                                } else controlsVisible = true
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV && media.nextEpisode != null && !advancing) {
+                                    advancing = true
+                                    onPlayNext()
+                                } else controlsVisible = true
                                 true
                             }
                             else -> false
@@ -468,7 +480,12 @@ fun PlayerScreen(
                                 if (duration > 0L) down = progressFocusRequester
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }) {
-                            Icon(Icons.Default.SkipPrevious, "Previous episode", Modifier.size(34.dp), tint = Color.White)
+                            Icon(
+                                Icons.Default.SkipPrevious,
+                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) "Previous channel" else "Previous episode",
+                                Modifier.size(34.dp),
+                                tint = Color.White
+                            )
                         }
                         if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) },
                             modifier = Modifier.focusRequester(rewindFocusRequester)
@@ -512,7 +529,12 @@ fun PlayerScreen(
                                 up = rotateFocusRequester
                                 if (duration > 0L) down = progressFocusRequester
                             }.playerControlFocus(CircleShape) { controlsFocused = it }) {
-                            Icon(Icons.Default.SkipNext, "Next episode", Modifier.size(34.dp), tint = Color.White)
+                            Icon(
+                                Icons.Default.SkipNext,
+                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) "Next channel" else "Next episode",
+                                Modifier.size(34.dp),
+                                tint = Color.White
+                            )
                         }
                     }
                 }

@@ -780,7 +780,10 @@ private fun ModernBrowseScreen(
                             Modifier.padding(horizontal = 4.dp),
                             onClick = { play(item) },
                             isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
-                            toggleFavorite = { toggleFavorite(item) }
+                            toggleFavorite = { toggleFavorite(item) },
+                            footer = if (state.selectedType == CatalogType.LIVE_TV && item.liveProgramme != null) {{
+                                LiveProgrammeFooter(item.liveProgramme)
+                            }} else null
                         )
                     }
                 }
@@ -816,6 +819,29 @@ private fun ModernBrowseScreen(
                     Text("Nothing to show in this category", color = Color.White.copy(alpha = .72f))
                 }
             }
+    }
+}
+
+@Composable
+private fun LiveProgrammeFooter(programme: LiveProgramme) {
+    val formatter = remember { java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()) }
+    val schedule = remember(programme.startTimeMillis, programme.endTimeMillis) {
+        when {
+            programme.startTimeMillis != null && programme.endTimeMillis != null ->
+                "${formatter.format(java.util.Date(programme.startTimeMillis))}–${formatter.format(java.util.Date(programme.endTimeMillis))}"
+            programme.startTimeMillis != null -> "From ${formatter.format(java.util.Date(programme.startTimeMillis))}"
+            else -> null
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            programme.title,
+            color = Color(0xFFE6E6E6),
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        schedule?.let { Text(it, color = Color(0xFFB3B3B3), style = MaterialTheme.typography.labelSmall) }
     }
 }
 

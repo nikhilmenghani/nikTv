@@ -154,8 +154,9 @@ class StalkerPortalClient(private val context: Context) {
                     o.string("name") ?: o.string("title") ?: "Untitled",
                     portalAssetUrl(session, o.string("logo") ?: o.string("screenshot_uri") ?: o.string("pic")),
                     o.string("cmd"),
-                    o.string("description") ?: o.string("genres_str"),
-                    portalCategoryId = category.id
+                    o.string("description") ?: o.string("descr") ?: o.string("genres_str"),
+                    portalCategoryId = category.id,
+                    liveProgramme = if (category.type == CatalogType.LIVE_TV) o.liveProgramme() else null
                 )
             }
         val metadata = payload as? JsonObject
@@ -404,7 +405,14 @@ class StalkerPortalClient(private val context: Context) {
                 CatalogType.MOVIES -> "${profile.portalUrl}/movie/${encode(profile.username)}/${encode(profile.password)}/$id.$extension"
                 else -> null
             }
-            MediaItem(id, o.string("name") ?: o.string("title") ?: "Untitled", o.string("stream_icon") ?: o.string("cover"), url, o.string("plot"))
+            MediaItem(
+                id,
+                o.string("name") ?: o.string("title") ?: "Untitled",
+                o.string("stream_icon") ?: o.string("cover"),
+                url,
+                o.string("plot") ?: o.string("description"),
+                liveProgramme = if (type == CatalogType.LIVE_TV) o.liveProgramme() else null
+            )
         }
     }
 
@@ -690,6 +698,30 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
+    private fun JsonObject.liveProgramme(): LiveProgramme? {
+        val nested = listOf("now_playing", "current_program", "current_programme", "epg")
+            .asSequence()
+            .mapNotNull { key -> this[key] }
+            .mapNotNull { value -> when (value) {
+                is JsonObject -> value
+                is JsonArray -> value.firstOrNull() as? JsonObject
+                else -> null
+            } }
+            .firstOrNull()
+        val source = nested ?: this
+        val title: String = (listOf("program_name", "programme_name", "title", "name", "cur_playing", "playing")
+            .firstNotNullOfOrNull { key -> source.string(key)?.takeIf(String::isNotBlank) }
+            ?: if (source !== this) string("cur_playing")?.takeIf(String::isNotBlank) else null)
+            ?: return null
+        fun timestamp(vararg keys: String): Long? = keys.firstNotNullOfOrNull { key ->
+            source.string(key)?.toLongOrNull()?.let { raw -> if (raw < 10_000_000_000L) raw * 1_000L else raw }
+        }
+        return LiveProgramme(
+            title = title,
+            startTimeMillis = timestamp("start_timestamp", "start_ts", "start_time"),
+            endTimeMillis = timestamp("stop_timestamp", "end_timestamp", "stop_ts", "end_ts", "end_time")
+        )
+    }
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Mobile Safari/533.3"
         private const val MAG_VER = "ImageDescription: 2.20.02-pub-424; ImageDate: Fri May 8 15:39:55 UTC 2020; PORTAL version: 5.6.2; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x588"

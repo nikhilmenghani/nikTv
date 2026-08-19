@@ -109,7 +109,15 @@ data class MediaItem(
     val episodeNumber: Int? = null,
     val portalSeasonId: String? = null,
     val portalCategoryId: String? = null,
-    val portalEpisodeId: String? = null
+    val portalEpisodeId: String? = null,
+    val liveProgramme: LiveProgramme? = null
+)
+
+@Serializable
+data class LiveProgramme(
+    val title: String,
+    val startTimeMillis: Long? = null,
+    val endTimeMillis: Long? = null
 )
 
 @Serializable
