@@ -2008,7 +2008,9 @@ private fun ModernSeriesDetailScreen(
     }
 
     val recentEpisode = remember(state.recentlyPlayed, state.playbackProgress, state.items, series) {
-        val recentWatched = state.recentlyPlayed.firstOrNull { it.series?.id == series.id }?.lastPlayed
+        val recentWatched = state.recentlyPlayed.firstOrNull { recent ->
+            recent.kind == FavoriteKind.SERIES && (recent.media.id == series.id || recent.series?.id == series.id)
+        }?.lastPlayed
             ?.let { last -> state.items.firstOrNull { it.id == last.id } }
         if (recentWatched != null) return@remember recentWatched
         val lastProgress = state.playbackProgress
@@ -2019,7 +2021,11 @@ private fun ModernSeriesDetailScreen(
         } else null
     }
 
-    val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) state.items.maxByOrNull { it.episodeNumber ?: it.title.episodeNumberFromTitle() ?: 0 } ?: state.items.firstOrNull()
+    val latestEpisode = state.items.maxWithOrNull(
+        compareBy<MediaItem>({ it.seasonNumber ?: it.title.seasonNumberFromTitle() ?: 0 },
+            { it.episodeNumber ?: it.title.episodeNumberFromTitle() ?: 0 }, { it.title })
+    )
+    val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) latestEpisode ?: state.items.firstOrNull()
         else state.items.firstOrNull()
 
     Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
@@ -2179,6 +2185,21 @@ private fun ModernSeriesDetailScreen(
                                         else -> "Play First Episode"
                                     }
                                     Text(playLabel, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            if (recentEpisode != null && latestEpisode != null && recentEpisode.id != latestEpisode.id) {
+                                FilledTonalButton(
+                                    onClick = { play(latestEpisode) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.filledTonalButtonColors(
+                                        containerColor = Color.White.copy(alpha = 0.15f),
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Icon(Icons.Default.SkipNext, null, Modifier.size(22.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Play Latest (${latestEpisode.title.take(18)})")
                                 }
                             }
 

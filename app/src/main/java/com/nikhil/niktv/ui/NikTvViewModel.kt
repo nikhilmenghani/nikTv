@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
 
 data class NikTvState(
     val profiles: List<PortalProfile> = emptyList(),
@@ -74,6 +76,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var allWatchedSeries: List<WatchedSeries> = emptyList()
     private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
+    private val watchRefreshMutex = Mutex()
 
     init {
         prepareProfileChooser()
@@ -97,6 +100,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         } }
         viewModelScope.launch { store.recentSearches.collect { searches -> _state.update { it.copy(recentSearches = searches) } } }
         viewModelScope.launch { store.profiles.collect { profiles -> _state.update { it.copy(profiles = profiles) } } }
+        viewModelScope.launch {
+            while (isActive) {
+                delay(60_000L)
+                runCatching { refreshWatchedSeriesIfDue() }
+            }
+        }
         viewModelScope.launch {
             store.categoryFilters.collect { filters ->
                 val snapshot = _state.value
@@ -733,7 +742,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun openFavorites() = _state.update { it.copy(favoritesOpen = true, homeOpen = false, settingsOpen = false, searchOpen = false) }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
-    fun openHome() = _state.update { it.copy(homeOpen = true, favoritesOpen = false, settingsOpen = false, searchOpen = false) }
+    fun openHome() {
+        _state.update { it.copy(homeOpen = true, favoritesOpen = false, settingsOpen = false, searchOpen = false) }
+        viewModelScope.launch { runCatching { refreshWatchedSeriesIfDue() } }
+    }
     fun closeHome() = _state.update { it.copy(homeOpen = false) }
 
     fun toggleFavorite(item: MediaItem) {
@@ -834,6 +846,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun refreshWatchedSeriesIfDue() {
+        if (!watchRefreshMutex.tryLock()) return
+        try {
         val session = _state.value.session ?: return
         val profileKey = session.profile.cacheKey()
         val interval = _state.value.cacheIntervalMinutes * 60_000L
@@ -859,6 +873,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + scoped
             _state.update { it.copy(watchedSeries = scoped) }
             store.saveWatchedSeries(allWatchedSeries)
+        }
+        } finally {
+            watchRefreshMutex.unlock()
         }
     }
 
