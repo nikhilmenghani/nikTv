@@ -929,8 +929,9 @@ private fun ModernPosterCard(
     val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
     val fraction = if (progress != null && progress.durationMillis > 0L)
         (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
-    Column(
-        modifier.onFocusChanged { focused = it.isFocused }
+    Box(modifier) {
+        Column(
+            Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
             .graphicsLayer { scaleX = if (focused) 1.04f else 1f; scaleY = if (focused) 1.04f else 1f }
             .combinedClickable(
                 onClick = onClick,
@@ -938,33 +939,35 @@ private fun ModernPosterCard(
                     { menuOpen = true }
                 } else onLongClick
             ),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
-            .border(if (focused) 3.dp else 0.dp, Color(0xFFE50914), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-            if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
-            else SubcomposeAsyncImage(artworkModel, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
-                when (painter.state.value) {
-                    is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
-                    else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
+                .border(if (focused) 3.dp else 0.dp, Color(0xFFE50914), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
+                else SubcomposeAsyncImage(artworkModel, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
+                    when (painter.state.value) {
+                        is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                        else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
+                    }
+                }
+                if (fraction > 0f) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0xFF333333))) {
+                    Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Color(0xFFE50914)))
                 }
             }
-            if (fraction > 0f) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0xFF333333))) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Color(0xFFE50914)))
-            }
+            Text(
+                item.title,
+                modifier = if (focused && titleMaxLines == 1) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = titleMaxLines,
+                overflow = TextOverflow.Ellipsis
+            )
+            footer?.invoke()
         }
-        Text(
-            item.title,
-            modifier = if (focused && titleMaxLines == 1) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
-            color = Color.White,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = titleMaxLines,
-            overflow = TextOverflow.Ellipsis
-        )
-        footer?.invoke()
         DropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
+            modifier = Modifier.align(Alignment.TopEnd),
             containerColor = Color(0xFF202020),
             shape = RoundedCornerShape(12.dp)
         ) {
