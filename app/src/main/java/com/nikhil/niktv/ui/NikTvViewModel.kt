@@ -40,6 +40,7 @@ data class NikTvState(
     val playbackUrls: List<PlaybackUrl> = emptyList(),
     val cacheIntervalMinutes: Int = 60,
     val browseCache: BrowseCatalogCache? = null,
+    val browseCachesByType: Map<CatalogType, BrowseCatalogCache> = emptyMap(),
     val searchOpen: Boolean = false,
     val searchType: SearchContentType = SearchContentType.SERIES,
     val searchQuery: String = "",
@@ -131,10 +132,48 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun reconnect() { _state.value.savedProfile?.let(::connect) }
 
     fun loadType(type: CatalogType) {
+        if (activateWarmedType(type)) return
         viewModelScope.launch {
             runCatching { loadTypeInternal(requireNotNull(_state.value.session), type) }
                 .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not load ${type.title}") } }
         }
+    }
+
+    fun openCatalogType(type: CatalogType) {
+        if (activateWarmedType(type, closeOverlays = true)) return
+        _state.update { it.copy(
+            homeOpen = false, favoritesOpen = false, settingsOpen = false, searchOpen = false,
+            selectedType = type, selectedSeries = null
+        ) }
+        loadType(type)
+    }
+
+    /** Applies a profile-warmed tab in the caller's frame without disk, network or coroutine hops. */
+    private fun activateWarmedType(type: CatalogType, closeOverlays: Boolean = false): Boolean {
+        val snapshot = _state.value
+        val session = snapshot.session ?: return false
+        val cache = snapshot.browseCachesByType[type]
+            ?.takeIf { it.profileKey == session.profile.cacheKey() }
+            ?: return false
+        val filteredCategories = filterCategories(cache.categories, session.profile.cacheKey(), type, snapshot.categoryFilters)
+        val selected = filteredCategories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
+            ?: filteredCategories.firstOrNull()
+        val items = selected?.let { cache.itemsByCategory[it.id] } ?: if (selected == null) emptyList() else return false
+        _state.update { current -> current.copy(
+            selectedType = type,
+            categories = filteredCategories,
+            selectedCategory = selected,
+            items = items,
+            selectedSeries = null,
+            fullSearchItems = null,
+            fullSearchCachedAtMillis = null,
+            browseCache = cache,
+            homeOpen = if (closeOverlays) false else current.homeOpen,
+            favoritesOpen = if (closeOverlays) false else current.favoritesOpen,
+            settingsOpen = if (closeOverlays) false else current.settingsOpen,
+            searchOpen = if (closeOverlays) false else current.searchOpen
+        ) }
+        return true
     }
 
     private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType, forceRefresh: Boolean = false, preferredCategoryId: String? = null) {
@@ -142,9 +181,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         var rawCategories: List<Category>? = null
         var cachedItems: Map<String, List<MediaItem>> = emptyMap()
-        var cachedBrowse: BrowseCatalogCache? = null
+        var cachedBrowse: BrowseCatalogCache? = if (!forceRefresh) {
+            _state.value.browseCachesByType[type]?.takeIf { it.profileKey == profileKey }
+        } else null
 
-        if (!forceRefresh) {
+        cachedBrowse?.let { cached ->
+            rawCategories = cached.categories
+            cachedItems = cached.itemsByCategory
+        }
+
+        if (!forceRefresh && cachedBrowse == null) {
             store.browseCatalog(type, profileKey).first()?.takeIf { it.categories.isNotEmpty() }?.let { cached ->
                 rawCategories = cached.categories
                 cachedItems = cached.itemsByCategory
@@ -174,7 +220,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val cache = cachedBrowse?.copy(categories = allCategories, itemsByCategory = if (selected != null) cachedItems + (selected.id to items) else cachedItems)
             ?: BrowseCatalogCache(profileKey, type, System.currentTimeMillis(), allCategories, selected?.let { mapOf(it.id to items) }.orEmpty())
 
-        if (allCategories.isNotEmpty() && (selected == null || items.isNotEmpty())) store.saveBrowseCatalog(cache)
+        if (allCategories.isNotEmpty() && (selected == null || items.isNotEmpty()) && cache != cachedBrowse) {
+            store.saveBrowseCatalog(cache)
+        }
 
         _state.update { current ->
             val updatedRaw = current.rawCategoriesByType + (type to allCategories)
@@ -187,7 +235,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 selectedSeries = null,
                 fullSearchItems = null,
                 fullSearchCachedAtMillis = null,
-                browseCache = cache
+                browseCache = cache,
+                browseCachesByType = current.browseCachesByType + (type to cache)
             )
         }
     }
@@ -195,14 +244,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
-        val cached = _state.value.browseCache?.takeIf { it.type == category.type }?.itemsByCategory?.get(category.id)
+        val cached = _state.value.browseCachesByType[category.type]?.itemsByCategory?.get(category.id)
         val items = cached ?: portal.catalog(session, category)
         if (cached == null) {
-            val existing = _state.value.browseCache
+            val existing = _state.value.browseCachesByType[category.type]
             if (existing != null && existing.type == category.type) {
                 val updated = existing.copy(itemsByCategory = existing.itemsByCategory + (category.id to items))
                 store.saveBrowseCatalog(updated)
-                _state.update { it.copy(browseCache = updated) }
+                _state.update { current -> current.copy(
+                    browseCache = updated,
+                    browseCachesByType = current.browseCachesByType + (category.type to updated)
+                ) }
             }
         }
         _state.update { it.copy(items = items) }
@@ -578,7 +630,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
-            selectedSeries = null, browseCache = null, fullSearchItems = null, playbackUrls = emptyList()) }
+            selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList()) }
         preloadDashboard(session)
     }
     fun removeProfile(profile: PortalProfile) = viewModelScope.launch {

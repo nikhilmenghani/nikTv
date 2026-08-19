@@ -106,7 +106,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor)
                 else -> CatalogScreen(
                     state = state,
-                    selectType = { vm.closeSearch(); vm.closeSettings(); vm.closeFavorites(); vm.closeHome(); vm.loadType(it) },
+                    selectType = vm::openCatalogType,
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     closeSeries = vm::closeSeries,
