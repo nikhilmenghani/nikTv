@@ -93,8 +93,7 @@ private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContent
 
 @Composable
 private fun Modifier.remoteFocusFrame(
-    shape: Shape = RoundedCornerShape(12.dp),
-    focusedScale: Float = 1.035f
+    shape: Shape = RoundedCornerShape(12.dp)
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
     return this
@@ -102,7 +101,6 @@ private fun Modifier.remoteFocusFrame(
         .then(
             if (focused) Modifier
                 .shadow(16.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
-                .graphicsLayer { scaleX = focusedScale; scaleY = focusedScale }
                 .background(Color(0xFF3A1014), shape)
                 .border(4.dp, Color(0xFFFF3340), shape)
             else Modifier
@@ -369,13 +367,14 @@ private fun ProfileChooserTile(title: String, subtitle: String, icon: ImageVecto
     var focused by remember { mutableStateOf(false) }
     Column(
         Modifier.width(156.dp).onFocusChanged { focused = it.isFocused }
-            .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
-            .clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(8.dp),
+            .clickable(onClick = onClick).padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Box(
-            Modifier.size(124.dp).clip(RoundedCornerShape(10.dp))
+            Modifier.size(124.dp)
+                .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(10.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
+                .clip(RoundedCornerShape(10.dp))
                 .background(Color(0xFF1F2937))
                 .border(if (focused) 4.dp else 2.dp, if (focused) Color(0xFFE50914) else Color(0xFF374151), RoundedCornerShape(10.dp)),
             contentAlignment = Alignment.Center
@@ -640,7 +639,7 @@ private fun ModernBrowseScreen(
                         item {
                             AssistChip(
                                 onClick = { openCategoryManager(state.selectedType) },
-                                modifier = Modifier.remoteFocusFrame().focusProperties {
+                                modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
                                     if (state.items.isNotEmpty()) down = layoutToggleRequester
                                 },
                                 label = { Text(if (isFiltered) "Filtered (${state.categories.size})" else "Categories") },
@@ -650,7 +649,7 @@ private fun ModernBrowseScreen(
                         items(state.categories, key = { it.id }) { category ->
                             val selected = state.selectedCategory?.id == category.id
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                TextButton(onClick = { selectCategory(category) }, modifier = Modifier.remoteFocusFrame().focusProperties {
+                                TextButton(onClick = { selectCategory(category) }, modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
                                     if (state.items.isNotEmpty()) down = layoutToggleRequester
                                 }) {
                                     Text(category.title, color = if (selected) Color.White else Color.LightGray)
@@ -659,7 +658,7 @@ private fun ModernBrowseScreen(
                             }
                         }
                         item {
-                            AssistChip(onClick = refreshCatalog, modifier = Modifier.remoteFocusFrame().focusProperties {
+                            AssistChip(onClick = refreshCatalog, modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
                                 if (state.items.isNotEmpty()) down = layoutToggleRequester
                             }, label = { Text("Refresh") }, leadingIcon = {
                                 Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
@@ -748,7 +747,7 @@ private fun ModernBrowseScreen(
                                 setBrowseLayout(if (state.browseLayout == BrowseLayout.GRID) BrowseLayout.LIST else BrowseLayout.GRID)
                             }, modifier = Modifier.focusRequester(layoutToggleRequester)
                                 .focusProperties { up = FocusRequester.Default }
-                                .remoteFocusFrame(CircleShape, 1.14f)) {
+                                .remoteFocusFrame(CircleShape)) {
                                 Icon(if (state.browseLayout == BrowseLayout.GRID) Icons.Default.ViewList else Icons.Default.GridView,
                                     if (state.browseLayout == BrowseLayout.GRID) "Show as list" else "Show as grid")
                             }
@@ -872,16 +871,16 @@ private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit,
     Row(Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("N", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
         Spacer(Modifier.width(8.dp))
-        TextButton(onClick = openHome, modifier = Modifier.remoteFocusFrame()) { Text("Home", color = if (home) Color.White else Color.Gray) }
+        TextButton(onClick = openHome, modifier = Modifier.remoteFocusFrame(CircleShape)) { Text("Home", color = if (home) Color.White else Color.Gray) }
         visibleCatalogTypes.forEach { type ->
-            TextButton(onClick = { selectType(type) }, modifier = Modifier.remoteFocusFrame(), contentPadding = PaddingValues(horizontal = 6.dp)) {
+            TextButton(onClick = { selectType(type) }, modifier = Modifier.remoteFocusFrame(CircleShape), contentPadding = PaddingValues(horizontal = 6.dp)) {
                 Text(type.title, color = if (!home && state.selectedType == type) Color.White else Color.Gray, style = MaterialTheme.typography.labelMedium)
             }
         }
         Spacer(Modifier.weight(1f))
-        IconButton(onClick = openSearch, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
-        IconButton(onClick = openFavorites, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.FavoriteBorder, "My List", tint = Color.White) }
-        IconButton(onClick = openSettings, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
+        IconButton(onClick = openSearch, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
+        IconButton(onClick = openFavorites, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.FavoriteBorder, "My List", tint = Color.White) }
+        IconButton(onClick = openSettings, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
     }
 }
 
@@ -975,8 +974,6 @@ private fun ModernPosterCard(
     Box(modifier) {
         Column(
             Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
-            .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(10.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
-            .graphicsLayer { scaleX = if (focused) 1.08f else 1f; scaleY = if (focused) 1.08f else 1f }
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
@@ -985,7 +982,9 @@ private fun ModernPosterCard(
             ),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
+            Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio)
+                .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(8.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
+                .clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
                 .border(if (focused) 4.dp else 0.dp, Color(0xFFFF2633), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
                 else SubcomposeAsyncImage(artworkModel, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
@@ -1048,7 +1047,6 @@ private fun ModernMediaListCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
             .onFocusChanged { focused = it.isFocused }
             .then(if (focused) Modifier.shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
-            .graphicsLayer { scaleX = if (focused) 1.025f else 1f; scaleY = if (focused) 1.025f else 1f }
             .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         shape = RoundedCornerShape(12.dp),
         color = if (focused) Color(0xFF292929) else Color(0xFF171717),
@@ -1185,10 +1183,10 @@ private fun ModernScreenTopBar(title: String, close: () -> Unit, openSearch: (()
         Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = close, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+        IconButton(onClick = close, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
-        openSearch?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Search, "Search", tint = Color.White) } }
-        openSettings?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) } }
+        openSearch?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Search, "Search", tint = Color.White) } }
+        openSettings?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) } }
     }
 }
 
@@ -1230,7 +1228,7 @@ private fun ModernSearchScreen(
                 FilterChip(
                     selected = state.searchType == type,
                     onClick = { setType(type) },
-                    modifier = Modifier.remoteFocusFrame(),
+                    modifier = Modifier.remoteFocusFrame(CircleShape),
                     label = { Text(type.title) },
                     leadingIcon = { Icon(if (type == SearchContentType.LIVE_TV) Icons.Default.LiveTv else if (type == SearchContentType.MOVIES) Icons.Default.Movie else Icons.Default.VideoLibrary, null) }
                 )
@@ -1240,7 +1238,7 @@ private fun ModernSearchScreen(
             val selectedCategory = state.searchCategories.firstOrNull { it.id == state.searchCategoryId }
             AssistChip(
                 onClick = { categoriesExpanded = !categoriesExpanded },
-                modifier = Modifier.remoteFocusFrame(),
+                modifier = Modifier.remoteFocusFrame(CircleShape),
                 label = { Text(selectedCategory?.title ?: "All categories", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = { Icon(Icons.Default.FilterAlt, null, Modifier.size(18.dp)) },
                 trailingIcon = { Icon(if (categoriesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, Modifier.size(18.dp)) }
@@ -1251,9 +1249,9 @@ private fun ModernSearchScreen(
         AnimatedVisibility(categoriesExpanded) {
             Surface(Modifier.fillMaxWidth().heightIn(max = 220.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFF111827)) {
                 FlowRow(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FilterChip(selected = state.searchCategoryId == "*", onClick = { setCategory("*"); categoriesExpanded = false }, modifier = Modifier.remoteFocusFrame(), label = { Text("All categories") })
+                    FilterChip(selected = state.searchCategoryId == "*", onClick = { setCategory("*"); categoriesExpanded = false }, modifier = Modifier.remoteFocusFrame(CircleShape), label = { Text("All categories") })
                     state.searchCategories.filter { it.id != "*" }.forEach { category ->
-                        FilterChip(selected = state.searchCategoryId == category.id, onClick = { setCategory(category.id); categoriesExpanded = false }, modifier = Modifier.remoteFocusFrame(), label = { Text(category.title) })
+                        FilterChip(selected = state.searchCategoryId == category.id, onClick = { setCategory(category.id); categoriesExpanded = false }, modifier = Modifier.remoteFocusFrame(CircleShape), label = { Text(category.title) })
                     }
                 }
             }
@@ -1279,7 +1277,7 @@ private fun ModernSearchScreen(
                 .pointerInput(searchEditing) {
                     if (!searchEditing) detectTapGestures { activateSearchField() }
                 }
-                .remoteFocusFrame(RoundedCornerShape(24.dp), 1.01f),
+                .remoteFocusFrame(RoundedCornerShape(24.dp)),
             singleLine = true,
             shape = RoundedCornerShape(24.dp),
             placeholder = { Text("Search ${state.searchType.title.lowercase()}") },
@@ -1315,7 +1313,7 @@ private fun ModernSearchScreen(
                     InputChip(
                         selected = false,
                         onClick = { useRecent(recent) },
-                        modifier = Modifier.remoteFocusFrame(),
+                        modifier = Modifier.remoteFocusFrame(CircleShape),
                         label = { Text(recent.query) },
                         colors = InputChipDefaults.inputChipColors(containerColor = Color(0xFF111827), labelColor = Color.LightGray),
                         trailingIcon = {
@@ -1478,7 +1476,7 @@ private fun ModernSettingsScreen(
                         Row {
                             if (saved == profile) Icon(Icons.Default.CheckCircle, "Active", tint = MaterialTheme.colorScheme.primary)
                             else TextButton(onClick = { switchProfile(saved) }, modifier = Modifier.remoteFocusFrame()) { Text("Open") }
-                            IconButton(onClick = { pendingRemoval = saved }, modifier = Modifier.remoteFocusFrame(CircleShape, 1.12f)) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
+                            IconButton(onClick = { pendingRemoval = saved }, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
                         }
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -1562,7 +1560,7 @@ private fun ModernSettingsScreen(
                         SegmentedButton(
                             selected = state.cacheIntervalMinutes == minutes,
                             onClick = { setCacheIntervalMinutes(minutes) },
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)),
+                            modifier = Modifier.remoteFocusFrame(SegmentedButtonDefaults.itemShape(index, 4)),
                             shape = SegmentedButtonDefaults.itemShape(index, 4)
                         ) { Text(label) }
                     }
@@ -1578,7 +1576,7 @@ private fun ModernSettingsScreen(
                         SegmentedButton(
                             selected = state.seriesStartSeason == option,
                             onClick = { setSeriesStartSeason(option) },
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)),
+                            modifier = Modifier.remoteFocusFrame(SegmentedButtonDefaults.itemShape(index, SeriesStartSeason.entries.size)),
                             shape = SegmentedButtonDefaults.itemShape(index, SeriesStartSeason.entries.size)
                         ) { Text(if (option == SeriesStartSeason.FIRST) "First season" else "Latest season") }
                     }
@@ -2417,21 +2415,21 @@ private fun ModernSeriesDetailScreen(
                     ) {
                         IconButton(
                             onClick = closeSeries,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to browse", tint = Color.White)
                         }
                         Spacer(Modifier.weight(1f))
                         IconButton(
                             onClick = openSearch,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
                         ) {
                             Icon(Icons.Default.Search, "Search", tint = Color.White)
                         }
                         Spacer(Modifier.width(8.dp))
                         IconButton(
                             onClick = openSettings,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
                         ) {
                             Icon(Icons.Default.Settings, "Settings", tint = Color.White)
                         }
@@ -2571,7 +2569,7 @@ private fun ModernSeriesDetailScreen(
 
                             IconButton(
                                 onClick = refreshCatalog,
-                                modifier = Modifier.background(Color.White.copy(alpha = 0.15f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
+                                modifier = Modifier.background(Color.White.copy(alpha = 0.15f), CircleShape).remoteFocusFrame(CircleShape)
                             ) {
                                 Icon(Icons.Default.Refresh, "Refresh episodes", tint = Color.White)
                             }
@@ -2690,7 +2688,7 @@ private fun ModernSeriesDetailScreen(
                             .pointerInput(series.id, episodeSearchEditing) {
                                 if (!episodeSearchEditing) detectTapGestures { activateEpisodeSearch() }
                             }
-                            .remoteFocusFrame(RoundedCornerShape(16.dp), 1.01f),
+                            .remoteFocusFrame(RoundedCornerShape(16.dp)),
                         placeholder = { Text("Search episode name or number…", color = Color.Gray) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.LightGray) },
                         trailingIcon = if (searchQuery.isNotEmpty()) {{
@@ -2802,7 +2800,6 @@ private fun ModernEpisodeCard(
         shadowElevation = if (focused) 14.dp else 0.dp,
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            .graphicsLayer { scaleX = if (focused) 1.025f else 1f; scaleY = if (focused) 1.025f else 1f }
     ) {
         Row(
             modifier = Modifier.padding(12.dp),

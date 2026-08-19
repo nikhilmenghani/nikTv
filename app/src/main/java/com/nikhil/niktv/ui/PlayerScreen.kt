@@ -21,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -33,6 +34,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.key.Key as ComposeKey
+import androidx.compose.ui.input.key.KeyEventType as ComposeKeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -204,7 +211,15 @@ fun PlayerScreen(
         }
     }
     BackHandler {
-        if (focusMode) focusMode = false else onBack()
+        when {
+            controlsVisible -> {
+                controlsVisible = false
+                controlsFocused = false
+                playerViewRef?.requestFocus()
+            }
+            focusMode -> focusMode = false
+            else -> onBack()
+        }
     }
     Box(Modifier.fillMaxSize().clipToBounds()) {
         // AndroidView instances survive recomposition by default. When autoplay advances to
@@ -411,7 +426,7 @@ fun PlayerScreen(
                         onClick = onBack,
                         modifier = Modifier.focusRequester(backFocusRequester)
                             .focusProperties { right = rotateFocusRequester; down = playPauseFocusRequester }
-                            .playerControlFocus { controlsFocused = it }
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(media.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
@@ -422,10 +437,15 @@ fun PlayerScreen(
                         activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     }, modifier = Modifier.focusRequester(rotateFocusRequester)
                         .focusProperties { left = backFocusRequester; right = fullscreenFocusRequester; down = playPauseFocusRequester }
-                        .playerControlFocus { controlsFocused = it }) { Icon(Icons.Default.ScreenRotation, "Rotate", tint = Color.White) }
-                    IconButton(onClick = { focusMode = !focusMode }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
+                        .playerControlFocus(CircleShape) { controlsFocused = it }) { Icon(Icons.Default.ScreenRotation, "Rotate", tint = Color.White) }
+                    IconButton(onClick = {
+                        focusMode = !focusMode
+                        controlsVisible = false
+                        controlsFocused = false
+                        playerViewRef?.requestFocus()
+                    }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
                         .focusProperties { left = rotateFocusRequester; down = playPauseFocusRequester }
-                        .playerControlFocus { controlsFocused = it }) {
+                        .playerControlFocus(CircleShape) { controlsFocused = it }) {
                         Icon(if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
                     }
                 }
@@ -447,7 +467,7 @@ fun PlayerScreen(
                                 up = rotateFocusRequester
                                 if (duration > 0L) down = progressFocusRequester
                             }
-                            .playerControlFocus { controlsFocused = it }) {
+                            .playerControlFocus(CircleShape) { controlsFocused = it }) {
                             Icon(Icons.Default.SkipPrevious, "Previous episode", Modifier.size(34.dp), tint = Color.White)
                         }
                         if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) },
@@ -457,7 +477,7 @@ fun PlayerScreen(
                                     right = playPauseFocusRequester
                                     up = rotateFocusRequester
                                     down = progressFocusRequester
-                                }.playerControlFocus { controlsFocused = it }) {
+                                }.playerControlFocus(CircleShape) { controlsFocused = it }) {
                             Icon(Icons.Default.Replay10, "Back 10 seconds", Modifier.size(38.dp), tint = Color.White)
                         }
                         FilledIconButton(
@@ -468,7 +488,7 @@ fun PlayerScreen(
                                     right = when { duration > 0L -> forwardFocusRequester; media.nextEpisode != null -> nextFocusRequester; else -> FocusRequester.Default }
                                     up = rotateFocusRequester
                                     if (duration > 0L) down = progressFocusRequester
-                                }.playerControlFocus { controlsFocused = it },
+                                }.playerControlFocus(CircleShape) { controlsFocused = it },
                             colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
                         ) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", Modifier.size(42.dp)) }
                         if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) },
@@ -478,7 +498,7 @@ fun PlayerScreen(
                                     right = if (media.nextEpisode != null) nextFocusRequester else FocusRequester.Default
                                     up = rotateFocusRequester
                                     down = progressFocusRequester
-                                }.playerControlFocus { controlsFocused = it }) {
+                                }.playerControlFocus(CircleShape) { controlsFocused = it }) {
                             Icon(Icons.Default.Forward10, "Forward 10 seconds", Modifier.size(38.dp), tint = Color.White)
                         }
                         if (media.nextEpisode != null) IconButton(onClick = {
@@ -491,7 +511,7 @@ fun PlayerScreen(
                                 left = if (duration > 0L) forwardFocusRequester else playPauseFocusRequester
                                 up = rotateFocusRequester
                                 if (duration > 0L) down = progressFocusRequester
-                            }.playerControlFocus { controlsFocused = it }) {
+                            }.playerControlFocus(CircleShape) { controlsFocused = it }) {
                             Icon(Icons.Default.SkipNext, "Next episode", Modifier.size(34.dp), tint = Color.White)
                         }
                     }
@@ -507,7 +527,13 @@ fun PlayerScreen(
                             valueRange = 0f..duration.toFloat(),
                             modifier = Modifier.focusRequester(progressFocusRequester)
                                 .focusProperties { up = playPauseFocusRequester }
-                                .playerControlFocus { controlsFocused = it },
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
+                                        playPauseFocusRequester.requestFocus()
+                                        true
+                                    } else false
+                                }
+                                .playerControlFocus(RoundedCornerShape(50)) { controlsFocused = it },
                             colors = SliderDefaults.colors(thumbColor = Color(0xFFE50914), activeTrackColor = Color(0xFFE50914), inactiveTrackColor = Color.White.copy(alpha = .35f))
                         )
                     } else if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) {
@@ -538,8 +564,8 @@ fun PlayerScreen(
                     Text("This title can’t be played right now", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     Text(failure, color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(onClick = onBack, modifier = Modifier.playerControlFocus { controlsFocused = it }) { Text("Go back") }
-                        Button(onClick = onRetry, modifier = Modifier.playerControlFocus { controlsFocused = it }) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Retry with fresh link") }
+                        OutlinedButton(onClick = onBack, modifier = Modifier.playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }) { Text("Go back") }
+                        Button(onClick = onRetry, modifier = Modifier.playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Retry with fresh link") }
                     }
                 }
             }
@@ -600,10 +626,10 @@ fun PlayerScreen(
                     TextButton(onClick = {
                         autoPlayCancelled = true
                         playerViewRef?.requestFocus()
-                    }, modifier = Modifier.playerControlFocus { controlsFocused = it }) { Text("Cancel") }
+                    }, modifier = Modifier.playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }) { Text("Cancel") }
                     Button(
                         onClick = { if (!advancing) { advancing = true; onPlayNext() } },
-                        modifier = Modifier.focusRequester(playNextFocusRequester).playerControlFocus { controlsFocused = it }
+                        modifier = Modifier.focusRequester(playNextFocusRequester).playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
                     ) { Text("Play now") }
                 }
             }
@@ -612,10 +638,13 @@ fun PlayerScreen(
 }
 
 @Composable
-private fun Modifier.playerControlFocus(onFocused: (Boolean) -> Unit): Modifier {
+private fun Modifier.playerControlFocus(
+    shape: Shape = RoundedCornerShape(12.dp),
+    onFocused: (Boolean) -> Unit
+): Modifier {
     var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(12.dp)
     return this
+        .requiredSizeIn(minWidth = 56.dp, minHeight = 56.dp)
         .onFocusChanged {
             focused = it.isFocused
             onFocused(it.isFocused)
@@ -623,7 +652,6 @@ private fun Modifier.playerControlFocus(onFocused: (Boolean) -> Unit): Modifier 
         .then(
             if (focused) Modifier
                 .shadow(18.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
-                .graphicsLayer { scaleX = 1.14f; scaleY = 1.14f }
                 .background(Color(0xFF451014), shape)
                 .border(4.dp, Color(0xFFFF3340), shape)
             else Modifier
