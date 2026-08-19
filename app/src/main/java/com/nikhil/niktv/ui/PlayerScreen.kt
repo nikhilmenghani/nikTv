@@ -55,6 +55,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.ui.PlayerView
 import com.nikhil.niktv.R
 import com.nikhil.niktv.model.PlayingMedia
@@ -97,9 +98,15 @@ fun PlayerScreen(
     val forwardFocusRequester = remember(media.progressKey) { FocusRequester() }
     val nextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val progressFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val errorBackFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val errorRetryFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val player = remember(media.progressKey) {
-        ExoPlayer.Builder(context).build().apply {
+        val renderersFactory = DefaultRenderersFactory(context)
+            // Some TV devices advertise a hardware decoder that later rejects or
+            // stalls on a stream. Let Media3 try the next compatible decoder.
+            .setEnableDecoderFallback(true)
+        ExoPlayer.Builder(context, renderersFactory).build().apply {
             setMediaItem(MediaItem.fromUri(media.url))
             if (media.resumePositionMillis > 0L) seekTo(media.resumePositionMillis)
             prepare()
@@ -208,6 +215,12 @@ fun PlayerScreen(
         if (controlsVisible && playbackError == null && !startupTimedOut) {
             delay(80L)
             runCatching { playPauseFocusRequester.requestFocus() }
+        }
+    }
+    LaunchedEffect(playbackError, startupTimedOut, media.progressKey) {
+        if (playbackError != null || startupTimedOut) {
+            delay(120L)
+            runCatching { errorRetryFocusRequester.requestFocus() }
         }
     }
     BackHandler {
@@ -586,8 +599,18 @@ fun PlayerScreen(
                     Text("This title can’t be played right now", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     Text(failure, color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(onClick = onBack, modifier = Modifier.playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }) { Text("Go back") }
-                        Button(onClick = onRetry, modifier = Modifier.playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Retry with fresh link") }
+                        OutlinedButton(
+                            onClick = onBack,
+                            modifier = Modifier.focusRequester(errorBackFocusRequester)
+                                .focusProperties { right = errorRetryFocusRequester }
+                                .playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
+                        ) { Text("Go back") }
+                        Button(
+                            onClick = onRetry,
+                            modifier = Modifier.focusRequester(errorRetryFocusRequester)
+                                .focusProperties { left = errorBackFocusRequester }
+                                .playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
+                        ) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Retry with fresh link") }
                     }
                 }
             }
