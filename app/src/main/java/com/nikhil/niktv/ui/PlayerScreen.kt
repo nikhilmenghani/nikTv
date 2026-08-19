@@ -62,6 +62,7 @@ import androidx.media3.ui.PlayerView
 import com.nikhil.niktv.R
 import com.nikhil.niktv.model.PlayingMedia
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @UnstableApi
 @Composable
@@ -69,11 +70,13 @@ fun PlayerScreen(
     media: PlayingMedia,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onRetryAlternateDecoder: () -> Unit,
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val activity = remember(context) { context.findActivity() }
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
     var videoOffset by remember(media.progressKey) { mutableStateOf(Offset.Zero) }
@@ -135,6 +138,12 @@ fun PlayerScreen(
                     }
                 }
                 controlsVisible = true
+                if (failedDecoder != null) {
+                    coroutineScope.launch {
+                        delay(350L)
+                        onRetryAlternateDecoder()
+                    }
+                }
             }
         }
         player.addListener(listener)
@@ -710,7 +719,8 @@ private object FailedDecoderRegistry {
             .mapNotNull { it.message }
             .joinToString("\n")
         val decoder = decoderPattern.find(messages)?.groupValues?.getOrNull(1) ?: return null
-        failedNames += decoder.lowercase()
+        val newlyRejected = failedNames.add(decoder.lowercase())
+        if (!newlyRejected) return null
         context.getSharedPreferences("player_decoder_fallbacks", Context.MODE_PRIVATE).edit()
             .putStringSet("failed_decoders", failedNames.toSet()).apply()
         return decoder

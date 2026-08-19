@@ -142,6 +142,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     state.nowPlaying!!,
                     vm::closePlayer,
                     vm::retryPlayback,
+                    vm::retryPlaybackWithAlternateDecoder,
                     vm::playPreviousEpisode,
                     vm::playNextEpisode,
                     vm::savePlaybackProgress

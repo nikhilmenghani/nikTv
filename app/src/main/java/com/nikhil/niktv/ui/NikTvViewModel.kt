@@ -773,6 +773,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 .onFailure { error -> _state.update { it.copy(error = error.message ?: "Playback retry failed") } }
         }
     }
+    fun retryPlaybackWithAlternateDecoder() {
+        val playing = _state.value.nowPlaying ?: return
+        viewModelScope.launch {
+            // Recreate the player so its decoder selector is queried again. Keep
+            // the already-resolved URL: a codec failure is not a portal failure.
+            _state.update { it.copy(nowPlaying = null, error = null) }
+            delay(80L)
+            _state.update { it.copy(nowPlaying = playing) }
+        }
+    }
     fun openSettings() = _state.update { it.copy(settingsOpen = true) }
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
