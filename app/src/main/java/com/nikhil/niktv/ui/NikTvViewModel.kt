@@ -20,6 +20,8 @@ data class NikTvState(
     val selectedCategory: Category? = null,
     val items: List<MediaItem> = emptyList(),
     val loading: Boolean = false,
+    val profileLoadProgress: Float? = null,
+    val profileLoadMessage: String = "Preparing profile…",
     val error: String? = null,
     val nowPlaying: PlayingMedia? = null,
     val restoring: Boolean = true,
@@ -99,11 +101,32 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connect(profile: PortalProfile) = task {
+        _state.update { it.copy(savedProfile = profile) }
+        updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
         val session = portal.authenticate(profile)
+        updateProfileLoad(0.24f, "Authentication complete")
         store.save(session)
         _state.update { it.copy(session = session, savedProfile = session.profile, profileEditorOpen = false) }
-        loadTypeInternal(session, CatalogType.LIVE_TV)
+        preloadDashboard(session)
     }
+
+    /**
+     * Warms only the first enabled category for each dashboard type. Requests are
+     * deliberately sequential and loadTypeInternal observes the configured cache
+     * TTL, so choosing a profile cannot fan out into a burst of portal calls.
+     */
+    private suspend fun preloadDashboard(session: PortalSession) {
+        updateProfileLoad(0.32f, "Loading Movies…")
+        loadTypeInternal(session, CatalogType.MOVIES)
+        updateProfileLoad(0.56f, "Loading Series…")
+        loadTypeInternal(session, CatalogType.SERIES)
+        updateProfileLoad(0.80f, "Loading Live TV…")
+        loadTypeInternal(session, CatalogType.LIVE_TV)
+        updateProfileLoad(1f, "Opening dashboard…")
+    }
+
+    private fun updateProfileLoad(progress: Float, message: String) =
+        _state.update { it.copy(profileLoadProgress = progress.coerceIn(0f, 1f), profileLoadMessage = message) }
 
     fun reconnect() { _state.value.savedProfile?.let(::connect) }
 
@@ -545,13 +568,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun switchProfile(profile: PortalProfile) = task {
+        _state.update { it.copy(savedProfile = profile) }
+        updateProfileLoad(0.04f, "Loading ${profile.name}…")
         store.activate(profile)
-        val session = store.sessionFor(profile) ?: portal.authenticate(profile).also { store.save(it) }
+        // Profile selection is the session boundary: always obtain a fresh token.
+        updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
+        val session = portal.authenticate(profile).also { store.save(it) }
+        updateProfileLoad(0.24f, "Authentication complete")
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, fullSearchItems = null, playbackUrls = emptyList()) }
-        loadTypeInternal(session, CatalogType.LIVE_TV)
+        preloadDashboard(session)
     }
     fun removeProfile(profile: PortalProfile) = viewModelScope.launch {
         store.removeProfile(profile)
@@ -635,7 +663,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             runCatching { block() }.onFailure { e -> _state.update { it.copy(error = e.message ?: "Unexpected error") } }
-            _state.update { it.copy(loading = false) }
+            _state.update { it.copy(loading = false, profileLoadProgress = null, profileLoadMessage = "Preparing profile…") }
         }
     }
 

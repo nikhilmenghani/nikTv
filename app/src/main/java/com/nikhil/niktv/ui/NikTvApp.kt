@@ -98,6 +98,11 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             when {
                 state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::playNextEpisode, vm::savePlaybackProgress)
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                state.profileLoadProgress != null -> ProfileLoadingScreen(
+                    profileName = state.savedProfile?.name,
+                    message = state.profileLoadMessage,
+                    progress = state.profileLoadProgress ?: 0f
+                )
                 state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor)
                 else -> CatalogScreen(
                     state = state,
@@ -148,14 +153,21 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     setFilter = { type, list -> vm.setCategoryFilter(type, list) }
                 )
             }
-            if (state.loading) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            if (state.loading && state.profileLoadProgress == null) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             state.error?.let { error ->
                 val authorizationExpired = error.isAuthorizationFailureText()
                 var showDiagnostics by remember(error) { mutableStateOf(!authorizationExpired) }
+                val reauthenticateRequester = remember(error) { FocusRequester() }
+                LaunchedEffect(error, authorizationExpired) {
+                    if (authorizationExpired) reauthenticateRequester.requestFocus()
+                }
                 AlertDialog(
                     onDismissRequest = vm::dismissError,
                     confirmButton = {
-                        if (authorizationExpired) Button(onClick = { vm.dismissError(); vm.reauthenticate() }) { Text("Re-authenticate") }
+                        if (authorizationExpired) Button(
+                            onClick = { vm.dismissError(); vm.reauthenticate() },
+                            modifier = Modifier.focusRequester(reauthenticateRequester)
+                        ) { Text("Re-authenticate") }
                         else TextButton(onClick = { clipboard.setText(AnnotatedString(error)) }) { Text("Copy diagnostics") }
                     },
                     dismissButton = { TextButton(onClick = vm::dismissError) { Text("Close") } },
@@ -176,6 +188,40 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ProfileLoadingScreen(profileName: String?, message: String, progress: Float) {
+    Box(
+        modifier = Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(Color(0xFF070707), Color(0xFF111111), Color.Black))
+        ),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(0.72f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Surface(shape = CircleShape, color = Color(0xFFE50914), modifier = Modifier.size(84.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("N", color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+                }
+            }
+            Text(
+                text = profileName?.let { "Loading $it" } ?: "Loading profile",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(999.dp)),
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+            )
+            Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -1502,7 +1548,7 @@ private fun CategoryManagerDialog(
     }
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
-    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
     val closeRequester = remember { FocusRequester() }
     val typeRequesters = remember { visibleCatalogTypes.associateWith { FocusRequester() } }
     val searchRequester = remember { FocusRequester() }
@@ -1533,7 +1579,7 @@ private fun CategoryManagerDialog(
         typeRequesters.getValue(type).requestFocus()
     }
     LaunchedEffect(type, searchQuery) {
-        if (filteredRaw.isNotEmpty()) listState.scrollToItem(0)
+        if (filteredRaw.isNotEmpty()) gridState.scrollToItem(0)
     }
     BackHandler(searchEditing) {
         searchEditing = false
@@ -1555,22 +1601,36 @@ private fun CategoryManagerDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.88f)
-                .widthIn(max = 680.dp),
-            shape = RoundedCornerShape(28.dp),
+                .fillMaxHeight(0.92f)
+                .widthIn(max = 1080.dp),
+            shape = RoundedCornerShape(22.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp
         ) {
-            Column(Modifier.fillMaxSize().padding(24.dp)) {
+            Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Category Filters", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                        Text("Choose which categories to show in NikTV", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Category Filters", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("Selections save immediately · Back also closes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    Button(
+                        onClick = close,
+                        modifier = Modifier
+                            .heightIn(min = 44.dp)
+                            .focusRequester(applyRequester)
+                            .onFocusChanged { applyFocused = it.isFocused }
+                            .border(
+                                if (applyFocused) 3.dp else 0.dp,
+                                if (applyFocused) MaterialTheme.colorScheme.onPrimary else Color.Transparent,
+                                RoundedCornerShape(14.dp)
+                            ),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Apply & Close") }
+                    Spacer(Modifier.width(8.dp))
                     IconButton(
                         onClick = close,
                         modifier = Modifier
-                            .sizeIn(minWidth = 56.dp, minHeight = 56.dp)
+                            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
                             .focusRequester(closeRequester)
                             .focusProperties {
                                 left = typeRequesters.getValue(visibleCatalogTypes.last())
@@ -1584,7 +1644,7 @@ private fun CategoryManagerDialog(
                     ) { Icon(Icons.Default.Close, "Close") }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
 
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     visibleCatalogTypes.forEachIndexed { index, catalogType ->
@@ -1595,7 +1655,7 @@ private fun CategoryManagerDialog(
                             onClick = { setType(catalogType) },
                             shape = shape,
                             modifier = Modifier
-                                .heightIn(min = 56.dp)
+                                .heightIn(min = 44.dp)
                                 .focusRequester(typeRequesters.getValue(catalogType))
                                 .focusProperties {
                                     left = if (index > 0) typeRequesters.getValue(visibleCatalogTypes[index - 1])
@@ -1618,14 +1678,14 @@ private fun CategoryManagerDialog(
                     }
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
 
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 56.dp)
+                        .heightIn(min = 48.dp)
                         .focusRequester(searchRequester)
                         .focusProperties {
                             up = typeRequesters.getValue(type)
@@ -1732,7 +1792,7 @@ private fun CategoryManagerDialog(
                     }
                 }
 
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                HorizontalDivider(Modifier.padding(vertical = 3.dp))
 
                 if (raw.isEmpty()) {
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -1746,11 +1806,13 @@ private fun CategoryManagerDialog(
                         Text("No categories match “${searchQuery.trim()}”", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(
+                    LazyVerticalGrid(
                         modifier = Modifier.weight(1f),
-                        state = listState,
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = PaddingValues(vertical = 8.dp)
+                        columns = GridCells.Fixed(2),
+                        state = gridState,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(vertical = 6.dp)
                     ) {
                         itemsIndexed(filteredRaw, key = { _, category -> category.id }) { index, category ->
                             val selected = category.id in currentEnabledSet
@@ -1767,7 +1829,7 @@ private fun CategoryManagerDialog(
                                 border = if (rowFocused) BorderStroke(3.dp, MaterialTheme.colorScheme.primary) else null,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(min = 56.dp)
+                                    .heightIn(min = 44.dp)
                                     .focusRequester(rowRequester)
                                     .focusProperties {
                                         if (index == 0) up = selectAllRequester
@@ -1779,8 +1841,8 @@ private fun CategoryManagerDialog(
                                         if (it.isFocused) {
                                             focusedCategoryId = category.id
                                             scope.launch {
-                                                if (listState.layoutInfo.visibleItemsInfo.none { item -> item.index == index }) {
-                                                    listState.animateScrollToItem(index)
+                                                if (gridState.layoutInfo.visibleItemsInfo.none { item -> item.index == index }) {
+                                                    gridState.animateScrollToItem(index)
                                                 }
                                             }
                                         } else if (focusedCategoryId == category.id) {
@@ -1791,8 +1853,8 @@ private fun CategoryManagerDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 56.dp)
-                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                        .heightIn(min = 44.dp)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Checkbox(
@@ -1800,11 +1862,13 @@ private fun CategoryManagerDialog(
                                         onCheckedChange = { toggleCategory(type, category.id) },
                                         modifier = Modifier.focusProperties { canFocus = false }
                                     )
-                                    Spacer(Modifier.width(12.dp))
+                                    Spacer(Modifier.width(6.dp))
                                     Text(
                                         text = category.title,
-                                        style = MaterialTheme.typography.bodyLarge,
+                                        style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -1813,30 +1877,6 @@ private fun CategoryManagerDialog(
                     }
                 }
 
-                Spacer(Modifier.height(12.dp))
-
-                Button(
-                    onClick = close,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 56.dp)
-                        .focusRequester(applyRequester)
-                        .focusProperties {
-                            up = if (lastCategoryRequester == null) selectAllRequester else FocusRequester.Default
-                            down = FocusRequester.Cancel
-                            left = FocusRequester.Cancel
-                            right = FocusRequester.Cancel
-                        }
-                        .onFocusChanged { applyFocused = it.isFocused }
-                        .border(
-                            if (applyFocused) 3.dp else 0.dp,
-                            if (applyFocused) MaterialTheme.colorScheme.onPrimary else Color.Transparent,
-                            RoundedCornerShape(20.dp)
-                        ),
-                    shape = RoundedCornerShape(20.dp)
-                ) {
-                    Text("Apply & Close")
-                }
             }
 
         }
