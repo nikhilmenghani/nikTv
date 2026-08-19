@@ -34,6 +34,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -89,6 +90,24 @@ private val NikColors = darkColorScheme(
 private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
+
+@Composable
+private fun Modifier.remoteFocusFrame(
+    shape: Shape = RoundedCornerShape(12.dp),
+    focusedScale: Float = 1.035f
+): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged { focused = it.isFocused }
+        .then(
+            if (focused) Modifier
+                .shadow(16.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
+                .graphicsLayer { scaleX = focusedScale; scaleY = focusedScale }
+                .background(Color(0xFF3A1014), shape)
+                .border(4.dp, Color(0xFFFF3340), shape)
+            else Modifier
+        )
+}
 private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
     if (value.length >= 2 && ((value.first() == '"' && value.last() == '"') ||
             (value.first() == '\'' && value.last() == '\''))) value.substring(1, value.length - 1).trim()
@@ -580,6 +599,7 @@ private fun ModernBrowseScreen(
     openCategoryManager: (CatalogType) -> Unit
 ) {
     val home = state.homeOpen
+    val layoutToggleRequester = remember { FocusRequester() }
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
@@ -620,6 +640,9 @@ private fun ModernBrowseScreen(
                         item {
                             AssistChip(
                                 onClick = { openCategoryManager(state.selectedType) },
+                                modifier = Modifier.remoteFocusFrame().focusProperties {
+                                    if (state.items.isNotEmpty()) down = layoutToggleRequester
+                                },
                                 label = { Text(if (isFiltered) "Filtered (${state.categories.size})" else "Categories") },
                                 leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(16.dp)) }
                             )
@@ -627,14 +650,18 @@ private fun ModernBrowseScreen(
                         items(state.categories, key = { it.id }) { category ->
                             val selected = state.selectedCategory?.id == category.id
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                TextButton(onClick = { selectCategory(category) }) {
+                                TextButton(onClick = { selectCategory(category) }, modifier = Modifier.remoteFocusFrame().focusProperties {
+                                    if (state.items.isNotEmpty()) down = layoutToggleRequester
+                                }) {
                                     Text(category.title, color = if (selected) Color.White else Color.LightGray)
                                 }
                                 Box(Modifier.width(30.dp).height(3.dp).background(if (selected) Color(0xFFE50914) else Color.Transparent))
                             }
                         }
                         item {
-                            AssistChip(onClick = refreshCatalog, label = { Text("Refresh") }, leadingIcon = {
+                            AssistChip(onClick = refreshCatalog, modifier = Modifier.remoteFocusFrame().focusProperties {
+                                if (state.items.isNotEmpty()) down = layoutToggleRequester
+                            }, label = { Text("Refresh") }, leadingIcon = {
                                 Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
                             })
                         }
@@ -719,7 +746,9 @@ private fun ModernBrowseScreen(
                         action = {
                             FilledTonalIconButton(onClick = {
                                 setBrowseLayout(if (state.browseLayout == BrowseLayout.GRID) BrowseLayout.LIST else BrowseLayout.GRID)
-                            }) {
+                            }, modifier = Modifier.focusRequester(layoutToggleRequester)
+                                .focusProperties { up = FocusRequester.Default }
+                                .remoteFocusFrame(CircleShape, 1.14f)) {
                                 Icon(if (state.browseLayout == BrowseLayout.GRID) Icons.Default.ViewList else Icons.Default.GridView,
                                     if (state.browseLayout == BrowseLayout.GRID) "Show as list" else "Show as grid")
                             }
@@ -843,16 +872,16 @@ private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit,
     Row(Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("N", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
         Spacer(Modifier.width(8.dp))
-        TextButton(onClick = openHome) { Text("Home", color = if (home) Color.White else Color.Gray) }
+        TextButton(onClick = openHome, modifier = Modifier.remoteFocusFrame()) { Text("Home", color = if (home) Color.White else Color.Gray) }
         visibleCatalogTypes.forEach { type ->
-            TextButton(onClick = { selectType(type) }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+            TextButton(onClick = { selectType(type) }, modifier = Modifier.remoteFocusFrame(), contentPadding = PaddingValues(horizontal = 6.dp)) {
                 Text(type.title, color = if (!home && state.selectedType == type) Color.White else Color.Gray, style = MaterialTheme.typography.labelMedium)
             }
         }
         Spacer(Modifier.weight(1f))
-        IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
-        IconButton(onClick = openFavorites) { Icon(Icons.Default.FavoriteBorder, "My List", tint = Color.White) }
-        IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
+        IconButton(onClick = openSearch, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
+        IconButton(onClick = openFavorites, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.FavoriteBorder, "My List", tint = Color.White) }
+        IconButton(onClick = openSettings, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
     }
 }
 
@@ -868,7 +897,7 @@ private fun ModernHero(item: MediaItem?, recentAction: (() -> Unit)?, catalogAct
             Text(item?.description?.takeIf(String::isNotBlank) ?: if (profileName.isBlank()) "Choose something to watch" else "Streaming from $profileName",
                 style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = .86f), maxLines = 2, overflow = TextOverflow.Ellipsis)
             val action = recentAction ?: catalogAction
-            if (action != null) Button(onClick = action, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
+            if (action != null) Button(onClick = action, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
                 Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(if (recentAction != null) "Resume" else "Play")
             }
         }
@@ -1156,10 +1185,10 @@ private fun ModernScreenTopBar(title: String, close: () -> Unit, openSearch: (()
         Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+        IconButton(onClick = close, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
-        openSearch?.let { IconButton(onClick = it) { Icon(Icons.Default.Search, "Search", tint = Color.White) } }
-        openSettings?.let { IconButton(onClick = it) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) } }
+        openSearch?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Search, "Search", tint = Color.White) } }
+        openSettings?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape, 1.14f)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) } }
     }
 }
 
@@ -1178,6 +1207,7 @@ private fun ModernSearchScreen(
     loadMore: () -> Unit
 ) {
     var categoriesExpanded by rememberSaveable(state.searchType) { mutableStateOf(false) }
+    var searchEditing by rememberSaveable { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val wide = LocalConfiguration.current.screenWidthDp >= 720
@@ -1187,7 +1217,11 @@ private fun ModernSearchScreen(
         if (wide) 6 else 3
     }
     val aspectRatio = 16f / 9f
-    LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
+    fun activateSearchField() {
+        searchEditing = true
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909)).padding(horizontal = 16.dp)) {
         ModernScreenTopBar("Search", close)
         Spacer(Modifier.height(8.dp))
@@ -1196,6 +1230,7 @@ private fun ModernSearchScreen(
                 FilterChip(
                     selected = state.searchType == type,
                     onClick = { setType(type) },
+                    modifier = Modifier.remoteFocusFrame(),
                     label = { Text(type.title) },
                     leadingIcon = { Icon(if (type == SearchContentType.LIVE_TV) Icons.Default.LiveTv else if (type == SearchContentType.MOVIES) Icons.Default.Movie else Icons.Default.VideoLibrary, null) }
                 )
@@ -1205,6 +1240,7 @@ private fun ModernSearchScreen(
             val selectedCategory = state.searchCategories.firstOrNull { it.id == state.searchCategoryId }
             AssistChip(
                 onClick = { categoriesExpanded = !categoriesExpanded },
+                modifier = Modifier.remoteFocusFrame(),
                 label = { Text(selectedCategory?.title ?: "All categories", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = { Icon(Icons.Default.FilterAlt, null, Modifier.size(18.dp)) },
                 trailingIcon = { Icon(if (categoriesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, Modifier.size(18.dp)) }
@@ -1215,9 +1251,9 @@ private fun ModernSearchScreen(
         AnimatedVisibility(categoriesExpanded) {
             Surface(Modifier.fillMaxWidth().heightIn(max = 220.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFF111827)) {
                 FlowRow(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FilterChip(selected = state.searchCategoryId == "*", onClick = { setCategory("*"); categoriesExpanded = false }, label = { Text("All categories") })
+                    FilterChip(selected = state.searchCategoryId == "*", onClick = { setCategory("*"); categoriesExpanded = false }, modifier = Modifier.remoteFocusFrame(), label = { Text("All categories") })
                     state.searchCategories.filter { it.id != "*" }.forEach { category ->
-                        FilterChip(selected = state.searchCategoryId == category.id, onClick = { setCategory(category.id); categoriesExpanded = false }, label = { Text(category.title) })
+                        FilterChip(selected = state.searchCategoryId == category.id, onClick = { setCategory(category.id); categoriesExpanded = false }, modifier = Modifier.remoteFocusFrame(), label = { Text(category.title) })
                     }
                 }
             }
@@ -1226,7 +1262,24 @@ private fun ModernSearchScreen(
         OutlinedTextField(
             value = state.searchQuery,
             onValueChange = setQuery,
-            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                .onFocusChanged {
+                    if (!it.isFocused && searchEditing) {
+                        searchEditing = false
+                        keyboard?.hide()
+                    }
+                }
+                .onPreviewKeyEvent { event ->
+                    if (!searchEditing && event.type == KeyEventType.KeyUp &&
+                        event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                    ) {
+                        activateSearchField(); true
+                    } else false
+                }
+                .pointerInput(searchEditing) {
+                    if (!searchEditing) detectTapGestures { activateSearchField() }
+                }
+                .remoteFocusFrame(RoundedCornerShape(24.dp), 1.01f),
             singleLine = true,
             shape = RoundedCornerShape(24.dp),
             placeholder = { Text("Search ${state.searchType.title.lowercase()}") },
@@ -1239,6 +1292,13 @@ private fun ModernSearchScreen(
                     }
                 }
             },
+            readOnly = !searchEditing,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = {
+                searchEditing = false
+                keyboard?.hide()
+                if (state.searchQuery.isNotBlank()) search(false)
+            }),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = Color(0xFF111827),
                 unfocusedContainerColor = Color(0xFF111827),
@@ -1255,6 +1315,7 @@ private fun ModernSearchScreen(
                     InputChip(
                         selected = false,
                         onClick = { useRecent(recent) },
+                        modifier = Modifier.remoteFocusFrame(),
                         label = { Text(recent.query) },
                         colors = InputChipDefaults.inputChipColors(containerColor = Color(0xFF111827), labelColor = Color.LightGray),
                         trailingIcon = {
@@ -1270,13 +1331,13 @@ private fun ModernSearchScreen(
             Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("No cached results", style = MaterialTheme.typography.titleMedium)
                 Text("Search the portal once for this title. Requests are rate-limited for account safety.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = { search(true) }, border = BorderStroke(1.dp, Color.Gray)) { Icon(Icons.Default.CloudDownload, null); Spacer(Modifier.width(8.dp)); Text("Search server") }
+                OutlinedButton(onClick = { search(true) }, modifier = Modifier.remoteFocusFrame(), border = BorderStroke(1.dp, Color.Gray)) { Icon(Icons.Default.CloudDownload, null); Spacer(Modifier.width(8.dp)); Text("Search server") }
             }
         }
         if (state.searchResults.isNotEmpty()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("${state.searchResults.size} results${if (state.searchUsedServer) " · through page ${state.searchPage}" else " · cached"}", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = { search(true) }, enabled = !state.searchServerLoading, border = BorderStroke(1.dp, Color.Gray)) { Text("Search server") }
+                OutlinedButton(onClick = { search(true) }, modifier = Modifier.remoteFocusFrame(), enabled = !state.searchServerLoading, border = BorderStroke(1.dp, Color.Gray)) { Text("Search server") }
             }
             ModernGrid(
                 columns = columns,
@@ -1289,7 +1350,7 @@ private fun ModernSearchScreen(
                     ModernPosterCard(item, aspectRatio, onClick = { openResult(item) })
                 }
                 if (state.searchHasMore) item("load-more-${state.searchPage}", span = { GridItemSpan(maxLineSpan) }) {
-                    OutlinedButton(onClick = loadMore, enabled = !state.searchServerLoading, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    OutlinedButton(onClick = loadMore, enabled = !state.searchServerLoading, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).remoteFocusFrame()) {
                         if (state.searchServerLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Default.ExpandMore, null)
                         Spacer(Modifier.width(8.dp))
@@ -1416,8 +1477,8 @@ private fun ModernSettingsScreen(
                     trailingContent = {
                         Row {
                             if (saved == profile) Icon(Icons.Default.CheckCircle, "Active", tint = MaterialTheme.colorScheme.primary)
-                            else TextButton(onClick = { switchProfile(saved) }) { Text("Open") }
-                            IconButton(onClick = { pendingRemoval = saved }) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
+                            else TextButton(onClick = { switchProfile(saved) }, modifier = Modifier.remoteFocusFrame()) { Text("Open") }
+                            IconButton(onClick = { pendingRemoval = saved }, modifier = Modifier.remoteFocusFrame(CircleShape, 1.12f)) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
                         }
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -1429,7 +1490,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Add profile") },
                 supportingContent = { Text("Connect another Stalker or Xtream service") },
                 leadingContent = { Icon(Icons.Default.AddCircleOutline, null) },
-                modifier = Modifier.clickable(onClick = addProfile),
+                modifier = Modifier.remoteFocusFrame().clickable(onClick = addProfile),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
@@ -1451,7 +1512,7 @@ private fun ModernSettingsScreen(
                         supportingContent = { Text(countSummary) },
                         leadingContent = { Icon(type.icon(), null) },
                         trailingContent = { Icon(Icons.Default.ChevronRight, "Configure ${type.title} categories") },
-                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { openCategoryManager(type) },
+                        modifier = Modifier.remoteFocusFrame().clip(RoundedCornerShape(12.dp)).clickable { openCategoryManager(type) },
                         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
                     )
                     if (index != visibleCatalogTypes.lastIndex) Spacer(Modifier.height(4.dp))
@@ -1472,7 +1533,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Re-authenticate") },
                 supportingContent = { Text("Request a fresh session token using the saved profile") },
                 leadingContent = { Icon(Icons.Default.Refresh, null) },
-                modifier = Modifier.clickable(onClick = reauthenticate),
+                modifier = Modifier.remoteFocusFrame().clickable(onClick = reauthenticate),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
             HorizontalDivider()
@@ -1480,7 +1541,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Edit connection") },
                 supportingContent = { Text("Change portal address or credentials") },
                 leadingContent = { Icon(Icons.Default.Edit, null) },
-                modifier = Modifier.clickable(onClick = editProfile),
+                modifier = Modifier.remoteFocusFrame().clickable(onClick = editProfile),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
             HorizontalDivider()
@@ -1488,7 +1549,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Clear all app data", color = MaterialTheme.colorScheme.error) },
                 supportingContent = { Text("Remove every profile, cache, favorite, recent item, and session") },
                 leadingContent = { Icon(Icons.Default.Logout, null, tint = MaterialTheme.colorScheme.error) },
-                modifier = Modifier.clickable(onClick = logout),
+                modifier = Modifier.remoteFocusFrame().clickable(onClick = logout),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
@@ -1501,6 +1562,7 @@ private fun ModernSettingsScreen(
                         SegmentedButton(
                             selected = state.cacheIntervalMinutes == minutes,
                             onClick = { setCacheIntervalMinutes(minutes) },
+                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)),
                             shape = SegmentedButtonDefaults.itemShape(index, 4)
                         ) { Text(label) }
                     }
@@ -1516,6 +1578,7 @@ private fun ModernSettingsScreen(
                         SegmentedButton(
                             selected = state.seriesStartSeason == option,
                             onClick = { setSeriesStartSeason(option) },
+                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)),
                             shape = SegmentedButtonDefaults.itemShape(index, SeriesStartSeason.entries.size)
                         ) { Text(if (option == SeriesStartSeason.FIRST) "First season" else "Latest season") }
                     }
@@ -1536,7 +1599,7 @@ private fun ModernSettingsScreen(
                     },
                     leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
                     trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
-                    modifier = Modifier.clickable(enabled = !checkingUpdate) {
+                    modifier = Modifier.remoteFocusFrame().clickable(enabled = !checkingUpdate) {
                         checkingUpdate = true; updateMessage = "Checking for updates…"
                         scope.launch {
                             runCatching { AppUpdates.check() }
@@ -1611,12 +1674,12 @@ private fun ModernSettingsScreen(
                             downloadActionMessage = null
                             runCatching { AppUpdates.install(context) }
                                 .onFailure { downloadActionMessage = it.message }
-                        }) { Text("Install") }
+                        }, modifier = Modifier.remoteFocusFrame()) { Text("Install") }
                         OutlinedButton(onClick = {
                             downloadActionMessage = null
                             runCatching { AppUpdates.openDownloads(context) }
                                 .onFailure { downloadActionMessage = it.message }
-                        }) { Text("Open Downloads") }
+                        }, modifier = Modifier.remoteFocusFrame()) { Text("Open Downloads") }
                     }
                 }
                 if (downloadState is UpdateDownloadState.Failed) {
@@ -1625,7 +1688,7 @@ private fun ModernSettingsScreen(
                             val failed = downloadState as UpdateDownloadState.Failed
                             requestUpdateDownload(UpdateInfo(failed.version, failed.downloadUrl))
                         },
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).remoteFocusFrame()
                     ) { Text("Retry download") }
                 }
                 downloadActionMessage?.let {
@@ -1858,6 +1921,7 @@ private fun CategoryManagerDialog(
     val firstCategoryRequester = filteredRaw.firstOrNull()?.let { categoryRequesters[it.id] }
     val lastCategoryRequester = filteredRaw.lastOrNull()?.let { categoryRequesters[it.id] }
     var searchEditing by remember(type) { mutableStateOf(false) }
+    var searchFocused by remember(type) { mutableStateOf(false) }
     var closeFocused by remember { mutableStateOf(false) }
     var applyFocused by remember { mutableStateOf(false) }
     var focusedCategoryId by remember { mutableStateOf<String?>(null) }
@@ -1953,7 +2017,7 @@ private fun CategoryManagerDialog(
                             shape = RoundedCornerShape(12.dp),
                             color = if (selected) Color(0xFF351416) else Color.Black,
                             border = when {
-                                typeFocused -> BorderStroke(2.dp, Color.White)
+                                typeFocused -> BorderStroke(4.dp, Color(0xFFFF3340))
                                 selected -> BorderStroke(1.dp, Color(0xFFE50914))
                                 else -> BorderStroke(1.dp, Color(0xFF666666))
                             },
@@ -1968,7 +2032,7 @@ private fun CategoryManagerDialog(
                                         typeRequesters.getValue(visibleCatalogTypes[index + 1])
                                     } else closeRequester
                                     up = closeRequester
-                                    down = searchRequester
+                                    down = firstCategoryRequester ?: searchRequester
                                 }
                                 .onFocusChanged { typeFocused = it.isFocused }
                         ) {
@@ -1981,103 +2045,6 @@ private fun CategoryManagerDialog(
                             }
                         }
                     }
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(Modifier.weight(2.2f)) {
-                        Surface(
-                            Modifier.fillMaxWidth().height(64.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color.Black,
-                            border = BorderStroke(if (searchEditing) 2.dp else 1.dp, if (searchEditing) Color(0xFFE50914) else Color(0xFF666666))
-                        ) {
-                            Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Search, null, Modifier.size(26.dp), tint = Color.LightGray)
-                                Spacer(Modifier.width(12.dp))
-                                BasicTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    modifier = Modifier.weight(1f)
-                                        .focusRequester(searchRequester)
-                                        .focusProperties {
-                                            up = typeRequesters.getValue(type)
-                                            right = selectAllRequester
-                                            down = firstCategoryRequester ?: applyRequester
-                                        }
-                                        .onFocusChanged {
-                                            if (!it.isFocused && searchEditing) {
-                                                searchEditing = false
-                                                keyboardController?.hide()
-                                            }
-                                        }
-                                        .onPreviewKeyEvent { event ->
-                                            if (!searchEditing && event.type == KeyEventType.KeyUp &&
-                                                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
-                                            ) {
-                                                activateSearch(); true
-                                            } else false
-                                        },
-                                    singleLine = true,
-                                    readOnly = !searchEditing,
-                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
-                                    cursorBrush = SolidColor(Color(0xFFE50914)),
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = {
-                                        searchEditing = false
-                                        keyboardController?.hide()
-                                    }),
-                                    decorationBox = { inner ->
-                                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                                            if (searchQuery.isEmpty()) Text("Search ${type.title.lowercase()} categories…", color = Color.Gray, maxLines = 1)
-                                            inner()
-                                        }
-                                    }
-                                )
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.focusProperties { canFocus = false }) {
-                                        Icon(Icons.Default.Close, "Clear search", tint = Color.LightGray)
-                                    }
-                                }
-                            }
-                        }
-                        if (!searchEditing) {
-                            Box(Modifier.matchParentSize().pointerInput(type) {
-                                detectTapGestures { activateSearch() }
-                            })
-                        }
-                    }
-                    CategoryDialogActionButton(
-                        text = "Select All",
-                        onClick = { selectAll(type) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(selectAllRequester)
-                            .focusProperties {
-                                left = searchRequester
-                                right = deselectAllRequester
-                                up = searchRequester
-                                down = firstCategoryRequester ?: applyRequester
-                            }
-                    )
-                    CategoryDialogActionButton(
-                        text = "Deselect All",
-                        onClick = { deselectAll(type) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(deselectAllRequester)
-                            .focusProperties {
-                                left = selectAllRequester
-                                right = FocusRequester.Cancel
-                                up = searchRequester
-                                down = firstCategoryRequester ?: applyRequester
-                            }
-                    )
                 }
 
                 val enabledCount = currentEnabledSet.size
@@ -2131,7 +2098,7 @@ private fun CategoryManagerDialog(
                                     else -> Color(0xFF171717)
                                 },
                                 border = when {
-                                    rowFocused -> BorderStroke(2.dp, Color.White)
+                                    rowFocused -> BorderStroke(4.dp, Color(0xFFFF3340))
                                     selected -> BorderStroke(1.dp, Color(0xFFE50914).copy(alpha = 0.75f))
                                     else -> BorderStroke(1.dp, Color(0xFF303030))
                                 },
@@ -2140,10 +2107,8 @@ private fun CategoryManagerDialog(
                                     .height(44.dp)
                                     .focusRequester(rowRequester)
                                     .focusProperties {
-                                        if (index == 0) up = selectAllRequester
-                                        if (index == filteredRaw.lastIndex) down = applyRequester
-                                        left = FocusRequester.Cancel
-                                        right = FocusRequester.Cancel
+                                        if (index < categoryColumns) up = typeRequesters.getValue(type)
+                                        if (index >= filteredRaw.size - categoryColumns) down = searchRequester
                                     }
                                     .onFocusChanged {
                                         if (it.isFocused) {
@@ -2188,6 +2153,98 @@ private fun CategoryManagerDialog(
                             }
                         }
                     }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.weight(2.2f)) {
+                        Surface(
+                            Modifier.fillMaxWidth().height(58.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.Black,
+                            border = BorderStroke(
+                                if (searchEditing || searchFocused) 4.dp else 1.dp,
+                                if (searchEditing || searchFocused) Color(0xFFFF3340) else Color(0xFF666666)
+                            )
+                        ) {
+                            Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Search, null, Modifier.size(24.dp), tint = Color.LightGray)
+                                Spacer(Modifier.width(10.dp))
+                                BasicTextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    modifier = Modifier.weight(1f)
+                                        .focusRequester(searchRequester)
+                                        .focusProperties {
+                                            up = lastCategoryRequester ?: typeRequesters.getValue(type)
+                                            right = selectAllRequester
+                                            down = applyRequester
+                                        }
+                                        .onFocusChanged {
+                                            searchFocused = it.isFocused
+                                            if (!it.isFocused && searchEditing) {
+                                                searchEditing = false
+                                                keyboardController?.hide()
+                                            }
+                                        }
+                                        .onPreviewKeyEvent { event ->
+                                            if (!searchEditing && event.type == KeyEventType.KeyUp &&
+                                                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                                            ) {
+                                                activateSearch(); true
+                                            } else false
+                                        },
+                                    singleLine = true,
+                                    readOnly = !searchEditing,
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                                    cursorBrush = SolidColor(Color(0xFFE50914)),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        searchEditing = false
+                                        keyboardController?.hide()
+                                    }),
+                                    decorationBox = { inner ->
+                                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                                            if (searchQuery.isEmpty()) Text("Search ${type.title.lowercase()} categories…", color = Color.Gray, maxLines = 1)
+                                            inner()
+                                        }
+                                    }
+                                )
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.focusProperties { canFocus = false }) {
+                                        Icon(Icons.Default.Close, "Clear search", tint = Color.LightGray)
+                                    }
+                                }
+                            }
+                        }
+                        if (!searchEditing) {
+                            Box(Modifier.matchParentSize().pointerInput(type) { detectTapGestures { activateSearch() } })
+                        }
+                    }
+                    CategoryDialogActionButton(
+                        text = "Select All",
+                        onClick = { selectAll(type) },
+                        modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
+                            left = searchRequester
+                            right = deselectAllRequester
+                            up = lastCategoryRequester ?: typeRequesters.getValue(type)
+                            down = applyRequester
+                        }
+                    )
+                    CategoryDialogActionButton(
+                        text = "Deselect All",
+                        onClick = { deselectAll(type) },
+                        modifier = Modifier.weight(1f).focusRequester(deselectAllRequester).focusProperties {
+                            left = selectAllRequester
+                            right = FocusRequester.Cancel
+                            up = lastCategoryRequester ?: typeRequesters.getValue(type)
+                            down = applyRequester
+                        }
+                    )
                 }
 
             }
@@ -2360,21 +2417,21 @@ private fun ModernSeriesDetailScreen(
                     ) {
                         IconButton(
                             onClick = closeSeries,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to browse", tint = Color.White)
                         }
                         Spacer(Modifier.weight(1f))
                         IconButton(
                             onClick = openSearch,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
                         ) {
                             Icon(Icons.Default.Search, "Search", tint = Color.White)
                         }
                         Spacer(Modifier.width(8.dp))
                         IconButton(
                             onClick = openSettings,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
                         ) {
                             Icon(Icons.Default.Settings, "Settings", tint = Color.White)
                         }
@@ -2448,6 +2505,7 @@ private fun ModernSeriesDetailScreen(
                             if (primaryEpisodeToPlay != null) {
                                 Button(
                                     onClick = { play(primaryEpisodeToPlay) },
+                                    modifier = Modifier.remoteFocusFrame(),
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color.White,
@@ -2469,6 +2527,7 @@ private fun ModernSeriesDetailScreen(
                             if (recentEpisode != null && latestEpisode != null && recentEpisode.id != latestEpisode.id) {
                                 FilledTonalButton(
                                     onClick = { play(latestEpisode) },
+                                    modifier = Modifier.remoteFocusFrame(),
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.filledTonalButtonColors(
                                         containerColor = Color.White.copy(alpha = 0.15f),
@@ -2483,6 +2542,7 @@ private fun ModernSeriesDetailScreen(
 
                             FilledTonalButton(
                                 onClick = { toggleFavorite(series) },
+                                modifier = Modifier.remoteFocusFrame(),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.filledTonalButtonColors(
                                     containerColor = if (isFavorite) MaterialTheme.colorScheme.primaryContainer else Color.White.copy(alpha = 0.15f),
@@ -2500,6 +2560,7 @@ private fun ModernSeriesDetailScreen(
 
                             FilledTonalButton(
                                 onClick = toggleSeriesWatch,
+                                modifier = Modifier.remoteFocusFrame(),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color.White.copy(alpha = 0.15f), contentColor = Color.White)
                             ) {
@@ -2510,7 +2571,7 @@ private fun ModernSeriesDetailScreen(
 
                             IconButton(
                                 onClick = refreshCatalog,
-                                modifier = Modifier.background(Color.White.copy(alpha = 0.15f), CircleShape)
+                                modifier = Modifier.background(Color.White.copy(alpha = 0.15f), CircleShape).remoteFocusFrame(CircleShape, 1.14f)
                             ) {
                                 Icon(Icons.Default.Refresh, "Refresh episodes", tint = Color.White)
                             }
@@ -2538,7 +2599,7 @@ private fun ModernSeriesDetailScreen(
                                     shape = RoundedCornerShape(12.dp),
                                     color = Color(0xFF1E2430),
                                     contentColor = Color.White,
-                                    modifier = Modifier.height(42.dp)
+                                    modifier = Modifier.height(42.dp).remoteFocusFrame()
                                 ) {
                                     Row(
                                         Modifier.padding(horizontal = 14.dp),
@@ -2576,7 +2637,7 @@ private fun ModernSeriesDetailScreen(
                             color = if (episodeSortDescending) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color(0xFF1E2430),
                             border = BorderStroke(1.dp, if (episodeSortDescending) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color.Transparent),
                             contentColor = Color.White,
-                            modifier = Modifier.height(42.dp)
+                            modifier = Modifier.height(42.dp).remoteFocusFrame()
                         ) {
                             Row(
                                 Modifier.padding(horizontal = 14.dp),
@@ -2628,7 +2689,8 @@ private fun ModernSeriesDetailScreen(
                             }
                             .pointerInput(series.id, episodeSearchEditing) {
                                 if (!episodeSearchEditing) detectTapGestures { activateEpisodeSearch() }
-                            },
+                            }
+                            .remoteFocusFrame(RoundedCornerShape(16.dp), 1.01f),
                         placeholder = { Text("Search episode name or number…", color = Color.Gray) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.LightGray) },
                         trailingIcon = if (searchQuery.isNotEmpty()) {{
