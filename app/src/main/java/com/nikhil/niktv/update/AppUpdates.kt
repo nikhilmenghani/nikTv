@@ -126,7 +126,10 @@ object AppUpdates {
     private const val PREF_URL = "url"
     private const val PREF_PENDING_VERSION = "pending_version"
     private const val PREF_PENDING_URL = "pending_url"
+    private const val PREF_INSTALL_AFTER_DOWNLOAD = "install_after_download"
     private const val CHANNEL = "niktv-updates"
+    private const val AVAILABLE_NOTIFICATION_ID = 1001
+    private const val READY_NOTIFICATION_ID = 1002
     private const val RELEASES_URL = "https://api.github.com/repos/nikhilmenghani/nikTv/releases?per_page=30"
     private const val LATEST_URL = "https://api.github.com/repos/nikhilmenghani/nikTv/releases/latest"
     private const val APK_MIME = "application/vnd.android.package-archive"
@@ -222,7 +225,7 @@ object AppUpdates {
             .setMimeType(APK_MIME)
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
             .setDestinationInExternalPublicDir(
                 Environment.DIRECTORY_DOWNLOADS,
                 "NikTV/$fileName"
@@ -256,6 +259,17 @@ object AppUpdates {
         }
     }
 
+    /** Starts one user-visible update flow and hands the APK to Android's installer when ready. */
+    fun downloadAndInstall(context: Context, update: UpdateInfo): Long {
+        ensureInitialized(context)
+        preferences().edit().putBoolean(PREF_INSTALL_AFTER_DOWNLOAD, true).apply()
+        val id = download(context, update)
+        if (mutableDownloadState.value is UpdateDownloadState.Ready) {
+            handOffCompletedDownload()
+        }
+        return id
+    }
+
     fun retry(context: Context): Long {
         val failed = mutableDownloadState.value as? UpdateDownloadState.Failed
             ?: error("There is no failed update download to retry")
@@ -277,6 +291,12 @@ object AppUpdates {
 
     fun deferDownload(context: Context, update: UpdateInfo) {
         ensureInitialized(context)
+        persistPendingUpdate(update)
+    }
+
+    fun deferDownloadAndInstall(context: Context, update: UpdateInfo) {
+        ensureInitialized(context)
+        preferences().edit().putBoolean(PREF_INSTALL_AFTER_DOWNLOAD, true).apply()
         persistPendingUpdate(update)
     }
 
@@ -340,6 +360,8 @@ object AppUpdates {
         mutableDownloadState.value = UpdateDownloadState.InstallerLaunched(
             candidate.downloadId, candidate.version, candidate.downloadUrl, uri
         )
+        preferences().edit().putBoolean(PREF_INSTALL_AFTER_DOWNLOAD, false).apply()
+        notificationManager().cancel(READY_NOTIFICATION_ID)
         return InstallHandoff.INSTALLER_LAUNCHED
     }
 
@@ -366,7 +388,7 @@ object AppUpdates {
     fun notifyAvailable(context: Context, update: UpdateInfo) {
         if (!notificationsAllowed(context)) return
         val intent = Intent(context, UpdateActionReceiver::class.java)
-            .setAction(UpdateActionReceiver.DOWNLOAD)
+            .setAction(UpdateActionReceiver.DOWNLOAD_AND_INSTALL)
             .putExtra("version", update.version)
             .putExtra("url", update.downloadUrl)
         val action = PendingIntent.getBroadcast(
@@ -377,13 +399,37 @@ object AppUpdates {
         )
         notify(
             context,
-            1001,
+            AVAILABLE_NOTIFICATION_ID,
             NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("NikTV ${update.version} is available")
-                .setContentText("Download the update when you're ready.")
+                .setContentText("Download the update and open Android's installer.")
                 .setAutoCancel(true)
-                .addAction(android.R.drawable.stat_sys_download, "Download", action)
+                .addAction(android.R.drawable.stat_sys_download, "Download & Install", action)
+                .build()
+        )
+    }
+
+    private fun notifyReadyToInstall(version: String) {
+        if (!notificationsAllowed(appContext)) return
+        val intent = Intent(appContext, UpdateActionReceiver::class.java)
+            .setAction(UpdateActionReceiver.INSTALL)
+        val action = PendingIntent.getBroadcast(
+            appContext,
+            2,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        notify(
+            appContext,
+            READY_NOTIFICATION_ID,
+            NotificationCompat.Builder(appContext, CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("NikTV $version is ready")
+                .setContentText("Tap to finish installing the update.")
+                .setContentIntent(action)
+                .setAutoCancel(true)
+                .addAction(android.R.drawable.stat_sys_download_done, "Install", action)
                 .build()
         )
     }
@@ -482,6 +528,9 @@ object AppUpdates {
                             "Android reports a completed download, but the APK cannot be opened."
                         )
                     }
+                    if (uri != null && preferences().getBoolean(PREF_INSTALL_AFTER_DOWNLOAD, false)) {
+                        handOffCompletedDownload()
+                    }
                     return false
                 }
                 DownloadManager.STATUS_FAILED -> {
@@ -514,6 +563,23 @@ object AppUpdates {
         appContext.getSystemService(DownloadManager::class.java)
 
     private fun preferences() = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun notificationManager(): NotificationManager =
+        appContext.getSystemService(NotificationManager::class.java)
+
+    private fun handOffCompletedDownload() {
+        val ready = mutableDownloadState.value as? UpdateDownloadState.Ready ?: return
+        runCatching { install(appContext) }
+            .onSuccess { handoff ->
+                if (handoff == InstallHandoff.UNKNOWN_SOURCES_SETTINGS_LAUNCHED) {
+                    notifyReadyToInstall(ready.version)
+                }
+            }
+            .onFailure { exception ->
+                Log.w(TAG, "Could not open the installer automatically", exception)
+                notifyReadyToInstall(ready.version)
+            }
+    }
 
     private fun clearDownloadMetadata() {
         preferences().edit().remove(PREF_ID).remove(PREF_VERSION).remove(PREF_URL).apply()
@@ -701,13 +767,18 @@ class UpdateCheckWorker(context: Context, params: WorkerParameters) :
 
 class UpdateActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != DOWNLOAD) return
+        if (intent.action == INSTALL) {
+            runCatching { AppUpdates.install(context) }
+                .onFailure { Log.e("UpdateActionReceiver", "Could not open update installer", it) }
+            return
+        }
+        if (intent.action != DOWNLOAD_AND_INSTALL) return
         val version = intent.getStringExtra("version").orEmpty()
         val url = intent.getStringExtra("url").orEmpty()
         val update = UpdateInfo(version, url)
         try {
             if (!AppUpdates.canWritePublicDownloads(context)) {
-                AppUpdates.deferDownload(context, update)
+                AppUpdates.deferDownloadAndInstall(context, update)
                 context.startActivity(
                     Intent(context, MainActivity::class.java)
                         .setAction(AppUpdates.ACTION_REQUEST_UPDATE_DOWNLOAD)
@@ -721,13 +792,14 @@ class UpdateActionReceiver : BroadcastReceiver() {
                 )
                 return
             }
-            AppUpdates.download(context, update)
+            AppUpdates.downloadAndInstall(context, update)
         } catch (exception: Exception) {
             Log.e("UpdateActionReceiver", "Could not start update download", exception)
         }
     }
 
     companion object {
-        const val DOWNLOAD = "com.nikhil.niktv.DOWNLOAD_UPDATE"
+        const val DOWNLOAD_AND_INSTALL = "com.nikhil.niktv.DOWNLOAD_AND_INSTALL_UPDATE"
+        const val INSTALL = "com.nikhil.niktv.INSTALL_DOWNLOADED_UPDATE"
     }
 }
