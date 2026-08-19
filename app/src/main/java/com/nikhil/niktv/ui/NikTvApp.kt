@@ -815,12 +815,26 @@ private fun ModernSideRail(
 
 @Composable
 private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
     IconButton(
         onClick = onClick,
-        modifier = Modifier.padding(vertical = 4.dp).semantics { role = Role.Tab; this.selected = selected }
-            .then(if (selected) Modifier.border(2.dp, Color(0xFFE50914), CircleShape) else Modifier)
+        modifier = Modifier.padding(vertical = 4.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .graphicsLayer {
+                scaleX = if (focused) 1.18f else 1f
+                scaleY = if (focused) 1.18f else 1f
+            }
+            .semantics { role = Role.Tab; this.selected = selected }
+            .then(
+                if (focused) Modifier
+                    .shadow(14.dp, CircleShape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
+                    .background(Color(0xFF3A0A0D), CircleShape)
+                    .border(4.dp, Color(0xFFFF3340), CircleShape)
+                else if (selected) Modifier.border(2.dp, Color(0xFFE50914), CircleShape)
+                else Modifier
+            )
     ) {
-        Icon(icon, label, tint = if (selected) Color.White else Color.Gray)
+        Icon(icon, label, tint = if (focused || selected) Color.White else Color.Gray)
     }
 }
 
@@ -932,7 +946,8 @@ private fun ModernPosterCard(
     Box(modifier) {
         Column(
             Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
-            .graphicsLayer { scaleX = if (focused) 1.04f else 1f; scaleY = if (focused) 1.04f else 1f }
+            .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(10.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
+            .graphicsLayer { scaleX = if (focused) 1.08f else 1f; scaleY = if (focused) 1.08f else 1f }
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
@@ -942,7 +957,7 @@ private fun ModernPosterCard(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
-                .border(if (focused) 3.dp else 0.dp, Color(0xFFE50914), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                .border(if (focused) 4.dp else 0.dp, Color(0xFFFF2633), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
                 else SubcomposeAsyncImage(artworkModel, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
                     when (painter.state.value) {
@@ -1003,10 +1018,12 @@ private fun ModernMediaListCard(
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
             .onFocusChanged { focused = it.isFocused }
+            .then(if (focused) Modifier.shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
+            .graphicsLayer { scaleX = if (focused) 1.025f else 1f; scaleY = if (focused) 1.025f else 1f }
             .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         shape = RoundedCornerShape(12.dp),
         color = if (focused) Color(0xFF292929) else Color(0xFF171717),
-        border = if (focused) BorderStroke(2.dp, Color(0xFFE50914)) else null
+        border = if (focused) BorderStroke(4.dp, Color(0xFFFF2633)) else null
     ) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
@@ -2221,7 +2238,16 @@ private fun ModernSeriesDetailScreen(
     val series = state.selectedSeries ?: return
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
     var searchQuery by rememberSaveable(series.id) { mutableStateOf("") }
+    var episodeSearchEditing by rememberSaveable(series.id) { mutableStateOf(false) }
     var seasonDropdownExpanded by remember { mutableStateOf(false) }
+    val episodeSearchRequester = remember(series.id) { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    fun activateEpisodeSearch() {
+        episodeSearchEditing = true
+        episodeSearchRequester.requestFocus()
+        keyboardController?.show()
+    }
 
     val isFavorite = remember(state.favorites, series) {
         state.favorites.any { it.media.id == series.id && it.kind == FavoriteKind.SERIES }
@@ -2584,13 +2610,37 @@ private fun ModernSeriesDetailScreen(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth()
+                            .focusRequester(episodeSearchRequester)
+                            .onFocusChanged {
+                                if (!it.isFocused && episodeSearchEditing) {
+                                    episodeSearchEditing = false
+                                    keyboardController?.hide()
+                                }
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (!episodeSearchEditing && event.type == KeyEventType.KeyUp &&
+                                    event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                                ) {
+                                    activateEpisodeSearch()
+                                    true
+                                } else false
+                            }
+                            .pointerInput(series.id, episodeSearchEditing) {
+                                if (!episodeSearchEditing) detectTapGestures { activateEpisodeSearch() }
+                            },
                         placeholder = { Text("Search episode name or number…", color = Color.Gray) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.LightGray) },
                         trailingIcon = if (searchQuery.isNotEmpty()) {{
                             IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, "Clear", tint = Color.LightGray) }
                         }} else null,
                         singleLine = true,
+                        readOnly = !episodeSearchEditing,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            episodeSearchEditing = false
+                            keyboardController?.hide()
+                        }),
                         shape = RoundedCornerShape(16.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = Color(0xFF141822),
@@ -2671,6 +2721,7 @@ private fun ModernEpisodeCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var focused by remember { mutableStateOf(false) }
     val progressFraction = remember(progress) {
         if (progress != null && progress.durationMillis > 0L) {
             (progress.positionMillis.toFloat() / progress.durationMillis.toFloat()).coerceIn(0f, 1f)
@@ -2680,9 +2731,16 @@ private fun ModernEpisodeCard(
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
-        color = if (isCurrentResume) Color(0xFF1B2232) else Color(0xFF121620),
-        border = if (isCurrentResume) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) else null,
+        color = if (focused) Color(0xFF321417) else if (isCurrentResume) Color(0xFF1B2232) else Color(0xFF121620),
+        border = when {
+            focused -> BorderStroke(4.dp, Color(0xFFFF2633))
+            isCurrentResume -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+            else -> null
+        },
+        shadowElevation = if (focused) 14.dp else 0.dp,
         modifier = modifier
+            .onFocusChanged { focused = it.isFocused }
+            .graphicsLayer { scaleX = if (focused) 1.025f else 1f; scaleY = if (focused) 1.025f else 1f }
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
