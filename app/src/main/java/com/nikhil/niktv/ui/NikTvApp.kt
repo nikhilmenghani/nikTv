@@ -97,7 +97,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     MaterialTheme(colorScheme = profileColors) {
         Surface(Modifier.fillMaxSize()) {
             when {
-                state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::playNextEpisode, vm::savePlaybackProgress)
+                state.nowPlaying != null -> PlayerScreen(state.nowPlaying!!, vm::closePlayer, vm::retryPlayback, vm::playNextEpisode, vm::savePlaybackProgress)
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.profileLoadProgress != null -> ProfileLoadingScreen(
                     profileName = state.savedProfile?.name,

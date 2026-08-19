@@ -164,6 +164,7 @@ data class RecentItem(
 data class PlayingMedia(
     val media: MediaItem,
     val url: String,
+    val catalogType: CatalogType,
     val nextEpisode: MediaItem? = null,
     val series: MediaItem? = null,
     val episodeQueue: List<MediaItem> = emptyList(),

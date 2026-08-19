@@ -560,16 +560,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun playInternal(item: MediaItem, type: CatalogType, series: MediaItem?, episodes: List<MediaItem>) {
         var session = requireNotNull(_state.value.session)
         val urlKey = "${type.name}:${item.id}"
-        val cachedUrl = _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
+        // Live links are commonly session-bound and may point at an old stream
+        // window. Always resolve them immediately before playback.
+        val cachedUrl = if (type == CatalogType.LIVE_TV) null else _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
         val url = cachedUrl ?: runCatching { portal.playableUrl(session, item, type) }.getOrElse { firstError ->
             if (session.profile.portalType != PortalType.STALKER || !firstError.isAuthenticationFailure()) throw firstError
             session = refreshSession(session.profile)
             portal.playableUrl(session, item, type)
         }.also { resolved ->
-            val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
-                .take(MAX_PLAYBACK_URLS)
-            _state.update { it.copy(playbackUrls = updated) }
-            store.savePlaybackUrls(updated)
+            if (type != CatalogType.LIVE_TV) {
+                val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
+                    .take(MAX_PLAYBACK_URLS)
+                _state.update { it.copy(playbackUrls = updated) }
+                store.savePlaybackUrls(updated)
+            }
         }
         val orderedEpisodes = if (type == CatalogType.SERIES) episodes.sortedWith(
             compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
@@ -586,7 +590,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 .filter { it.key == legacyProgressKey }
                 .maxByOrNull { it.updatedAtMillis }
         val resumePosition = saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L } ?: 0L
-        _state.update { it.copy(nowPlaying = PlayingMedia(item, url, nextEpisode, series, orderedEpisodes, resumePosition, progressKey)) }
+        _state.update { it.copy(nowPlaying = PlayingMedia(item, url, type, nextEpisode, series, orderedEpisodes, resumePosition, progressKey)) }
         recordRecent(item, type, series)
     }
 
@@ -656,6 +660,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlayer() = _state.update { it.copy(nowPlaying = null) }
+    fun retryPlayback() {
+        val playing = _state.value.nowPlaying ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(nowPlaying = null, error = null) }
+            runCatching { playInternal(playing.media, playing.catalogType, playing.series, playing.episodeQueue) }
+                .onFailure { error -> _state.update { it.copy(error = error.message ?: "Playback retry failed") } }
+        }
+    }
     fun openSettings() = _state.update { it.copy(settingsOpen = true) }
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }

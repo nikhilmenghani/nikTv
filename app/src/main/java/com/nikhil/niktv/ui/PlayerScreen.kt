@@ -17,17 +17,19 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Brightness6
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -35,6 +37,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.nikhil.niktv.R
@@ -42,7 +47,7 @@ import com.nikhil.niktv.model.PlayingMedia
 import kotlinx.coroutines.delay
 
 @Composable
-fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit, onProgress: (String, Long, Long) -> Unit) {
+fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, onPlayNext: () -> Unit, onProgress: (String, Long, Long) -> Unit) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
@@ -52,6 +57,13 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var focusMode by remember(media.progressKey) { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
+    var controlsVisible by remember(media.progressKey) { mutableStateOf(true) }
+    var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
+    var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
+    var position by remember(media.progressKey) { mutableLongStateOf(0L) }
+    var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
+    var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
+    var startupTimedOut by remember(media.progressKey) { mutableStateOf(false) }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val player = remember(media.progressKey) {
         ExoPlayer.Builder(context).build().apply {
@@ -59,7 +71,26 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
             if (media.resumePositionMillis > 0L) seekTo(media.resumePositionMillis)
             prepare()
             playWhenReady = true
+            repeatMode = Player.REPEAT_MODE_OFF
         }
+    }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                playbackState = state
+                if (state == Player.STATE_READY) startupTimedOut = false
+            }
+            override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
+            override fun onPlayerError(error: PlaybackException) {
+                playbackError = buildString {
+                    append(error.errorCodeName.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase))
+                    error.cause?.message?.takeIf { it.isNotBlank() }?.let { append("\n"); append(it) }
+                }
+                controlsVisible = true
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
     }
     DisposableEffect(player) {
         onDispose {
@@ -115,8 +146,23 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
     }
     LaunchedEffect(player) {
         while (true) {
-            delay(5_000)
-            onProgress(media.progressKey, player.currentPosition, player.duration)
+            delay(1_000)
+            position = player.currentPosition.coerceAtLeast(0L)
+            duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+            if (position % 5_000L < 1_000L) onProgress(media.progressKey, player.currentPosition, player.duration)
+        }
+    }
+    LaunchedEffect(player, media.url) {
+        delay(25_000L)
+        if (playbackState != Player.STATE_READY && playbackError == null) {
+            startupTimedOut = true
+            controlsVisible = true
+        }
+    }
+    LaunchedEffect(controlsVisible, isPlaying) {
+        if (controlsVisible && isPlaying && playbackError == null && !startupTimedOut) {
+            delay(4_000L)
+            controlsVisible = false
         }
     }
     BackHandler {
@@ -128,37 +174,7 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                 PlayerView(viewContext).apply {
                     val playerView = this
                     this.player = player
-                    useController = true
-                    setFullscreenButtonClickListener { fullScreen ->
-                        focusMode = fullScreen
-                    }
-                    val controlSize = (48f * resources.displayMetrics.density).toInt()
-                    val controlPadding = (12f * resources.displayMetrics.density).toInt()
-                    val settingsButton = findViewById<View>(androidx.media3.ui.R.id.exo_settings)
-                    val settingsContainer = settingsButton?.parent as? ViewGroup
-                    val settingsIndex = settingsContainer?.indexOfChild(settingsButton) ?: -1
-                    fun playerControlButton(icon: Int, description: String, action: () -> Unit) =
-                        ImageButton(viewContext).apply {
-                            setImageResource(icon)
-                            contentDescription = description
-                            background = null
-                            isClickable = true
-                            isFocusable = true
-                            imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
-                            setPadding(controlPadding, controlPadding, controlPadding, controlPadding)
-                            layoutParams = ViewGroup.LayoutParams(controlSize, controlSize)
-                            setOnClickListener { action() }
-                        }
-                    if (settingsContainer != null && settingsIndex >= 0) {
-                        settingsContainer.addView(
-                            playerControlButton(R.drawable.ic_player_rotate, "Rotate screen") {
-                                val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-                                activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                                else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            },
-                            settingsIndex + 1
-                        )
-                    }
+                    useController = false
                     isFocusable = true
                     isFocusableInTouchMode = true
                     requestFocus()
@@ -222,28 +238,28 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                             KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                                 if (player.isPlaying) player.pause() else player.play()
-                                showController()
+                                controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY -> {
                                 player.play()
-                                showController()
+                                controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PAUSE -> {
                                 player.pause()
-                                showController()
+                                controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                                 val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
                                 player.seekTo((player.currentPosition + 10_000L).coerceAtMost(maxPosition))
-                                showController()
+                                controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
                                 player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
-                                showController()
+                                controlsVisible = true
                                 true
                             }
                             else -> false
@@ -299,8 +315,7 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                             }
                             MotionEvent.ACTION_UP -> {
                                 if (tapCandidate && !gestureConsumed && !adjustingLevel && !scaleDetector.isInProgress) {
-                                    if (playerView.isControllerFullyVisible) playerView.hideController()
-                                    else playerView.showController()
+                                    controlsVisible = !controlsVisible
                                     gestureConsumed = true
                                 }
                             }
@@ -323,6 +338,94 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
             modifier = Modifier
                 .fillMaxSize()
         )
+        if (controlsVisible) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(listOf(Color.Black.copy(alpha = .82f), Color.Transparent, Color.Black.copy(alpha = .88f)))
+                )
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                        Text(media.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                        media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                    }
+                    IconButton(onClick = {
+                        val landscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                        activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    }) { Icon(Icons.Default.ScreenRotation, "Rotate", tint = Color.White) }
+                    IconButton(onClick = { focusMode = !focusMode }) {
+                        Icon(if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
+                    }
+                }
+
+                if (playbackError == null && !startupTimedOut) {
+                    Row(
+                        Modifier.align(Alignment.Center),
+                        horizontalArrangement = Arrangement.spacedBy(28.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) {
+                            Icon(Icons.Default.Replay10, "Back 10 seconds", Modifier.size(38.dp), tint = Color.White)
+                        }
+                        FilledIconButton(
+                            onClick = { if (player.isPlaying) player.pause() else player.play() },
+                            modifier = Modifier.size(68.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
+                        ) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", Modifier.size(42.dp)) }
+                        if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }) {
+                            Icon(Icons.Default.Forward10, "Forward 10 seconds", Modifier.size(38.dp), tint = Color.White)
+                        }
+                    }
+                }
+
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp)
+                ) {
+                    if (duration > 0L) {
+                        Slider(
+                            value = position.coerceAtMost(duration).toFloat(),
+                            onValueChange = { player.seekTo(it.toLong()) },
+                            valueRange = 0f..duration.toFloat(),
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFFE50914), activeTrackColor = Color(0xFFE50914), inactiveTrackColor = Color.White.copy(alpha = .35f))
+                        )
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(9.dp).clip(RoundedCornerShape(50)).background(Color(0xFFE50914)))
+                            Spacer(Modifier.width(8.dp))
+                            Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+        if ((playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE) && playbackError == null && !startupTimedOut) {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator(color = Color(0xFFE50914))
+                Text("Connecting to stream…", color = Color.White)
+            }
+        }
+        val failure = playbackError ?: if (startupTimedOut) "The stream did not start within 25 seconds." else null
+        if (failure != null) {
+            Surface(
+                Modifier.align(Alignment.Center).padding(24.dp).widthIn(max = 560.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xEE181818)
+            ) {
+                Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Default.ErrorOutline, null, Modifier.size(42.dp), tint = Color(0xFFE50914))
+                    Text("This title can’t be played right now", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                    Text(failure, color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = onBack) { Text("Go back") }
+                        Button(onClick = onRetry) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Retry with fresh link") }
+                    }
+                }
+            }
+        }
         gestureFeedback?.let { (isBrightness, level) ->
             Surface(
                 modifier = Modifier
@@ -361,13 +464,6 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onPlayNext: () -> Unit
                     Text("${(level * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
                 }
             }
-        }
-        if (!focusMode) {
-            Text(
-                media.media.title,
-                Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 20.dp, top = 16.dp, end = 72.dp),
-                style = MaterialTheme.typography.titleLarge
-            )
         }
         val countdown = remainingSeconds
         if (!focusMode && countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
