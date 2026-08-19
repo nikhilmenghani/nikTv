@@ -62,11 +62,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val portal = StalkerPortalClient(application)
     private val _state = MutableStateFlow(NikTvState())
     val state: StateFlow<NikTvState> = _state.asStateFlow()
+    private var allFavorites: List<FavoriteItem> = emptyList()
+    private var allRecentlyPlayed: List<RecentItem> = emptyList()
 
     init {
         prepareProfileChooser()
-        viewModelScope.launch { store.favorites.collect { favorites -> _state.update { it.copy(favorites = favorites) } } }
-        viewModelScope.launch { store.recentlyPlayed.collect { recent -> _state.update { it.copy(recentlyPlayed = recent) } } }
+        viewModelScope.launch { store.favorites.collect { favorites ->
+            allFavorites = favorites
+            refreshProfileLibrary()
+        } }
+        viewModelScope.launch { store.recentlyPlayed.collect { recent ->
+            allRecentlyPlayed = recent
+            refreshProfileLibrary()
+        } }
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
@@ -108,6 +116,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         updateProfileLoad(0.24f, "Authentication complete")
         store.save(session)
         _state.update { it.copy(session = session, savedProfile = session.profile, profileEditorOpen = false) }
+        loadProfileLibrary(session.profile.cacheKey())
         preloadDashboard(session)
     }
 
@@ -128,6 +137,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun updateProfileLoad(progress: Float, message: String) =
         _state.update { it.copy(profileLoadProgress = progress.coerceIn(0f, 1f), profileLoadMessage = message) }
+
+    private fun refreshProfileLibrary() {
+        val profileKey = _state.value.session?.profile?.cacheKey()
+        _state.update { it.copy(
+            favorites = if (profileKey == null) emptyList() else allFavorites.filter { entry -> entry.profileKey == profileKey },
+            recentlyPlayed = if (profileKey == null) emptyList() else allRecentlyPlayed.filter { entry -> entry.profileKey == profileKey }
+        ) }
+    }
+
+    private suspend fun loadProfileLibrary(profileKey: String) {
+        // Claim legacy unscoped rows once for the first profile opened after this upgrade.
+        val storedFavorites = store.favorites.first()
+        val storedRecent = store.recentlyPlayed.first()
+        val migratedFavorites = storedFavorites.map { if (it.profileKey.isBlank()) it.copy(profileKey = profileKey) else it }
+        val migratedRecent = storedRecent.map { if (it.profileKey.isBlank()) it.copy(profileKey = profileKey) else it }
+        if (migratedFavorites != storedFavorites) store.saveFavorites(migratedFavorites)
+        if (migratedRecent != storedRecent) store.saveRecentlyPlayed(migratedRecent)
+        allFavorites = migratedFavorites
+        allRecentlyPlayed = migratedRecent
+        refreshProfileLibrary()
+    }
 
     fun reconnect() { _state.value.savedProfile?.let(::connect) }
 
@@ -524,20 +554,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun recordRecent(item: MediaItem, type: CatalogType, series: MediaItem?) {
+        val profileKey = requireNotNull(_state.value.session).profile.cacheKey()
         val additions = buildList {
             if (type == CatalogType.SERIES && series != null) {
-                add(RecentItem(FavoriteKind.SERIES, series, lastPlayed = item))
+                add(RecentItem(FavoriteKind.SERIES, series, lastPlayed = item, profileKey = profileKey))
             } else add(RecentItem(when (type) {
                 CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
                 CatalogType.MOVIES -> FavoriteKind.MOVIE
                 CatalogType.SERIES -> FavoriteKind.SERIES
                 CatalogType.RADIO -> FavoriteKind.CHANNEL
-            }, item, series))
+            }, item, series, profileKey = profileKey))
         }
         val updated = (additions + _state.value.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE })
             .distinctBy { it.key }.take(MAX_RECENT_ITEMS)
         _state.update { it.copy(recentlyPlayed = updated) }
-        store.saveRecentlyPlayed(updated)
+        allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
+        store.saveRecentlyPlayed(allRecentlyPlayed)
     }
 
     fun closeSeries() = task {
@@ -631,6 +663,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList()) }
+        loadProfileLibrary(session.profile.cacheKey())
         preloadDashboard(session)
     }
     fun removeProfile(profile: PortalProfile) = viewModelScope.launch {
@@ -652,16 +685,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.selectedSeries != null -> FavoriteKind.EPISODE
             else -> FavoriteKind.SERIES
         }
-        toggleFavorite(FavoriteItem(kind, item, if (kind == FavoriteKind.EPISODE) snapshot.selectedSeries else null))
+        val profileKey = snapshot.session?.profile?.cacheKey() ?: return
+        toggleFavorite(FavoriteItem(kind, item, if (kind == FavoriteKind.EPISODE) snapshot.selectedSeries else null, profileKey = profileKey))
     }
 
     fun toggleFavorite(favorite: FavoriteItem) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        val scopedFavorite = if (favorite.profileKey == profileKey) favorite else favorite.copy(profileKey = profileKey)
         val updated = _state.value.favorites.toMutableList().apply {
-            val index = indexOfFirst { it.key == favorite.key }
-            if (index >= 0) removeAt(index) else add(favorite)
+            val index = indexOfFirst { it.key == scopedFavorite.key }
+            if (index >= 0) removeAt(index) else add(scopedFavorite)
         }
         _state.update { it.copy(favorites = updated) }
-        store.saveFavorites(updated)
+        allFavorites = allFavorites.filterNot { it.profileKey == profileKey } + updated
+        store.saveFavorites(allFavorites)
     }
 
     fun openFavorite(favorite: FavoriteItem) {
@@ -699,14 +736,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun removeRecent(recent: RecentItem) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val updated = _state.value.recentlyPlayed.filterNot { it.key == recent.key }
         _state.update { it.copy(recentlyPlayed = updated) }
-        store.saveRecentlyPlayed(updated)
+        allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
+        store.saveRecentlyPlayed(allRecentlyPlayed)
     }
     fun clearRecent(kind: FavoriteKind) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val updated = _state.value.recentlyPlayed.filterNot { it.kind == kind }
         _state.update { it.copy(recentlyPlayed = updated) }
-        store.saveRecentlyPlayed(updated)
+        allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
+        store.saveRecentlyPlayed(allRecentlyPlayed)
     }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }

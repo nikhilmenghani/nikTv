@@ -109,9 +109,10 @@ data class FavoriteItem(
     val kind: FavoriteKind,
     val media: MediaItem,
     val series: MediaItem? = null,
-    val addedAtMillis: Long = System.currentTimeMillis()
+    val addedAtMillis: Long = System.currentTimeMillis(),
+    val profileKey: String = ""
 ) {
-    val key: String get() = "${kind.name}:${media.id}"
+    val key: String get() = "$profileKey:${kind.name}:${media.id}"
 }
 
 @Serializable
@@ -120,9 +121,10 @@ data class RecentItem(
     val media: MediaItem,
     val series: MediaItem? = null,
     val lastPlayed: MediaItem? = null,
-    val playedAtMillis: Long = System.currentTimeMillis()
+    val playedAtMillis: Long = System.currentTimeMillis(),
+    val profileKey: String = ""
 ) {
-    val key: String get() = "${kind.name}:${media.id}"
+    val key: String get() = "$profileKey:${kind.name}:${media.id}"
 }
 
 data class PlayingMedia(

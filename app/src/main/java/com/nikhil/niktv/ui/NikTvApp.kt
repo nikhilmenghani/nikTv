@@ -499,10 +499,10 @@ private fun ModernBrowseScreen(
     val isWide = configuration.screenWidthDp >= 720 || isTv
     val columns = when {
         state.selectedType == CatalogType.LIVE_TV -> if (isWide) 6 else 4
-        isWide -> 5
+        isWide -> 6
         else -> 3
     }
-    val aspectRatio = if (state.selectedType == CatalogType.LIVE_TV) 16f / 9f else 2f / 3f
+    val aspectRatio = 16f / 9f
     val gridSpan: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
 
     ModernGrid(
@@ -564,8 +564,7 @@ private fun ModernBrowseScreen(
                 }
                 if (state.favorites.isNotEmpty()) item("my-list", span = gridSpan) {
                     ModernRail(
-                        "My List", state.favorites, { it.media }, openFavorite,
-                        aspectRatio = { favorite -> if (favorite.kind == FavoriteKind.CHANNEL) 16f / 9f else 2f / 3f }
+                        "My List", state.favorites, { it.media }, openFavorite
                     )
                 }
                 FavoriteKind.entries.filterNot { it == FavoriteKind.EPISODE }.forEach { kind ->
@@ -573,7 +572,6 @@ private fun ModernBrowseScreen(
                     if (entries.isNotEmpty()) item("recent-${kind.name}", span = gridSpan) {
                         ModernRail(
                             "Recently Played ${kind.sectionTitle()}", entries, { it.media }, openRecent,
-                            aspectRatio = { if (kind == FavoriteKind.CHANNEL) 16f / 9f else 2f / 3f },
                             remove = removeRecent,
                             clear = { clearRecent(kind) }
                         )
@@ -605,14 +603,6 @@ private fun ModernBrowseScreen(
                         state.selectedCategory?.title ?: state.selectedType.title,
                         "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}"
                     )
-                }
-                val typeFavorites = state.favorites.filter {
-                    (state.selectedType == CatalogType.LIVE_TV && it.kind == FavoriteKind.CHANNEL) ||
-                        (state.selectedType == CatalogType.MOVIES && it.kind == FavoriteKind.MOVIE) ||
-                        (state.selectedType == CatalogType.SERIES && it.kind == FavoriteKind.SERIES)
-                }
-                if (typeFavorites.isNotEmpty()) item("catalog-favorites", span = gridSpan) {
-                    ModernRail("My List", typeFavorites, { it.media }, openFavorite, aspectRatio = { aspectRatio })
                 }
                 items(state.items, key = { "catalog-${state.selectedType}-${it.id}" }) { item ->
                     ModernPosterCard(item, aspectRatio, Modifier.padding(horizontal = 4.dp), onClick = { play(item) })
@@ -843,19 +833,12 @@ private fun ModernFavoritesScreen(
                     items = favorites,
                     key = { it.key },
                     span = { favorite ->
-                        val portrait = favorite.kind != FavoriteKind.CHANNEL && favorite.kind != FavoriteKind.EPISODE
-                        GridItemSpan(when {
-                            portrait && wide -> 3
-                            portrait -> 4
-                            wide -> 2
-                            else -> 3
-                        })
+                        GridItemSpan(if (wide) 2 else 4)
                     }
                 ) { favorite ->
-                    val portrait = favorite.kind != FavoriteKind.CHANNEL && favorite.kind != FavoriteKind.EPISODE
                     ModernFavoriteCard(
                         favorite = favorite,
-                        aspectRatio = if (portrait) 2f / 3f else 16f / 9f,
+                        aspectRatio = 16f / 9f,
                         open = { openFavorite(favorite) },
                         remove = { toggleFavorite(favorite) }
                     )
@@ -927,9 +910,9 @@ private fun ModernSearchScreen(
     val columns = if (state.searchType == SearchContentType.LIVE_TV) {
         if (wide) 6 else 4
     } else {
-        if (wide) 5 else 3
+        if (wide) 6 else 3
     }
-    val aspectRatio = if (state.searchType == SearchContentType.LIVE_TV) 16f / 9f else 2f / 3f
+    val aspectRatio = 16f / 9f
     LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909)).padding(horizontal = 16.dp)) {
         ModernScreenTopBar("Search", close)
