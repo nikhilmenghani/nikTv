@@ -262,6 +262,25 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
                                 controlsVisible = true
                                 true
                             }
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                if (player.duration > 0L) {
+                                    player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration))
+                                }
+                                controlsVisible = true
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                if (player.duration > 0L) {
+                                    player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                }
+                                controlsVisible = true
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_UP,
+                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                controlsVisible = true
+                                true
+                            }
                             else -> false
                         }
                     }
@@ -320,8 +339,13 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
                                 }
                             }
                         }
-                        val consumed = gestureConsumed || scaleDetector.isInProgress || event.pointerCount > 1 || panned || adjustingLevel
-                        if (consumed) gestureConsumed = true
+                        // Claim the gesture at ACTION_DOWN. The old Media3 controller
+                        // used to do this for us; without it Android would stop sending
+                        // pointer-down/move/up events, breaking tap, pinch and pan.
+                        val ownsGesture = event.actionMasked == MotionEvent.ACTION_DOWN
+                        val consumed = ownsGesture ||
+                            gestureConsumed || scaleDetector.isInProgress || event.pointerCount > 1 || panned || adjustingLevel
+                        if (consumed && !ownsGesture) gestureConsumed = true
                         consumed
                     }
                 }
