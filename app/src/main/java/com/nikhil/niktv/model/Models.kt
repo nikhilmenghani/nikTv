@@ -110,9 +110,43 @@ data class FavoriteItem(
     val media: MediaItem,
     val series: MediaItem? = null,
     val addedAtMillis: Long = System.currentTimeMillis(),
-    val profileKey: String = ""
+    val profileKey: String = "",
+    val categoryTitle: String? = null
 ) {
     val key: String get() = "$profileKey:${kind.name}:${media.id}"
+}
+
+@Serializable
+enum class SeriesStartSeason { FIRST, LAST }
+
+@Serializable
+data class WatchedSeries(
+    val profileKey: String,
+    val series: MediaItem,
+    val categoryTitle: String? = null,
+    val knownEpisodeIds: Set<String> = emptySet(),
+    val newEpisodes: List<MediaItem> = emptyList(),
+    val checkedAtMillis: Long = 0L
+) {
+    val key: String get() = "$profileKey:${series.id}"
+}
+
+data class EpisodeSeasonResult(
+    val episodes: List<MediaItem>,
+    val availableSeasons: List<Int>,
+    val selectedSeason: Int?
+)
+
+@Serializable
+data class EpisodeSeasonCache(
+    val profileKey: String,
+    val seriesId: String,
+    val season: Int?,
+    val availableSeasons: List<Int>,
+    val episodes: List<MediaItem>,
+    val cachedAtMillis: Long = System.currentTimeMillis()
+) {
+    val key: String get() = "$profileKey|$seriesId|${season ?: -1}"
 }
 
 @Serializable

@@ -10,6 +10,7 @@ import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
 
 data class NikTvState(
     val profiles: List<PortalProfile> = emptyList(),
@@ -41,6 +42,10 @@ data class NikTvState(
     val playbackProgress: List<PlaybackProgress> = emptyList(),
     val playbackUrls: List<PlaybackUrl> = emptyList(),
     val cacheIntervalMinutes: Int = 60,
+    val seriesStartSeason: SeriesStartSeason = SeriesStartSeason.FIRST,
+    val availableSeriesSeasons: List<Int> = emptyList(),
+    val selectedSeriesSeason: Int? = null,
+    val watchedSeries: List<WatchedSeries> = emptyList(),
     val browseCache: BrowseCatalogCache? = null,
     val browseCachesByType: Map<CatalogType, BrowseCatalogCache> = emptyMap(),
     val searchOpen: Boolean = false,
@@ -66,6 +71,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<NikTvState> = _state.asStateFlow()
     private var allFavorites: List<FavoriteItem> = emptyList()
     private var allRecentlyPlayed: List<RecentItem> = emptyList()
+    private var allWatchedSeries: List<WatchedSeries> = emptyList()
+    private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
+    private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
 
     init {
         prepareProfileChooser()
@@ -80,6 +88,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
+        viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
+        viewModelScope.launch { store.rememberedSeriesSeasons.collect { rememberedSeriesSeasons = it } }
+        viewModelScope.launch { store.episodeSeasonCaches.collect { episodeSeasonCaches = it } }
+        viewModelScope.launch { store.watchedSeries.collect { entries ->
+            allWatchedSeries = entries
+            refreshProfileLibrary()
+        } }
         viewModelScope.launch { store.recentSearches.collect { searches -> _state.update { it.copy(recentSearches = searches) } } }
         viewModelScope.launch { store.profiles.collect { profiles -> _state.update { it.copy(profiles = profiles) } } }
         viewModelScope.launch {
@@ -140,6 +155,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         updateProfileLoad(0.92f, "Preparing your dashboard…")
         val homeArtwork = _state.value.recentlyPlayed.map { it.media } + _state.value.favorites.map { it.media }
         withTimeoutOrNull(5_000L) { prefetchArtwork(getApplication(), homeArtwork, limit = 8) }
+        refreshWatchedSeriesIfDue()
         updateProfileLoad(1f, "Opening dashboard…")
     }
 
@@ -155,7 +171,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = _state.value.session?.profile?.cacheKey()
         _state.update { it.copy(
             favorites = if (profileKey == null) emptyList() else allFavorites.filter { entry -> entry.profileKey == profileKey },
-            recentlyPlayed = if (profileKey == null) emptyList() else allRecentlyPlayed.filter { entry -> entry.profileKey == profileKey }
+            recentlyPlayed = if (profileKey == null) emptyList() else allRecentlyPlayed.filter { entry -> entry.profileKey == profileKey },
+            watchedSeries = if (profileKey == null) emptyList() else allWatchedSeries.filter { entry -> entry.profileKey == profileKey }
         ) }
     }
 
@@ -309,8 +326,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = requireNotNull(snapshot.session)
         if (series != null) {
             _state.update { it.copy(items = emptyList()) }
-            val episodes = portal.episodes(session, series)
-            _state.update { it.copy(items = episodes) }
+            loadSeriesEpisodes(series, snapshot.selectedSeriesSeason)
         } else {
             loadTypeInternal(session, snapshot.selectedType, forceRefresh = true,
                 preferredCategoryId = snapshot.selectedCategory?.id)
@@ -321,12 +337,42 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.setCacheIntervalMinutes(minutes)
     }
 
+    fun setSeriesStartSeason(value: SeriesStartSeason) = viewModelScope.launch {
+        store.setSeriesStartSeason(value)
+    }
+
+    fun loadSeriesSeason(season: Int) = task {
+        val series = requireNotNull(_state.value.selectedSeries)
+        _state.update { it.copy(items = emptyList()) }
+        loadSeriesEpisodes(series, season)
+    }
+
+    private suspend fun loadSeriesEpisodes(series: MediaItem, requestedSeason: Int? = null) {
+        val session = requireNotNull(_state.value.session)
+        val profileKey = session.profile.cacheKey()
+        val remembered = rememberedSeriesSeasons["$profileKey|${series.id}"]
+        val desired = requestedSeason ?: remembered
+        val maxAge = _state.value.cacheIntervalMinutes * 60_000L
+        val cached = episodeSeasonCaches.firstOrNull { cache ->
+            cache.profileKey == profileKey && cache.seriesId == series.id &&
+                (desired == null || cache.season == desired) && System.currentTimeMillis() - cache.cachedAtMillis < maxAge
+        }
+        val result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season) }
+            ?: portal.episodeSeason(session, series, _state.value.seriesStartSeason, desired).also { loaded ->
+                val cache = EpisodeSeasonCache(profileKey, series.id, loaded.selectedSeason, loaded.availableSeasons, loaded.episodes)
+                episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
+                store.saveEpisodeSeasonCache(cache)
+            }
+        result.selectedSeason?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
+        _state.update { it.copy(items = result.episodes, availableSeriesSeasons = result.availableSeasons, selectedSeriesSeason = result.selectedSeason) }
+    }
+
     fun openMedia(item: MediaItem) {
         if (_state.value.selectedType == CatalogType.SERIES && _state.value.selectedSeries == null) {
             task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(selectedSeries = item, items = emptyList(), seriesOpenedFromFavorites = false, seriesOpenedFromHome = false) }
-                _state.update { it.copy(items = portal.episodes(session, item)) }
+                _state.update { it.copy(selectedSeries = item, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null, seriesOpenedFromFavorites = false, seriesOpenedFromHome = false) }
+                loadSeriesEpisodes(item)
             }
         } else play(item, _state.value.selectedType, _state.value.selectedSeries, _state.value.items)
     }
@@ -490,8 +536,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             SearchContentType.LIVE_TV -> play(item, CatalogType.LIVE_TV)
             SearchContentType.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(searchOpen = false, homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = item, items = emptyList()) }
-                _state.update { it.copy(items = portal.episodes(session, item)) }
+                _state.update { it.copy(searchOpen = false, homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = item, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null) }
+                loadSeriesEpisodes(item)
             }
             SearchContentType.MOVIES -> play(item, CatalogType.MOVIES)
             SearchContentType.EPISODES -> play(item, CatalogType.SERIES)
@@ -699,7 +745,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             else -> FavoriteKind.SERIES
         }
         val profileKey = snapshot.session?.profile?.cacheKey() ?: return
-        toggleFavorite(FavoriteItem(kind, item, if (kind == FavoriteKind.EPISODE) snapshot.selectedSeries else null, profileKey = profileKey))
+        toggleFavorite(FavoriteItem(kind, item, if (kind == FavoriteKind.EPISODE) snapshot.selectedSeries else null,
+            profileKey = profileKey, categoryTitle = snapshot.selectedCategory?.title))
     }
 
     fun toggleFavorite(favorite: FavoriteItem) = viewModelScope.launch {
@@ -719,13 +766,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             FavoriteKind.CHANNEL -> play(favorite.media, CatalogType.LIVE_TV)
             FavoriteKind.MOVIE -> play(favorite.media, CatalogType.MOVIES)
             FavoriteKind.EPISODE -> task {
-                val episodes = favorite.series?.let { portal.episodes(requireNotNull(_state.value.session), it) }.orEmpty()
+                val episodes = favorite.series?.let { portal.episodeSeason(requireNotNull(_state.value.session), it, _state.value.seriesStartSeason, favorite.media.seasonNumber).episodes }.orEmpty()
                 playInternal(favorite.media, CatalogType.SERIES, favorite.series, episodes)
             }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = favorite.media, seriesOpenedFromFavorites = true, items = emptyList()) }
-                _state.update { it.copy(items = portal.episodes(session, favorite.media)) }
+                _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = favorite.media, seriesOpenedFromFavorites = true, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null) }
+                loadSeriesEpisodes(favorite.media)
             }
         }
     }
@@ -734,12 +781,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             FavoriteKind.CHANNEL -> play(recent.media, CatalogType.LIVE_TV)
             FavoriteKind.MOVIE -> play(recent.media, CatalogType.MOVIES)
             FavoriteKind.EPISODE -> task {
-                val episodes = recent.series?.let { portal.episodes(requireNotNull(_state.value.session), it) }.orEmpty()
+                val episodes = recent.series?.let { portal.episodeSeason(requireNotNull(_state.value.session), it, _state.value.seriesStartSeason, recent.media.seasonNumber).episodes }.orEmpty()
                 playInternal(recent.media, CatalogType.SERIES, recent.series, episodes)
             }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
-                val episodes = portal.episodes(session, recent.media)
+                val episodes = portal.episodeSeason(session, recent.media, _state.value.seriesStartSeason, recent.lastPlayed?.seasonNumber).episodes
                 val resumeEpisode = recent.lastPlayed?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
                 if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes)
                 else {
@@ -761,6 +808,71 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(recentlyPlayed = updated) }
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
         store.saveRecentlyPlayed(allRecentlyPlayed)
+    }
+
+    fun toggleSeriesWatch() = viewModelScope.launch {
+        val snapshot = _state.value
+        val series = snapshot.selectedSeries ?: return@launch
+        val session = snapshot.session ?: return@launch
+        val profileKey = session.profile.cacheKey()
+        val existing = snapshot.watchedSeries.firstOrNull { it.series.id == series.id }
+        val updated = if (existing != null) {
+            snapshot.watchedSeries.filterNot { it.key == existing.key }
+        } else {
+            val latest = runCatching { portal.episodeSeason(session, series, SeriesStartSeason.LAST) }.getOrNull()
+            snapshot.watchedSeries + WatchedSeries(
+                profileKey = profileKey,
+                series = series,
+                categoryTitle = snapshot.selectedCategory?.title,
+                knownEpisodeIds = latest?.episodes?.map { it.id }?.toSet().orEmpty(),
+                checkedAtMillis = System.currentTimeMillis()
+            )
+        }
+        _state.update { it.copy(watchedSeries = updated) }
+        allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
+        store.saveWatchedSeries(allWatchedSeries)
+    }
+
+    private suspend fun refreshWatchedSeriesIfDue() {
+        val session = _state.value.session ?: return
+        val profileKey = session.profile.cacheKey()
+        val interval = _state.value.cacheIntervalMinutes * 60_000L
+        val now = System.currentTimeMillis()
+        var scoped = allWatchedSeries.filter { it.profileKey == profileKey }
+        var changed = false
+        scoped.forEachIndexed { index, watched ->
+            if (now - watched.checkedAtMillis < interval) return@forEachIndexed
+            val latest = runCatching { portal.episodeSeason(session, watched.series, SeriesStartSeason.LAST) }.getOrNull()
+                ?: return@forEachIndexed
+            val discovered = latest.episodes.filterNot { it.id in watched.knownEpisodeIds }
+            val replacement = watched.copy(
+                knownEpisodeIds = watched.knownEpisodeIds + latest.episodes.map { it.id },
+                newEpisodes = (discovered + watched.newEpisodes).distinctBy { it.id }
+                    .sortedWith(compareByDescending<MediaItem> { it.seasonNumber ?: 0 }.thenByDescending { it.episodeNumber ?: 0 }),
+                checkedAtMillis = now
+            )
+            scoped = scoped.map { if (it.key == watched.key) replacement else it }
+            changed = true
+            if (index < scoped.lastIndex) delay(1_200L)
+        }
+        if (changed) {
+            allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + scoped
+            _state.update { it.copy(watchedSeries = scoped) }
+            store.saveWatchedSeries(allWatchedSeries)
+        }
+    }
+
+    fun openWatchedEpisode(watched: WatchedSeries, episode: MediaItem) = task {
+        val session = requireNotNull(_state.value.session)
+        val queue = portal.episodeSeason(session, watched.series, _state.value.seriesStartSeason, episode.seasonNumber).episodes
+        val updated = _state.value.watchedSeries.map {
+            if (it.key == watched.key) it.copy(newEpisodes = it.newEpisodes.filterNot { candidate -> candidate.id == episode.id }) else it
+        }
+        val profileKey = session.profile.cacheKey()
+        allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
+        _state.update { it.copy(watchedSeries = updated) }
+        store.saveWatchedSeries(allWatchedSeries)
+        playInternal(episode, CatalogType.SERIES, watched.series, queue)
     }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }

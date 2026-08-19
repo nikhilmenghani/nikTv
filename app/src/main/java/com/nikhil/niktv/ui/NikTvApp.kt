@@ -127,6 +127,10 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     editProfile = vm::editProfile,
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
+                    ,setSeriesStartSeason = vm::setSeriesStartSeason
+                    ,loadSeriesSeason = vm::loadSeriesSeason
+                    ,toggleSeriesWatch = vm::toggleSeriesWatch
+                    ,openWatchedEpisode = vm::openWatchedEpisode
                     ,openSearch = vm::openSearch
                     ,closeSearch = vm::closeSearch
                     ,setSearchType = vm::setSearchType
@@ -361,6 +365,10 @@ private fun CatalogScreen(
     editProfile: () -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
+    setSeriesStartSeason: (SeriesStartSeason) -> Unit,
+    loadSeriesSeason: (Int) -> Unit,
+    toggleSeriesWatch: () -> Unit,
+    openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     openSearch: () -> Unit,
     closeSearch: () -> Unit,
     setSearchType: (SearchContentType) -> Unit,
@@ -404,6 +412,7 @@ private fun CatalogScreen(
                     removeProfile = removeProfile,
                     logout = logout,
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
+                    setSeriesStartSeason = setSeriesStartSeason,
                     openCategoryManager = openCategoryManager
                 )
                 state.searchOpen -> ModernSearchScreen(
@@ -431,6 +440,8 @@ private fun CatalogScreen(
                     play = play,
                     closeSeries = closeSeries,
                     toggleFavorite = toggleFavorite,
+                    toggleSeriesWatch = toggleSeriesWatch,
+                    loadSeriesSeason = loadSeriesSeason,
                     openSearch = openSearch,
                     openSettings = openSettings,
                     refreshCatalog = refreshCatalog
@@ -444,6 +455,7 @@ private fun CatalogScreen(
                     openRecent = openRecent,
                     removeRecent = removeRecent,
                     clearRecent = clearRecent,
+                    openWatchedEpisode = openWatchedEpisode,
                     openFavorite = openFavorite,
                     openFavorites = openFavorites,
                     openSearch = openSearch,
@@ -485,6 +497,7 @@ private fun ModernBrowseScreen(
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
     clearRecent: (FavoriteKind) -> Unit,
+    openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     openFavorites: () -> Unit,
     openSearch: () -> Unit,
@@ -555,6 +568,13 @@ private fun ModernBrowseScreen(
                 }
             }
             if (home) {
+                val newEpisodes = state.watchedSeries.flatMap { watched -> watched.newEpisodes.map { watched to it } }
+                if (newEpisodes.isNotEmpty()) item("watch-list-updates", span = gridSpan) {
+                    ModernRail(
+                        "New Episodes", newEpisodes, { it.second }, { (watched, episode) -> openWatchedEpisode(watched, episode) },
+                        progress = { (_, episode) -> state.playbackProgress.progressFor(episode) }
+                    )
+                }
                 val recents = state.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE }
                 if (recents.isNotEmpty()) item("continue", span = gridSpan) {
                     ModernRail(
@@ -565,7 +585,8 @@ private fun ModernBrowseScreen(
                 }
                 if (state.favorites.isNotEmpty()) item("my-list", span = gridSpan) {
                     ModernRail(
-                        "My List", state.favorites, { it.media }, openFavorite
+                        "My List", state.favorites, { it.media }, openFavorite,
+                        subtitle = { favorite -> listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle).joinToString(" · ") }
                     )
                 }
                 FavoriteKind.entries.filterNot { it == FavoriteKind.EPISODE }.forEach { kind ->
@@ -730,7 +751,8 @@ private fun <T> ModernRail(
     aspectRatio: (T) -> Float = { 16f / 9f },
     progress: (T) -> PlaybackProgress? = { null },
     remove: ((T) -> Unit)? = null,
-    clear: (() -> Unit)? = null
+    clear: (() -> Unit)? = null,
+    subtitle: (T) -> String? = { null }
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
@@ -744,6 +766,9 @@ private fun <T> ModernRail(
                     onClick = { open(entry) },
                     onLongClick = remove?.let { { it(entry) } }
                 ) {
+                    subtitle(entry)?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = Color.Gray, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                     if (remove != null) Text("Hold to remove", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                 }
             }
@@ -876,7 +901,15 @@ private fun ModernFavoriteCard(
             }
         }
     ) {
-        ModernPosterCard(favorite.media, aspectRatio, Modifier.fillMaxWidth(), onClick = open, onLongClick = remove)
+        ModernPosterCard(favorite.media, aspectRatio, Modifier.fillMaxWidth(), onClick = open, onLongClick = remove) {
+            Text(
+                listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle?.takeIf { it.isNotBlank() }).joinToString(" · "),
+                color = Color.Gray,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -1045,6 +1078,7 @@ private fun ModernSettingsScreen(
     removeProfile: (PortalProfile) -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
+    setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
 ) {
     val profile = state.savedProfile ?: return
@@ -1232,6 +1266,21 @@ private fun ModernSettingsScreen(
                             onClick = { setCacheIntervalMinutes(minutes) },
                             shape = SegmentedButtonDefaults.itemShape(index, 4)
                         ) { Text(label) }
+                    }
+                }
+            }
+        }
+        SettingsSection("Series") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Default season", style = MaterialTheme.typography.titleMedium)
+                Text("Used only when a series has no remembered season. NikTV loads one season at a time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    SeriesStartSeason.entries.forEachIndexed { index, option ->
+                        SegmentedButton(
+                            selected = state.seriesStartSeason == option,
+                            onClick = { setSeriesStartSeason(option) },
+                            shape = SegmentedButtonDefaults.itemShape(index, SeriesStartSeason.entries.size)
+                        ) { Text(if (option == SeriesStartSeason.FIRST) "First season" else "Latest season") }
                     }
                 }
             }
@@ -1439,6 +1488,12 @@ private fun FavoriteKind.sectionTitle() = when (this) {
     FavoriteKind.MOVIE -> "Movies"
     FavoriteKind.SERIES -> "Series"
     FavoriteKind.EPISODE -> "Episodes"
+}
+private fun FavoriteKind.mediaTypeLabel() = when (this) {
+    FavoriteKind.CHANNEL -> "Live TV"
+    FavoriteKind.MOVIE -> "Movie"
+    FavoriteKind.SERIES -> "Series"
+    FavoriteKind.EPISODE -> "Episode"
 }
 private fun String.episodeNumberFromTitle(): Int? {
     val patterns = listOf(
@@ -1902,31 +1957,31 @@ private fun ModernSeriesDetailScreen(
     play: (MediaItem) -> Unit,
     closeSeries: () -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
+    toggleSeriesWatch: () -> Unit,
+    loadSeriesSeason: (Int) -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
     refreshCatalog: () -> Unit
 ) {
     val series = state.selectedSeries ?: return
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
-    var selectedSeason by rememberSaveable(series.id) { mutableStateOf<Int?>(null) }
     var searchQuery by rememberSaveable(series.id) { mutableStateOf("") }
     var seasonDropdownExpanded by remember { mutableStateOf(false) }
 
     val isFavorite = remember(state.favorites, series) {
         state.favorites.any { it.media.id == series.id && it.kind == FavoriteKind.SERIES }
     }
+    val isWatched = state.watchedSeries.any { it.series.id == series.id }
 
-    val availableSeasons = remember(state.items) {
-        state.items.mapNotNull { it.seasonNumber }.distinct().sorted()
-    }
+    val availableSeasons = state.availableSeriesSeasons
+    val selectedSeason = state.selectedSeriesSeason
 
     val comparator = remember(episodeSortDescending) {
         episodeComparator(episodeSortDescending)
     }
 
     val seasonFilteredItems = remember(state.items, selectedSeason) {
-        if (selectedSeason == null) state.items
-        else state.items.filter { it.seasonNumber == selectedSeason }
+        state.items
     }
 
     val filteredEpisodes = remember(seasonFilteredItems, searchQuery, comparator, episodeSortDescending) {
@@ -2083,7 +2138,7 @@ private fun ModernSeriesDetailScreen(
                                 Text("•", color = Color.Gray)
                             }
                             Text(
-                                text = "${state.items.size} Episodes",
+                                text = "${state.items.size} Episodes${selectedSeason?.let { " in Season $it" }.orEmpty()}",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = Color.LightGray
                             )
@@ -2144,6 +2199,16 @@ private fun ModernSeriesDetailScreen(
                                 Text(if (isFavorite) "In My List" else "My List")
                             }
 
+                            FilledTonalButton(
+                                onClick = toggleSeriesWatch,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color.White.copy(alpha = 0.15f), contentColor = Color.White)
+                            ) {
+                                Icon(if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (isWatched) "Watching" else "Watch updates")
+                            }
+
                             IconButton(
                                 onClick = refreshCatalog,
                                 modifier = Modifier.background(Color.White.copy(alpha = 0.15f), CircleShape)
@@ -2181,7 +2246,7 @@ private fun ModernSeriesDetailScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = selectedSeason?.let { "Season $it" } ?: "All Seasons",
+                                            text = selectedSeason?.let { "Season $it" } ?: "Choose Season",
                                             style = MaterialTheme.typography.labelLarge,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -2194,17 +2259,11 @@ private fun ModernSeriesDetailScreen(
                                     expanded = seasonDropdownExpanded,
                                     onDismissRequest = { seasonDropdownExpanded = false }
                                 ) {
-                                    DropdownMenuItem(
-                                        text = { Text("All Seasons (${state.items.size} episodes)") },
-                                        onClick = { selectedSeason = null; seasonDropdownExpanded = false },
-                                        trailingIcon = if (selectedSeason == null) {{ Icon(Icons.Default.Check, null) }} else null
-                                    )
                                     val orderedSeasons = if (episodeSortDescending) availableSeasons.reversed() else availableSeasons
                                     orderedSeasons.forEach { season ->
-                                        val seasonEpCount = state.items.count { it.seasonNumber == season }
                                         DropdownMenuItem(
-                                            text = { Text("Season $season ($seasonEpCount episodes)") },
-                                            onClick = { selectedSeason = season; seasonDropdownExpanded = false },
+                                            text = { Text("Season $season") },
+                                            onClick = { loadSeriesSeason(season); seasonDropdownExpanded = false },
                                             trailingIcon = if (selectedSeason == season) {{ Icon(Icons.Default.Check, null) }} else null
                                         )
                                     }

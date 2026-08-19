@@ -255,8 +255,19 @@ class StalkerPortalClient(private val context: Context) {
         playbackUrl
     }
 
-    suspend fun episodes(session: PortalSession, series: MediaItem): List<MediaItem> = withContext(Dispatchers.IO) {
-        if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamEpisodes(session, series)
+    suspend fun episodes(session: PortalSession, series: MediaItem): List<MediaItem> =
+        episodeSeason(session, series, SeriesStartSeason.FIRST).episodes
+
+    suspend fun episodeSeason(
+        session: PortalSession,
+        series: MediaItem,
+        preference: SeriesStartSeason,
+        requestedSeason: Int? = null
+    ): EpisodeSeasonResult = withContext(Dispatchers.IO) {
+        if (session.profile.portalType == PortalType.XTREAM) {
+            val all = xtreamEpisodes(session, series)
+            return@withContext selectEpisodeSeason(all, preference, requestedSeason)
+        }
         val baseParams = mapOf(
             "type" to "vod", "action" to "get_ordered_list", "movie_id" to series.id,
             "category" to series.id, "season_id" to "0", "episode_id" to "0", "p" to "1"
@@ -264,19 +275,30 @@ class StalkerPortalClient(private val context: Context) {
         val initial = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams))
             .payload().arrayFromData()
         val direct = stalkerEpisodeItems(initial, series)
-        if (direct.isNotEmpty()) return@withContext direct
+        if (direct.isNotEmpty()) return@withContext selectEpisodeSeason(direct, preference, requestedSeason)
 
-        initial.mapNotNull { node ->
+        val seasons = initial.mapNotNull { node ->
             val season = node as? JsonObject ?: return@mapNotNull null
             val seasonId = season.string("season_id") ?: season.string("id") ?: return@mapNotNull null
             seasonId to (season.string("season_number")?.toIntOrNull() ?: season.string("season")?.toIntOrNull())
-        }.distinctBy { it.first }
-            .flatMap { (seasonId, seasonNumber) ->
-                val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams + ("season_id" to seasonId)))
-                stalkerEpisodeItems(response.payload().arrayFromData(), series, seasonNumber, seasonId)
-            }
-            .distinctBy { it.id }
-            .sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title }))
+        }.distinctBy { it.first }.mapIndexed { index, pair -> pair.first to (pair.second ?: index + 1) }
+        if (seasons.isEmpty()) return@withContext EpisodeSeasonResult(emptyList(), emptyList(), null)
+        val available = seasons.map { it.second }.distinct().sorted()
+        val selected = requestedSeason?.takeIf { it in available }
+            ?: if (preference == SeriesStartSeason.LAST) available.last() else available.first()
+        val (seasonId, seasonNumber) = seasons.first { it.second == selected }
+        val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams + ("season_id" to seasonId)))
+        val episodes = stalkerEpisodeItems(response.payload().arrayFromData(), series, seasonNumber, seasonId)
+            .distinctBy { it.id }.sortedWith(compareBy({ it.episodeNumber ?: 0 }, { it.title }))
+        EpisodeSeasonResult(episodes, available, selected)
+    }
+
+    private fun selectEpisodeSeason(all: List<MediaItem>, preference: SeriesStartSeason, requestedSeason: Int?): EpisodeSeasonResult {
+        val available = all.mapNotNull { it.seasonNumber }.distinct().sorted()
+        if (available.isEmpty()) return EpisodeSeasonResult(all, emptyList(), null)
+        val selected = requestedSeason?.takeIf { it in available }
+            ?: if (preference == SeriesStartSeason.LAST) available.last() else available.first()
+        return EpisodeSeasonResult(all.filter { it.seasonNumber == selected }, available, selected)
     }
 
     private fun stalkerEpisodeItems(nodes: List<JsonElement>, series: MediaItem, fallbackSeason: Int? = null, portalSeasonId: String? = null): List<MediaItem> =

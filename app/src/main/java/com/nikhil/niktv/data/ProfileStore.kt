@@ -16,6 +16,9 @@ import com.nikhil.niktv.model.BrowseCatalogCache
 import com.nikhil.niktv.model.PlaybackUrl
 import com.nikhil.niktv.model.RecentSearch
 import com.nikhil.niktv.model.SearchResultCache
+import com.nikhil.niktv.model.SeriesStartSeason
+import com.nikhil.niktv.model.WatchedSeries
+import com.nikhil.niktv.model.EpisodeSeasonCache
 import com.nikhil.niktv.model.canonicalSearchQuery
 import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +42,10 @@ class ProfileStore(private val context: Context) {
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
     private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
     private val categoryFiltersKey = stringPreferencesKey("category_filters")
+    private val seriesStartSeasonKey = stringPreferencesKey("series_start_season")
+    private val watchedSeriesKey = stringPreferencesKey("watched_series")
+    private val rememberedSeriesSeasonsKey = stringPreferencesKey("remembered_series_seasons")
+    private val episodeSeasonCachesKey = stringPreferencesKey("episode_season_caches")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         val identity = prefs[activeProfileKey]
@@ -77,6 +84,19 @@ class ProfileStore(private val context: Context) {
     }
     val categoryFilters: Flow<Map<String, List<String>>> = context.dataStore.data.map { prefs ->
         prefs[categoryFiltersKey]?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
+    }
+    val seriesStartSeason: Flow<SeriesStartSeason> = context.dataStore.data.map { prefs ->
+        prefs[seriesStartSeasonKey]?.let { runCatching { SeriesStartSeason.valueOf(it) }.getOrNull() }
+            ?: SeriesStartSeason.FIRST
+    }
+    val watchedSeries: Flow<List<WatchedSeries>> = context.dataStore.data.map { prefs ->
+        prefs[watchedSeriesKey]?.let { runCatching { Json.decodeFromString<List<WatchedSeries>>(it) }.getOrNull() }.orEmpty()
+    }
+    val rememberedSeriesSeasons: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
+        prefs[rememberedSeriesSeasonsKey]?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
+    }
+    val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = context.dataStore.data.map { prefs ->
+        prefs[episodeSeasonCachesKey]?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
     }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
         val profiles = decodeProfiles(it[profilesKey], it[key])
@@ -151,6 +171,18 @@ class ProfileStore(private val context: Context) {
         }
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
+    suspend fun setSeriesStartSeason(value: SeriesStartSeason) = context.dataStore.edit { it[seriesStartSeasonKey] = value.name }
+    suspend fun saveWatchedSeries(items: List<WatchedSeries>) = context.dataStore.edit {
+        it[watchedSeriesKey] = Json.encodeToString(items)
+    }
+    suspend fun rememberSeriesSeason(profileKey: String, seriesId: String, season: Int) = context.dataStore.edit { prefs ->
+        val current = prefs[rememberedSeriesSeasonsKey]?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
+        prefs[rememberedSeriesSeasonsKey] = Json.encodeToString(current + ("$profileKey|$seriesId" to season))
+    }
+    suspend fun saveEpisodeSeasonCache(cache: EpisodeSeasonCache) = context.dataStore.edit { prefs ->
+        val current = prefs[episodeSeasonCachesKey]?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
+        prefs[episodeSeasonCachesKey] = Json.encodeToString((listOf(cache) + current.filterNot { it.key == cache.key }).take(40))
+    }
     suspend fun addRecentSearch(search: RecentSearch) = context.dataStore.edit { prefs ->
         val entry = search.copy(query = search.query.canonicalSearchQuery())
         val current = decodeRecentSearches(prefs[recentSearchesKey])
@@ -193,6 +225,10 @@ class ProfileStore(private val context: Context) {
         it.remove(recentSearchesKey)
         it.remove(pagedSearchesKey)
         it.remove(categoryFiltersKey)
+        it.remove(seriesStartSeasonKey)
+        it.remove(watchedSeriesKey)
+        it.remove(rememberedSeriesSeasonsKey)
+        it.remove(episodeSeasonCachesKey)
     }
 
     private fun decodeProfiles(raw: String?, legacy: String?): List<PortalProfile> =
