@@ -90,6 +90,12 @@ data class PortalSearchPage(
     val hasMore: Boolean
 )
 
+data class PortalCatalogPage(
+    val items: List<MediaItem>,
+    val page: Int,
+    val hasMore: Boolean
+)
+
 @Serializable
 data class Category(val id: String, val title: String, val type: CatalogType)
 @Serializable

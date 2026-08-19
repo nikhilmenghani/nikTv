@@ -125,19 +125,25 @@ class StalkerPortalClient(private val context: Context) {
         } else portalCategories
     }
 
-    suspend fun catalog(session: PortalSession, category: Category): List<MediaItem> = withContext(Dispatchers.IO) {
-        if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamCatalog(session, category)
+    suspend fun catalog(session: PortalSession, category: Category): List<MediaItem> =
+        catalogPage(session, category, 1).items
+
+    suspend fun catalogPage(session: PortalSession, category: Category, page: Int): PortalCatalogPage = withContext(Dispatchers.IO) {
+        if (session.profile.portalType == PortalType.XTREAM) {
+            return@withContext PortalCatalogPage(xtreamCatalog(session, category), 1, false)
+        }
         val action = "get_ordered_list"
         val categoryKey = if (category.type == CatalogType.LIVE_TV || category.type == CatalogType.RADIO) "genre" else "category"
         val requestType = if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) "vod" else category.type.apiType
-        val listingParams = mutableMapOf("type" to requestType, "action" to action, categoryKey to category.id, "p" to "1")
+        val requestedPage = page.coerceAtLeast(1)
+        val listingParams = mutableMapOf("type" to requestType, "action" to action, categoryKey to category.id, "p" to requestedPage.toString())
         if (category.type == CatalogType.MOVIES) listingParams += mapOf(
             "movie_id" to "0", "season_id" to "0", "episode_id" to "0", "fav" to "0",
             "sortby" to "added", "hd" to "0", "ended" to "0", "search" to ""
         )
-        val listingNodes = request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams))
-            .payload().arrayFromData()
-        listingNodes.mapNotNull { node ->
+        val payload = request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams)).payload()
+        val listingNodes = payload.arrayFromData()
+        val items = listingNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
                 // Category selection and request shape are authoritative. This
                 // provider reports both is_movie=true and is_series=1 for Series,
@@ -152,6 +158,20 @@ class StalkerPortalClient(private val context: Context) {
                     portalCategoryId = category.id
                 )
             }
+        val metadata = payload as? JsonObject
+        val maxPage = metadata?.string("max_page")?.toIntOrNull()
+            ?: metadata?.string("total_pages")?.toIntOrNull()
+        val total = metadata?.string("total_items")?.toIntOrNull()
+            ?: metadata?.string("total")?.toIntOrNull()
+        val pageSize = metadata?.string("items_per_page")?.toIntOrNull()
+            ?: metadata?.string("per_page")?.toIntOrNull()
+            ?: listingNodes.size.takeIf { it > 0 }
+        val hasMore = when {
+            maxPage != null -> requestedPage < maxPage
+            total != null && pageSize != null -> requestedPage * pageSize < total
+            else -> listingNodes.isNotEmpty()
+        }
+        PortalCatalogPage(items, requestedPage, hasMore)
     }
 
     suspend fun fullCatalog(session: PortalSession, type: CatalogType, categories: List<Category>): List<MediaItem> = withContext(Dispatchers.IO) {

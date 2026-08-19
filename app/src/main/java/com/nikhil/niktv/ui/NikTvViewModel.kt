@@ -65,6 +65,9 @@ data class NikTvState(
     val categoryFilters: Map<String, List<String>> = emptyMap(),
     val categoryManagerOpen: Boolean = false,
     val categoryManagerType: CatalogType = CatalogType.LIVE_TV
+    ,val catalogPage: Int = 1
+    ,val catalogHasMore: Boolean = false
+    ,val catalogLoadingMore: Boolean = false
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -241,6 +244,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             categories = filteredCategories,
             selectedCategory = selected,
             items = items,
+            catalogPage = 1,
+            catalogHasMore = session.profile.portalType == PortalType.STALKER && items.isNotEmpty(),
             selectedSeries = null,
             fullSearchItems = null,
             fullSearchCachedAtMillis = null,
@@ -309,6 +314,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categories = filteredCategories,
                 selectedCategory = selected,
                 items = items,
+                catalogPage = 1,
+                catalogHasMore = session.profile.portalType == PortalType.STALKER && items.isNotEmpty(),
                 selectedSeries = null,
                 fullSearchItems = null,
                 fullSearchCachedAtMillis = null,
@@ -322,7 +329,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = requireNotNull(_state.value.session)
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
         val cached = _state.value.browseCachesByType[category.type]?.itemsByCategory?.get(category.id)
-        val items = cached ?: portal.catalog(session, category)
+        val firstPage = if (cached == null) portal.catalogPage(session, category, 1) else null
+        val items = cached ?: firstPage!!.items
         if (cached == null) {
             val existing = _state.value.browseCachesByType[category.type]
             if (existing != null && existing.type == category.type) {
@@ -334,7 +342,41 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 ) }
             }
         }
-        _state.update { it.copy(items = items) }
+        _state.update { it.copy(
+            items = items,
+            catalogPage = 1,
+            catalogHasMore = firstPage?.hasMore ?: (session.profile.portalType == PortalType.STALKER && items.isNotEmpty())
+        ) }
+    }
+
+    fun loadMoreCatalog() {
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        val category = snapshot.selectedCategory ?: return
+        if (snapshot.catalogLoadingMore || !snapshot.catalogHasMore ||
+            snapshot.selectedType !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) return
+        viewModelScope.launch {
+            _state.update { it.copy(catalogLoadingMore = true) }
+            runCatching { portal.catalogPage(session, category, snapshot.catalogPage + 1) }
+                .onSuccess { result ->
+                    val merged = (_state.value.items + result.items).distinctBy { it.id }
+                    val existing = _state.value.browseCachesByType[category.type]
+                    val updated = existing?.copy(
+                        cachedAtMillis = System.currentTimeMillis(),
+                        itemsByCategory = existing.itemsByCategory + (category.id to merged)
+                    )
+                    if (updated != null) store.saveBrowseCatalog(updated)
+                    _state.update { current -> current.copy(
+                        items = merged,
+                        catalogPage = result.page,
+                        catalogHasMore = result.hasMore && result.items.isNotEmpty(),
+                        catalogLoadingMore = false,
+                        browseCache = updated ?: current.browseCache,
+                        browseCachesByType = if (updated == null) current.browseCachesByType else current.browseCachesByType + (category.type to updated)
+                    ) }
+                }
+                .onFailure { error -> _state.update { it.copy(catalogLoadingMore = false, error = error.message ?: "Could not load more titles") } }
+        }
     }
 
     fun refreshCatalog() = task {

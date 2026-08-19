@@ -183,6 +183,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,deleteRecentSearch = vm::deleteRecentSearch
                     ,openSearchResult = vm::openSearchResult
                     ,loadMoreSearch = vm::loadMoreSearch
+                    ,loadMoreCatalog = vm::loadMoreCatalog
                     ,setSearchCategory = vm::setSearchCategory
                     ,addProfile = vm::addProfile
                     ,switchProfile = vm::switchProfile
@@ -423,6 +424,7 @@ private fun CatalogScreen(
     deleteRecentSearch: (RecentSearch) -> Unit,
     openSearchResult: (MediaItem) -> Unit,
     loadMoreSearch: () -> Unit,
+    loadMoreCatalog: () -> Unit,
     setSearchCategory: (String) -> Unit,
     addProfile: () -> Unit,
     switchProfile: (PortalProfile) -> Unit,
@@ -525,7 +527,8 @@ private fun CatalogScreen(
                     openSearch = openSearch,
                     openSettings = openSettings,
                     refreshCatalog = refreshCatalog,
-                    openCategoryManager = openCategoryManager
+                    openCategoryManager = openCategoryManager,
+                    loadMoreCatalog = loadMoreCatalog
                 )
             }
         }
@@ -595,7 +598,8 @@ private fun ModernBrowseScreen(
     openSearch: () -> Unit,
     openSettings: () -> Unit,
     refreshCatalog: () -> Unit,
-    openCategoryManager: (CatalogType) -> Unit
+    openCategoryManager: (CatalogType) -> Unit,
+    loadMoreCatalog: () -> Unit
 ) {
     val home = state.homeOpen
     val layoutToggleRequester = remember { FocusRequester() }
@@ -775,6 +779,29 @@ private fun ModernBrowseScreen(
                             isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
                             toggleFavorite = { toggleFavorite(item) }
                         )
+                    }
+                }
+                if (state.selectedType in setOf(CatalogType.MOVIES, CatalogType.SERIES) && state.catalogHasMore) {
+                    item("catalog-load-more", span = gridSpan) {
+                        Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
+                            Button(
+                                onClick = loadMoreCatalog,
+                                enabled = !state.catalogLoadingMore,
+                                modifier = Modifier.height(48.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                            ) {
+                                if (state.catalogLoadingMore) {
+                                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text("Loading…", color = Color.White)
+                                } else {
+                                    Icon(Icons.Default.Add, null, Modifier.size(20.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Load more titles", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 }
             } else item("modern-empty", span = gridSpan) {
@@ -1906,7 +1933,15 @@ private fun CategoryManagerDialog(
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     val gridState = rememberLazyGridState()
-    val categoryColumns = if (LocalConfiguration.current.screenWidthDp >= 720) 4 else 2
+    val categoryConfiguration = LocalConfiguration.current
+    val categoryContext = LocalContext.current
+    val categoryIsTv = categoryContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        categoryConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val categoryColumns = when {
+        categoryIsTv || categoryConfiguration.screenWidthDp >= 840 -> 4
+        categoryConfiguration.screenWidthDp >= 600 -> 2
+        else -> 1
+    }
     val closeRequester = remember { FocusRequester() }
     val typeRequesters = remember { visibleCatalogTypes.associateWith { FocusRequester() } }
     val searchRequester = remember { FocusRequester() }
@@ -2159,9 +2194,9 @@ private fun CategoryManagerDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(Modifier.weight(2.2f)) {
+                    Box(Modifier.weight(1.55f)) {
                         Surface(
-                            Modifier.fillMaxWidth().height(58.dp),
+                            Modifier.fillMaxWidth().height(52.dp),
                             shape = RoundedCornerShape(12.dp),
                             color = Color.Black,
                             border = BorderStroke(
@@ -2170,8 +2205,8 @@ private fun CategoryManagerDialog(
                             )
                         ) {
                             Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Search, null, Modifier.size(24.dp), tint = Color.LightGray)
-                                Spacer(Modifier.width(10.dp))
+                                Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = Color.LightGray)
+                                Spacer(Modifier.width(6.dp))
                                 BasicTextField(
                                     value = searchQuery,
                                     onValueChange = { searchQuery = it },
@@ -2198,7 +2233,7 @@ private fun CategoryManagerDialog(
                                         },
                                     singleLine = true,
                                     readOnly = !searchEditing,
-                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
                                     cursorBrush = SolidColor(Color(0xFFE50914)),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                     keyboardActions = KeyboardActions(onDone = {
@@ -2207,7 +2242,7 @@ private fun CategoryManagerDialog(
                                     }),
                                     decorationBox = { inner ->
                                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                                            if (searchQuery.isEmpty()) Text("Search ${type.title.lowercase()} categories…", color = Color.Gray, maxLines = 1)
+                                            if (searchQuery.isEmpty()) Text("Search categories", color = Color.Gray, maxLines = 1, style = MaterialTheme.typography.bodySmall)
                                             inner()
                                         }
                                     }
@@ -2261,7 +2296,7 @@ private fun CategoryDialogActionButton(
     OutlinedButton(
         onClick = onClick,
         modifier = modifier
-            .heightIn(min = 64.dp)
+            .height(52.dp)
             .onFocusChanged { focused = it.isFocused },
         border = BorderStroke(
             if (focused) 3.dp else 1.dp,
@@ -2271,9 +2306,15 @@ private fun CategoryDialogActionButton(
             containerColor = if (focused) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
         ),
         shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
     ) {
-        Text(text, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Text(
+            text,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
