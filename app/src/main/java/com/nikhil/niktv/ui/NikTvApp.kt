@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
@@ -32,6 +33,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -56,6 +58,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,7 +76,16 @@ import com.nikhil.niktv.update.formatDownloadBytes
 import java.security.MessageDigest
 import kotlinx.coroutines.launch
 
-private val NikColors = darkColorScheme(primary = Color(0xFFE50914), secondary = Color(0xFFE50914), background = Color(0xFF090909), surface = Color(0xFF111827))
+private val NikColors = darkColorScheme(
+    primary = Color(0xFFE50914), onPrimary = Color.White,
+    primaryContainer = Color(0xFF7F1016), onPrimaryContainer = Color.White,
+    secondary = Color(0xFFE50914), onSecondary = Color.White,
+    secondaryContainer = Color(0xFF3A1518), onSecondaryContainer = Color.White,
+    background = Color(0xFF090909), onBackground = Color.White,
+    surface = Color(0xFF141414), onSurface = Color.White,
+    surfaceVariant = Color(0xFF262626), onSurfaceVariant = Color(0xFFD1D1D1),
+    outline = Color(0xFF666666)
+)
 private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
@@ -81,6 +93,12 @@ private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
     if (value.length >= 2 && ((value.first() == '"' && value.last() == '"') ||
             (value.first() == '\'' && value.last() == '\''))) value.substring(1, value.length - 1).trim()
     else value
+}
+
+private tailrec fun android.content.Context.findHostActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findHostActivity()
+    else -> null
 }
 
 @Composable
@@ -131,6 +149,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,loadSeriesSeason = vm::loadSeriesSeason
                     ,toggleSeriesWatch = vm::toggleSeriesWatch
                     ,openWatchedEpisode = vm::openWatchedEpisode
+                    ,setBrowseLayout = vm::setBrowseLayout
                     ,openSearch = vm::openSearch
                     ,closeSearch = vm::closeSearch
                     ,setSearchType = vm::setSearchType
@@ -369,6 +388,7 @@ private fun CatalogScreen(
     loadSeriesSeason: (Int) -> Unit,
     toggleSeriesWatch: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    setBrowseLayout: (BrowseLayout) -> Unit,
     openSearch: () -> Unit,
     closeSearch: () -> Unit,
     setSearchType: (SearchContentType) -> Unit,
@@ -385,9 +405,13 @@ private fun CatalogScreen(
     openCategoryManager: (CatalogType) -> Unit
 ) {
     val configuration = LocalConfiguration.current
-    val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+    val context = LocalContext.current
+    val activity = context.findHostActivity()
+    val isTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
         configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
     val wide = configuration.screenWidthDp >= 720
+    var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
+    val exitFocusRequester = remember { FocusRequester() }
 
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
     BackHandler(enabled = !state.settingsOpen && state.searchOpen, onBack = closeSearch)
@@ -396,6 +420,18 @@ private fun CatalogScreen(
         enabled = !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries != null,
         onBack = closeSeries
     )
+    BackHandler(
+        enabled = !exitConfirmationOpen && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries == null
+    ) {
+        if (state.homeOpen) exitConfirmationOpen = true else openHome()
+    }
+
+    LaunchedEffect(exitConfirmationOpen) {
+        if (exitConfirmationOpen) {
+            withFrameNanos { }
+            runCatching { exitFocusRequester.requestFocus() }
+        }
+    }
 
     // Determine the current content to show in the main pane
     @Composable
@@ -456,6 +492,8 @@ private fun CatalogScreen(
                     removeRecent = removeRecent,
                     clearRecent = clearRecent,
                     openWatchedEpisode = openWatchedEpisode,
+                    toggleFavorite = toggleFavorite,
+                    setBrowseLayout = setBrowseLayout,
                     openFavorite = openFavorite,
                     openFavorites = openFavorites,
                     openSearch = openSearch,
@@ -483,6 +521,31 @@ private fun CatalogScreen(
     } else {
         MainContent(Modifier.fillMaxSize())
     }
+
+    if (exitConfirmationOpen) {
+        AlertDialog(
+            onDismissRequest = { exitConfirmationOpen = false },
+            icon = { Icon(Icons.Default.ExitToApp, null, tint = Color(0xFFE50914)) },
+            title = { Text("Exit NikTV?") },
+            text = { Text("Are you sure you want to close the app?") },
+            dismissButton = {
+                TextButton(onClick = { exitConfirmationOpen = false }) { Text("Cancel") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { activity?.finishAffinity() },
+                    modifier = Modifier.focusRequester(exitFocusRequester),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                ) {
+                    Text("Exit", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color(0xFF181818),
+            titleContentColor = Color.White,
+            textContentColor = Color.LightGray
+        )
+    }
 }
 
 
@@ -498,6 +561,8 @@ private fun ModernBrowseScreen(
     removeRecent: (RecentItem) -> Unit,
     clearRecent: (FavoriteKind) -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    toggleFavorite: (MediaItem) -> Unit,
+    setBrowseLayout: (BrowseLayout) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     openFavorites: () -> Unit,
     openSearch: () -> Unit,
@@ -506,6 +571,7 @@ private fun ModernBrowseScreen(
     openCategoryManager: (CatalogType) -> Unit
 ) {
     val home = state.homeOpen
+    var actionItem by remember { mutableStateOf<MediaItem?>(null) }
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
@@ -623,17 +689,41 @@ private fun ModernBrowseScreen(
                 item("catalog-header", span = gridSpan) {
                     ModernSectionHeader(
                         state.selectedCategory?.title ?: state.selectedType.title,
-                        "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}"
+                        "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}",
+                        action = {
+                            FilledTonalIconButton(onClick = {
+                                setBrowseLayout(if (state.browseLayout == BrowseLayout.GRID) BrowseLayout.LIST else BrowseLayout.GRID)
+                            }) {
+                                Icon(if (state.browseLayout == BrowseLayout.GRID) Icons.Default.ViewList else Icons.Default.GridView,
+                                    if (state.browseLayout == BrowseLayout.GRID) "Show as list" else "Show as grid")
+                            }
+                        }
                     )
                 }
-                items(state.items, key = { "catalog-${state.selectedType}-${it.id}" }) { item ->
-                    ModernPosterCard(item, aspectRatio, Modifier.padding(horizontal = 4.dp), onClick = { play(item) })
+                items(
+                    state.items,
+                    key = { "catalog-${state.selectedType}-${it.id}" },
+                    span = { if (state.browseLayout == BrowseLayout.LIST) GridItemSpan(maxLineSpan) else GridItemSpan(1) }
+                ) { item ->
+                    if (state.browseLayout == BrowseLayout.LIST) {
+                        ModernMediaListCard(item, onClick = { play(item) }, onLongClick = { actionItem = item })
+                    } else {
+                        ModernPosterCard(item, aspectRatio, Modifier.padding(horizontal = 4.dp), onClick = { play(item) }, onLongClick = { actionItem = item })
+                    }
                 }
             } else item("modern-empty", span = gridSpan) {
                 Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
                     Text("Nothing to show in this category", color = Color.White.copy(alpha = .72f))
                 }
             }
+    }
+    actionItem?.let { item ->
+        MediaActionDialog(
+            item = item,
+            isFavorite = state.favorites.any { favorite -> favorite.media.id == item.id },
+            dismiss = { actionItem = null },
+            toggleFavorite = { toggleFavorite(item); actionItem = null }
+        )
     }
 }
 
@@ -811,9 +901,68 @@ private fun ModernPosterCard(
                 Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Color(0xFFE50914)))
             }
         }
-        Text(item.title, color = Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            item.title,
+            modifier = if (focused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
         footer?.invoke()
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ModernMediaListCard(item: MediaItem, onClick: () -> Unit, onLongClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = RoundedCornerShape(12.dp),
+        color = if (focused) Color(0xFF292929) else Color(0xFF171717),
+        border = if (focused) BorderStroke(2.dp, Color(0xFFE50914)) else null
+    ) {
+        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
+                if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, tint = Color.LightGray)
+                else AsyncImage(artworkRequest(context, item), item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(item.title, Modifier.then(if (focused) Modifier.basicMarquee(Int.MAX_VALUE) else Modifier), color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                item.description?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Icon(Icons.Default.PlayArrow, null, tint = if (focused) Color.White else Color.Gray)
+        }
+    }
+}
+
+@Composable
+private fun MediaActionDialog(item: MediaItem, isFavorite: Boolean, dismiss: () -> Unit, toggleFavorite: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = dismiss,
+        icon = { Icon(Icons.Default.MoreHoriz, null) },
+        title = { Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            ListItem(
+                headlineContent = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
+                supportingContent = { Text("Saved only for the active profile") },
+                leadingContent = { Icon(if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder, null) },
+                modifier = Modifier.clickable(onClick = toggleFavorite),
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = dismiss) { Text("Cancel") } },
+        containerColor = Color(0xFF181818),
+        titleContentColor = Color.White,
+        textContentColor = Color.White
+    )
 }
 
 private fun List<PlaybackProgress>.progressFor(item: MediaItem): PlaybackProgress? =
@@ -1597,11 +1746,13 @@ private fun CategoryManagerDialog(
     var searchQuery by rememberSaveable(type) { mutableStateOf("") }
     val filteredRaw = remember(raw, searchQuery) {
         val query = searchQuery.trim()
-        if (query.isBlank()) raw else raw.filter { it.title.contains(query, ignoreCase = true) }
+        if (query.isBlank()) raw else raw.filter { it.title.matchesTitleKeywords(query) }
+            .sortedByDescending { it.title.titleKeywordScore(query) }
     }
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     val gridState = rememberLazyGridState()
+    val categoryColumns = if (LocalConfiguration.current.screenWidthDp >= 720) 4 else 2
     val closeRequester = remember { FocusRequester() }
     val typeRequesters = remember { visibleCatalogTypes.associateWith { FocusRequester() } }
     val searchRequester = remember { FocusRequester() }
@@ -1654,13 +1805,13 @@ private fun CategoryManagerDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.92f)
+                .fillMaxHeight(0.88f)
                 .widthIn(max = 1080.dp),
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(28.dp),
+            color = Color.Black,
             tonalElevation = 6.dp
         ) {
-            Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Category Filters", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -1669,7 +1820,7 @@ private fun CategoryManagerDialog(
                     Button(
                         onClick = close,
                         modifier = Modifier
-                            .heightIn(min = 44.dp)
+                            .height(48.dp)
                             .focusRequester(applyRequester)
                             .onFocusChanged { applyFocused = it.isFocused }
                             .border(
@@ -1677,13 +1828,14 @@ private fun CategoryManagerDialog(
                                 if (applyFocused) MaterialTheme.colorScheme.onPrimary else Color.Transparent,
                                 RoundedCornerShape(14.dp)
                             ),
-                        shape = RoundedCornerShape(14.dp)
-                    ) { Text("Apply & Close") }
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                    ) { Text("Apply & Close", color = Color.White, fontWeight = FontWeight.Bold) }
                     Spacer(Modifier.width(8.dp))
                     IconButton(
                         onClick = close,
                         modifier = Modifier
-                            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
+                            .size(48.dp)
                             .focusRequester(closeRequester)
                             .focusProperties {
                                 left = typeRequesters.getValue(visibleCatalogTypes.last())
@@ -1699,16 +1851,22 @@ private fun CategoryManagerDialog(
 
                 Spacer(Modifier.height(8.dp))
 
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     visibleCatalogTypes.forEachIndexed { index, catalogType ->
                         var typeFocused by remember(catalogType) { mutableStateOf(false) }
-                        val shape = SegmentedButtonDefaults.itemShape(index, visibleCatalogTypes.size)
-                        SegmentedButton(
-                            selected = type == catalogType,
+                        val selected = type == catalogType
+                        Surface(
                             onClick = { setType(catalogType) },
-                            shape = shape,
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (selected) Color(0xFF351416) else Color.Black,
+                            border = when {
+                                typeFocused -> BorderStroke(2.dp, Color.White)
+                                selected -> BorderStroke(1.dp, Color(0xFFE50914))
+                                else -> BorderStroke(1.dp, Color(0xFF666666))
+                            },
                             modifier = Modifier
-                                .heightIn(min = 44.dp)
+                                .weight(1f)
+                                .height(48.dp)
                                 .focusRequester(typeRequesters.getValue(catalogType))
                                 .focusProperties {
                                     left = if (index > 0) typeRequesters.getValue(visibleCatalogTypes[index - 1])
@@ -1720,83 +1878,87 @@ private fun CategoryManagerDialog(
                                     down = searchRequester
                                 }
                                 .onFocusChanged { typeFocused = it.isFocused }
-                                .border(
-                                    width = if (typeFocused) 3.dp else 0.dp,
-                                    color = if (typeFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                    shape = shape
-                                )
                         ) {
-                            Text(catalogType.title)
+                            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                                if (selected) {
+                                    Icon(Icons.Default.Check, null, Modifier.size(17.dp), tint = Color(0xFFE50914))
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(catalogType.title, color = Color.White, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+                            }
                         }
                     }
                 }
 
                 Spacer(Modifier.height(8.dp))
 
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .focusRequester(searchRequester)
-                        .focusProperties {
-                            up = typeRequesters.getValue(type)
-                            down = selectAllRequester
-                        }
-                        .onFocusChanged {
-                            if (!it.isFocused && searchEditing) {
-                                searchEditing = false
-                                keyboardController?.hide()
-                            }
-                        }
-                        .onPreviewKeyEvent { event ->
-                            if (!searchEditing &&
-                                event.type == KeyEventType.KeyUp &&
-                                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
-                            ) {
-                                activateSearch()
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        .pointerInput(searchEditing) {
-                            if (!searchEditing) detectTapGestures { activateSearch() }
-                        },
-                    placeholder = { Text("Search ${type.title.lowercase()} categories…") },
-                    leadingIcon = { Icon(Icons.Default.Search, null) },
-                    trailingIcon = if (searchQuery.isNotEmpty()) {{
-                        IconButton(
-                            onClick = { searchQuery = "" },
-                            modifier = Modifier.focusProperties { canFocus = false }
-                        ) { Icon(Icons.Default.Close, "Clear search") }
-                    }} else null,
-                    singleLine = true,
-                    readOnly = !searchEditing,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        searchEditing = false
-                        keyboardController?.hide()
-                    }),
-                    shape = RoundedCornerShape(20.dp)
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                val enabledCount = currentEnabledSet.size
-                val totalCount = raw.size
-                Text(
-                    text = if (searchQuery.isNotBlank()) "${filteredRaw.size} matching · $enabledCount of $totalCount active"
-                           else "$enabledCount of $totalCount active",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(6.dp))
                 Row(
                     Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Box(Modifier.weight(2.2f)) {
+                        Surface(
+                            Modifier.fillMaxWidth().height(64.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.Black,
+                            border = BorderStroke(if (searchEditing) 2.dp else 1.dp, if (searchEditing) Color(0xFFE50914) else Color(0xFF666666))
+                        ) {
+                            Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Search, null, Modifier.size(26.dp), tint = Color.LightGray)
+                                Spacer(Modifier.width(12.dp))
+                                BasicTextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    modifier = Modifier.weight(1f)
+                                        .focusRequester(searchRequester)
+                                        .focusProperties {
+                                            up = typeRequesters.getValue(type)
+                                            right = selectAllRequester
+                                            down = firstCategoryRequester ?: applyRequester
+                                        }
+                                        .onFocusChanged {
+                                            if (!it.isFocused && searchEditing) {
+                                                searchEditing = false
+                                                keyboardController?.hide()
+                                            }
+                                        }
+                                        .onPreviewKeyEvent { event ->
+                                            if (!searchEditing && event.type == KeyEventType.KeyUp &&
+                                                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                                            ) {
+                                                activateSearch(); true
+                                            } else false
+                                        },
+                                    singleLine = true,
+                                    readOnly = !searchEditing,
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                                    cursorBrush = SolidColor(Color(0xFFE50914)),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        searchEditing = false
+                                        keyboardController?.hide()
+                                    }),
+                                    decorationBox = { inner ->
+                                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                                            if (searchQuery.isEmpty()) Text("Search ${type.title.lowercase()} categories…", color = Color.Gray, maxLines = 1)
+                                            inner()
+                                        }
+                                    }
+                                )
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.focusProperties { canFocus = false }) {
+                                        Icon(Icons.Default.Close, "Clear search", tint = Color.LightGray)
+                                    }
+                                }
+                            }
+                        }
+                        if (!searchEditing) {
+                            Box(Modifier.matchParentSize().pointerInput(type) {
+                                detectTapGestures { activateSearch() }
+                            })
+                        }
+                    }
                     CategoryDialogActionButton(
                         text = "Select All",
                         onClick = { selectAll(type) },
@@ -1804,7 +1966,7 @@ private fun CategoryManagerDialog(
                             .weight(1f)
                             .focusRequester(selectAllRequester)
                             .focusProperties {
-                                left = FocusRequester.Cancel
+                                left = searchRequester
                                 right = deselectAllRequester
                                 up = searchRequester
                                 down = firstCategoryRequester ?: applyRequester
@@ -1818,30 +1980,26 @@ private fun CategoryManagerDialog(
                             .focusRequester(deselectAllRequester)
                             .focusProperties {
                                 left = selectAllRequester
-                                right = if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
-                                    selectMatchingRequester
-                                } else FocusRequester.Cancel
+                                right = FocusRequester.Cancel
                                 up = searchRequester
                                 down = firstCategoryRequester ?: applyRequester
                             }
                     )
+                }
+
+                val enabledCount = currentEnabledSet.size
+                val totalCount = raw.size
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (searchQuery.isNotBlank()) "${filteredRaw.size} matching · $enabledCount of $totalCount active" else "$enabledCount of $totalCount active",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
-                        CategoryDialogActionButton(
-                            text = "Select Matching",
-                            onClick = {
-                                val newEnabled = (currentEnabledSet + filteredRaw.map { it.id }).toList()
-                                setFilter(type, newEnabled)
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .focusRequester(selectMatchingRequester)
-                                .focusProperties {
-                                    left = deselectAllRequester
-                                    right = FocusRequester.Cancel
-                                    up = searchRequester
-                                    down = firstCategoryRequester ?: applyRequester
-                                }
-                        )
+                        TextButton(onClick = {
+                            setFilter(type, (currentEnabledSet + filteredRaw.map { it.id }).toList())
+                        }, modifier = Modifier.heightIn(min = 64.dp).focusRequester(selectMatchingRequester)) { Text("Select matching") }
                     }
                 }
 
@@ -1861,7 +2019,7 @@ private fun CategoryManagerDialog(
                 } else {
                     LazyVerticalGrid(
                         modifier = Modifier.weight(1f),
-                        columns = GridCells.Fixed(2),
+                        columns = GridCells.Fixed(categoryColumns),
                         state = gridState,
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1873,16 +2031,20 @@ private fun CategoryManagerDialog(
                             val rowFocused = focusedCategoryId == category.id
                             Surface(
                                 onClick = { toggleCategory(type, category.id) },
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 color = when {
-                                    rowFocused -> MaterialTheme.colorScheme.primaryContainer
-                                    selected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                                    else -> MaterialTheme.colorScheme.surfaceContainerLow
+                                    rowFocused -> Color(0xFF292929)
+                                    selected -> Color(0xFF351416)
+                                    else -> Color(0xFF171717)
                                 },
-                                border = if (rowFocused) BorderStroke(3.dp, MaterialTheme.colorScheme.primary) else null,
+                                border = when {
+                                    rowFocused -> BorderStroke(2.dp, Color.White)
+                                    selected -> BorderStroke(1.dp, Color(0xFFE50914).copy(alpha = 0.75f))
+                                    else -> BorderStroke(1.dp, Color(0xFF303030))
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(min = 44.dp)
+                                    .height(44.dp)
                                     .focusRequester(rowRequester)
                                     .focusProperties {
                                         if (index == 0) up = selectAllRequester
@@ -1906,23 +2068,28 @@ private fun CategoryManagerDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 44.dp)
-                                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                                        .height(44.dp)
+                                        .padding(horizontal = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Checkbox(
-                                        checked = selected,
-                                        onCheckedChange = { toggleCategory(type, category.id) },
-                                        modifier = Modifier.focusProperties { canFocus = false }
-                                    )
-                                    Spacer(Modifier.width(6.dp))
+                                    Box(
+                                        Modifier.size(20.dp).clip(CircleShape)
+                                            .background(if (selected) Color(0xFFE50914) else Color.Transparent)
+                                            .border(1.dp, if (selected) Color(0xFFE50914) else Color(0xFF777777), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (selected) Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = Color.White)
+                                    }
+                                    Spacer(Modifier.width(8.dp))
                                     Text(
                                         text = category.title,
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        style = MaterialTheme.typography.labelMedium,
                                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                        maxLines = 2,
+                                        maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.weight(1f).then(
+                                            if (rowFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
+                                        )
                                     )
                                 }
                             }
@@ -1946,7 +2113,7 @@ private fun CategoryDialogActionButton(
     OutlinedButton(
         onClick = onClick,
         modifier = modifier
-            .heightIn(min = 56.dp)
+            .heightIn(min = 64.dp)
             .onFocusChanged { focused = it.isFocused },
         border = BorderStroke(
             if (focused) 3.dp else 1.dp,
@@ -1955,7 +2122,8 @@ private fun CategoryDialogActionButton(
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = if (focused) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
         ),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+        shape = RoundedCornerShape(12.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
     ) {
         Text(text, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
@@ -1998,11 +2166,8 @@ private fun ModernSeriesDetailScreen(
     val filteredEpisodes = remember(seasonFilteredItems, searchQuery, comparator, episodeSortDescending) {
         val query = searchQuery.trim()
         val baseList = if (query.isBlank()) seasonFilteredItems else {
-            seasonFilteredItems.filter { ep ->
-                ep.title.contains(query, ignoreCase = true) ||
-                    ep.description?.contains(query, ignoreCase = true) == true ||
-                    ep.episodeNumber?.toString() == query
-            }
+            seasonFilteredItems.filter { ep -> ep.title.matchesTitleKeywords(query) || ep.episodeNumber?.toString() == query }
+                .sortedByDescending { it.title.titleKeywordScore(query) }
         }
         if (selectedSeason != null) {
             baseList.sortedWith(comparator)

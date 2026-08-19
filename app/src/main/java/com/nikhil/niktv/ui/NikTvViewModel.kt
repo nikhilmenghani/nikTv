@@ -48,6 +48,7 @@ data class NikTvState(
     val availableSeriesSeasons: List<Int> = emptyList(),
     val selectedSeriesSeason: Int? = null,
     val watchedSeries: List<WatchedSeries> = emptyList(),
+    val browseLayout: BrowseLayout = BrowseLayout.GRID,
     val browseCache: BrowseCatalogCache? = null,
     val browseCachesByType: Map<CatalogType, BrowseCatalogCache> = emptyMap(),
     val searchOpen: Boolean = false,
@@ -76,6 +77,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var allWatchedSeries: List<WatchedSeries> = emptyList()
     private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
+    private var browseLayouts: Map<String, BrowseLayout> = emptyMap()
     private val watchRefreshMutex = Mutex()
 
     init {
@@ -94,6 +96,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
         viewModelScope.launch { store.rememberedSeriesSeasons.collect { rememberedSeriesSeasons = it } }
         viewModelScope.launch { store.episodeSeasonCaches.collect { episodeSeasonCaches = it } }
+        viewModelScope.launch { store.browseLayouts.collect { layouts ->
+            browseLayouts = layouts
+            val key = _state.value.session?.profile?.cacheKey()
+            _state.update { it.copy(browseLayout = key?.let(layouts::get) ?: BrowseLayout.GRID) }
+        } }
         viewModelScope.launch { store.watchedSeries.collect { entries ->
             allWatchedSeries = entries
             refreshProfileLibrary()
@@ -181,7 +188,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(
             favorites = if (profileKey == null) emptyList() else allFavorites.filter { entry -> entry.profileKey == profileKey },
             recentlyPlayed = if (profileKey == null) emptyList() else allRecentlyPlayed.filter { entry -> entry.profileKey == profileKey },
-            watchedSeries = if (profileKey == null) emptyList() else allWatchedSeries.filter { entry -> entry.profileKey == profileKey }
+            watchedSeries = if (profileKey == null) emptyList() else allWatchedSeries.filter { entry -> entry.profileKey == profileKey },
+            browseLayout = profileKey?.let(browseLayouts::get) ?: BrowseLayout.GRID
         ) }
     }
 
@@ -348,6 +356,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSeriesStartSeason(value: SeriesStartSeason) = viewModelScope.launch {
         store.setSeriesStartSeason(value)
+    }
+
+    fun setBrowseLayout(layout: BrowseLayout) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        _state.update { it.copy(browseLayout = layout) }
+        store.setBrowseLayout(profileKey, layout)
     }
 
     fun loadSeriesSeason(season: Int) = task {
@@ -525,7 +539,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         } else emptyList()
         val source = if (type == SearchContentType.EPISODES) episodes else indexed + browsed
         val categoryId = _state.value.searchCategoryId
-        return source.distinctBy { it.id }.filter { (categoryId == "*" || it.portalCategoryId == categoryId) && it.title.matchesSearchKeywords(query) }
+        return source.distinctBy { it.id }
+            .filter { (categoryId == "*" || it.portalCategoryId == categoryId) && it.title.matchesTitleKeywords(query) }
+            .sortedByDescending { it.title.titleKeywordScore(query) }
     }
 
     private suspend fun rememberSearch(query: String, type: SearchContentType) {
@@ -968,12 +984,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         Regex("(?i)\\bE[ ._:-]*(\\d+)"),
         Regex("\\b(\\d+)\\b")
     ).firstNotNullOfOrNull { it.findAll(this).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull() }
-
-    private fun String.matchesSearchKeywords(query: String): Boolean {
-        val words = lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
-        val keys = query.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
-        return keys.isNotEmpty() && keys.all { key -> words.any { word -> word.contains(key) } }
-    }
 
     private fun Throwable.isAuthenticationFailure(): Boolean = message.orEmpty().let { text ->
         text.contains("Authorization failed", ignoreCase = true) ||

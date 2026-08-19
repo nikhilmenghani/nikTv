@@ -167,7 +167,8 @@ class StalkerPortalClient(private val context: Context) {
                 SearchContentType.SERIES -> CatalogType.SERIES
                 else -> CatalogType.MOVIES
             }
-            val matches = xtreamCatalog(session, catalogType, null).filter { it.title.matchesSearchKeywords(query) }
+            val matches = xtreamCatalog(session, catalogType, null).filter { it.title.matchesTitleKeywords(query) }
+                .sortedByDescending { it.title.titleKeywordScore(query) }
             return@withContext PortalSearchPage(matches, 1, false)
         }
         val live = type == SearchContentType.LIVE_TV
@@ -197,7 +198,8 @@ class StalkerPortalClient(private val context: Context) {
                 item.string("cmd"), item.string("description") ?: item.string("genres_str"),
                 item.string("season_number")?.toIntOrNull(), item.string("episode")?.toIntOrNull(),
                 item.string("season_id"), item.string("category_id") ?: item.string("genre_id") ?: categoryId, item.string("episode_id"))
-        }.filter { it.title.matchesSearchKeywords(query) }.distinctBy { it.id }
+        }.filter { it.title.matchesTitleKeywords(query) }.distinctBy { it.id }
+            .sortedByDescending { it.title.titleKeywordScore(query) }
         val metadata = payload as? JsonObject
         val maxPage = metadata?.string("max_page")?.toIntOrNull()
             ?: metadata?.string("total_pages")?.toIntOrNull()
@@ -668,11 +670,6 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
-    private fun String.matchesSearchKeywords(query: String): Boolean {
-        val titleWords = lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
-        val keys = query.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter(String::isNotBlank)
-        return keys.isNotEmpty() && keys.all { key -> titleWords.any { word -> word.contains(key) } }
-    }
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Mobile Safari/533.3"
         private const val MAG_VER = "ImageDescription: 2.20.02-pub-424; ImageDate: Fri May 8 15:39:55 UTC 2020; PORTAL version: 5.6.2; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x588"

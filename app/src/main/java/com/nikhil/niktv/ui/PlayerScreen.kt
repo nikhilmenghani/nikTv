@@ -30,6 +30,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -64,6 +66,8 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var startupTimedOut by remember(media.progressKey) { mutableStateOf(false) }
+    var playerViewRef by remember(media.progressKey) { mutableStateOf<PlayerView?>(null) }
+    val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val player = remember(media.progressKey) {
         ExoPlayer.Builder(context).build().apply {
@@ -144,6 +148,12 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
             delay(500)
         }
     }
+    LaunchedEffect(remainingSeconds, autoPlayCancelled) {
+        if (remainingSeconds != null && !autoPlayCancelled) {
+            delay(120L)
+            runCatching { playNextFocusRequester.requestFocus() }
+        }
+    }
     LaunchedEffect(player) {
         while (true) {
             delay(1_000)
@@ -173,6 +183,7 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
                     val playerView = this
+                    playerViewRef = this
                     this.player = player
                     useController = false
                     isFocusable = true
@@ -490,7 +501,7 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
             }
         }
         val countdown = remainingSeconds
-        if (!focusMode && countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
+        if (countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp).widthIn(max = 560.dp),
                 shape = RoundedCornerShape(24.dp),
@@ -503,8 +514,14 @@ fun PlayerScreen(media: PlayingMedia, onBack: () -> Unit, onRetry: () -> Unit, o
                         Text("Up next in ${countdown}s", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         Text(media.nextEpisode.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     }
-                    TextButton(onClick = { autoPlayCancelled = true }) { Text("Cancel") }
-                    Button(onClick = { if (!advancing) { advancing = true; onPlayNext() } }) { Text("Play now") }
+                    TextButton(onClick = {
+                        autoPlayCancelled = true
+                        playerViewRef?.requestFocus()
+                    }) { Text("Cancel") }
+                    Button(
+                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                        modifier = Modifier.focusRequester(playNextFocusRequester)
+                    ) { Text("Play now") }
                 }
             }
         }

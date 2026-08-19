@@ -19,6 +19,7 @@ import com.nikhil.niktv.model.SearchResultCache
 import com.nikhil.niktv.model.SeriesStartSeason
 import com.nikhil.niktv.model.WatchedSeries
 import com.nikhil.niktv.model.EpisodeSeasonCache
+import com.nikhil.niktv.model.BrowseLayout
 import com.nikhil.niktv.model.canonicalSearchQuery
 import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
@@ -46,6 +47,7 @@ class ProfileStore(private val context: Context) {
     private val watchedSeriesKey = stringPreferencesKey("watched_series")
     private val rememberedSeriesSeasonsKey = stringPreferencesKey("remembered_series_seasons")
     private val episodeSeasonCachesKey = stringPreferencesKey("episode_season_caches")
+    private val browseLayoutsKey = stringPreferencesKey("browse_layouts")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         val identity = prefs[activeProfileKey]
@@ -97,6 +99,9 @@ class ProfileStore(private val context: Context) {
     }
     val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = context.dataStore.data.map { prefs ->
         prefs[episodeSeasonCachesKey]?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
+    }
+    val browseLayouts: Flow<Map<String, BrowseLayout>> = context.dataStore.data.map { prefs ->
+        prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
     }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
         val profiles = decodeProfiles(it[profilesKey], it[key])
@@ -183,6 +188,10 @@ class ProfileStore(private val context: Context) {
         val current = prefs[episodeSeasonCachesKey]?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
         prefs[episodeSeasonCachesKey] = Json.encodeToString((listOf(cache) + current.filterNot { it.key == cache.key }).take(40))
     }
+    suspend fun setBrowseLayout(profileKey: String, layout: BrowseLayout) = context.dataStore.edit { prefs ->
+        val current = prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
+        prefs[browseLayoutsKey] = Json.encodeToString(current + (profileKey to layout))
+    }
     suspend fun addRecentSearch(search: RecentSearch) = context.dataStore.edit { prefs ->
         val entry = search.copy(query = search.query.canonicalSearchQuery())
         val current = decodeRecentSearches(prefs[recentSearchesKey])
@@ -229,6 +238,7 @@ class ProfileStore(private val context: Context) {
         it.remove(watchedSeriesKey)
         it.remove(rememberedSeriesSeasonsKey)
         it.remove(episodeSeasonCachesKey)
+        it.remove(browseLayoutsKey)
     }
 
     private fun decodeProfiles(raw: String?, legacy: String?): List<PortalProfile> =

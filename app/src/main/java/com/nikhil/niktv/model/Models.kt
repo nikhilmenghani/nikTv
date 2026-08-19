@@ -1,6 +1,7 @@
 package com.nikhil.niktv.model
 
 import kotlinx.serialization.Serializable
+import java.text.Normalizer
 
 @Serializable
 data class PortalProfile(
@@ -45,6 +46,28 @@ private val searchWhitespace = Regex("\\s+")
 fun String.canonicalSearchQuery(): String = trim().replace(searchWhitespace, " ")
 
 fun String.normalizedSearchQuery(): String = canonicalSearchQuery().lowercase()
+
+private fun String.titleSearchTokens(): List<String> =
+    Normalizer.normalize(lowercase(), Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+        .split(Regex("[^\\p{L}\\p{N}]+"))
+        .filter(String::isNotBlank)
+
+/** Case-insensitive title matching where every query word may be separated by punctuation. */
+fun String.matchesTitleKeywords(query: String): Boolean {
+    val titleTokens = titleSearchTokens()
+    val queryTokens = query.titleSearchTokens()
+    return queryTokens.isNotEmpty() && queryTokens.all { key -> titleTokens.any { word -> word.contains(key) } }
+}
+
+fun String.titleKeywordScore(query: String): Int {
+    if (!matchesTitleKeywords(query)) return Int.MIN_VALUE
+    val titleTokens = titleSearchTokens()
+    val queryTokens = query.titleSearchTokens()
+    val exactWords = queryTokens.count { it in titleTokens }
+    val orderedPhrase = queryTokens.joinToString(" ") in titleTokens.joinToString(" ")
+    return (if (orderedPhrase) 1_000 else 0) + exactWords * 100 - (titleTokens.size - queryTokens.size).coerceAtLeast(0)
+}
 
 fun List<RecentSearch>.deduplicatedRecentSearches(maxItems: Int = 20): List<RecentSearch> =
     distinctBy { it.key }.take(maxItems)
@@ -118,6 +141,9 @@ data class FavoriteItem(
 
 @Serializable
 enum class SeriesStartSeason { FIRST, LAST }
+
+@Serializable
+enum class BrowseLayout { GRID, LIST }
 
 @Serializable
 data class WatchedSeries(
