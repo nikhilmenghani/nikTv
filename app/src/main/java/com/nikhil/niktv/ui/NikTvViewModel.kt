@@ -743,7 +743,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openFavorites() = _state.update { it.copy(favoritesOpen = true, homeOpen = false, settingsOpen = false, searchOpen = false) }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
     fun openHome() {
-        _state.update { it.copy(homeOpen = true, favoritesOpen = false, settingsOpen = false, searchOpen = false) }
+        _state.update { it.copy(
+            homeOpen = true,
+            favoritesOpen = false,
+            settingsOpen = false,
+            searchOpen = false,
+            selectedSeries = null,
+            seriesOpenedFromFavorites = false,
+            seriesOpenedFromHome = false,
+            availableSeriesSeasons = emptyList(),
+            selectedSeriesSeason = null
+        ) }
         viewModelScope.launch { runCatching { refreshWatchedSeriesIfDue() } }
     }
     fun closeHome() = _state.update { it.copy(homeOpen = false) }

@@ -1507,6 +1507,17 @@ private fun String.episodeNumberFromTitle(): Int? {
     }
 }
 
+private fun MediaItem.actionEpisodeLabel(): String {
+    val season = seasonNumber ?: title.seasonNumberFromTitle()
+    val episode = episodeNumber ?: title.episodeNumberFromTitle()
+    return when {
+        season != null && episode != null -> "S$season · Episode $episode"
+        episode != null -> "Episode $episode"
+        else -> title.replace(Regex("[,.|]\\s*\\d{4}[-/]\\d{1,2}.*$"), "")
+            .trim().ifBlank { title }.take(28).trimEnd('.', ',', '-', ' ')
+    }
+}
+
 private fun String.seasonNumberFromTitle(): Int? {
     val patterns = listOf(
         Regex("(?i)S(?:EASON)?[ ._-]*(\\d+)"),
@@ -2180,8 +2191,8 @@ private fun ModernSeriesDetailScreen(
                                     Icon(Icons.Default.PlayArrow, null, Modifier.size(24.dp))
                                     Spacer(Modifier.width(8.dp))
                                     val playLabel = when {
-                                        recentEpisode != null -> "Resume (${recentEpisode.title.take(20)})"
-                                        episodeSortDescending -> "Play Latest (${primaryEpisodeToPlay.title.take(18)})"
+                                        recentEpisode != null -> "Resume (${recentEpisode.actionEpisodeLabel()})"
+                                        episodeSortDescending -> "Play Latest (${primaryEpisodeToPlay.actionEpisodeLabel()})"
                                         else -> "Play First Episode"
                                     }
                                     Text(playLabel, fontWeight = FontWeight.Bold)
@@ -2199,7 +2210,7 @@ private fun ModernSeriesDetailScreen(
                                 ) {
                                     Icon(Icons.Default.SkipNext, null, Modifier.size(22.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("Play Latest (${latestEpisode.title.take(18)})")
+                                    Text("Play Latest (${latestEpisode.actionEpisodeLabel()})")
                                 }
                             }
 
