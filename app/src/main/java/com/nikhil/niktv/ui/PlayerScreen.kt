@@ -60,6 +60,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.ui.PlayerView
 import com.nikhil.niktv.R
+import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.PlayingMedia
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -94,9 +95,11 @@ fun PlayerScreen(
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var startupTimedOut by remember(media.progressKey) { mutableStateOf(false) }
     var playerViewRef by remember(media.progressKey) { mutableStateOf<PlayerView?>(null) }
+    var inPictureInPicture by remember { mutableStateOf(false) }
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rotateFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rewindFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -107,6 +110,12 @@ fun PlayerScreen(
     val errorBackFocusRequester = remember(media.progressKey) { FocusRequester() }
     val errorRetryFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val pipActivity = activity as? MainActivity
+    val pipAvailable = remember(context) {
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+            context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
+            !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+    }
     val player = remember(media.progressKey) {
         val renderersFactory = DefaultRenderersFactory(context)
             // Some TV devices advertise a hardware decoder that later rejects or
@@ -160,6 +169,20 @@ fun PlayerScreen(
         onDispose {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+    DisposableEffect(pipActivity) {
+        pipActivity?.setPlayerActiveForPip(true)
+        pipActivity?.pipModeListener = { entered ->
+            inPictureInPicture = entered
+            if (entered) {
+                controlsVisible = false
+                controlsFocused = false
+            }
+        }
+        onDispose {
+            pipActivity?.pipModeListener = null
+            pipActivity?.setPlayerActiveForPip(false)
         }
     }
     DisposableEffect(activity, focusMode) {
@@ -454,7 +477,7 @@ fun PlayerScreen(
                     .fillMaxSize()
             )
         }
-        if (controlsVisible) {
+        if (controlsVisible && !inPictureInPicture) {
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(listOf(Color.Black.copy(alpha = .82f), Color.Transparent, Color.Black.copy(alpha = .88f)))
@@ -478,15 +501,27 @@ fun PlayerScreen(
                         val landscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
                         activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     }, modifier = Modifier.focusRequester(rotateFocusRequester)
-                        .focusProperties { left = backFocusRequester; right = fullscreenFocusRequester; down = playPauseFocusRequester }
+                        .focusProperties { left = backFocusRequester; right = if (pipAvailable) pipFocusRequester else fullscreenFocusRequester; down = playPauseFocusRequester }
                         .playerControlFocus(CircleShape) { controlsFocused = it }) { Icon(Icons.Default.ScreenRotation, "Rotate", tint = Color.White) }
+                    if (pipAvailable) {
+                        IconButton(
+                            onClick = {
+                                controlsVisible = false
+                                controlsFocused = false
+                                pipActivity?.enterPlayerPictureInPicture()
+                            },
+                            modifier = Modifier.focusRequester(pipFocusRequester)
+                                .focusProperties { left = rotateFocusRequester; right = fullscreenFocusRequester; down = playPauseFocusRequester }
+                                .playerControlFocus(CircleShape) { controlsFocused = it }
+                        ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
+                    }
                     IconButton(onClick = {
                         focusMode = !focusMode
                         controlsVisible = false
                         controlsFocused = false
                         playerViewRef?.requestFocus()
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
-                        .focusProperties { left = rotateFocusRequester; down = playPauseFocusRequester }
+                        .focusProperties { left = if (pipAvailable) pipFocusRequester else rotateFocusRequester; down = playPauseFocusRequester }
                         .playerControlFocus(CircleShape) { controlsFocused = it }) {
                         Icon(if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
                     }
