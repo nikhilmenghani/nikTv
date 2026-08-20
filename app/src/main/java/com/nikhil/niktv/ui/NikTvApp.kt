@@ -3,7 +3,6 @@ package com.nikhil.niktv.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -69,12 +68,12 @@ import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.data.artworkRequest
+import com.nikhil.niktv.data.cast4kLegacyDeviceIdentity
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
 import com.nikhil.niktv.update.formatDownloadBytes
-import java.security.MessageDigest
 import kotlinx.coroutines.launch
 
 private val NikColors = darkColorScheme(
@@ -525,11 +524,13 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
         }
         return
     }
-    val stalkerDefaults = remember { PortalProfile(
+    val context = LocalContext.current
+    val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
+    val stalkerDefaults = remember(generatedIdentity) { PortalProfile(
         BuildConfig.DEFAULT_PROFILE_NAME.withoutConfigurationQuotes(),
         BuildConfig.DEFAULT_PORTAL_URL.withoutConfigurationQuotes(),
-        BuildConfig.DEFAULT_MAC_ADDRESS.withoutConfigurationQuotes(),
-        BuildConfig.DEFAULT_SERIAL_NUMBER.withoutConfigurationQuotes(),
+        generatedIdentity.macAddress,
+        generatedIdentity.serialNumber,
         PortalType.STALKER
     ) }
     val xtreamDefaults = remember { PortalProfile(
@@ -578,6 +579,15 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().focusRequester(lastFocus), label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
                 } else {
                     OutlinedTextField(mac, { mac = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus), label = { Text("MAC address") }, placeholder = { Text("00:1A:79:XX:XX:XX") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = if (advanced) ImeAction.Next else ImeAction.Done), keyboardActions = KeyboardActions(onNext = { lastFocus.requestFocus() }, onDone = { keyboard?.hide() }))
+                    TextButton(onClick = {
+                        mac = generatedIdentity.macAddress
+                        serial = generatedIdentity.serialNumber
+                        advanced = true
+                    }) {
+                        Icon(Icons.Default.AutoFixHigh, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Generate Cast4K-style identity")
+                    }
                     TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
                     if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
                 }
@@ -2315,10 +2325,7 @@ private fun episodeComparator(descending: Boolean): Comparator<MediaItem> = Comp
 }
 
 private fun cast4kStyleDeviceMacAddress(context: android.content.Context): String {
-    val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
-    val hash = MessageDigest.getInstance("MD5").digest(androidId.toByteArray())
-        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
-    return "00:1E:99:${hash.substring(0, 6).chunked(2).joinToString(":")}".uppercase()
+    return cast4kLegacyDeviceIdentity(context).macAddress
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

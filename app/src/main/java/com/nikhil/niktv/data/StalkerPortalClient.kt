@@ -42,7 +42,12 @@ class StalkerPortalClient(private val context: Context) {
     suspend fun authenticate(profile: PortalProfile): PortalSession = authMutex.withLock { withContext(Dispatchers.IO) {
         if (profile.portalType == PortalType.XTREAM) return@withContext authenticateXtream(profile)
         val normalized = normalizePortal(profile.portalUrl)
-        val clean = profile.copy(portalUrl = normalized, macAddress = normalizeMac(profile.macAddress))
+        val generatedIdentity = cast4kLegacyDeviceIdentity(context)
+        val clean = profile.copy(
+            portalUrl = normalized,
+            macAddress = normalizeMac(profile.macAddress.ifBlank { generatedIdentity.macAddress }),
+            serialNumber = profile.serialNumber.ifBlank { generatedIdentity.serialNumber }
+        )
         val handshakeParams = mapOf("type" to "stb", "action" to "handshake", "token" to "", "JsHttpRequest" to "1")
         val attempts = mutableListOf<String>()
         val preferredEndpoint = trafficPrefs.getString(endpointKey(clean), null)
