@@ -530,8 +530,8 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     val stalkerDefaults = remember(generatedIdentity) { PortalProfile(
         BuildConfig.DEFAULT_PROFILE_NAME.withoutConfigurationQuotes(),
         BuildConfig.DEFAULT_PORTAL_URL.withoutConfigurationQuotes(),
-        generatedIdentity.macAddress,
-        generatedIdentity.serialNumber,
+        BuildConfig.DEFAULT_MAC_ADDRESS.withoutConfigurationQuotes().ifBlank { generatedIdentity.macAddress },
+        BuildConfig.DEFAULT_SERIAL_NUMBER.withoutConfigurationQuotes().ifBlank { generatedIdentity.serialNumber },
         PortalType.STALKER
     ) }
     val xtreamDefaults = remember { PortalProfile(
@@ -587,7 +587,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     }) {
                         Icon(Icons.Default.AutoFixHigh, null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Generate Cast4K-style identity")
+                        Text("Generate compatible device identity")
                     }
                     TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
                     if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))

@@ -35,4 +35,11 @@ class AppUpdatesFormattingTest {
         )
         assertTrue(downloadFailureMessage(9876).contains("9876"))
     }
+
+    @Test
+    fun developmentSuffixDoesNotMakeSameReleaseAnUpdate() {
+        assertEquals(0, AppUpdates.compareAppVersions("0.1.21", "0.1.21-dev"))
+        assertEquals(0, AppUpdates.compareAppVersions("dev-v0.1.21", "0.1.21-dev"))
+        assertTrue(AppUpdates.compareAppVersions("0.1.22", "0.1.21-dev") > 0)
+    }
 }

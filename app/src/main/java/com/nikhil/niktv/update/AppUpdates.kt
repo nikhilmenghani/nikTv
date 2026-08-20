@@ -599,8 +599,16 @@ object AppUpdates {
         val prefs = preferences()
         val version = prefs.getString(PREF_PENDING_VERSION, null).orEmpty()
         val url = prefs.getString(PREF_PENDING_URL, null).orEmpty()
-        mutablePendingUpdate.value =
-            if (version.isNotBlank() && url.startsWith("https://")) UpdateInfo(version, url) else null
+        mutablePendingUpdate.value = if (
+            version.isNotBlank() &&
+            url.startsWith("https://") &&
+            isNewer(version, BuildConfig.VERSION_NAME)
+        ) {
+            UpdateInfo(version, url)
+        } else {
+            preferences().edit().remove(PREF_PENDING_VERSION).remove(PREF_PENDING_URL).apply()
+            null
+        }
     }
 
     private fun persistPendingUpdate(update: UpdateInfo) {
@@ -635,11 +643,15 @@ object AppUpdates {
     }
 
     private fun isNewer(candidate: String, installed: String) =
-        compareVersions(candidate, installed) > 0
+        compareAppVersions(candidate, installed) > 0
 
-    private fun compareVersions(a: String, b: String): Int {
-        val left = a.split('.', '-', '_').map { it.toIntOrNull() ?: 0 }
-        val right = b.split('.', '-', '_').map { it.toIntOrNull() ?: 0 }
+    private fun compareVersions(a: String, b: String): Int = compareAppVersions(a, b)
+
+    internal fun compareAppVersions(a: String, b: String): Int {
+        // Build/channel labels (for example `dev-v` and `-dev`) do not change the
+        // underlying app version. Only compare the numeric version components.
+        val left = Regex("\\d+").findAll(a).map { it.value.toInt() }.toList()
+        val right = Regex("\\d+").findAll(b).map { it.value.toInt() }.toList()
         repeat(maxOf(left.size, right.size)) { i ->
             left.getOrElse(i) { 0 }.compareTo(right.getOrElse(i) { 0 })
                 .takeIf { it != 0 }
