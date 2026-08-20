@@ -91,6 +91,17 @@ private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
 
+private fun UpdateDownloadState.updateInfoOrNull(): UpdateInfo? = when (this) {
+    is UpdateDownloadState.Queued -> UpdateInfo(version, downloadUrl)
+    is UpdateDownloadState.Downloading -> UpdateInfo(version, downloadUrl)
+    is UpdateDownloadState.Paused -> UpdateInfo(version, downloadUrl)
+    is UpdateDownloadState.Ready -> UpdateInfo(version, downloadUrl)
+    is UpdateDownloadState.Installing -> UpdateInfo(version, downloadUrl)
+    is UpdateDownloadState.InstallerLaunched -> UpdateInfo(version, downloadUrl)
+    is UpdateDownloadState.Failed -> UpdateInfo(version, downloadUrl)
+    UpdateDownloadState.Idle -> null
+}
+
 private fun uniformSegmentShape(index: Int, count: Int): RoundedCornerShape = when (index) {
     0 -> RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp)
     count - 1 -> RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp)
@@ -128,15 +139,30 @@ private tailrec fun android.content.Context.findHostActivity(): android.app.Acti
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
+    val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
+    var discoveredUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    var checkingForRequiredUpdate by remember { mutableStateOf(
+        pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null
+    ) }
     val clipboard = LocalClipboardManager.current
-    LaunchedEffect(pendingUpdate, state.session, state.restoring) {
-        if (pendingUpdate != null && state.session != null && !state.restoring) {
-            vm.openSettings()
+    LaunchedEffect(Unit) {
+        if (pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
+            discoveredUpdate = runCatching { AppUpdates.check() }.getOrNull()
         }
+        checkingForRequiredUpdate = false
     }
+    val requiredUpdate = discoveredUpdate ?: pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     MaterialTheme(colorScheme = profileColors) {
         Surface(Modifier.fillMaxSize()) {
+          if (checkingForRequiredUpdate || requiredUpdate != null) {
+            MandatoryNikTvUpdateScreen(
+                checking = checkingForRequiredUpdate,
+                update = requiredUpdate,
+                downloadState = updateDownloadState
+            )
+          } else {
+           Box(Modifier.fillMaxSize()) {
             when {
                 state.nowPlaying != null -> PlayerScreen(
                     state.nowPlaying!!,
@@ -243,6 +269,160 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         }
                     }
                 )
+            }
+           }
+          }
+        }
+    }
+}
+
+@Composable
+private fun MandatoryNikTvUpdateScreen(
+    checking: Boolean,
+    update: UpdateInfo?,
+    downloadState: UpdateDownloadState
+) {
+    val context = LocalContext.current
+    val actionRequester = remember { FocusRequester() }
+    var actionError by remember { mutableStateOf<String?>(null) }
+    var permissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val pending = permissionUpdate
+        permissionUpdate = null
+        if (granted && pending != null) {
+            runCatching { AppUpdates.downloadAndInstall(context, pending) }
+                .onFailure { actionError = it.message ?: "Could not start the update" }
+        } else if (!granted) {
+            actionError = AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE
+        }
+    }
+    val busy = downloadState is UpdateDownloadState.Queued ||
+        downloadState is UpdateDownloadState.Downloading ||
+        downloadState is UpdateDownloadState.Paused ||
+        downloadState is UpdateDownloadState.Installing
+    val actionable = !checking && update != null && !busy
+
+    fun downloadAndInstall(target: UpdateInfo) {
+        actionError = null
+        if (!AppUpdates.canWritePublicDownloads(context) && AppUpdates.requiresLegacyStoragePermission()) {
+            permissionUpdate = target
+            AppUpdates.deferDownloadAndInstall(context, target)
+            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            runCatching { AppUpdates.downloadAndInstall(context, target) }
+                .onFailure { actionError = it.message ?: "Could not start the update" }
+        }
+    }
+
+    LaunchedEffect(actionable, downloadState) {
+        if (actionable) {
+            withFrameNanos { }
+            runCatching { actionRequester.requestFocus() }
+        }
+    }
+    BackHandler(enabled = true) { }
+
+    Surface(Modifier.fillMaxSize(), color = Color(0xFF090909)) {
+        Box(
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 560.dp),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFF181818))
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 34.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    Surface(Modifier.size(76.dp), CircleShape, color = Color(0xFFE50914)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (checking) CircularProgressIndicator(color = Color.White)
+                            else Icon(Icons.Default.SystemUpdateAlt, null, Modifier.size(38.dp), tint = Color.White)
+                        }
+                    }
+                    Text(
+                        if (checking) "Checking for updates…" else "Update required",
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (checking) "Confirming that NikTV is up to date."
+                        else "NikTV ${update?.version} is available. Update from ${BuildConfig.VERSION_NAME} to continue.",
+                        color = Color(0xFFB3B3B3),
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+
+                    when (val state = downloadState) {
+                        is UpdateDownloadState.Downloading -> {
+                            LinearProgressIndicator(
+                                progress = { (state.percent ?: 0) / 100f },
+                                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(999.dp)),
+                                color = Color(0xFFE50914)
+                            )
+                            Text(
+                                "Downloading ${state.percent?.let { "$it%" } ?: "…"} · ${formatDownloadBytes(state.bytesDownloaded)}",
+                                color = Color.LightGray
+                            )
+                        }
+                        is UpdateDownloadState.Queued -> {
+                            LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFFE50914))
+                            Text("Preparing download…", color = Color.LightGray)
+                        }
+                        is UpdateDownloadState.Paused -> {
+                            LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFFE50914))
+                            Text(state.reason, color = Color.LightGray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                        is UpdateDownloadState.Installing -> {
+                            CircularProgressIndicator(color = Color(0xFFE50914))
+                            Text("Opening Android’s installer…", color = Color.LightGray)
+                        }
+                        is UpdateDownloadState.Failed -> Text(state.message, color = MaterialTheme.colorScheme.error, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        else -> Unit
+                    }
+                    actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
+
+                    if (!checking && update != null) {
+                        Button(
+                            onClick = {
+                                when (downloadState) {
+                                    is UpdateDownloadState.Ready,
+                                    is UpdateDownloadState.InstallerLaunched -> runCatching { AppUpdates.install(context) }
+                                        .onFailure { actionError = it.message ?: "Could not open the installer" }
+                                    else -> downloadAndInstall(update)
+                                }
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth().height(54.dp)
+                                .focusRequester(actionRequester)
+                                .remoteFocusFrame(RoundedCornerShape(10.dp)),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                        ) {
+                            Icon(Icons.Default.Download, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                when (downloadState) {
+                                    is UpdateDownloadState.Ready -> if (downloadState.awaitingUnknownSourcesPermission) "Allow installation" else "Install update"
+                                    is UpdateDownloadState.InstallerLaunched -> "Install update"
+                                    is UpdateDownloadState.Failed -> "Retry download"
+                                    else -> "Download & Install"
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Text(
+                        "The latest version is required to continue using NikTV.",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
             }
         }
     }
@@ -2090,16 +2270,22 @@ private fun CategoryManagerDialog(
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val categoryPanelModifier = if (categoryIsTv) {
+            Modifier.fillMaxWidth(0.97f).fillMaxHeight(0.96f).widthIn(max = 1280.dp)
+        } else {
+            Modifier.fillMaxSize()
+        }
         Surface(
-            modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.88f)
-                .widthIn(max = 1080.dp),
-            shape = RoundedCornerShape(28.dp),
+            modifier = categoryPanelModifier,
+            shape = if (categoryIsTv) RoundedCornerShape(18.dp) else RoundedCornerShape(0.dp),
             color = Color.Black,
-            tonalElevation = 6.dp
+            tonalElevation = if (categoryIsTv) 6.dp else 0.dp
         ) {
-            Column(Modifier.fillMaxSize().padding(12.dp)) {
+            Column(
+                Modifier.fillMaxSize()
+                    .then(if (!categoryIsTv) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Category Filters", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
