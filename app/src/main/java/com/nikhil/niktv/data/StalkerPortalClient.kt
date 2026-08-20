@@ -411,6 +411,7 @@ class StalkerPortalClient(private val context: Context) {
                 o.string("stream_icon") ?: o.string("cover"),
                 url,
                 o.string("plot") ?: o.string("description"),
+                portalCategoryId = o.string("category_id") ?: categoryId,
                 liveProgramme = if (type == CatalogType.LIVE_TV) o.liveProgramme() else null
             )
         }

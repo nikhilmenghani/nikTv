@@ -1510,13 +1510,6 @@ private fun ModernSearchScreen(
     val searchContext = LocalContext.current
     val searchIsTv = searchContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
         searchConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
-    val wide = searchConfiguration.screenWidthDp >= 720
-    val columns = if (state.searchType == SearchContentType.LIVE_TV) {
-        if (wide) 6 else 4
-    } else {
-        if (wide) 6 else 3
-    }
-    val aspectRatio = 16f / 9f
     fun activateSearchField() {
         searchEditing = true
         focusRequester.requestFocus()
@@ -1640,28 +1633,114 @@ private fun ModernSearchScreen(
                 Text("${state.searchResults.size} results${if (state.searchUsedServer) " · through page ${state.searchPage}" else " · cached"}", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(onClick = { search(true) }, modifier = Modifier.remoteFocusFrame(), enabled = !state.searchServerLoading, border = BorderStroke(1.dp, Color.Gray)) { Text("Search server") }
             }
-            ModernGrid(
-                columns = columns,
+            LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(state.searchResults, key = { "search-${state.searchType}-${it.id}" }) { item ->
-                    ModernPosterCard(item, aspectRatio, onClick = { openResult(item) })
+                    val category = state.searchCategories.firstOrNull { it.id == item.portalCategoryId }?.title
+                        ?: state.searchCategories.firstOrNull { it.id == state.searchCategoryId }?.title
+                    ModernSearchResultRow(
+                        item = item,
+                        type = state.searchType,
+                        categoryTitle = category,
+                        onClick = { openResult(item) }
+                    )
                 }
-                if (state.searchHasMore) item("load-more-${state.searchPage}", span = { GridItemSpan(maxLineSpan) }) {
+                if (state.searchHasMore) item("load-more-${state.searchPage}") {
                     OutlinedButton(onClick = loadMore, enabled = !state.searchServerLoading, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).remoteFocusFrame()) {
                         if (state.searchServerLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Default.ExpandMore, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Load up to 3 more pages")
                     }
-                } else if (state.searchUsedServer) item("all-pages-loaded", span = { GridItemSpan(maxLineSpan) }) {
+                } else if (state.searchUsedServer) item("all-pages-loaded") {
                     Text("All available result pages loaded", Modifier.fillMaxWidth().padding(16.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ModernSearchResultRow(
+    item: MediaItem,
+    type: SearchContentType,
+    categoryTitle: String?,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
+    val typeLabel = when (type) {
+        SearchContentType.LIVE_TV -> "Live TV"
+        SearchContentType.MOVIES -> "Movie"
+        SearchContentType.SERIES -> "Series"
+        SearchContentType.EPISODES -> "Episode"
+    }
+    val supportingText = item.liveProgramme?.title?.takeIf { it.isNotBlank() } ?: item.description?.takeIf { it.isNotBlank() }
+    val compact = LocalConfiguration.current.screenWidthDp < 600
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().remoteFocusFrame(shape),
+        shape = shape,
+        color = Color(0xFF171717)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                Modifier.width(if (compact) 112.dp else 148.dp)
+                    .aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF292929)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(36.dp), tint = Color.LightGray)
+                else SubcomposeAsyncImage(artworkModel, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
+                    when (painter.state.value) {
+                        is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                        else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(36.dp), tint = Color.LightGray)
+                    }
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(item.title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    SearchMetadataBadge(typeLabel, Color(0xFFE50914))
+                    SearchMetadataBadge(
+                        categoryTitle?.takeIf { it.isNotBlank() } ?: "Category unavailable",
+                        Color(0xFF343434),
+                        Modifier.widthIn(max = if (compact) 116.dp else 260.dp)
+                    )
+                }
+                supportingText?.let {
+                    Text(
+                        if (item.liveProgramme != null) "Now playing: $it" else it,
+                        color = Color(0xFFB8B8B8),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Icon(Icons.Default.PlayArrow, "Open ${item.title}", tint = Color.White, modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+@Composable
+private fun SearchMetadataBadge(text: String, color: Color, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(5.dp), color = color) {
+        Text(
+            text,
+            Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
