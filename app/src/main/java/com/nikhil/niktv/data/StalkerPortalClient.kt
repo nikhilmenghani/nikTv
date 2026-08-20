@@ -290,20 +290,37 @@ class StalkerPortalClient(private val context: Context) {
         session: PortalSession,
         series: MediaItem,
         preference: SeriesStartSeason,
-        requestedSeason: Int? = null
+        requestedSeason: Int? = null,
+        page: Int = 1,
+        requestedSeasonId: String? = null
     ): EpisodeSeasonResult = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             val all = xtreamEpisodes(session, series)
             return@withContext selectEpisodeSeason(all, preference, requestedSeason)
         }
+        val requestedPage = page.coerceAtLeast(1)
         val baseParams = mapOf(
             "type" to "vod", "action" to "get_ordered_list", "movie_id" to series.id,
-            "category" to series.id, "season_id" to "0", "episode_id" to "0", "p" to "1"
+            "category" to series.id, "season_id" to "0", "episode_id" to "0", "p" to requestedPage.toString()
         )
-        val initial = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams))
-            .payload().arrayFromData()
+        if (requestedPage > 1 && !requestedSeasonId.isNullOrBlank()) {
+            val pagePayload = request(session.profile, session.endpointUrl, session, authorizedParams(
+                session, baseParams + ("season_id" to requestedSeasonId)
+            )).payload()
+            val episodes = stalkerEpisodeItems(pagePayload.arrayFromData(), series, requestedSeason, requestedSeasonId)
+                .distinctBy { it.id }.sortedWith(compareBy({ it.episodeNumber ?: 0 }, { it.title }))
+            return@withContext EpisodeSeasonResult(
+                episodes, listOfNotNull(requestedSeason), requestedSeason, requestedPage,
+                episodePayloadHasMore(pagePayload, requestedPage)
+            )
+        }
+        val initialPayload = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams)).payload()
+        val initial = initialPayload.arrayFromData()
         val direct = stalkerEpisodeItems(initial, series)
-        if (direct.isNotEmpty()) return@withContext selectEpisodeSeason(direct, preference, requestedSeason)
+        if (direct.isNotEmpty()) {
+            val selected = selectEpisodeSeason(direct, preference, requestedSeason)
+            return@withContext selected.copy(page = requestedPage, hasMore = episodePayloadHasMore(initialPayload, requestedPage))
+        }
 
         val seasons = initial.mapNotNull { node ->
             val season = node as? JsonObject ?: return@mapNotNull null
@@ -316,9 +333,24 @@ class StalkerPortalClient(private val context: Context) {
             ?: if (preference == SeriesStartSeason.LAST) available.last() else available.first()
         val (seasonId, seasonNumber) = seasons.first { it.second == selected }
         val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams + ("season_id" to seasonId)))
-        val episodes = stalkerEpisodeItems(response.payload().arrayFromData(), series, seasonNumber, seasonId)
+        val seasonPayload = response.payload()
+        val episodes = stalkerEpisodeItems(seasonPayload.arrayFromData(), series, seasonNumber, seasonId)
             .distinctBy { it.id }.sortedWith(compareBy({ it.episodeNumber ?: 0 }, { it.title }))
-        EpisodeSeasonResult(episodes, available, selected)
+        EpisodeSeasonResult(episodes, available, selected, requestedPage, episodePayloadHasMore(seasonPayload, requestedPage))
+    }
+
+    private fun episodePayloadHasMore(payload: JsonElement, page: Int): Boolean {
+        val nodes = payload.arrayFromData()
+        val metadata = payload as? JsonObject
+        val maxPage = metadata?.string("max_page")?.toIntOrNull() ?: metadata?.string("total_pages")?.toIntOrNull()
+        val total = metadata?.string("total_items")?.toIntOrNull() ?: metadata?.string("total")?.toIntOrNull()
+        val pageSize = metadata?.string("items_per_page")?.toIntOrNull()
+            ?: metadata?.string("per_page")?.toIntOrNull() ?: nodes.size.takeIf { it > 0 }
+        return when {
+            maxPage != null -> page < maxPage
+            total != null && pageSize != null -> page * pageSize < total
+            else -> nodes.isNotEmpty()
+        }
     }
 
     private fun selectEpisodeSeason(all: List<MediaItem>, preference: SeriesStartSeason, requestedSeason: Int?): EpisodeSeasonResult {

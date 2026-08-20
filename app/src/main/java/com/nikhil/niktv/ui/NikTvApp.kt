@@ -219,6 +219,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,openSearchResult = vm::openSearchResult
                     ,loadMoreSearch = vm::loadMoreSearch
                     ,loadMoreCatalog = vm::loadMoreCatalog
+                    ,loadMoreEpisodes = vm::loadMoreEpisodes
                     ,setSearchCategory = vm::setSearchCategory
                     ,addProfile = vm::addProfile
                     ,switchProfile = vm::switchProfile
@@ -662,6 +663,7 @@ private fun CatalogScreen(
     openSearchResult: (MediaItem) -> Unit,
     loadMoreSearch: () -> Unit,
     loadMoreCatalog: () -> Unit,
+    loadMoreEpisodes: () -> Unit,
     setSearchCategory: (String) -> Unit,
     addProfile: () -> Unit,
     switchProfile: (PortalProfile) -> Unit,
@@ -725,7 +727,8 @@ private fun CatalogScreen(
                     useRecent = useRecentSearch,
                     deleteRecent = deleteRecentSearch,
                     openResult = openSearchResult,
-                    loadMore = loadMoreSearch
+                    loadMore = loadMoreSearch,
+                    toggleFavorite = toggleFavoriteEntry
                 )
                 state.favoritesOpen -> ModernFavoritesScreen(
                     state = state,
@@ -744,7 +747,8 @@ private fun CatalogScreen(
                     loadSeriesSeason = loadSeriesSeason,
                     openSearch = openSearch,
                     openSettings = openSettings,
-                    refreshCatalog = refreshCatalog
+                    refreshCatalog = refreshCatalog,
+                    loadMoreEpisodes = loadMoreEpisodes
                 )
                 else -> ModernBrowseScreen(
                     state = state,
@@ -1550,7 +1554,8 @@ private fun ModernSearchScreen(
     useRecent: (RecentSearch) -> Unit,
     deleteRecent: (RecentSearch) -> Unit,
     openResult: (MediaItem) -> Unit,
-    loadMore: () -> Unit
+    loadMore: () -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit
 ) {
     var categoriesExpanded by rememberSaveable(state.searchType) { mutableStateOf(false) }
     var searchEditing by rememberSaveable { mutableStateOf(false) }
@@ -1695,6 +1700,16 @@ private fun ModernSearchScreen(
                         item = item,
                         type = state.searchType,
                         categoryTitle = category,
+                        isFavorite = state.favorites.any { favorite ->
+                            favorite.media.id == item.id && favorite.kind == state.searchType.favoriteKind()
+                        },
+                        toggleFavorite = {
+                            toggleFavorite(FavoriteItem(
+                                kind = state.searchType.favoriteKind(),
+                                media = item,
+                                categoryTitle = category
+                            ))
+                        },
                         onClick = { openResult(item) }
                     )
                 }
@@ -1713,13 +1728,17 @@ private fun ModernSearchScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ModernSearchResultRow(
     item: MediaItem,
     type: SearchContentType,
     categoryTitle: String?,
+    isFavorite: Boolean,
+    toggleFavorite: () -> Unit,
     onClick: () -> Unit
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
     val typeLabel = when (type) {
@@ -1731,11 +1750,11 @@ private fun ModernSearchResultRow(
     val supportingText = item.liveProgramme?.title?.takeIf { it.isNotBlank() } ?: item.description?.takeIf { it.isNotBlank() }
     val compact = LocalConfiguration.current.screenWidthDp < 600
     val shape = RoundedCornerShape(12.dp)
+    Box {
     Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth().remoteFocusFrame(shape),
-        shape = shape,
-        color = Color(0xFF171717)
+        modifier = Modifier.fillMaxWidth().remoteFocusFrame(shape)
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
+        shape = shape, color = Color(0xFF171717)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(10.dp),
@@ -1777,6 +1796,20 @@ private fun ModernSearchResultRow(
             }
             Icon(Icons.Default.PlayArrow, "Open ${item.title}", tint = Color.White, modifier = Modifier.size(28.dp))
         }
+    }
+    DropdownMenu(
+        expanded = menuOpen,
+        onDismissRequest = { menuOpen = false },
+        modifier = Modifier.align(Alignment.TopEnd),
+        containerColor = Color(0xFF202020),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        DropdownMenuItem(
+            text = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
+            leadingIcon = { Icon(if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder, null) },
+            onClick = { menuOpen = false; toggleFavorite() }
+        )
+    }
     }
 }
 
@@ -2327,6 +2360,12 @@ private fun episodeComparator(descending: Boolean): Comparator<MediaItem> = Comp
 private fun cast4kStyleDeviceMacAddress(context: android.content.Context): String {
     return cast4kLegacyDeviceIdentity(context).macAddress
 }
+private fun SearchContentType.favoriteKind() = when (this) {
+    SearchContentType.LIVE_TV -> FavoriteKind.CHANNEL
+    SearchContentType.MOVIES -> FavoriteKind.MOVIE
+    SearchContentType.SERIES -> FavoriteKind.SERIES
+    SearchContentType.EPISODES -> FavoriteKind.EPISODE
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2744,7 +2783,8 @@ private fun ModernSeriesDetailScreen(
     loadSeriesSeason: (Int) -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
-    refreshCatalog: () -> Unit
+    refreshCatalog: () -> Unit,
+    loadMoreEpisodes: () -> Unit
 ) {
     val series = state.selectedSeries ?: return
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
@@ -2757,6 +2797,8 @@ private fun ModernSeriesDetailScreen(
     val episodeContext = LocalContext.current
     val episodeSearchIsTv = episodeContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
         episodeConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
+        episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
 
     fun activateEpisodeSearch() {
         episodeSearchEditing = true
@@ -2830,7 +2872,7 @@ private fun ModernSeriesDetailScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(340.dp)
+                        .height(if (compactPortrait) 470.dp else 340.dp)
                 ) {
                     val backdropUrl = series.logo
                     if (!backdropUrl.isNullOrBlank()) {
@@ -2956,9 +2998,9 @@ private fun ModernSeriesDetailScreen(
 
                         Spacer(Modifier.height(16.dp))
 
-                        Row(
+                        FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             if (primaryEpisodeToPlay != null) {
                                 Button(
@@ -3227,6 +3269,24 @@ private fun ModernSeriesDetailScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 24.dp, vertical = 6.dp)
                     )
+                }
+                if (state.episodeHasMore && searchQuery.isBlank()) {
+                    item("episodes-load-more-${state.episodePage}") {
+                        Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
+                            Button(
+                                onClick = loadMoreEpisodes,
+                                enabled = !state.episodeLoadingMore,
+                                modifier = Modifier.fillMaxWidth().height(48.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                            ) {
+                                if (state.episodeLoadingMore) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                                else Icon(Icons.Default.Add, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (state.episodeLoadingMore) "Loading…" else "Load more episodes", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
         }

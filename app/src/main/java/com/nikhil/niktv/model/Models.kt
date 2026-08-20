@@ -174,7 +174,9 @@ data class WatchedSeries(
 data class EpisodeSeasonResult(
     val episodes: List<MediaItem>,
     val availableSeasons: List<Int>,
-    val selectedSeason: Int?
+    val selectedSeason: Int?,
+    val page: Int = 1,
+    val hasMore: Boolean = false
 )
 
 @Serializable
@@ -184,6 +186,8 @@ data class EpisodeSeasonCache(
     val season: Int?,
     val availableSeasons: List<Int>,
     val episodes: List<MediaItem>,
+    val page: Int = 1,
+    val hasMore: Boolean = false,
     val cachedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "$profileKey|$seriesId|${season ?: -1}"

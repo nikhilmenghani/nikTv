@@ -68,6 +68,9 @@ data class NikTvState(
     ,val catalogPage: Int = 1
     ,val catalogHasMore: Boolean = false
     ,val catalogLoadingMore: Boolean = false
+    ,val episodePage: Int = 1
+    ,val episodeHasMore: Boolean = false
+    ,val episodeLoadingMore: Boolean = false
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -385,7 +388,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = requireNotNull(snapshot.session)
         if (series != null) {
             _state.update { it.copy(items = emptyList()) }
-            loadSeriesEpisodes(series, snapshot.selectedSeriesSeason)
+            loadSeriesEpisodes(series, snapshot.selectedSeriesSeason, forceRefresh = true)
         } else {
             loadTypeInternal(session, snapshot.selectedType, forceRefresh = true,
                 preferredCategoryId = snapshot.selectedCategory?.id)
@@ -412,24 +415,50 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         loadSeriesEpisodes(series, season)
     }
 
-    private suspend fun loadSeriesEpisodes(series: MediaItem, requestedSeason: Int? = null) {
+    private suspend fun loadSeriesEpisodes(series: MediaItem, requestedSeason: Int? = null, forceRefresh: Boolean = false) {
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
         val remembered = rememberedSeriesSeasons["$profileKey|${series.id}"]
         val desired = requestedSeason ?: remembered
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
-        val cached = episodeSeasonCaches.firstOrNull { cache ->
+        val cached = if (forceRefresh) null else episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
                 (desired == null || cache.season == desired) && System.currentTimeMillis() - cache.cachedAtMillis < maxAge
         }
-        val result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season) }
+        val result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season, it.page, it.hasMore) }
             ?: portal.episodeSeason(session, series, _state.value.seriesStartSeason, desired).also { loaded ->
-                val cache = EpisodeSeasonCache(profileKey, series.id, loaded.selectedSeason, loaded.availableSeasons, loaded.episodes)
+                val cache = EpisodeSeasonCache(profileKey, series.id, loaded.selectedSeason, loaded.availableSeasons, loaded.episodes, loaded.page, loaded.hasMore)
                 episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
                 store.saveEpisodeSeasonCache(cache)
             }
         result.selectedSeason?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
-        _state.update { it.copy(items = result.episodes, availableSeriesSeasons = result.availableSeasons, selectedSeriesSeason = result.selectedSeason) }
+        _state.update { it.copy(items = result.episodes, availableSeriesSeasons = result.availableSeasons, selectedSeriesSeason = result.selectedSeason,
+            episodePage = result.page, episodeHasMore = result.hasMore, episodeLoadingMore = false) }
+    }
+
+    fun loadMoreEpisodes() {
+        val snapshot = _state.value
+        val series = snapshot.selectedSeries ?: return
+        val session = snapshot.session ?: return
+        if (!snapshot.episodeHasMore || snapshot.episodeLoadingMore) return
+        viewModelScope.launch {
+            _state.update { it.copy(episodeLoadingMore = true) }
+            runCatching {
+                portal.episodeSeason(session, series, snapshot.seriesStartSeason, snapshot.selectedSeriesSeason,
+                    snapshot.episodePage + 1, snapshot.items.firstOrNull()?.portalSeasonId)
+            }.onSuccess { next ->
+                val combined = (snapshot.items + next.episodes).distinctBy { it.id }
+                val actuallyAdded = combined.size > snapshot.items.size
+                _state.update { it.copy(items = combined, episodePage = next.page,
+                    episodeHasMore = next.hasMore && actuallyAdded, episodeLoadingMore = false) }
+                val cache = EpisodeSeasonCache(session.profile.cacheKey(), series.id, next.selectedSeason,
+                    next.availableSeasons.ifEmpty { snapshot.availableSeriesSeasons }, combined, next.page, next.hasMore && actuallyAdded)
+                episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
+                store.saveEpisodeSeasonCache(cache)
+            }.onFailure { error ->
+                _state.update { it.copy(episodeLoadingMore = false, error = error.message ?: "Could not load more episodes") }
+            }
+        }
     }
 
     fun openMedia(item: MediaItem) {
