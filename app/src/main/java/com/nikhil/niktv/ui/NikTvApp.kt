@@ -140,13 +140,14 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
+    val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
     var discoveredUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var checkingForRequiredUpdate by remember { mutableStateOf(
         pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null
     ) }
     val clipboard = LocalClipboardManager.current
-    LaunchedEffect(Unit) {
-        if (pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
+    LaunchedEffect(updateEnforcementEnabled) {
+        if (updateEnforcementEnabled && pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
             discoveredUpdate = runCatching { AppUpdates.check() }.getOrNull()
         }
         checkingForRequiredUpdate = false
@@ -155,11 +156,13 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     MaterialTheme(colorScheme = profileColors) {
         Surface(Modifier.fillMaxSize()) {
-          if (checkingForRequiredUpdate || requiredUpdate != null) {
+          if (updateEnforcementEnabled && (checkingForRequiredUpdate || requiredUpdate != null)) {
             MandatoryNikTvUpdateScreen(
                 checking = checkingForRequiredUpdate,
                 update = requiredUpdate,
-                downloadState = updateDownloadState
+                downloadState = updateDownloadState,
+                enforcementEnabled = updateEnforcementEnabled,
+                setEnforcementEnabled = AppUpdates::setUpdateEnforcementEnabled
             )
           } else {
            Box(Modifier.fillMaxSize()) {
@@ -280,12 +283,15 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 private fun MandatoryNikTvUpdateScreen(
     checking: Boolean,
     update: UpdateInfo?,
-    downloadState: UpdateDownloadState
+    downloadState: UpdateDownloadState,
+    enforcementEnabled: Boolean,
+    setEnforcementEnabled: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val actionRequester = remember { FocusRequester() }
     var actionError by remember { mutableStateOf<String?>(null) }
     var permissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    var settingsOpen by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val pending = permissionUpdate
         permissionUpdate = null
@@ -415,6 +421,15 @@ private fun MandatoryNikTvUpdateScreen(
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                        OutlinedButton(
+                            onClick = { settingsOpen = true },
+                            modifier = Modifier.fillMaxWidth().height(50.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Settings, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Update settings")
+                        }
                     }
                     Text(
                         "The latest version is required to continue using NikTV.",
@@ -425,6 +440,31 @@ private fun MandatoryNikTvUpdateScreen(
                 }
             }
         }
+    }
+    if (settingsOpen) {
+        AlertDialog(
+            onDismissRequest = { settingsOpen = false },
+            title = { Text("Update settings") },
+            text = {
+                ListItem(
+                    headlineContent = { Text("Require updates before using NikTV") },
+                    supportingContent = {
+                        Text(if (BuildConfig.DEBUG) "Off by default for Android Studio development builds." else "Turn off to continue without installing an available update.")
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = enforcementEnabled,
+                            onCheckedChange = {
+                                setEnforcementEnabled(it)
+                                if (!it) settingsOpen = false
+                            }
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+            },
+            confirmButton = { TextButton(onClick = { settingsOpen = false }) { Text("Done") } }
+        )
     }
 }
 
@@ -1770,6 +1810,7 @@ private fun ModernSettingsScreen(
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     val downloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
+    val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
     val performDownload: (UpdateInfo) -> Unit = { update ->
         downloadActionMessage = null
         runCatching { AppUpdates.download(context, update) }
@@ -1969,6 +2010,25 @@ private fun ModernSettingsScreen(
         }
         SettingsSection("App updates") {
             Column {
+                ListItem(
+                    headlineContent = { Text("Require updates before using NikTV") },
+                    supportingContent = {
+                        Text(
+                            if (BuildConfig.DEBUG) "Development build · disabled by default"
+                            else "Block access until an available update is installed"
+                        )
+                    },
+                    leadingContent = { Icon(Icons.Default.AdminPanelSettings, null) },
+                    trailingContent = {
+                        Switch(
+                            checked = updateEnforcementEnabled,
+                            onCheckedChange = AppUpdates::setUpdateEnforcementEnabled,
+                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(16.dp))
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                HorizontalDivider()
                 ListItem(
                     headlineContent = { Text("NikTV ${BuildConfig.VERSION_NAME}") },
                     supportingContent = {

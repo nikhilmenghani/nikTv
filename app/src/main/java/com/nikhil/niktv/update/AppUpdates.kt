@@ -127,6 +127,7 @@ object AppUpdates {
     private const val PREF_PENDING_VERSION = "pending_version"
     private const val PREF_PENDING_URL = "pending_url"
     private const val PREF_INSTALL_AFTER_DOWNLOAD = "install_after_download"
+    private const val PREF_ENFORCE_UPDATES = "enforce_updates"
     private const val CHANNEL = "niktv-updates"
     private const val AVAILABLE_NOTIFICATION_ID = 1001
     private const val READY_NOTIFICATION_ID = 1002
@@ -139,6 +140,8 @@ object AppUpdates {
     val downloadState: StateFlow<UpdateDownloadState> = mutableDownloadState.asStateFlow()
     private val mutablePendingUpdate = MutableStateFlow<UpdateInfo?>(null)
     val pendingUpdate: StateFlow<UpdateInfo?> = mutablePendingUpdate.asStateFlow()
+    private val mutableUpdateEnforcementEnabled = MutableStateFlow(!BuildConfig.DEBUG)
+    val updateEnforcementEnabled: StateFlow<Boolean> = mutableUpdateEnforcementEnabled.asStateFlow()
 
     const val ACTION_REQUEST_UPDATE_DOWNLOAD =
         "com.nikhil.niktv.action.REQUEST_UPDATE_DOWNLOAD"
@@ -155,6 +158,7 @@ object AppUpdates {
         if (initialized) return
         appContext = context.applicationContext
         initialized = true
+        mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !BuildConfig.DEBUG)
         createChannel(appContext)
         restorePendingUpdate()
 
@@ -172,6 +176,12 @@ object AppUpdates {
             OneTimeWorkRequestBuilder<UpdateCheckWorker>().setConstraints(constraints).build()
         )
         restoreDownload()
+    }
+
+    fun setUpdateEnforcementEnabled(enabled: Boolean) {
+        check(initialized) { "AppUpdates has not been initialized" }
+        preferences().edit().putBoolean(PREF_ENFORCE_UPDATES, enabled).apply()
+        mutableUpdateEnforcementEnabled.value = enabled
     }
 
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
