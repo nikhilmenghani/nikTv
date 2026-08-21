@@ -64,6 +64,7 @@ import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.PlayingMedia
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @UnstableApi
 @Composable
@@ -92,6 +93,7 @@ fun PlayerScreen(
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
     var position by remember(media.progressKey) { mutableLongStateOf(0L) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
+    var videoDetails by remember(media.progressKey) { mutableStateOf("") }
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var startupTimedOut by remember(media.progressKey) { mutableStateOf(false) }
     var playerViewRef by remember(media.progressKey) { mutableStateOf<PlayerView?>(null) }
@@ -166,6 +168,7 @@ fun PlayerScreen(
     }
     DisposableEffect(activity) {
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -235,6 +238,13 @@ fun PlayerScreen(
             delay(1_000)
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+            videoDetails = player.videoFormat?.let { format ->
+                buildList {
+                    if (format.width > 0 && format.height > 0) add("${format.width}×${format.height}")
+                    format.sampleMimeType?.substringAfter('/')?.uppercase(Locale.ROOT)?.let(::add)
+                    if (format.bitrate > 0) add("%.1f Mbps".format(Locale.ROOT, format.bitrate / 1_000_000f))
+                }.joinToString(" · ")
+            }.orEmpty()
             if (position % 5_000L < 1_000L) onProgress(media.progressKey, player.currentPosition, player.duration)
         }
     }
@@ -270,11 +280,20 @@ fun PlayerScreen(
                 controlsFocused = false
                 playerViewRef?.requestFocus()
             }
-            focusMode -> focusMode = false
+            focusMode -> {
+                focusMode = false
+                controlsVisible = true
+            }
             else -> onBack()
         }
     }
-    Box(Modifier.fillMaxSize().clipToBounds()) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .then(if (focusMode || inPictureInPicture) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
+            .clipToBounds()
+    ) {
         // AndroidView instances survive recomposition by default. When autoplay advances to
         // another episode, recreate PlayerView so its touch/key listeners capture the new
         // episode's player and Compose control state instead of the disposed episode's state.
@@ -475,16 +494,22 @@ fun PlayerScreen(
             },
                 modifier = Modifier
                     .fillMaxSize()
+                    .then(if (!focusMode && !inPictureInPicture) Modifier.padding(top = 76.dp, bottom = 116.dp) else Modifier)
             )
         }
-        if (controlsVisible && !inPictureInPicture) {
+        if ((controlsVisible || !focusMode) && !inPictureInPicture) {
             Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(listOf(Color.Black.copy(alpha = .82f), Color.Transparent, Color.Black.copy(alpha = .88f)))
+                Modifier.fillMaxSize().then(
+                    if (focusMode) Modifier.background(
+                        Brush.verticalGradient(listOf(Color.Black.copy(alpha = .82f), Color.Transparent, Color.Black.copy(alpha = .88f)))
+                    ) else Modifier
                 )
             ) {
                 Row(
-                    Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+                    Modifier.fillMaxWidth()
+                        .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
+                        .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -516,8 +541,9 @@ fun PlayerScreen(
                         ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     }
                     IconButton(onClick = {
-                        focusMode = !focusMode
-                        controlsVisible = false
+                        val enteringFullscreen = !focusMode
+                        focusMode = enteringFullscreen
+                        controlsVisible = !enteringFullscreen
                         controlsFocused = false
                         playerViewRef?.requestFocus()
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
@@ -527,7 +553,7 @@ fun PlayerScreen(
                     }
                 }
 
-                if (playbackError == null && !startupTimedOut) {
+                if (controlsVisible && playbackError == null && !startupTimedOut) {
                     Row(
                         Modifier.align(Alignment.Center),
                         horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -605,9 +631,31 @@ fun PlayerScreen(
                 }
 
                 Column(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp, vertical = 16.dp)
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
+                        .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
                 ) {
                     if (duration > 0L) {
+                        val completedPercent = ((position.coerceIn(0L, duration) * 100L) / duration).toInt()
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(
+                                "${formatPlayerTime(position)} elapsed · $completedPercent% complete",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Text(
+                                buildString {
+                                    append(formatPlayerTime((duration - position).coerceAtLeast(0L)))
+                                    append(" remaining · ")
+                                    append(100 - completedPercent)
+                                    append('%')
+                                    if (videoDetails.isNotBlank()) { append(" · "); append(videoDetails) }
+                                },
+                                color = Color.LightGray,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
                         Slider(
                             value = position.coerceAtMost(duration).toFloat(),
                             onValueChange = { player.seekTo(it.toLong()) },
@@ -709,7 +757,9 @@ fun PlayerScreen(
         val countdown = remainingSeconds
         if (countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
             Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp).widthIn(max = 560.dp),
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
+                    .padding(16.dp).widthIn(max = 560.dp),
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
                 tonalElevation = 6.dp,
@@ -760,6 +810,15 @@ private object FailedDecoderRegistry {
             .putStringSet("failed_decoders", failedNames.toSet()).apply()
         return decoder
     }
+}
+
+private fun formatPlayerTime(milliseconds: Long): String {
+    val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1_000L)
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) "%d:%02d:%02d".format(Locale.ROOT, hours, minutes, seconds)
+    else "%d:%02d".format(Locale.ROOT, minutes, seconds)
 }
 
 @Composable
