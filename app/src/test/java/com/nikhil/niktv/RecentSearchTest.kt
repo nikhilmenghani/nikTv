@@ -42,4 +42,20 @@ class RecentSearchTest {
         assertEquals("query 0", result.first().query)
         assertEquals("query 19", result.last().query)
     }
+
+    @Test
+    fun sameSearchInDifferentCategoriesRetainsBothContexts() {
+        val searches = listOf(
+            RecentSearch("news", SearchContentType.LIVE_TV, 1, "all", "All channels"),
+            RecentSearch("NEWS", SearchContentType.LIVE_TV, 2, "sports", "Sports"),
+            RecentSearch(" news ", SearchContentType.LIVE_TV, 3, "sports", "Sports")
+        )
+
+        val result = searches.deduplicatedRecentSearches()
+
+        assertEquals(2, result.size)
+        assertEquals(3, result.first().searchedAtMillis)
+        assertEquals("sports", result.first().categoryId)
+        assertEquals("all", result.last().categoryId)
+    }
 }

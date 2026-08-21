@@ -38,8 +38,10 @@ enum class SearchContentType(val title: String) {
 data class RecentSearch(
     val query: String,
     val type: SearchContentType,
-    val searchedAtMillis: Long = System.currentTimeMillis()
-) { val key: String get() = "${type.name}:${query.normalizedSearchQuery()}" }
+    val searchedAtMillis: Long = System.currentTimeMillis(),
+    val categoryId: String = "*",
+    val categoryTitle: String = "All categories"
+) { val key: String get() = "${type.name}:$categoryId:${query.normalizedSearchQuery()}" }
 
 private val searchWhitespace = Regex("\\s+")
 
@@ -70,7 +72,7 @@ fun String.titleKeywordScore(query: String): Int {
 }
 
 fun List<RecentSearch>.deduplicatedRecentSearches(maxItems: Int = 20): List<RecentSearch> =
-    distinctBy { it.key }.take(maxItems)
+    sortedByDescending { it.searchedAtMillis }.distinctBy { it.key }.take(maxItems)
 
 @Serializable
 data class SearchResultCache(

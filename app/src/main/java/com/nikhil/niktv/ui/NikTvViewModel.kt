@@ -618,11 +618,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun rememberSearch(query: String, type: SearchContentType) {
-        store.addRecentSearch(RecentSearch(query, type))
+        val snapshot = _state.value
+        val categoryId = snapshot.searchCategoryId
+        val categoryTitle = snapshot.searchCategories.firstOrNull { it.id == categoryId }?.title
+            ?: if (categoryId == "*") "All categories" else categoryId
+        store.addRecentSearch(RecentSearch(
+            query = query,
+            type = type,
+            categoryId = categoryId,
+            categoryTitle = categoryTitle
+        ))
     }
     fun useRecentSearch(search: RecentSearch) {
         _state.update { it.copy(searchQuery = search.query, searchType = search.type, searchOpen = true,
-            searchCategoryId = "*", searchCategories = emptyList(), searchResults = emptyList()) }
+            searchCategoryId = search.categoryId, searchCategories = emptyList(), searchResults = emptyList()) }
         loadSearchCategories(search.type)
         search()
     }

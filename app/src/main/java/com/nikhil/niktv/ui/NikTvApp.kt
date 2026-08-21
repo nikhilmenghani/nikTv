@@ -1731,11 +1731,24 @@ private fun ModernSearchScreen(
             Text("Recent searches", Modifier.padding(top = 16.dp, bottom = 6.dp), style = MaterialTheme.typography.titleMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 state.recentSearches.filter { it.type in visibleSearchTypes }.forEach { recent ->
+                    val recentShape = RoundedCornerShape(10.dp)
                     InputChip(
                         selected = false,
                         onClick = { useRecent(recent) },
-                        modifier = Modifier.remoteFocusFrame(CircleShape),
-                        label = { Text(recent.query) },
+                        modifier = Modifier.remoteFocusFrame(recentShape),
+                        shape = recentShape,
+                        label = {
+                            Column {
+                                Text(recent.query, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${recent.type.title} · ${recent.categoryTitle}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        },
                         colors = InputChipDefaults.inputChipColors(containerColor = Color(0xFF111827), labelColor = Color.LightGray),
                         trailingIcon = {
                             Icon(Icons.Default.Close, "Delete ${recent.query}", Modifier.size(18.dp).clickable { deleteRecent(recent) })
