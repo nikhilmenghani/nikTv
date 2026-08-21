@@ -79,6 +79,7 @@ import com.nikhil.niktv.update.UpdateInfo
 import com.nikhil.niktv.update.formatDownloadBytes
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 
 private val NikColors = darkColorScheme(
     primary = Color(0xFFE50914), onPrimary = Color.White,
@@ -92,6 +93,7 @@ private val NikColors = darkColorScheme(
 )
 private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+private val menuActivationKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
 private fun Context.isTvLikeDevice(configuration: Configuration): Boolean =
     packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
@@ -136,6 +138,48 @@ private fun Modifier.remoteFocusFrame(
                 .border(4.dp, Color(0xFFFF3340), shape)
             else Modifier
         )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.remoteCombinedClickable(
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?
+): Modifier {
+    val scope = rememberCoroutineScope()
+    var keyIsDown by remember { mutableStateOf(false) }
+    var longPressReached by remember { mutableStateOf(false) }
+    var longPressJob by remember { mutableStateOf<Job?>(null) }
+
+    return this
+        .onPreviewKeyEvent { event ->
+            if (event.key !in menuActivationKeys) return@onPreviewKeyEvent false
+            when (event.type) {
+                KeyEventType.KeyDown -> {
+                    if (!keyIsDown) {
+                        keyIsDown = true
+                        longPressReached = false
+                        longPressJob?.cancel()
+                        longPressJob = scope.launch {
+                            delay(android.view.ViewConfiguration.getLongPressTimeout().toLong())
+                            longPressReached = true
+                        }
+                    }
+                    true
+                }
+                KeyEventType.KeyUp -> {
+                    val invokeLongClick = keyIsDown && longPressReached && onLongClick != null
+                    longPressJob?.cancel()
+                    longPressJob = null
+                    keyIsDown = false
+                    longPressReached = false
+                    if (invokeLongClick) onLongClick?.invoke() else onClick()
+                    true
+                }
+                else -> false
+            }
+        }
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick)
 }
 private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
     if (value.length >= 2 && ((value.first() == '"' && value.last() == '"') ||
@@ -1378,7 +1422,7 @@ private fun ModernPosterCard(
     Box(modifier) {
         Column(
             Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
-            .combinedClickable(
+            .remoteCombinedClickable(
                 onClick = onClick,
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
                     { menuOpen = true }
@@ -1451,7 +1495,7 @@ private fun ModernMediaListCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
             .onFocusChanged { focused = it.isFocused }
             .then(if (focused) Modifier.shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
-            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
+            .remoteCombinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         shape = RoundedCornerShape(12.dp),
         color = if (focused) Color(0xFF292929) else Color(0xFF171717),
         border = if (focused) BorderStroke(4.dp, Color(0xFFFF2633)) else null
@@ -1836,7 +1880,7 @@ private fun ModernSearchResultRow(
     Box {
     Surface(
         modifier = Modifier.fillMaxWidth().remoteFocusFrame(shape)
-            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
+            .remoteCombinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         shape = shape, color = Color(0xFF171717)
     ) {
         Row(
