@@ -73,7 +73,7 @@ fun PlayerScreen(
     media: PlayingMedia,
     onBack: () -> Unit,
     onRetry: () -> Unit,
-    onRetryAlternateDecoder: () -> Unit,
+    onRetryAlternateDecoder: (Long) -> Unit,
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit
@@ -155,7 +155,7 @@ fun PlayerScreen(
                 if (failedDecoder != null) {
                     coroutineScope.launch {
                         delay(350L)
-                        onRetryAlternateDecoder()
+                        onRetryAlternateDecoder(player.currentPosition.coerceAtLeast(0L))
                     }
                 }
             }
@@ -276,6 +276,13 @@ fun PlayerScreen(
             runCatching { errorRetryFocusRequester.requestFocus() }
         }
     }
+    fun showControlsAndFocusPlayPause() {
+        controlsVisible = true
+        coroutineScope.launch {
+            delay(80L)
+            runCatching { playPauseFocusRequester.requestFocus() }
+        }
+    }
     BackHandler {
         when {
             controlsVisible -> {
@@ -369,7 +376,7 @@ fun PlayerScreen(
                             KeyEvent.KEYCODE_DPAD_CENTER,
                             KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                controlsVisible = true
+                                showControlsAndFocusPlayPause()
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
@@ -400,7 +407,7 @@ fun PlayerScreen(
                             }
                             KeyEvent.KEYCODE_DPAD_RIGHT,
                             KeyEvent.KEYCODE_DPAD_LEFT -> {
-                                controlsVisible = true
+                                showControlsAndFocusPlayPause()
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_UP -> {
@@ -574,6 +581,11 @@ fun PlayerScreen(
                                 FilledIconButton(
                                     onClick = { if (player.isPlaying) player.pause() else player.play() },
                                     modifier = Modifier.size(52.dp).focusRequester(playPauseFocusRequester)
+                                        .focusProperties {
+                                            up = fullscreenFocusRequester
+                                            left = if (seekable) rewindFocusRequester else previousFocusRequester
+                                            right = if (seekable) forwardFocusRequester else nextFocusRequester
+                                        }
                                         .playerControlFocus(CircleShape) { controlsFocused = it },
                                     colors = IconButtonDefaults.filledIconButtonColors(
                                         containerColor = MaterialTheme.colorScheme.primary,

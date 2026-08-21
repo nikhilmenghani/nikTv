@@ -222,6 +222,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,loadMoreEpisodes = vm::loadMoreEpisodes
                     ,setSearchCategory = vm::setSearchCategory
                     ,addProfile = vm::addProfile
+                    ,openProfileSwitcher = vm::openProfileSwitcher
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
                     ,openCategoryManager = vm::openCategoryManager
@@ -562,6 +563,27 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     val nameFocus = remember { FocusRequester() }; val urlFocus = remember { FocusRequester() }
     val credentialFocus = remember { FocusRequester() }; val lastFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val profileConfiguration = LocalConfiguration.current
+    val profileIsTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        profileConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    var editingField by remember { mutableStateOf<String?>(null) }
+    fun Modifier.profileTextField(field: String): Modifier = this
+        .onFocusChanged {
+            if (it.isFocused && !profileIsTv) editingField = field
+            if (!it.isFocused && editingField == field) {
+                editingField = null
+                keyboard?.hide()
+            }
+        }
+        .onPreviewKeyEvent { event ->
+            if (profileIsTv && editingField != field && event.type == KeyEventType.KeyUp &&
+                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+            ) {
+                editingField = field
+                keyboard?.show()
+                true
+            } else false
+        }
     Box(Modifier.fillMaxSize().background(Color(0xFF090909)).statusBarsPadding().imePadding().padding(16.dp), contentAlignment = Alignment.Center) {
         Card(Modifier.widthIn(max = 520.dp).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -573,13 +595,13 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     SegmentedButton(portalType == PortalType.STALKER, { useDefaults(PortalType.STALKER) }, uniformSegmentShape(0, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(0, 2))) { Text("Stalker / MAG") }
                     SegmentedButton(portalType == PortalType.XTREAM, { useDefaults(PortalType.XTREAM) }, uniformSegmentShape(1, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(1, 2))) { Text("Xtream") }
                 }
-                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().focusRequester(nameFocus), label = { Text("Profile name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { urlFocus.requestFocus() }))
-                OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().focusRequester(urlFocus), label = { Text("Portal URL") }, placeholder = { Text("https://provider.example") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { credentialFocus.requestFocus() }))
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().focusRequester(nameFocus).profileTextField("name"), label = { Text("Profile name") }, singleLine = true, readOnly = profileIsTv && editingField != "name", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { editingField = null; urlFocus.requestFocus() }))
+                OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().focusRequester(urlFocus).profileTextField("url"), label = { Text("Portal URL") }, placeholder = { Text("https://provider.example") }, singleLine = true, readOnly = profileIsTv && editingField != "url", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { editingField = null; credentialFocus.requestFocus() }))
                 if (portalType == PortalType.XTREAM) {
-                    OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus), label = { Text("Username") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { lastFocus.requestFocus() }))
-                    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().focusRequester(lastFocus), label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
+                    OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus).profileTextField("username"), label = { Text("Username") }, singleLine = true, readOnly = profileIsTv && editingField != "username", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { editingField = null; lastFocus.requestFocus() }))
+                    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().focusRequester(lastFocus).profileTextField("password"), label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, readOnly = profileIsTv && editingField != "password", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { editingField = null; keyboard?.hide() }))
                 } else {
-                    OutlinedTextField(mac, { mac = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus), label = { Text("MAC address") }, placeholder = { Text("00:1A:79:XX:XX:XX") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = if (advanced) ImeAction.Next else ImeAction.Done), keyboardActions = KeyboardActions(onNext = { lastFocus.requestFocus() }, onDone = { keyboard?.hide() }))
+                    OutlinedTextField(mac, { mac = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus).profileTextField("mac"), label = { Text("MAC address") }, placeholder = { Text("00:1A:79:XX:XX:XX") }, singleLine = true, readOnly = profileIsTv && editingField != "mac", keyboardOptions = KeyboardOptions(imeAction = if (advanced) ImeAction.Next else ImeAction.Done), keyboardActions = KeyboardActions(onNext = { editingField = null; lastFocus.requestFocus() }, onDone = { editingField = null; keyboard?.hide() }))
                     TextButton(onClick = {
                         mac = generatedIdentity.macAddress
                         serial = generatedIdentity.serialNumber
@@ -590,7 +612,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                         Text("Generate compatible device identity")
                     }
                     TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
-                    if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }))
+                    if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus).profileTextField("serial"), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, readOnly = profileIsTv && editingField != "serial", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { editingField = null; keyboard?.hide() }))
                 }
                 val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
                 Button(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text(if (saved == null) "Add profile" else "Save profile") }
@@ -666,6 +688,7 @@ private fun CatalogScreen(
     loadMoreEpisodes: () -> Unit,
     setSearchCategory: (String) -> Unit,
     addProfile: () -> Unit,
+    openProfileSwitcher: () -> Unit,
     switchProfile: (PortalProfile) -> Unit,
     removeProfile: (PortalProfile) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
@@ -767,6 +790,7 @@ private fun CatalogScreen(
                     openFavorites = openFavorites,
                     openSearch = openSearch,
                     openSettings = openSettings,
+                    openProfileSwitcher = openProfileSwitcher,
                     refreshCatalog = refreshCatalog,
                     openCategoryManager = openCategoryManager,
                     loadMoreCatalog = loadMoreCatalog
@@ -784,6 +808,7 @@ private fun CatalogScreen(
                 openFavorites = openFavorites,
                 openSearch = openSearch,
                 openSettings = openSettings,
+                openProfileSwitcher = openProfileSwitcher,
                 expanded = isTv,
                 modifier = Modifier.width(if (isTv) 196.dp else 72.dp).fillMaxHeight()
             )
@@ -839,6 +864,7 @@ private fun ModernBrowseScreen(
     openFavorites: () -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
+    openProfileSwitcher: () -> Unit,
     refreshCatalog: () -> Unit,
     openCategoryManager: (CatalogType) -> Unit,
     loadMoreCatalog: () -> Unit
@@ -866,7 +892,7 @@ private fun ModernBrowseScreen(
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
             if (!isWide) item("modern-top", span = gridSpan) {
-                ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings)
+                ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings, openProfileSwitcher)
             }
             item("modern-hero", span = gridSpan) {
                 val recent = state.recentlyPlayed.firstOrNull()
@@ -1124,6 +1150,7 @@ private fun ModernSideRail(
     openFavorites: () -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
+    openProfileSwitcher: () -> Unit,
     expanded: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -1134,15 +1161,21 @@ private fun ModernSideRail(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = if (expanded) 12.dp else 0.dp),
+                Modifier.fillMaxWidth()
+                    .clickable(onClick = openProfileSwitcher)
+                    .remoteFocusFrame(RoundedCornerShape(10.dp))
+                    .padding(horizontal = if (expanded) 12.dp else 0.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
             ) {
-                Text("N", style = MaterialTheme.typography.headlineLarge, color = Color(0xFFE50914), fontWeight = FontWeight.Black)
-                if (expanded) {
-                    Spacer(Modifier.width(12.dp))
-                    Text("NikTV", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                }
+                Text(
+                    state.savedProfile?.name.orEmpty().ifBlank { "Profile" },
+                    color = Color.White,
+                    style = if (expanded) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             Spacer(Modifier.weight(1f))
             ModernRailButton(Icons.Default.Home, "Home", state.homeOpen, expanded, openHome)
@@ -1200,9 +1233,11 @@ private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean
 }
 
 @Composable
-private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit, openSearch: () -> Unit, openSettings: () -> Unit) {
+private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit, openSearch: () -> Unit, openSettings: () -> Unit, openProfileSwitcher: () -> Unit) {
     Row(Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("N", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
+        TextButton(onClick = openProfileSwitcher, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))) {
+            Text(state.savedProfile?.name.orEmpty().ifBlank { "Profile" }, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+        }
         Spacer(Modifier.width(8.dp))
         TextButton(onClick = openHome, modifier = Modifier.remoteFocusFrame(CircleShape)) { Text("Home", color = if (home) Color.White else Color.Gray) }
         visibleCatalogTypes.forEach { type ->
