@@ -2945,8 +2945,6 @@ private fun ModernSeriesDetailScreen(
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val episodeConfiguration = LocalConfiguration.current
-    val episodeContext = LocalContext.current
-    val episodeSearchIsTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
         episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
 
@@ -3324,7 +3322,6 @@ private fun ModernSeriesDetailScreen(
                         modifier = Modifier.fillMaxWidth()
                             .focusRequester(episodeSearchRequester)
                             .onFocusChanged {
-                                if (it.isFocused && !episodeSearchIsTv) episodeSearchEditing = true
                                 if (!it.isFocused && episodeSearchEditing) {
                                     episodeSearchEditing = false
                                     keyboardController?.hide()
@@ -3338,8 +3335,8 @@ private fun ModernSeriesDetailScreen(
                                     true
                                 } else false
                             }
-                            .pointerInput(series.id, episodeSearchEditing, episodeSearchIsTv) {
-                                if (episodeSearchIsTv && !episodeSearchEditing) detectTapGestures { activateEpisodeSearch() }
+                            .pointerInput(series.id, episodeSearchEditing) {
+                                if (!episodeSearchEditing) detectTapGestures { activateEpisodeSearch() }
                             }
                             .remoteFocusFrame(RoundedCornerShape(16.dp)),
                         placeholder = { Text("Search episode name or number…", color = Color.Gray) },
@@ -3348,7 +3345,7 @@ private fun ModernSeriesDetailScreen(
                             IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, "Clear", tint = Color.LightGray) }
                         }} else null,
                         singleLine = true,
-                        readOnly = episodeSearchIsTv && !episodeSearchEditing,
+                        readOnly = !episodeSearchEditing,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = {
                             episodeSearchEditing = false
