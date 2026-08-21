@@ -86,7 +86,9 @@ fun PlayerScreen(
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
-    var focusMode by remember(media.progressKey) { mutableStateOf(false) }
+    // Fullscreen belongs to the player session, not to an individual queue item.
+    // Preserve it while changing channels/episodes/titles.
+    var focusMode by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var controlsVisible by remember(media.progressKey) { mutableStateOf(true) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
