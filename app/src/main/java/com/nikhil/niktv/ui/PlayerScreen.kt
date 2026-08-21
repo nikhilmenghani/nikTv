@@ -79,6 +79,7 @@ fun PlayerScreen(
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
+    controlsTimeoutSeconds: Int = 3,
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
     startFullscreen: Boolean = false,
@@ -277,10 +278,12 @@ fun PlayerScreen(
             controlsVisible = true
         }
     }
-    LaunchedEffect(controlsVisible, isPlaying, controlsFocused) {
-        if (controlsVisible && isPlaying && !controlsFocused && playbackError == null && !startupTimedOut) {
-            delay(4_000L)
+    LaunchedEffect(controlsVisible, isPlaying, controlsTimeoutSeconds, media.progressKey) {
+        if (controlsVisible && isPlaying && playbackError == null && !startupTimedOut) {
+            delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
+            controlsFocused = false
+            playerViewRef?.requestFocus()
         }
     }
     LaunchedEffect(controlsVisible, media.progressKey) {

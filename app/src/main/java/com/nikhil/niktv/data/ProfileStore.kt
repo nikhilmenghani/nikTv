@@ -49,6 +49,7 @@ class ProfileStore(private val context: Context) {
     private val progressKey = stringPreferencesKey("playback_progress")
     private val playbackUrlsKey = stringPreferencesKey("playback_urls")
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
+    private val playerControlsTimeoutKey = intPreferencesKey("player_controls_timeout_seconds")
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
     private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
     private val categoryFiltersKey = stringPreferencesKey("category_filters")
@@ -87,6 +88,7 @@ class ProfileStore(private val context: Context) {
         prefs[playbackUrlsKey]?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
+    val playerControlsTimeoutSeconds: Flow<Int> = context.dataStore.data.map { it[playerControlsTimeoutKey] ?: 3 }
     val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
         decodeRecentSearches(prefs[recentSearchesKey]).deduplicatedRecentSearches()
     }
@@ -185,6 +187,9 @@ class ProfileStore(private val context: Context) {
         }
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
+    suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = context.dataStore.edit {
+        it[playerControlsTimeoutKey] = seconds.coerceIn(1, 30)
+    }
     suspend fun setSeriesStartSeason(value: SeriesStartSeason) = context.dataStore.edit { it[seriesStartSeasonKey] = value.name }
     suspend fun saveWatchedSeries(items: List<WatchedSeries>) = context.dataStore.edit {
         it[watchedSeriesKey] = Json.encodeToString(items)
@@ -301,6 +306,6 @@ class ProfileStore(private val context: Context) {
             "recently_played", "playback_progress", "recent_searches", "category_filters",
             "series_start_season", "watched_series", "remembered_series_seasons", "browse_layouts"
         )
-        private val BACKUP_INT_KEYS = setOf("catalog_cache_interval_minutes")
+        private val BACKUP_INT_KEYS = setOf("catalog_cache_interval_minutes", "player_controls_timeout_seconds")
     }
 }

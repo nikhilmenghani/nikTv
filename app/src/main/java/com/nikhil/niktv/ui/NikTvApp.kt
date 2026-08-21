@@ -247,6 +247,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
+                    controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
                     startFullscreen = true
                 )
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -278,6 +279,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     editProfile = vm::editProfile,
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
+                    ,setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
                     ,loadSeriesSeason = vm::loadSeriesSeason
                     ,toggleSeriesWatch = vm::toggleSeriesWatch
@@ -763,6 +765,7 @@ private fun CatalogScreen(
     editProfile: () -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
+    setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     loadSeriesSeason: (Int) -> Unit,
     toggleSeriesWatch: () -> Unit,
@@ -833,6 +836,7 @@ private fun CatalogScreen(
                     removeProfile = removeProfile,
                     logout = logout,
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
+                    setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
                     setSeriesStartSeason = setSeriesStartSeason,
                     openCategoryManager = openCategoryManager
                 )
@@ -2040,6 +2044,7 @@ private fun ModernSettingsScreen(
     removeProfile: (PortalProfile) -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
+    setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
 ) {
@@ -2513,6 +2518,27 @@ private fun ModernSettingsScreen(
                 }
             }
         }
+        SettingsSection("Player controls") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Hide controls after", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "While video is playing, controls automatically disappear after this period of inactivity.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf(3 to "3s", 5 to "5s", 10 to "10s", 15 to "15s").forEachIndexed { index, (seconds, label) ->
+                        val timeoutShape = uniformSegmentShape(index, 4)
+                        SegmentedButton(
+                            selected = state.playerControlsTimeoutSeconds == seconds,
+                            onClick = { setPlayerControlsTimeoutSeconds(seconds) },
+                            modifier = Modifier.remoteFocusFrame(timeoutShape),
+                            shape = timeoutShape
+                        ) { Text(label) }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2549,6 +2575,7 @@ private fun LiveTvPlaybackScreen(
             onPlayPrevious = onPlayPrevious,
             onPlayNext = onPlayNext,
             onProgress = onProgress,
+            controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
             modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(0.72f).aspectRatio(16f / 9f).align(Alignment.CenterStart),
             embeddedMode = !fullscreen,
             fullscreenOverride = fullscreen,
