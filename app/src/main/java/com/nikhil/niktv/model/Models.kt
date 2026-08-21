@@ -216,7 +216,8 @@ data class PlayingMedia(
     val series: MediaItem? = null,
     val episodeQueue: List<MediaItem> = emptyList(),
     val resumePositionMillis: Long = 0L,
-    val progressKey: String = ""
+    val progressKey: String = "",
+    val authorizationRetryCount: Int = 0
 )
 
 @Serializable

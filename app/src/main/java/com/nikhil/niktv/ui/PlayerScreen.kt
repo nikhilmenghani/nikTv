@@ -56,6 +56,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
@@ -74,6 +75,7 @@ fun PlayerScreen(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onRetryAlternateDecoder: (Long) -> Unit,
+    onPlaybackAuthorizationFailure: (Long) -> Unit,
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
@@ -151,6 +153,9 @@ fun PlayerScreen(
             override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
             override fun onPlayerError(error: PlaybackException) {
                 val failedDecoder = FailedDecoderRegistry.record(context, error)
+                val authorizationFailure = error.causeSequence()
+                    .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
+                    .firstOrNull()?.responseCode in setOf(401, 403)
                 playbackError = buildString {
                     append(error.errorCodeName.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase))
                     error.cause?.message?.takeIf { it.isNotBlank() }?.let { append("\n"); append(it) }
@@ -159,7 +164,13 @@ fun PlayerScreen(
                     }
                 }
                 controlsVisible = true
-                if (failedDecoder != null) {
+                if (authorizationFailure && media.authorizationRetryCount == 0) {
+                    playbackError = "Stream authorization expired. Requesting a fresh playback link…"
+                    coroutineScope.launch {
+                        delay(350L)
+                        onPlaybackAuthorizationFailure(player.currentPosition.coerceAtLeast(0L))
+                    }
+                } else if (failedDecoder != null) {
                     coroutineScope.launch {
                         delay(350L)
                         onRetryAlternateDecoder(player.currentPosition.coerceAtLeast(0L))
@@ -862,6 +873,8 @@ private fun PlaybackProgressBar(
         }
     }
 }
+
+private fun Throwable.causeSequence(): Sequence<Throwable> = generateSequence(this) { it.cause }
 
 private fun formatPlayerTime(milliseconds: Long): String {
     val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1_000L)

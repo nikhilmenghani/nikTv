@@ -660,7 +660,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         type: CatalogType,
         series: MediaItem?,
         episodes: List<MediaItem>,
-        forceFreshUrl: Boolean = false
+        forceFreshUrl: Boolean = false,
+        authorizationRetryCount: Int = 0,
+        resumePositionOverride: Long? = null
     ) {
         var session = requireNotNull(_state.value.session)
         val urlKey = "${type.name}:${item.id}"
@@ -709,7 +711,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 .asSequence()
                 .filter { it.key == legacyProgressKey }
                 .maxByOrNull { it.updatedAtMillis }
-        val resumePosition = saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L } ?: 0L
+        val resumePosition = resumePositionOverride
+            ?: saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L }
+            ?: 0L
         _state.update {
             it.copy(
                 nowPlaying = PlayingMedia(
@@ -721,7 +725,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     series = series,
                     episodeQueue = playbackQueue,
                     resumePositionMillis = resumePosition,
-                    progressKey = progressKey
+                    progressKey = progressKey,
+                    authorizationRetryCount = authorizationRetryCount
                 )
             )
         }
@@ -828,6 +833,26 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(nowPlaying = null, error = null) }
             delay(80L)
             _state.update { it.copy(nowPlaying = playing.copy(resumePositionMillis = positionMillis)) }
+        }
+    }
+    fun retryPlaybackAfterAuthorizationFailure(positionMillis: Long) {
+        val playing = _state.value.nowPlaying ?: return
+        if (playing.authorizationRetryCount > 0) return
+        viewModelScope.launch {
+            _state.update { it.copy(nowPlaying = null, error = null) }
+            runCatching {
+                playInternal(
+                    item = playing.media,
+                    type = playing.catalogType,
+                    series = playing.series,
+                    episodes = playing.episodeQueue,
+                    forceFreshUrl = true,
+                    authorizationRetryCount = playing.authorizationRetryCount + 1,
+                    resumePositionOverride = positionMillis
+                )
+            }.onFailure { error ->
+                _state.update { it.copy(error = error.message ?: "Could not refresh stream authorization") }
+            }
         }
     }
     fun openSettings() = _state.update { it.copy(settingsOpen = true) }
