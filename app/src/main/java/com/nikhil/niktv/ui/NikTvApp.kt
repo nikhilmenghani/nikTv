@@ -239,14 +239,15 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     loadMoreCatalog = vm::loadMoreCatalog
                 )
                 state.nowPlaying != null -> PlayerScreen(
-                    state.nowPlaying!!,
-                    vm::closePlayer,
-                    vm::retryPlayback,
-                    vm::retryPlaybackWithAlternateDecoder,
-                    vm::retryPlaybackAfterAuthorizationFailure,
-                    vm::playPreviousEpisode,
-                    vm::playNextEpisode,
-                    vm::savePlaybackProgress
+                    media = state.nowPlaying!!,
+                    onBack = vm::closePlayer,
+                    onRetry = vm::retryPlayback,
+                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
+                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
+                    onPlayPrevious = vm::playPreviousEpisode,
+                    onPlayNext = vm::playNextEpisode,
+                    onProgress = vm::savePlaybackProgress,
+                    startFullscreen = true
                 )
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.profileLoadProgress != null -> ProfileLoadingScreen(

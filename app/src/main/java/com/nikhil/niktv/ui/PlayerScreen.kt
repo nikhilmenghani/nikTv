@@ -81,6 +81,7 @@ fun PlayerScreen(
     onProgress: (String, Long, Long) -> Unit,
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
+    startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
@@ -94,12 +95,12 @@ fun PlayerScreen(
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     // Fullscreen belongs to the player session, not to an individual queue item.
     // Preserve it while changing channels/episodes/titles.
-    var focusMode by remember { mutableStateOf(false) }
+    var focusMode by remember { mutableStateOf(startFullscreen) }
     LaunchedEffect(fullscreenOverride) {
         fullscreenOverride?.let { focusMode = it }
     }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
-    var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode) }
+    var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
@@ -303,6 +304,7 @@ fun PlayerScreen(
     }
     BackHandler {
         when {
+            startFullscreen -> onBack()
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -580,11 +582,15 @@ fun PlayerScreen(
                     }
                     IconButton(onClick = {
                         val enteringFullscreen = !focusMode
-                        focusMode = enteringFullscreen
-                        onFullscreenChanged?.invoke(enteringFullscreen)
-                        controlsVisible = !enteringFullscreen
-                        controlsFocused = false
-                        playerViewRef?.requestFocus()
+                        if (startFullscreen && !enteringFullscreen) {
+                            onBack()
+                        } else {
+                            focusMode = enteringFullscreen
+                            onFullscreenChanged?.invoke(enteringFullscreen)
+                            controlsVisible = !enteringFullscreen
+                            controlsFocused = false
+                            playerViewRef?.requestFocus()
+                        }
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
                         .focusProperties { left = if (pipAvailable) pipFocusRequester else rotateFocusRequester; down = playPauseFocusRequester }
                         .playerControlFocus(CircleShape) { controlsFocused = it }) {
