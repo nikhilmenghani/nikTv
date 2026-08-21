@@ -1271,6 +1271,7 @@ private fun ModernSideRail(
     Surface(modifier, color = Color(0xFF070707), shadowElevation = 12.dp) {
         Column(
             Modifier.statusBarsPadding().navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = if (expanded) 10.dp else 6.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -1291,13 +1292,13 @@ private fun ModernSideRail(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Home, "Home", state.homeOpen, expanded, openHome)
             visibleCatalogTypes.forEach { type ->
                 ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && state.selectedType == type, expanded) { selectType(type) }
             }
             ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen, expanded, openFavorites)
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Search, "Search", state.searchOpen, expanded, openSearch)
             ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
         }
@@ -1555,7 +1556,8 @@ private fun ModernMediaListCard(
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
     supportingText: String? = item.description,
-    compact: Boolean = false
+    compact: Boolean = false,
+    isCurrentlyPlaying: Boolean = false
 ) {
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -1567,10 +1569,17 @@ private fun ModernMediaListCard(
             .remoteCombinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         shape = RoundedCornerShape(12.dp),
         color = if (focused) Color(0xFF292929) else Color(0xFF171717),
-        border = if (focused) BorderStroke(4.dp, Color(0xFFFF2633)) else null
+        border = when {
+            focused -> BorderStroke(4.dp, Color(0xFFFF2633))
+            isCurrentlyPlaying -> BorderStroke(2.dp, Color(0xFFE50914))
+            else -> null
+        }
     ) {
-        Row(Modifier.padding(if (compact) 6.dp else 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 12.dp)) {
-            Box(Modifier.width(if (compact) 92.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
+        Row(Modifier.padding(if (compact) 5.dp else 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)) {
+            if (isCurrentlyPlaying) {
+                Box(Modifier.width(4.dp).height(42.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFFE50914)))
+            }
+            Box(Modifier.width(if (compact) 72.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
                 else SubcomposeAsyncImage(artworkRequest(context, item), item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
                     when (painter.state.value) {
@@ -1592,7 +1601,7 @@ private fun ModernMediaListCard(
                     )
                 }
             }
-            Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(if (compact) 20.dp else 24.dp), tint = if (focused) Color.White else Color.Gray)
+            if (!compact) Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(24.dp), tint = if (focused) Color.White else Color.Gray)
         }
         DropdownMenu(
             expanded = menuOpen,
@@ -2622,7 +2631,8 @@ private fun LiveTvPlaybackScreen(
                             isFavorite = state.favorites.any { it.kind == FavoriteKind.CHANNEL && it.media.id == item.id },
                             toggleFavorite = { toggleFavorite(item) },
                             supportingText = if (isPlaying) "NOW PLAYING" else item.liveProgramme?.title,
-                            compact = true
+                            compact = true,
+                            isCurrentlyPlaying = isPlaying
                         )
                     }
                     if (state.catalogHasMore) item("live-player-load-more") {
