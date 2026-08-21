@@ -698,13 +698,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             CatalogType.SERIES -> episodes.sortedWith(
                 compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
             )
-            CatalogType.LIVE_TV -> _state.value.items
-            CatalogType.MOVIES -> _state.value.items
-            CatalogType.RADIO -> _state.value.items
+            CatalogType.LIVE_TV -> episodes.ifEmpty { _state.value.items }
+            CatalogType.MOVIES -> episodes.ifEmpty { _state.value.items }
+            CatalogType.RADIO -> episodes.ifEmpty { _state.value.items }
         }
         val queueIndex = playbackQueue.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
-        val previousItem = queueIndex?.let { playbackQueue.getOrNull(it - 1) }
-        val nextItem = queueIndex?.let { playbackQueue.getOrNull(it + 1) }
+        val wrapLiveQueue = type == CatalogType.LIVE_TV && playbackQueue.size > 1
+        val previousItem = queueIndex?.let { index ->
+            playbackQueue.getOrNull(index - 1) ?: playbackQueue.lastOrNull().takeIf { wrapLiveQueue }
+        }
+        val nextItem = queueIndex?.let { index ->
+            playbackQueue.getOrNull(index + 1) ?: playbackQueue.firstOrNull().takeIf { wrapLiveQueue }
+        }
         // Use a profile-scoped, content-based key so resume survives session/token refreshes.
         val progressKey = progressKeyFor(session.profile, item, type, series)
         val legacyProgressKey = legacyProgressKeyFor(item, type)

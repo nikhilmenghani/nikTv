@@ -600,12 +600,16 @@ fun PlayerScreen(
                             Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
                     }
-                    if (videoDetails.isNotBlank()) Text(
-                        videoDetails,
-                        modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
-                        color = Color.LightGray,
-                        style = MaterialTheme.typography.labelMedium
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(20.dp),
+                        contentAlignment = Alignment.BottomEnd
+                    ) {
+                        Text(
+                            videoDetails,
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
                 }
             }
         }
