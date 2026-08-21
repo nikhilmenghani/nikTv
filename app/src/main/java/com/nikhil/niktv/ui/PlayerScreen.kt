@@ -19,6 +19,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
@@ -560,21 +561,39 @@ fun PlayerScreen(
                         .padding(horizontal = 24.dp, vertical = 16.dp)
                 ) {
                     if (duration > 0L) {
-                        Slider(
-                            value = position.coerceAtMost(duration).toFloat(),
-                            onValueChange = { player.seekTo(it.toLong()) },
-                            valueRange = 0f..duration.toFloat(),
-                            modifier = Modifier.focusRequester(progressFocusRequester)
-                                .focusProperties { up = playPauseFocusRequester }
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
-                                        playPauseFocusRequester.requestFocus()
-                                        true
-                                    } else false
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (playbackError == null && !startupTimedOut) {
+                                if (media.previousEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayPrevious() } }, modifier = Modifier.focusRequester(previousFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                    Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White)
                                 }
-                                .playerControlFocus(RoundedCornerShape(50)) { controlsFocused = it },
-                            colors = SliderDefaults.colors(thumbColor = Color(0xFFE50914), activeTrackColor = Color(0xFFE50914), inactiveTrackColor = Color.White.copy(alpha = .35f))
-                        )
+                                IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.focusRequester(rewindFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                    Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White)
+                                }
+                                FilledIconButton(
+                                    onClick = { if (player.isPlaying) player.pause() else player.play() },
+                                    modifier = Modifier.size(52.dp).focusRequester(playPauseFocusRequester)
+                                        .playerControlFocus(CircleShape) { controlsFocused = it },
+                                    colors = IconButtonDefaults.filledIconButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                ) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play") }
+                                IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }, modifier = Modifier.focusRequester(forwardFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                    Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White)
+                                }
+                                if (media.nextEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayNext() } }, modifier = Modifier.focusRequester(nextFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                    Icon(Icons.Default.SkipNext, "Next", tint = Color.White)
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            PlaybackProgressBar(
+                                position = position,
+                                duration = duration,
+                                onSeek = { player.seekTo(it) },
+                                modifier = Modifier.weight(1f).focusRequester(progressFocusRequester)
+                                    .playerControlFocus(RoundedCornerShape(28.dp)) { controlsFocused = it }
+                            )
+                        }
                     } else if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(9.dp).clip(RoundedCornerShape(50)).background(Color(0xFFE50914)))
@@ -582,39 +601,12 @@ fun PlayerScreen(
                             Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
                     }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        if (controlsVisible && playbackError == null && !startupTimedOut) {
-                            if (media.previousEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayPrevious() } }, modifier = Modifier.focusRequester(previousFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White)
-                            }
-                            if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.focusRequester(rewindFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White)
-                            }
-                            IconButton(onClick = { if (player.isPlaying) player.pause() else player.play() }, modifier = Modifier.focusRequester(playPauseFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", tint = Color.White)
-                            }
-                            if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }, modifier = Modifier.focusRequester(forwardFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White)
-                            }
-                            if (media.nextEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayNext() } }, modifier = Modifier.focusRequester(nextFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                Icon(Icons.Default.SkipNext, "Next", tint = Color.White)
-                            }
-                        }
-                        if (duration > 0L) {
-                            val completedPercent = ((position.coerceIn(0L, duration) * 100L) / duration).toInt()
-                            Text(
-                                "${formatPlayerTime(position)} / -${formatPlayerTime((duration - position).coerceAtLeast(0L))} · $completedPercent% / ${100 - completedPercent}%",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (videoDetails.isNotBlank()) Text(videoDetails, color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
-                    }
+                    if (videoDetails.isNotBlank()) Text(
+                        videoDetails,
+                        modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
+                        color = Color.LightGray,
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
         }
@@ -746,6 +738,89 @@ private object FailedDecoderRegistry {
         context.getSharedPreferences("player_decoder_fallbacks", Context.MODE_PRIVATE).edit()
             .putStringSet("failed_decoders", failedNames.toSet()).apply()
         return decoder
+    }
+}
+
+/**
+ * A seek bar with an Android 16-style vertical indicator. The left-aligned
+ * readout is clipped into active/inactive layers as the fill passes beneath it.
+ */
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun PlaybackProgressBar(
+    position: Long,
+    duration: Long,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val safePosition = position.coerceIn(0L, duration)
+    val fraction = (safePosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+    val elapsed = formatPlayerTime(safePosition)
+    val remaining = formatPlayerTime(duration - safePosition)
+    val total = formatPlayerTime(duration)
+    Box(
+        modifier.height(56.dp)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != ComposeKeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    ComposeKey.DirectionLeft -> {
+                        onSeek((safePosition - 10_000L).coerceAtLeast(0L))
+                        true
+                    }
+                    ComposeKey.DirectionRight -> {
+                        onSeek((safePosition + 10_000L).coerceAtMost(duration))
+                        true
+                    }
+                    else -> false
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Slider(
+            value = safePosition.toFloat(),
+            onValueChange = { onSeek(it.toLong()) },
+            valueRange = 0f..duration.toFloat(),
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            thumb = {
+                Box(
+                    Modifier.width(4.dp).height(44.dp)
+                        .shadow(5.dp, RoundedCornerShape(99.dp))
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            },
+            track = {
+                Box(
+                    Modifier.fillMaxWidth().height(36.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Box(
+                        Modifier.fillMaxHeight().fillMaxWidth(fraction)
+                            .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                }
+            },
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = Color.Transparent,
+                inactiveTrackColor = Color.Transparent
+            )
+        )
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color.Black.copy(alpha = 0.46f),
+            contentColor = Color.White
+        ) {
+            Text(
+                "$elapsed  •  −$remaining  •  $total",
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
+        }
     }
 }
 
