@@ -25,9 +25,18 @@ import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 private val Context.dataStore by preferencesDataStore("nik_tv_profiles")
+
+@Serializable
+private data class NikTvBackup(
+    val formatVersion: Int = 1,
+    val exportedAtMillis: Long = System.currentTimeMillis(),
+    val strings: Map<String, String>,
+    val integers: Map<String, Int>
+)
 
 class ProfileStore(private val context: Context) {
     private val key = stringPreferencesKey("active_profile")
@@ -219,6 +228,41 @@ class ProfileStore(private val context: Context) {
         val filterKey = "$profileKey|${type.name}"
         prefs[categoryFiltersKey] = Json.encodeToString(existing - filterKey)
     }
+    suspend fun exportBackup(): String {
+        val values = context.dataStore.data.first().asMap()
+        val strings = values.mapNotNull { (key, value) ->
+            if (key.name in BACKUP_STRING_KEYS && value is String) key.name to value else null
+        }.toMap()
+        val integers = values.mapNotNull { (key, value) ->
+            if (key.name in BACKUP_INT_KEYS && value is Int) key.name to value else null
+        }.toMap()
+        return Json { prettyPrint = true; encodeDefaults = true }.encodeToString(
+            NikTvBackup(strings = strings, integers = integers)
+        )
+    }
+
+    suspend fun importBackup(content: String) {
+        val backup = Json { ignoreUnknownKeys = true }.decodeFromString<NikTvBackup>(content)
+        require(backup.formatVersion == 1) { "Unsupported NikTV backup version ${backup.formatVersion}" }
+        backup.strings[profilesKey.name]?.let {
+            require(runCatching { Json.decodeFromString<List<PortalProfile>>(it) }.getOrNull() != null) {
+                "The backup contains invalid profile data"
+            }
+        }
+        context.dataStore.edit { prefs ->
+            BACKUP_STRING_KEYS.forEach { prefs.remove(stringPreferencesKey(it)) }
+            BACKUP_INT_KEYS.forEach { prefs.remove(intPreferencesKey(it)) }
+            backup.strings.filterKeys { it in BACKUP_STRING_KEYS }.forEach { (name, value) ->
+                prefs[stringPreferencesKey(name)] = value
+            }
+            backup.integers.filterKeys { it in BACKUP_INT_KEYS }.forEach { (name, value) ->
+                prefs[intPreferencesKey(name)] = value
+            }
+            // Portal tokens are intentionally device-local and must be refreshed.
+            prefs.remove(sessionKey)
+            prefs.remove(sessionsKey)
+        }
+    }
     suspend fun clear() = context.dataStore.edit {
         it.remove(key)
         it.remove(sessionKey)
@@ -250,4 +294,13 @@ class ProfileStore(private val context: Context) {
     private fun decodeRecentSearches(raw: String?): List<RecentSearch> =
         raw?.let { runCatching { Json.decodeFromString<List<RecentSearch>>(it) }.getOrNull() }.orEmpty()
     private fun PortalProfile.identity() = "$portalType|${portalUrl.trimEnd('/').lowercase()}|${username.ifBlank { macAddress }.lowercase()}"
+
+    companion object {
+        private val BACKUP_STRING_KEYS = setOf(
+            "active_profile", "saved_profiles", "active_profile_identity", "favorites",
+            "recently_played", "playback_progress", "recent_searches", "category_filters",
+            "series_start_season", "watched_series", "remembered_series_seasons", "browse_layouts"
+        )
+        private val BACKUP_INT_KEYS = setOf("catalog_cache_interval_minutes")
+    }
 }

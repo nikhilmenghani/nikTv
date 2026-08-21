@@ -10,6 +10,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
@@ -76,6 +78,7 @@ import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
 import com.nikhil.niktv.update.formatDownloadBytes
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 private val NikColors = darkColorScheme(
     primary = Color(0xFFE50914), onPrimary = Color.White,
@@ -118,8 +121,14 @@ private fun Modifier.remoteFocusFrame(
     shape: Shape = RoundedCornerShape(12.dp)
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     return this
-        .onFocusChanged { focused = it.isFocused }
+        .bringIntoViewRequester(bringIntoViewRequester)
+        .onFocusChanged {
+            focused = it.isFocused
+            if (it.isFocused) scope.launch { bringIntoViewRequester.bringIntoView() }
+        }
         .then(
             if (focused) Modifier
                 .shadow(16.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
@@ -187,7 +196,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     message = state.profileLoadMessage,
                     progress = state.profileLoadProgress ?: 0f
                 )
-                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor)
+                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup)
                 else -> CatalogScreen(
                     state = state,
                     selectType = vm::openCatalogType,
@@ -228,6 +237,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,loadMoreEpisodes = vm::loadMoreEpisodes
                     ,setSearchCategory = vm::setSearchCategory
                     ,addProfile = vm::addProfile
+                    ,exportBackup = vm::exportBackup
+                    ,importBackup = vm::importBackup
                     ,openProfileSwitcher = vm::openProfileSwitcher
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
@@ -278,6 +289,14 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             }
                         }
                     }
+                )
+            }
+            state.backupMessage?.let { message ->
+                AlertDialog(
+                    onDismissRequest = vm::dismissBackupMessage,
+                    confirmButton = { Button(onClick = vm::dismissBackupMessage) { Text("OK") } },
+                    title = { Text("NikTV backup") },
+                    text = { Text(message) }
                 )
             }
            }
@@ -510,7 +529,10 @@ private fun ProfileLoadingScreen(profileName: String?, message: String, progress
 }
 
 @Composable
-private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit) {
+private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit) {
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(importBackup)
+    }
     if (profiles.isNotEmpty() && !editorOpen) {
         Column(
             Modifier.fillMaxSize().background(Color(0xFF090909)).statusBarsPadding().padding(24.dp),
@@ -528,6 +550,9 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     }
                 }
                 ProfileChooserTile("Add profile", "New connection", Icons.Default.Add, addProfile)
+                ProfileChooserTile("Import backup", "Restore NikTV setup", Icons.Default.FileDownload) {
+                    importLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
+                }
             }
         }
         return
@@ -621,6 +646,10 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                 }
                 val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
                 Button(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text(if (saved == null) "Add profile" else "Save profile") }
+                OutlinedButton(
+                    onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
+                    modifier = Modifier.fillMaxWidth().remoteFocusFrame()
+                ) { Icon(Icons.Default.FileDownload, null); Spacer(Modifier.width(8.dp)); Text("Import NikTV backup") }
                 Text("Only connect to services you are authorized to access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.navigationBarsPadding())
             }
@@ -693,6 +722,8 @@ private fun CatalogScreen(
     loadMoreEpisodes: () -> Unit,
     setSearchCategory: (String) -> Unit,
     addProfile: () -> Unit,
+    exportBackup: (android.net.Uri) -> Unit,
+    importBackup: (android.net.Uri) -> Unit,
     openProfileSwitcher: () -> Unit,
     switchProfile: (PortalProfile) -> Unit,
     removeProfile: (PortalProfile) -> Unit,
@@ -737,6 +768,8 @@ private fun CatalogScreen(
                     reauthenticate = reauthenticate,
                     editProfile = editProfile,
                     addProfile = addProfile,
+                    exportBackup = exportBackup,
+                    importBackup = importBackup,
                     switchProfile = switchProfile,
                     removeProfile = removeProfile,
                     logout = logout,
@@ -1872,6 +1905,8 @@ private fun ModernSettingsScreen(
     reauthenticate: () -> Unit,
     editProfile: () -> Unit,
     addProfile: () -> Unit,
+    exportBackup: (android.net.Uri) -> Unit,
+    importBackup: (android.net.Uri) -> Unit,
     switchProfile: (PortalProfile) -> Unit,
     removeProfile: (PortalProfile) -> Unit,
     logout: () -> Unit,
@@ -1882,11 +1917,21 @@ private fun ModernSettingsScreen(
     val profile = state.savedProfile ?: return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let(exportBackup)
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(importBackup)
+    }
     var pendingRemoval by remember { mutableStateOf<PortalProfile?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
     var downloadActionMessage by remember { mutableStateOf<String?>(null) }
     var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    val updateDownloadRequester = remember { FocusRequester() }
+    val versionRequester = remember { FocusRequester() }
+    var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
+    var restoreVersionFocus by remember { mutableStateOf(false) }
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     val downloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
@@ -1896,6 +1941,7 @@ private fun ModernSettingsScreen(
         runCatching { AppUpdates.download(context, update) }
             .onSuccess {
                 updateMessage = "Downloading ${update.version}…"
+                restoreVersionFocus = true
                 availableUpdate = null
             }
             .onFailure {
@@ -1930,6 +1976,19 @@ private fun ModernSettingsScreen(
             availableUpdate = update
             updateMessage = "Version ${update.version} needs storage permission to download"
             downloadActionMessage = AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE
+        }
+    }
+    LaunchedEffect(availableUpdate) {
+        if (availableUpdate != null) {
+            updateDialogNavigationEnabled = false
+            withFrameNanos { }
+            runCatching { updateDownloadRequester.requestFocus() }
+            withFrameNanos { }
+            updateDialogNavigationEnabled = true
+        } else if (restoreVersionFocus) {
+            delay(80L)
+            runCatching { versionRequester.requestFocus() }
+            restoreVersionFocus = false
         }
     }
     val deviceMacAddress = remember(context) { cast4kStyleDeviceMacAddress(context) }
@@ -2029,6 +2088,38 @@ private fun ModernSettingsScreen(
             HorizontalDivider()
             SettingsValueRow(Icons.Default.Wifi, "Device MAC Address", deviceMacAddress)
         }
+        SettingsSection("Backup and restore") {
+            Text(
+                "Backup files contain your portal addresses and credentials. Store them securely.",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Export NikTV setup") },
+                supportingContent = { Text("Save profiles, credentials, filters, preferences, favorites, and viewing progress") },
+                leadingContent = { Icon(Icons.Default.FileUpload, null) },
+                modifier = Modifier.remoteFocusFrame().clickable {
+                    val timestamp = java.text.SimpleDateFormat(
+                        "yyyyMMdd-HHmmss",
+                        java.util.Locale.getDefault()
+                    ).format(java.util.Date())
+                    exportLauncher.launch("NikTV-${BuildConfig.VERSION_NAME}-$timestamp-backup.json")
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Import NikTV setup") },
+                supportingContent = { Text("Restore a backup from another TV; profiles authenticate with fresh sessions") },
+                leadingContent = { Icon(Icons.Default.FileDownload, null) },
+                modifier = Modifier.remoteFocusFrame().clickable {
+                    importLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
         SettingsSection("Account actions") {
             ListItem(
                 headlineContent = { Text("Re-authenticate") },
@@ -2121,7 +2212,7 @@ private fun ModernSettingsScreen(
                     },
                     leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
                     trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
-                    modifier = Modifier.remoteFocusFrame().clickable(enabled = !checkingUpdate) {
+                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame().clickable(enabled = !checkingUpdate) {
                         checkingUpdate = true; updateMessage = "Checking for updates…"
                         scope.launch {
                             runCatching { AppUpdates.check() }
@@ -2239,36 +2330,60 @@ private fun ModernSettingsScreen(
         )
     }
     availableUpdate?.let { update ->
-        AlertDialog(
-            onDismissRequest = { availableUpdate = null },
-            title = { Text("NikTV ${update.version} is available") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Dialog(onDismissRequest = {
+            restoreVersionFocus = true
+            availableUpdate = null
+        }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 620.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
+                tonalElevation = 2.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(Modifier.size(48.dp), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.SystemUpdate, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("NikTV ${update.version} is available", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text("Current version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                     Text("Download the signed APK to ${AppUpdates.savedLocation(update.version)}. Android will ask you to confirm installation when it is ready.")
-                    downloadActionMessage?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error)
+                    downloadActionMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                        FilledTonalButton(
+                            onClick = {
+                                AppUpdates.dismissPendingUpdate(update)
+                                restoreVersionFocus = true
+                                availableUpdate = null
+                                pendingPermissionUpdate = null
+                            },
+                            modifier = Modifier.height(44.dp)
+                                .focusProperties { canFocus = updateDialogNavigationEnabled }
+                                .remoteFocusFrame(CircleShape),
+                            shape = CircleShape
+                        ) { Text("Later") }
+                        Button(
+                            onClick = { requestUpdateDownload(update) },
+                            enabled = AppUpdates.canStartDownload(update),
+                            modifier = Modifier.height(44.dp).focusRequester(updateDownloadRequester).remoteFocusFrame(CircleShape),
+                            shape = CircleShape
+                        ) {
+                            Icon(Icons.Default.Download, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (AppUpdates.canWritePublicDownloads(context)) "Download" else "Allow & download")
+                        }
                     }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { requestUpdateDownload(update) },
-                    enabled = AppUpdates.canStartDownload(update)
-                ) {
-                    Text(
-                        if (AppUpdates.canWritePublicDownloads(context)) "Download"
-                        else "Allow & download"
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    AppUpdates.dismissPendingUpdate(update)
-                    availableUpdate = null
-                    pendingPermissionUpdate = null
-                }) { Text("Later") }
-            },
-        )
+            }
+        }
     }
 }
 

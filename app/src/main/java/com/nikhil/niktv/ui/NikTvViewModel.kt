@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nikhil.niktv.data.ProfileStore
@@ -65,6 +66,7 @@ data class NikTvState(
     val categoryFilters: Map<String, List<String>> = emptyMap(),
     val categoryManagerOpen: Boolean = false,
     val categoryManagerType: CatalogType = CatalogType.LIVE_TV
+    ,val backupMessage: String? = null
     ,val catalogPage: Int = 1
     ,val catalogHasMore: Boolean = false
     ,val catalogLoadingMore: Boolean = false
@@ -832,6 +834,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }.takeIf { it >= 0 } ?: 0
         switchProfile(snapshot.profiles[(currentIndex + 1) % snapshot.profiles.size])
     }
+    fun exportBackup(uri: Uri) = viewModelScope.launch {
+        runCatching {
+            val content = store.exportBackup()
+            requireNotNull(getApplication<Application>().contentResolver.openOutputStream(uri, "wt")).bufferedWriter().use {
+                it.write(content)
+            }
+        }.onSuccess {
+            _state.update { it.copy(backupMessage = "NikTV backup exported") }
+        }.onFailure { error ->
+            _state.update { it.copy(backupMessage = "Could not export backup: ${error.message}") }
+        }
+    }
+    fun importBackup(uri: Uri) = viewModelScope.launch {
+        runCatching {
+            val content = requireNotNull(getApplication<Application>().contentResolver.openInputStream(uri)).bufferedReader().use { it.readText() }
+            store.importBackup(content)
+        }.onSuccess {
+            val profiles = store.profiles.first()
+            _state.update { NikTvState(
+                profiles = profiles,
+                savedProfile = profiles.firstOrNull(),
+                profileEditorOpen = profiles.isEmpty(),
+                restoring = false,
+                backupMessage = "Backup imported. Choose a profile to authenticate."
+            ) }
+        }.onFailure { error ->
+            _state.update { it.copy(backupMessage = "Could not import backup: ${error.message}") }
+        }
+    }
+    fun dismissBackupMessage() = _state.update { it.copy(backupMessage = null) }
     fun cancelProfileEditor() = _state.update { current ->
         val fallback = current.profiles.firstOrNull()
         current.copy(profileEditorOpen = false, savedProfile = fallback)
