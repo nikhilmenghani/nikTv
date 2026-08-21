@@ -570,7 +570,15 @@ fun PlayerScreen(
                         .padding(horizontal = 24.dp, vertical = 16.dp)
                 ) {
                     val seekable = duration > 0L && media.catalogType != com.nikhil.niktv.model.CatalogType.LIVE_TV
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.onPreviewKeyEvent { event ->
+                            if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
+                                runCatching { fullscreenFocusRequester.requestFocus() }
+                                true
+                            } else false
+                        },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                             if (playbackError == null && !startupTimedOut) {
                                 if (media.previousEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayPrevious() } }, modifier = Modifier.focusRequester(previousFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
                                     Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White)
