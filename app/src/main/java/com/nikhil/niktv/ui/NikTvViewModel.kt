@@ -148,15 +148,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             profileEditorOpen = profiles.isEmpty(), restoring = false) }
     }
 
-    fun connect(profile: PortalProfile) = task {
-        _state.update { it.copy(savedProfile = profile) }
-        updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
-        val session = portal.authenticate(profile)
-        updateProfileLoad(0.24f, "Authentication complete")
-        store.save(session)
-        _state.update { it.copy(session = session, savedProfile = session.profile, profileEditorOpen = false) }
-        loadProfileLibrary(session.profile.cacheKey())
-        preloadDashboard(session)
+    fun connect(profile: PortalProfile) = openProfile(profile, forceAuthentication = false)
+
+    /**
+     * A profile selection is not a new login. Reuse its persisted portal token and
+     * only create a new session when there is no saved token, or the portal rejects
+     * the saved one while loading the dashboard.
+     */
+    private fun openProfile(profile: PortalProfile, forceAuthentication: Boolean) = task {
+        store.activate(profile)
+        var session = if (forceAuthentication) null else store.sessionFor(profile)
+        if (session == null) {
+            updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
+            session = portal.authenticate(profile)
+            store.save(session)
+            updateProfileLoad(0.24f, "Authentication complete")
+        } else {
+            updateProfileLoad(0.08f, "Restoring ${profile.name}…")
+        }
+
+        var activeSession = requireNotNull(session)
+        _state.update { it.copy(session = activeSession, savedProfile = activeSession.profile, profileEditorOpen = false) }
+        loadProfileLibrary(activeSession.profile.cacheKey())
+        try {
+            preloadDashboard(activeSession)
+        } catch (error: Throwable) {
+            if (!error.isAuthenticationFailure() || forceAuthentication) throw error
+            updateProfileLoad(0.18f, "Session expired — authenticating ${profile.name}…")
+            activeSession = refreshSession(profile)
+            preloadDashboard(activeSession)
+        }
     }
 
     /**
@@ -814,7 +835,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun openSettings() = _state.update { it.copy(settingsOpen = true) }
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
-    fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
+    fun reauthenticate() { _state.value.savedProfile?.let { openProfile(it, forceAuthentication = true) } }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }
     fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
     fun cancelProfileEditor() = _state.update { current ->
