@@ -494,7 +494,7 @@ fun PlayerScreen(
             },
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (!focusMode && !inPictureInPicture) Modifier.padding(top = 76.dp, bottom = 116.dp) else Modifier)
+                    .then(if (!focusMode && !inPictureInPicture) Modifier.padding(top = 76.dp, bottom = 148.dp) else Modifier)
             )
         }
         if ((controlsVisible || !focusMode) && !inPictureInPicture) {
@@ -553,83 +553,6 @@ fun PlayerScreen(
                     }
                 }
 
-                if (controlsVisible && playbackError == null && !startupTimedOut) {
-                    Row(
-                        Modifier.align(Alignment.Center),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (media.previousEpisode != null) IconButton(onClick = {
-                            if (!advancing) {
-                                advancing = true
-                                onPlayPrevious()
-                            }
-                        }, modifier = Modifier.focusRequester(previousFocusRequester)
-                            .focusProperties {
-                                right = if (duration > 0L) rewindFocusRequester else playPauseFocusRequester
-                                up = rotateFocusRequester
-                                if (duration > 0L) down = progressFocusRequester
-                            }
-                            .playerControlFocus(CircleShape) { controlsFocused = it }) {
-                            Icon(
-                                Icons.Default.SkipPrevious,
-                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) "Previous channel" else "Previous episode",
-                                Modifier.size(34.dp),
-                                tint = Color.White
-                            )
-                        }
-                        if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) },
-                            modifier = Modifier.focusRequester(rewindFocusRequester)
-                                .focusProperties {
-                                    left = if (media.previousEpisode != null) previousFocusRequester else FocusRequester.Default
-                                    right = playPauseFocusRequester
-                                    up = rotateFocusRequester
-                                    down = progressFocusRequester
-                                }.playerControlFocus(CircleShape) { controlsFocused = it }) {
-                            Icon(Icons.Default.Replay10, "Back 10 seconds", Modifier.size(38.dp), tint = Color.White)
-                        }
-                        FilledIconButton(
-                            onClick = { if (player.isPlaying) player.pause() else player.play() },
-                            modifier = Modifier.size(68.dp).focusRequester(playPauseFocusRequester)
-                                .focusProperties {
-                                    left = when { duration > 0L -> rewindFocusRequester; media.previousEpisode != null -> previousFocusRequester; else -> FocusRequester.Default }
-                                    right = when { duration > 0L -> forwardFocusRequester; media.nextEpisode != null -> nextFocusRequester; else -> FocusRequester.Default }
-                                    up = rotateFocusRequester
-                                    if (duration > 0L) down = progressFocusRequester
-                                }.playerControlFocus(CircleShape) { controlsFocused = it },
-                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)
-                        ) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", Modifier.size(42.dp)) }
-                        if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) },
-                            modifier = Modifier.focusRequester(forwardFocusRequester)
-                                .focusProperties {
-                                    left = playPauseFocusRequester
-                                    right = if (media.nextEpisode != null) nextFocusRequester else FocusRequester.Default
-                                    up = rotateFocusRequester
-                                    down = progressFocusRequester
-                                }.playerControlFocus(CircleShape) { controlsFocused = it }) {
-                            Icon(Icons.Default.Forward10, "Forward 10 seconds", Modifier.size(38.dp), tint = Color.White)
-                        }
-                        if (media.nextEpisode != null) IconButton(onClick = {
-                            if (!advancing) {
-                                advancing = true
-                                onPlayNext()
-                            }
-                        }, modifier = Modifier.focusRequester(nextFocusRequester)
-                            .focusProperties {
-                                left = if (duration > 0L) forwardFocusRequester else playPauseFocusRequester
-                                up = rotateFocusRequester
-                                if (duration > 0L) down = progressFocusRequester
-                            }.playerControlFocus(CircleShape) { controlsFocused = it }) {
-                            Icon(
-                                Icons.Default.SkipNext,
-                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) "Next channel" else "Next episode",
-                                Modifier.size(34.dp),
-                                tint = Color.White
-                            )
-                        }
-                    }
-                }
-
                 Column(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
@@ -637,25 +560,6 @@ fun PlayerScreen(
                         .padding(horizontal = 24.dp, vertical = 16.dp)
                 ) {
                     if (duration > 0L) {
-                        val completedPercent = ((position.coerceIn(0L, duration) * 100L) / duration).toInt()
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(
-                                "${formatPlayerTime(position)} elapsed · $completedPercent% complete",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                            Text(
-                                buildString {
-                                    append(formatPlayerTime((duration - position).coerceAtLeast(0L)))
-                                    append(" remaining · ")
-                                    append(100 - completedPercent)
-                                    append('%')
-                                    if (videoDetails.isNotBlank()) { append(" · "); append(videoDetails) }
-                                },
-                                color = Color.LightGray,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
                         Slider(
                             value = position.coerceAtMost(duration).toFloat(),
                             onValueChange = { player.seekTo(it.toLong()) },
@@ -677,6 +581,39 @@ fun PlayerScreen(
                             Spacer(Modifier.width(8.dp))
                             Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (controlsVisible && playbackError == null && !startupTimedOut) {
+                            if (media.previousEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayPrevious() } }, modifier = Modifier.focusRequester(previousFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White)
+                            }
+                            if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.focusRequester(rewindFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White)
+                            }
+                            IconButton(onClick = { if (player.isPlaying) player.pause() else player.play() }, modifier = Modifier.focusRequester(playPauseFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", tint = Color.White)
+                            }
+                            if (duration > 0L) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }, modifier = Modifier.focusRequester(forwardFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White)
+                            }
+                            if (media.nextEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayNext() } }, modifier = Modifier.focusRequester(nextFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                Icon(Icons.Default.SkipNext, "Next", tint = Color.White)
+                            }
+                        }
+                        if (duration > 0L) {
+                            val completedPercent = ((position.coerceIn(0L, duration) * 100L) / duration).toInt()
+                            Text(
+                                "${formatPlayerTime(position)} / -${formatPlayerTime((duration - position).coerceAtLeast(0L))} · $completedPercent% / ${100 - completedPercent}%",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (videoDetails.isNotBlank()) Text(videoDetails, color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
