@@ -157,7 +157,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun openProfile(profile: PortalProfile, forceAuthentication: Boolean) = task {
         store.activate(profile)
-        var session = if (forceAuthentication) null else store.sessionFor(profile)
+        var session = if (forceAuthentication) null else store.sessionFor(profile)?.takeIf(::isSessionRecent)
         if (session == null) {
             updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
             session = portal.authenticate(profile)
@@ -699,7 +699,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
             )
             CatalogType.LIVE_TV -> _state.value.items
-            else -> emptyList()
+            CatalogType.MOVIES -> _state.value.items
+            CatalogType.RADIO -> _state.value.items
         }
         val queueIndex = playbackQueue.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
         val previousItem = queueIndex?.let { playbackQueue.getOrNull(it - 1) }
@@ -900,16 +901,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.04f, "Loading ${profile.name}…")
         store.activate(profile)
-        // Profile selection is the session boundary: always obtain a fresh token.
-        updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
-        val session = portal.authenticate(profile).also { store.save(it) }
-        updateProfileLoad(0.24f, "Authentication complete")
+        var session = store.sessionFor(profile)?.takeIf(::isSessionRecent)
+        if (session == null) {
+            updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
+            session = portal.authenticate(profile).also { store.save(it) }
+            updateProfileLoad(0.24f, "Authentication complete")
+        } else updateProfileLoad(0.08f, "Restoring ${profile.name}…")
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList()) }
         loadProfileLibrary(session.profile.cacheKey())
-        preloadDashboard(session)
+        try {
+            preloadDashboard(session)
+        } catch (error: Throwable) {
+            if (!error.isAuthenticationFailure()) throw error
+            updateProfileLoad(0.18f, "Session expired — authenticating ${profile.name}…")
+            session = refreshSession(profile)
+            preloadDashboard(session)
+        }
     }
     fun removeProfile(profile: PortalProfile) = viewModelScope.launch {
         store.removeProfile(profile)
@@ -1139,9 +1149,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             text.contains("HTTP status: 401") || text.contains("HTTP status: 403")
     }
 
+    private fun isSessionRecent(session: PortalSession): Boolean =
+        System.currentTimeMillis() - session.authenticatedAtMillis in 0..SESSION_REUSE_WINDOW_MILLIS
+
     companion object {
         private const val MAX_RECENT_ITEMS = 100
         private const val MAX_PROGRESS_ITEMS = 200
         private const val MAX_PLAYBACK_URLS = 500
+        private const val SESSION_REUSE_WINDOW_MILLIS = 15 * 60_000L
     }
 }

@@ -560,13 +560,13 @@ fun PlayerScreen(
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
                         .padding(horizontal = 24.dp, vertical = 16.dp)
                 ) {
-                    if (duration > 0L) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    val seekable = duration > 0L && media.catalogType != com.nikhil.niktv.model.CatalogType.LIVE_TV
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                             if (playbackError == null && !startupTimedOut) {
                                 if (media.previousEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayPrevious() } }, modifier = Modifier.focusRequester(previousFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
                                     Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White)
                                 }
-                                IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.focusRequester(rewindFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                if (seekable) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.focusRequester(rewindFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
                                     Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White)
                                 }
                                 FilledIconButton(
@@ -578,7 +578,7 @@ fun PlayerScreen(
                                         contentColor = MaterialTheme.colorScheme.onPrimary
                                     )
                                 ) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play") }
-                                IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }, modifier = Modifier.focusRequester(forwardFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
+                                if (seekable) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }, modifier = Modifier.focusRequester(forwardFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
                                     Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White)
                                 }
                                 if (media.nextEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayNext() } }, modifier = Modifier.focusRequester(nextFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
@@ -586,16 +586,15 @@ fun PlayerScreen(
                                 }
                             }
                             Spacer(Modifier.width(12.dp))
-                            PlaybackProgressBar(
+                            if (seekable) PlaybackProgressBar(
                                 position = position,
                                 duration = duration,
                                 onSeek = { player.seekTo(it) },
                                 modifier = Modifier.weight(1f).focusRequester(progressFocusRequester)
                                     .playerControlFocus(RoundedCornerShape(28.dp)) { controlsFocused = it }
-                            )
-                        }
-                    } else if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ) else if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) Row(
+                                Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically
+                            ) {
                             Box(Modifier.size(9.dp).clip(RoundedCornerShape(50)).background(Color(0xFFE50914)))
                             Spacer(Modifier.width(8.dp))
                             Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)

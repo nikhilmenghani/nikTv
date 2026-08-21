@@ -271,6 +271,11 @@ class StalkerPortalClient(private val context: Context) {
             ?.removePrefix("ffrt ")
             ?.trim()
         if (playbackUrl.isNullOrBlank()) {
+            val payloadText = payload.toString()
+            if (listOf("authorization failed", "invalid token", "token expired", "not valid token", "not_valid_token\":\"1", "not_valid_token\":1")
+                    .any { payloadText.contains(it, ignoreCase = true) }) {
+                error("Authorization failed: the portal rejected the saved token")
+            }
             val portalError = payload.string("error")?.takeIf { it.isNotBlank() && it != "0" }
             error(
                 when (portalError) {
