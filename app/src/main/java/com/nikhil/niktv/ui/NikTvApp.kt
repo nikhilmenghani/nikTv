@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
@@ -88,6 +89,11 @@ private val NikColors = darkColorScheme(
 )
 private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+
+private fun Context.isTvLikeDevice(configuration: Configuration): Boolean =
+    packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION ||
+        !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
 private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
 
 private fun UpdateDownloadState.updateInfoOrNull(): UpdateInfo? = when (this) {
@@ -564,8 +570,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     val credentialFocus = remember { FocusRequester() }; val lastFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val profileConfiguration = LocalConfiguration.current
-    val profileIsTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-        profileConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val profileIsTv = context.isTvLikeDevice(profileConfiguration)
     var editingField by remember { mutableStateOf<String?>(null) }
     fun Modifier.profileTextField(field: String): Modifier = this
         .onFocusChanged {
@@ -696,8 +701,7 @@ private fun CatalogScreen(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val activity = context.findHostActivity()
-    val isTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = context.isTvLikeDevice(configuration)
     val wide = configuration.screenWidthDp >= 720
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
     val exitFocusRequester = remember { FocusRequester() }
@@ -873,8 +877,7 @@ private fun ModernBrowseScreen(
     val layoutToggleRequester = remember { FocusRequester() }
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
-    val isTv = LocalContext.current.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = LocalContext.current.isTvLikeDevice(configuration)
     val isWide = configuration.screenWidthDp >= 720 || isTv
     val columns = when {
         state.selectedType == CatalogType.LIVE_TV -> if (isWide) 6 else 4
@@ -1598,8 +1601,7 @@ private fun ModernSearchScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val searchConfiguration = LocalConfiguration.current
     val searchContext = LocalContext.current
-    val searchIsTv = searchContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-        searchConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val searchIsTv = searchContext.isTvLikeDevice(searchConfiguration)
     fun activateSearchField() {
         searchEditing = true
         focusRequester.requestFocus()
@@ -2433,8 +2435,7 @@ private fun CategoryManagerDialog(
     val gridState = rememberLazyGridState()
     val categoryConfiguration = LocalConfiguration.current
     val categoryContext = LocalContext.current
-    val categoryIsTv = categoryContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-        categoryConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val categoryIsTv = categoryContext.isTvLikeDevice(categoryConfiguration)
     val categoryColumns = when {
         categoryIsTv || categoryConfiguration.screenWidthDp >= 840 -> 4
         categoryConfiguration.screenWidthDp >= 600 -> 2
@@ -2830,8 +2831,7 @@ private fun ModernSeriesDetailScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val episodeConfiguration = LocalConfiguration.current
     val episodeContext = LocalContext.current
-    val episodeSearchIsTv = episodeContext.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-        episodeConfiguration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    val episodeSearchIsTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
         episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
 

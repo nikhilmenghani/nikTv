@@ -824,8 +824,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }
     fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
-    fun openProfileSwitcher() = _state.update {
-        it.copy(session = null, settingsOpen = false, searchOpen = false, favoritesOpen = false, profileEditorOpen = false)
+    fun openProfileSwitcher() {
+        val snapshot = _state.value
+        if (snapshot.profiles.size < 2) return
+        val currentIndex = snapshot.profiles.indexOfFirst {
+            it.cacheKey() == snapshot.savedProfile?.cacheKey()
+        }.takeIf { it >= 0 } ?: 0
+        switchProfile(snapshot.profiles[(currentIndex + 1) % snapshot.profiles.size])
     }
     fun cancelProfileEditor() = _state.update { current ->
         val fallback = current.profiles.firstOrNull()
