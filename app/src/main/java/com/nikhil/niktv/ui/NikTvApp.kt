@@ -225,6 +225,18 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
           } else {
            Box(Modifier.fillMaxSize()) {
             when {
+                state.nowPlaying?.catalogType == CatalogType.LIVE_TV -> LiveTvPlaybackScreen(
+                    state = state,
+                    play = vm::openMedia,
+                    onBack = vm::closePlayer,
+                    onRetry = vm::retryPlayback,
+                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
+                    onPlayPrevious = vm::playPreviousEpisode,
+                    onPlayNext = vm::playNextEpisode,
+                    onProgress = vm::savePlaybackProgress,
+                    toggleFavorite = vm::toggleFavorite,
+                    loadMoreCatalog = vm::loadMoreCatalog
+                )
                 state.nowPlaying != null -> PlayerScreen(
                     state.nowPlaying!!,
                     vm::closePlayer,
@@ -952,6 +964,7 @@ private fun ModernBrowseScreen(
 ) {
     val home = state.homeOpen
     val layoutToggleRequester = remember { FocusRequester() }
+    val firstChannelRequester = remember { FocusRequester() }
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.isTvLikeDevice(configuration)
@@ -963,6 +976,13 @@ private fun ModernBrowseScreen(
     }
     val aspectRatio = 16f / 9f
     val gridSpan: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+
+    LaunchedEffect(state.selectedType, state.selectedCategory?.id, state.items.firstOrNull()?.id) {
+        if (!home && state.selectedType == CatalogType.LIVE_TV && state.items.isNotEmpty()) {
+            delay(180L)
+            runCatching { firstChannelRequester.requestFocus() }
+        }
+    }
 
     ModernGrid(
         columns = columns,
@@ -976,8 +996,12 @@ private fun ModernBrowseScreen(
             }
             item("modern-hero", span = gridSpan) {
                 val recent = state.recentlyPlayed.firstOrNull()
-                ModernHero(hero, if (home && recent != null) {{ openRecent(recent) }} else null,
-                    if (!home && hero != null) {{ play(hero) }} else null, state.savedProfile?.name.orEmpty())
+                if (!home && state.selectedType == CatalogType.LIVE_TV) {
+                    LiveTvPreviewPlaceholder(state.selectedCategory?.title)
+                } else {
+                    ModernHero(hero, if (home && recent != null) {{ openRecent(recent) }} else null,
+                        if (!home && hero != null) {{ play(hero) }} else null, state.savedProfile?.name.orEmpty())
+                }
             }
             if (!home) item("modern-categories", span = gridSpan) {
                 val profileKey = state.savedProfile?.cacheKey()
@@ -1116,6 +1140,7 @@ private fun ModernBrowseScreen(
                     if (state.browseLayout == BrowseLayout.LIST) {
                         ModernMediaListCard(
                             item,
+                            modifier = if (state.selectedType == CatalogType.LIVE_TV && item.id == state.items.first().id) Modifier.focusRequester(firstChannelRequester) else Modifier,
                             onClick = { play(item) },
                             isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
                             toggleFavorite = { toggleFavorite(item) }
@@ -1124,7 +1149,9 @@ private fun ModernBrowseScreen(
                         ModernPosterCard(
                             item,
                             aspectRatio,
-                            Modifier.padding(horizontal = 4.dp),
+                            Modifier.padding(horizontal = 4.dp).then(
+                                if (state.selectedType == CatalogType.LIVE_TV && item.id == state.items.first().id) Modifier.focusRequester(firstChannelRequester) else Modifier
+                            ),
                             onClick = { play(item) },
                             isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
                             toggleFavorite = { toggleFavorite(item) },
@@ -1333,6 +1360,38 @@ private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit,
 }
 
 @Composable
+private fun LiveTvPreviewPlaceholder(categoryTitle: String?) {
+    Box(
+        Modifier.fillMaxWidth().height(330.dp).background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(listOf(Color(0xFF050505), Color(0xFF151515)))
+            )
+        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(shape = CircleShape, color = Color(0xFF242424)) {
+                Icon(Icons.Default.LiveTv, null, Modifier.padding(18.dp).size(42.dp), tint = Color(0xFFE50914))
+            }
+            Text("Choose a channel to start watching", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(categoryTitle ?: "Live TV", color = Color.LightGray, style = MaterialTheme.typography.bodyLarge)
+        }
+        Row(
+            Modifier.align(Alignment.BottomStart).padding(horizontal = 24.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFE50914)))
+            Text("LIVE TV", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
 private fun ModernHero(item: MediaItem?, recentAction: (() -> Unit)?, catalogAction: (() -> Unit)?, profileName: String) {
     val context = LocalContext.current
     Box(Modifier.fillMaxWidth().heightIn(min = 300.dp).height(50.vh())) {
@@ -1484,15 +1543,18 @@ private fun ModernPosterCard(
 @Composable
 private fun ModernMediaListCard(
     item: MediaItem,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     isFavorite: Boolean,
-    toggleFavorite: () -> Unit
+    toggleFavorite: () -> Unit,
+    supportingText: String? = item.description,
+    compact: Boolean = false
 ) {
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
+        modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp)
             .onFocusChanged { focused = it.isFocused }
             .then(if (focused) Modifier.shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
             .remoteCombinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
@@ -1500,8 +1562,8 @@ private fun ModernMediaListCard(
         color = if (focused) Color(0xFF292929) else Color(0xFF171717),
         border = if (focused) BorderStroke(4.dp, Color(0xFFFF2633)) else null
     ) {
-        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
+        Row(Modifier.padding(if (compact) 6.dp else 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 12.dp)) {
+            Box(Modifier.width(if (compact) 92.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
                 else SubcomposeAsyncImage(artworkRequest(context, item), item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
                     when (painter.state.value) {
@@ -1511,12 +1573,19 @@ private fun ModernMediaListCard(
                 }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(item.title, Modifier.then(if (focused) Modifier.basicMarquee(Int.MAX_VALUE) else Modifier), color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                item.description?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, color = Color.Gray, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(item.title, Modifier.then(if (focused) Modifier.basicMarquee(Int.MAX_VALUE) else Modifier), color = Color.White, style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium, maxLines = 1)
+                supportingText?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        it,
+                        color = if (it == "NOW PLAYING") Color(0xFFE50914) else Color.Gray,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = if (it == "NOW PLAYING") FontWeight.Bold else FontWeight.Normal,
+                        maxLines = if (compact) 1 else 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
-            Icon(Icons.Default.PlayArrow, null, tint = if (focused) Color.White else Color.Gray)
+            Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(if (compact) 20.dp else 24.dp), tint = if (focused) Color.White else Color.Gray)
         }
         DropdownMenu(
             expanded = menuOpen,
@@ -2436,6 +2505,105 @@ private fun ModernSettingsScreen(
                             Icon(Icons.Default.Download, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(if (AppUpdates.canWritePublicDownloads(context)) "Download" else "Allow & download")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveTvPlaybackScreen(
+    state: NikTvState,
+    play: (MediaItem) -> Unit,
+    onBack: () -> Unit,
+    onRetry: () -> Unit,
+    onRetryAlternateDecoder: (Long) -> Unit,
+    onPlayPrevious: () -> Unit,
+    onPlayNext: () -> Unit,
+    onProgress: (String, Long, Long) -> Unit,
+    toggleFavorite: (MediaItem) -> Unit,
+    loadMoreCatalog: () -> Unit
+) {
+    val playing = state.nowPlaying ?: return
+    var fullscreen by remember { mutableStateOf(false) }
+    val currentChannelRequester = remember { FocusRequester() }
+
+    LaunchedEffect(playing.progressKey) {
+        delay(180L)
+        runCatching { currentChannelRequester.requestFocus() }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+        PlayerScreen(
+            media = playing,
+            onBack = if (fullscreen) {{ fullscreen = false }} else onBack,
+            onRetry = onRetry,
+            onRetryAlternateDecoder = onRetryAlternateDecoder,
+            onPlayPrevious = onPlayPrevious,
+            onPlayNext = onPlayNext,
+            onProgress = onProgress,
+            modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(0.72f).aspectRatio(16f / 9f).align(Alignment.CenterStart),
+            embeddedMode = !fullscreen,
+            fullscreenOverride = fullscreen,
+            onFullscreenChanged = { fullscreen = it }
+        )
+        if (!fullscreen) {
+            Column(
+                Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.28f).fillMaxHeight()
+                    .background(Brush.verticalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0D0D0D))))
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(top = 12.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        "LIVE · ${state.selectedCategory?.title ?: "Channels"}",
+                        color = Color(0xFFE50914),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(playing.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        playing.media.liveProgramme?.title ?: "${state.items.size} channels",
+                        color = Color.LightGray,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    items(state.items, key = { item -> "live-player-${item.id}" }) { item ->
+                        val isPlaying = item.id == playing.media.id
+                        ModernMediaListCard(
+                            item = item,
+                            modifier = Modifier.then(if (isPlaying) Modifier.focusRequester(currentChannelRequester) else Modifier),
+                            onClick = {
+                                if (isPlaying) fullscreen = true else play(item)
+                            },
+                            isFavorite = state.favorites.any { it.kind == FavoriteKind.CHANNEL && it.media.id == item.id },
+                            toggleFavorite = { toggleFavorite(item) },
+                            supportingText = if (isPlaying) "NOW PLAYING" else item.liveProgramme?.title,
+                            compact = true
+                        )
+                    }
+                    if (state.catalogHasMore) item("live-player-load-more") {
+                        Button(
+                            onClick = loadMoreCatalog,
+                            enabled = !state.catalogLoadingMore,
+                            modifier = Modifier.fillMaxWidth().height(46.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                        ) {
+                            if (state.catalogLoadingMore) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                            else Icon(Icons.Default.ExpandMore, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (state.catalogLoadingMore) "Loading channels…" else "Load more channels")
                         }
                     }
                 }

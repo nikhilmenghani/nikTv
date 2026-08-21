@@ -76,7 +76,11 @@ fun PlayerScreen(
     onRetryAlternateDecoder: (Long) -> Unit,
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
-    onProgress: (String, Long, Long) -> Unit
+    onProgress: (String, Long, Long) -> Unit,
+    modifier: Modifier = Modifier,
+    embeddedMode: Boolean = false,
+    fullscreenOverride: Boolean? = null,
+    onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -89,8 +93,11 @@ fun PlayerScreen(
     // Fullscreen belongs to the player session, not to an individual queue item.
     // Preserve it while changing channels/episodes/titles.
     var focusMode by remember { mutableStateOf(false) }
+    LaunchedEffect(fullscreenOverride) {
+        fullscreenOverride?.let { focusMode = it }
+    }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
-    var controlsVisible by remember(media.progressKey) { mutableStateOf(true) }
+    var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
@@ -292,13 +299,14 @@ fun PlayerScreen(
             }
             focusMode -> {
                 focusMode = false
+                onFullscreenChanged?.invoke(false)
                 controlsVisible = true
             }
             else -> onBack()
         }
     }
     Box(
-        Modifier
+        modifier
             .fillMaxSize()
             .background(Color.Black)
             .then(if (focusMode || inPictureInPicture) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
@@ -320,7 +328,10 @@ fun PlayerScreen(
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         defaultFocusHighlightEnabled = false
                     }
-                    requestFocus()
+                    if (!embeddedMode) requestFocus()
+                    setOnFocusChangeListener { _, hasFocus ->
+                        if (hasFocus && embeddedMode) controlsVisible = true
+                    }
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     var lastFocus = Offset.Zero
                     var lastTouch = Offset.Zero
@@ -507,10 +518,10 @@ fun PlayerScreen(
             },
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (!focusMode && !inPictureInPicture) Modifier.padding(top = 76.dp, bottom = 148.dp) else Modifier)
+                    .then(if (!focusMode && !inPictureInPicture && !embeddedMode) Modifier.padding(top = 76.dp, bottom = 148.dp) else Modifier)
             )
         }
-        if ((controlsVisible || !focusMode) && !inPictureInPicture) {
+        if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             Box(
                 Modifier.fillMaxSize().then(
                     if (focusMode) Modifier.background(
@@ -534,6 +545,9 @@ fun PlayerScreen(
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(media.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                        videoDetails.takeIf { it.isNotBlank() }?.let {
+                            Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        }
                     }
                     IconButton(onClick = {
                         val landscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -556,6 +570,7 @@ fun PlayerScreen(
                     IconButton(onClick = {
                         val enteringFullscreen = !focusMode
                         focusMode = enteringFullscreen
+                        onFullscreenChanged?.invoke(enteringFullscreen)
                         controlsVisible = !enteringFullscreen
                         controlsFocused = false
                         playerViewRef?.requestFocus()
@@ -625,15 +640,11 @@ fun PlayerScreen(
                             Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
                     }
-                    Box(
+                    if (!embeddedMode) Box(
                         modifier = Modifier.fillMaxWidth().height(20.dp),
                         contentAlignment = Alignment.BottomEnd
                     ) {
-                        Text(
-                            videoDetails,
-                            color = Color.LightGray,
-                            style = MaterialTheme.typography.labelMedium
-                        )
+                        Text(videoDetails, color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
