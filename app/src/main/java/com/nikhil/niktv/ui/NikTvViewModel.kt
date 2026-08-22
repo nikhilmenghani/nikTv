@@ -30,6 +30,7 @@ data class NikTvState(
     val profileLoadMessage: String = "Preparing profile…",
     val error: String? = null,
     val nowPlaying: PlayingMedia? = null,
+    val playbackReturnFocusId: String? = null,
     val restoring: Boolean = true,
     val settingsOpen: Boolean = false,
     val selectedSeries: MediaItem? = null,
@@ -733,7 +734,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     resumePositionMillis = resumePosition,
                     progressKey = progressKey,
                     authorizationRetryCount = authorizationRetryCount
-                )
+                ),
+                playbackReturnFocusId = item.id
             )
         }
         recordRecent(item, type, series)
@@ -1043,7 +1045,33 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun openRecent(recent: RecentItem) {
         when (recent.kind) {
-            FavoriteKind.CHANNEL -> play(recent.media, CatalogType.LIVE_TV)
+            FavoriteKind.CHANNEL -> task {
+                val snapshot = _state.value
+                val session = requireNotNull(snapshot.session)
+                val categoryId = recent.media.portalCategoryId
+                val category = snapshot.rawCategoriesByType[CatalogType.LIVE_TV]
+                    .orEmpty()
+                    .firstOrNull { it.id == categoryId }
+                    ?: snapshot.categories.firstOrNull { it.id == categoryId }
+                    ?: runCatching {
+                        portal.categories(session, CatalogType.LIVE_TV).firstOrNull { it.id == categoryId }
+                    }.getOrNull()
+                if (category != null) {
+                    val channels = (listOf(recent.media) + portal.catalog(session, category)).distinctBy { it.id }
+                    _state.update {
+                        it.copy(
+                            homeOpen = false,
+                            selectedType = CatalogType.LIVE_TV,
+                            selectedCategory = category,
+                            items = channels,
+                            selectedSeries = null
+                        )
+                    }
+                    playInternal(recent.media, CatalogType.LIVE_TV, null, channels)
+                } else {
+                    playInternal(recent.media, CatalogType.LIVE_TV, null, listOf(recent.media))
+                }
+            }
             FavoriteKind.MOVIE -> play(recent.media, CatalogType.MOVIES)
             FavoriteKind.EPISODE -> task {
                 val episodes = recent.series?.let { portal.episodeSeason(requireNotNull(_state.value.session), it, _state.value.seriesStartSeason, recent.media.seasonNumber).episodes }.orEmpty()

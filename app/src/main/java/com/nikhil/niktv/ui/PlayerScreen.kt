@@ -307,12 +307,12 @@ fun PlayerScreen(
     }
     BackHandler {
         when {
-            startFullscreen -> onBack()
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
                 playerViewRef?.requestFocus()
             }
+            startFullscreen -> onBack()
             focusMode -> {
                 focusMode = false
                 onFullscreenChanged?.invoke(false)

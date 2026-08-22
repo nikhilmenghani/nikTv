@@ -1563,7 +1563,7 @@ private fun ModernMediaListCard(
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Surface(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp)
+        modifier = modifier.fillMaxWidth().padding(horizontal = if (compact) 4.dp else 10.dp)
             .onFocusChanged { focused = it.isFocused }
             .then(if (focused) Modifier.shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
             .remoteCombinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
@@ -1579,7 +1579,7 @@ private fun ModernMediaListCard(
             if (isCurrentlyPlaying) {
                 Box(Modifier.width(4.dp).height(42.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFFE50914)))
             }
-            Box(Modifier.width(if (compact) 72.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
+            Box(Modifier.width(if (compact) 60.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
                 else SubcomposeAsyncImage(artworkRequest(context, item), item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
                     when (painter.state.value) {
@@ -2568,10 +2568,21 @@ private fun LiveTvPlaybackScreen(
     val playing = state.nowPlaying ?: return
     var fullscreen by remember { mutableStateOf(false) }
     val currentChannelRequester = remember { FocusRequester() }
+    val channelListState = rememberLazyListState()
+    val playerConfiguration = LocalConfiguration.current
+    val narrowPlayerLayout = playerConfiguration.screenWidthDp < 900
+    val playerWidthFraction = if (narrowPlayerLayout) 0.64f else 0.72f
+    val channelWidthFraction = 1f - playerWidthFraction
 
-    LaunchedEffect(playing.progressKey) {
-        delay(180L)
-        runCatching { currentChannelRequester.requestFocus() }
+    LaunchedEffect(fullscreen, playing.media.id, state.items) {
+        if (!fullscreen) {
+            val playingIndex = state.items.indexOfFirst { it.id == playing.media.id }
+            if (playingIndex >= 0) {
+                channelListState.scrollToItem(playingIndex)
+                delay(180L)
+                runCatching { currentChannelRequester.requestFocus() }
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
@@ -2585,20 +2596,20 @@ private fun LiveTvPlaybackScreen(
             onPlayNext = onPlayNext,
             onProgress = onProgress,
             controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
-            modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(0.72f).aspectRatio(16f / 9f).align(Alignment.CenterStart),
+            modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(playerWidthFraction).aspectRatio(16f / 9f).align(Alignment.CenterStart),
             embeddedMode = !fullscreen,
             fullscreenOverride = fullscreen,
             onFullscreenChanged = { fullscreen = it }
         )
         if (!fullscreen) {
             Column(
-                Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.28f).fillMaxHeight()
+                Modifier.align(Alignment.CenterEnd).fillMaxWidth(channelWidthFraction).fillMaxHeight()
                     .background(Brush.verticalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0D0D0D))))
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(top = 12.dp, bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(top = 8.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
                         "LIVE · ${state.selectedCategory?.title ?: "Channels"}",
                         color = Color(0xFFE50914),
@@ -2607,7 +2618,7 @@ private fun LiveTvPlaybackScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(playing.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(playing.media.title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         playing.media.liveProgramme?.title ?: "${state.items.size} channels",
                         color = Color.LightGray,
@@ -2617,8 +2628,9 @@ private fun LiveTvPlaybackScreen(
                     )
                 }
                 LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    state = channelListState,
+                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     items(state.items, key = { item -> "live-player-${item.id}" }) { item ->
                         val isPlaying = item.id == playing.media.id
@@ -3210,6 +3222,8 @@ private fun ModernSeriesDetailScreen(
     var episodeSearchEditing by rememberSaveable(series.id) { mutableStateOf(false) }
     var seasonDropdownExpanded by remember { mutableStateOf(false) }
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
+    val returningEpisodeRequester = remember(series.id) { FocusRequester() }
+    val episodeListState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val episodeConfiguration = LocalConfiguration.current
     val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
@@ -3278,9 +3292,20 @@ private fun ModernSeriesDetailScreen(
     val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) latestEpisode ?: state.items.firstOrNull()
         else state.items.firstOrNull()
 
+    LaunchedEffect(state.playbackReturnFocusId, filteredEpisodes) {
+        val returningId = state.playbackReturnFocusId ?: return@LaunchedEffect
+        val episodeIndex = filteredEpisodes.indexOfFirst { it.id == returningId }
+        if (episodeIndex >= 0) {
+            episodeListState.scrollToItem(episodeIndex + 2)
+            delay(120L)
+            runCatching { returningEpisodeRequester.requestFocus() }
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
         LazyColumn(
             Modifier.fillMaxSize(),
+            state = episodeListState,
             contentPadding = PaddingValues(bottom = 64.dp)
         ) {
             item("series-hero") {
@@ -3681,6 +3706,7 @@ private fun ModernSeriesDetailScreen(
                         onClick = { play(episode) },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .then(if (state.playbackReturnFocusId == episode.id) Modifier.focusRequester(returningEpisodeRequester) else Modifier)
                             .padding(horizontal = 24.dp, vertical = 6.dp)
                     )
                 }
