@@ -1533,7 +1533,9 @@ private fun ModernBrowseScreen(
                                 },
                                 toggleFavorite = {
                                     toggleFavorite(item)
-                                }
+                                },
+                                unfocusedScale = 0.90f,
+                                focusedScale = 1.06f
                             )
                         }
 
@@ -2043,18 +2045,32 @@ private fun ModernPosterCard(
     isFavorite: Boolean = false,
     toggleFavorite: (() -> Unit)? = null,
     removeAction: (() -> Unit)? = null,
+    unfocusedScale: Float = 1f,
+    focusedScale: Float = 1f,
     footer: (@Composable () -> Unit)? = null
 ) {
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+
+    val posterScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (focused) focusedScale else unfocusedScale,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 140),
+        label = "catalogPosterScale"
+    )
     val context = LocalContext.current
     val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
     val fraction = if (progress != null && progress.durationMillis > 0L)
         (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
     Box(modifier) {
         Column(
-            Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
-            .remoteCombinedClickable(
+            Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = posterScale
+                    scaleY = posterScale
+                }
+                .onFocusChanged { focused = it.isFocused }
+                .remoteCombinedClickable(
                 onClick = onClick,
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
                     { menuOpen = true }

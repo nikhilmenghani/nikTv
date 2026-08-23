@@ -474,6 +474,9 @@ fun ShowcasePlaybackScreen(
 
         val headerHeight = (if (compact) 50.dp else 58.dp) + safeTop
         val railHeight = when {
+            type == CatalogType.MOVIES && maxHeight < 480.dp -> 132.dp
+            type == CatalogType.MOVIES && compact -> 154.dp
+            type == CatalogType.MOVIES -> 200.dp
             maxHeight < 480.dp -> 142.dp
             compact -> 172.dp
             else -> 224.dp
@@ -760,15 +763,15 @@ private fun BoxScope.ShowcaseRail(
         else -> 16f / 9f
     }
     val posterWidth = when {
-        type == CatalogType.MOVIES && compact -> 82.dp
-        type == CatalogType.MOVIES -> 118.dp
+        type == CatalogType.MOVIES && compact -> 72.dp
+        type == CatalogType.MOVIES -> 100.dp
         compact -> 136.dp
         else -> 184.dp
     }
     val showLoadMore =
         state.selectedType == type &&
-                type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) &&
-                (state.catalogHasMore || loadMorePending)
+            type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) &&
+            (state.catalogHasMore || loadMorePending)
 
     Column(
         Modifier
@@ -806,7 +809,7 @@ private fun BoxScope.ShowcaseRail(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             state = railState,
             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.Top
         ) {
             itemsIndexed(
@@ -823,7 +826,7 @@ private fun BoxScope.ShowcaseRail(
                     playing = playingItem.id == item.id,
                     favorite = state.favorites.any {
                         it.media.id == item.id &&
-                                it.kind == showcaseFavoriteKind(type, state.selectedSeries != null)
+                            it.kind == showcaseFavoriteKind(type, state.selectedSeries != null)
                     },
                     onFocused = { onFocused(item) },
                     onClick = { onPlay(item) }
@@ -880,6 +883,26 @@ private fun ShowcasePosterCard(
     var focused by remember { mutableStateOf(false) }
     val artwork = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
 
+    /*
+     * Netflix-style focus treatment:
+     * - normal cards are deliberately a little smaller
+     * - the selected card remains slightly emphasized
+     * - the actively focused card grows clearly above the rest
+     *
+     * The LazyRow slot does not change size, so focus movement remains stable.
+     */
+    val targetScale = when {
+        focused -> 1.12f
+        selected -> 1.04f
+        else -> 0.92f
+    }
+
+    val cardScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = targetScale,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 140),
+        label = "showcasePosterScale"
+    )
+
     Column(Modifier.width(width), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Surface(
             onClick = onClick,
@@ -896,9 +919,8 @@ private fun ShowcasePosterCard(
                     }
                 }
                 .graphicsLayer {
-                    val scale = if (focused) 1.055f else 1f
-                    scaleX = scale
-                    scaleY = scale
+                    scaleX = cardScale
+                    scaleY = cardScale
                 }
                 .then(
                     if (focused) {
