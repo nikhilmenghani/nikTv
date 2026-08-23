@@ -358,6 +358,17 @@ fun ShowcasePlaybackScreen(
     var fullscreen by remember { mutableStateOf(false) }
     var previewItem by remember { mutableStateOf(playing.media) }
 
+    /*
+     * SHOWCASE_BROWSE_CONTROLS_DISMISS_V10
+     *
+     * Increment whenever the poster rail or Load More becomes the user's
+     * active browsing surface. PlayerScreen observes this counter and removes
+     * its overlay controls without affecting playback.
+     */
+    var embeddedControlsDismissRequest by remember {
+        mutableIntStateOf(0)
+    }
+
     LaunchedEffect(playing.media.id) { previewItem = playing.media }
 
     /*
@@ -500,16 +511,16 @@ fun ShowcasePlaybackScreen(
 
         val headerHeight = (if (compact) 50.dp else 58.dp) + safeTop
         /*
-         * MOVIE_RAIL_READABILITY_V7
+         * MOVIE_RAIL_MULTILINE_TITLES_V9
          *
-         * Square movie artwork became too small at 100dp on larger screens.
-         * Give the rail enough vertical room for readable 112–124dp artwork
-         * while still leaving the majority of the screen to the video player.
+         * Keep the larger readable square artwork from v7, but reserve
+         * additional vertical room underneath movie tiles for wrapped titles.
+         * This prevents longer names from looking artificially cropped.
          */
         val railHeight = when {
-            type == CatalogType.MOVIES && maxHeight < 480.dp -> 146.dp
-            type == CatalogType.MOVIES && compact -> 164.dp
-            type == CatalogType.MOVIES -> 206.dp
+            type == CatalogType.MOVIES && maxHeight < 480.dp -> 184.dp
+            type == CatalogType.MOVIES && compact -> 204.dp
+            type == CatalogType.MOVIES -> 246.dp
             maxHeight < 480.dp -> 142.dp
             compact -> 172.dp
             else -> 224.dp
@@ -540,6 +551,8 @@ fun ShowcasePlaybackScreen(
                     .padding(start = 6.dp, end = 5.dp, top = 5.dp, bottom = 5.dp)
             },
             embeddedMode = !fullscreen,
+            embeddedControlsDismissRequest =
+                embeddedControlsDismissRequest,
             fullscreenOverride = fullscreen,
             onFullscreenChanged = { fullscreen = it }
         )
@@ -583,6 +596,9 @@ fun ShowcasePlaybackScreen(
                 safeEnd = safeEnd,
                 compact = compact,
                 loadMorePending = loadMorePending,
+                onBrowseFocus = {
+                    embeddedControlsDismissRequest++
+                },
                 onFocused = { previewItem = it },
                 onPlay = { item ->
                     /*
@@ -801,6 +817,7 @@ private fun BoxScope.ShowcaseRail(
     safeEnd: Dp,
     compact: Boolean,
     loadMorePending: Boolean,
+    onBrowseFocus: () -> Unit,
     onFocused: (MediaItem) -> Unit,
     onPlay: (MediaItem) -> Unit,
     onLoadMore: () -> Unit
@@ -921,8 +938,18 @@ private fun BoxScope.ShowcaseRail(
                         it.media.id == item.id &&
                             it.kind == showcaseFavoriteKind(type, state.selectedSeries != null)
                     },
-                    onFocused = { onFocused(item) },
-                    onClick = { onPlay(item) }
+                    onFocused = {
+                        onBrowseFocus()
+                        onFocused(item)
+                    },
+                    onClick = {
+                        /*
+                         * Touch does not always produce a focus transition
+                         * first, so explicitly dismiss player controls here.
+                         */
+                        onBrowseFocus()
+                        onPlay(item)
+                    }
                 )
             }
 
@@ -966,6 +993,8 @@ private fun BoxScope.ShowcaseRail(
                     ) {
                         Button(
                             onClick = {
+                                onBrowseFocus()
+
                                 if (
                                     !state.catalogLoadingMore &&
                                     !loadMorePending
@@ -985,6 +1014,8 @@ private fun BoxScope.ShowcaseRail(
                                         focusState.isFocused
 
                                     if (focusState.isFocused) {
+                                        onBrowseFocus()
+
                                         loadMoreScope.launch {
                                             withFrameNanos { }
                                             loadMoreSlotBringIntoViewRequester
@@ -1291,13 +1322,43 @@ private fun ShowcasePosterCard(
             }
         }
 
+        /*
+         * SHOWCASE_MULTILINE_TITLE_V9
+         *
+         * The player rail is primarily visual, but the title still needs to
+         * be readable. Allow several wrapped lines rather than forcing a
+         * single/truncated label beneath otherwise readable artwork.
+         */
         Text(
             item.title,
-            color = if (focused || selected) Color.White else Color.LightGray,
+            modifier = Modifier.heightIn(
+                min =
+                    if (width <= 100.dp) {
+                        58.dp
+                    } else {
+                        46.dp
+                    }
+            ),
+            color =
+                if (focused || selected) {
+                    Color.White
+                } else {
+                    Color.LightGray
+                },
             style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            fontWeight =
+                if (focused) {
+                    FontWeight.Bold
+                } else {
+                    FontWeight.Medium
+                },
+            maxLines =
+                if (width <= 100.dp) {
+                    4
+                } else {
+                    3
+                },
+            overflow = TextOverflow.Clip
         )
     }
 }

@@ -82,6 +82,7 @@ fun PlayerScreen(
     controlsTimeoutSeconds: Int = 3,
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
+    embeddedControlsDismissRequest: Int = 0,
     startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null
@@ -103,6 +104,31 @@ fun PlayerScreen(
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
+
+    /*
+     * EMBEDDED_BROWSE_DISMISSES_CONTROLS_V10
+     *
+     * The Showcase rail owns browsing focus. Every time focus/touch returns
+     * to that rail, Showcase increments embeddedControlsDismissRequest.
+     *
+     * This is intentionally one-way:
+     * - rail -> hides controls;
+     * - PlayerView focus -> existing focus listener shows controls again.
+     *
+     * Using a monotonically increasing request instead of a Boolean matters:
+     * the user can enter the player, then return to the rail repeatedly and
+     * each transition still produces a new dismissal event.
+     */
+    LaunchedEffect(embeddedControlsDismissRequest) {
+        if (
+            embeddedMode &&
+            embeddedControlsDismissRequest > 0
+        ) {
+            controlsVisible = false
+            controlsFocused = false
+        }
+    }
+
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
     var position by remember(media.progressKey) { mutableLongStateOf(0L) }
