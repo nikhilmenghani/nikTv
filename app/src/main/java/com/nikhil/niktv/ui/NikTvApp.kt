@@ -3123,67 +3123,59 @@ private fun LiveTvPlaybackScreen(
     }
 
     /*
-     * Keep one FocusRequester permanently associated with each channel ID.
-     *
-     * This is important for paged channel loading because the same requester
-     * can be created before a LazyColumn item is composed, then attached to
-     * that item when it enters the viewport.
+     * One stable FocusRequester per channel.
      */
     val channelFocusRequesters = remember {
         mutableMapOf<String, FocusRequester>()
     }
 
-    /*
-     * LazyColumn retains its position while pages are appended.
-     */
     val channelListState = rememberLazyListState()
 
     /*
-     * Focus restoration when returning from fullscreen is explicitly
-     * event-driven. Normal catalog updates must not move focus back to
-     * the currently playing channel.
+     * Used only when returning from fullscreen.
      */
     var restorePlayingChannelRequest by remember {
         mutableIntStateOf(0)
     }
 
     /*
-     * Load More lifecycle.
-     *
-     * While this is true, the Load More row remains in the LazyColumn and
-     * remains focusable. This prevents Compose from dropping focus while
-     * the next page is being requested.
+     * Load More state.
      */
     var loadMorePending by remember {
         mutableStateOf(false)
     }
 
-    /*
-     * Tracks whether catalogLoadingMore was actually observed.
-     *
-     * This distinguishes:
-     *
-     * 1. button pressed
-     * 2. ViewModel begins loading
-     * 3. ViewModel finishes loading
-     *
-     * from an unrelated recomposition.
-     */
     var loadMoreObservedLoading by remember {
         mutableStateOf(false)
     }
 
     /*
-     * Number of channels that existed before Load More was pressed.
+     * Number of channels before pagination.
      *
-     * After the page is appended, this index points at the first new
-     * channel.
+     * When new channels are appended, this is the index of
+     * the first newly loaded channel.
      */
     var loadMoreStartItemCount by remember {
         mutableIntStateOf(0)
     }
 
-    val playerConfiguration = LocalConfiguration.current
+    /*
+     * Preserve the exact viewport that existed when Load More
+     * was activated.
+     *
+     * This prevents the first newly loaded channel from being
+     * moved to the top of the screen.
+     */
+    var loadMoreFirstVisibleItemIndex by remember {
+        mutableIntStateOf(0)
+    }
+
+    var loadMoreFirstVisibleItemScrollOffset by remember {
+        mutableIntStateOf(0)
+    }
+
+    val playerConfiguration =
+        LocalConfiguration.current
 
     val narrowPlayerLayout =
         playerConfiguration.screenWidthDp < 900
@@ -3199,15 +3191,13 @@ private fun LiveTvPlaybackScreen(
         1f - playerWidthFraction
 
     /*
-     * Deterministically scroll to and focus a channel.
+     * Used when we deliberately want to navigate to a channel:
      *
-     * Do NOT use an arbitrary delay here.
+     * - opening Live TV
+     * - returning from fullscreen
      *
-     * scrollToItem() brings the requested index into the LazyColumn
-     * viewport. snapshotFlow then waits until LazyColumn confirms that
-     * the target row is actually part of its visible layout.
-     *
-     * Only after that row exists do we request focus.
+     * Pagination does NOT use this because it intentionally
+     * places the requested channel at the start of the viewport.
      */
     suspend fun focusChannelAt(
         index: Int,
@@ -3220,26 +3210,13 @@ private fun LiveTvPlaybackScreen(
                 FocusRequester()
             }
 
-        /*
-         * Align the target at the beginning of the channel viewport.
-         *
-         * This gives Load More the desired behaviour:
-         *
-         * old channels
-         * Load More
-         *      ↓
-         * first newly loaded channel at top
-         * second newly loaded channel
-         * third newly loaded channel
-         */
         channelListState.scrollToItem(
             index = index,
             scrollOffset = 0
         )
 
         /*
-         * Wait until LazyColumn has actually composed and laid out
-         * the requested row.
+         * Wait for LazyColumn to actually lay out the row.
          */
         snapshotFlow {
             channelListState.layoutInfo.visibleItemsInfo
@@ -3251,8 +3228,7 @@ private fun LiveTvPlaybackScreen(
         }
 
         /*
-         * Allow the FocusRequester modifier on the newly composed
-         * channel to become attached before requesting focus.
+         * Give the FocusRequester modifier one frame to attach.
          */
         withFrameNanos { }
 
@@ -3262,11 +3238,7 @@ private fun LiveTvPlaybackScreen(
     }
 
     /*
-     * Initial entry focus.
-     *
-     * Runs once when Live TV playback opens. It deliberately does not
-     * observe normal state/items changes because pagination must never
-     * pull the user back to the currently playing channel.
+     * Initial Live TV entry.
      */
     LaunchedEffect(Unit) {
         val playingIndex =
@@ -3275,7 +3247,9 @@ private fun LiveTvPlaybackScreen(
             }
 
         val playingChannel =
-            state.items.getOrNull(playingIndex)
+            state.items.getOrNull(
+                playingIndex
+            )
 
         if (
             playingIndex >= 0 &&
@@ -3289,8 +3263,7 @@ private fun LiveTvPlaybackScreen(
     }
 
     /*
-     * Restore the playing channel only after explicitly leaving
-     * fullscreen.
+     * Restore the playing row only after leaving fullscreen.
      */
     LaunchedEffect(
         restorePlayingChannelRequest
@@ -3308,7 +3281,9 @@ private fun LiveTvPlaybackScreen(
             }
 
         val playingChannel =
-            state.items.getOrNull(playingIndex)
+            state.items.getOrNull(
+                playingIndex
+            )
 
         if (
             playingIndex >= 0 &&
@@ -3322,26 +3297,23 @@ private fun LiveTvPlaybackScreen(
     }
 
     /*
-     * Seamless Load More focus handoff.
+     * Seamless pagination focus handoff.
      *
-     * The important sequence is:
+     * Expected behaviour:
      *
-     * Load More keeps focus
-     *        ↓
-     * ViewModel starts loading
-     *        ↓
-     * channels appended
-     *        ↓
-     * scroll first new channel to top
-     *        ↓
-     * wait until row is laid out
-     *        ↓
-     * focus first new channel
-     *        ↓
-     * loadMorePending = false
+     * 8
+     * 9
+     * 10
+     * Load More     <- focus
      *
-     * Once loadMorePending becomes false, this effect does nothing else.
-     * Normal D-pad focus navigation completely takes over.
+     * after loading:
+     *
+     * 8
+     * 9
+     * 10
+     * 11            <- focus
+     *
+     * The viewport itself should remain essentially unchanged.
      */
     LaunchedEffect(
         loadMorePending,
@@ -3353,10 +3325,9 @@ private fun LiveTvPlaybackScreen(
         }
 
         /*
-         * Loading has started.
+         * Loading started.
          *
-         * Keep Load More alive and focused. Do not attempt any focus
-         * movement yet because the target channel does not exist.
+         * Leave focus on Load More.
          */
         if (state.catalogLoadingMore) {
             loadMoreObservedLoading = true
@@ -3367,16 +3338,6 @@ private fun LiveTvPlaybackScreen(
             state.items.size >
                     loadMoreStartItemCount
 
-        /*
-         * Loading is considered finished once:
-         *
-         * - catalogLoadingMore was observed and is now false, or
-         * - new items have already appeared.
-         *
-         * The second condition also handles a very fast state update
-         * where Compose may not observe catalogLoadingMore=true in a
-         * separate frame.
-         */
         val loadFinished =
             loadMoreObservedLoading ||
                     receivedNewChannels
@@ -3393,29 +3354,66 @@ private fun LiveTvPlaybackScreen(
 
             if (firstNewChannel != null) {
                 /*
-                 * Pre-create the requester before scrolling.
-                 *
-                 * When LazyColumn composes the new row, getOrPut()
-                 * below will return this exact same requester.
+                 * Pre-create the requester.
                  */
-                channelFocusRequesters.getOrPut(
-                    firstNewChannel.id
-                ) {
-                    FocusRequester()
+                val requester =
+                    channelFocusRequesters.getOrPut(
+                        firstNewChannel.id
+                    ) {
+                        FocusRequester()
+                    }
+
+                /*
+                 * Restore exactly the viewport that existed when
+                 * Load More was pressed.
+                 *
+                 * Since pagination only appends channels, existing
+                 * channel indexes have not changed.
+                 */
+                channelListState.scrollToItem(
+                    index =
+                        loadMoreFirstVisibleItemIndex,
+
+                    scrollOffset =
+                        loadMoreFirstVisibleItemScrollOffset
+                )
+
+                /*
+                 * Wait until the first new channel exists in
+                 * LazyColumn's visible layout.
+                 *
+                 * Because it replaces the Load More row visually,
+                 * it should already be near the bottom of the
+                 * viewport rather than at the top.
+                 */
+                snapshotFlow {
+                    channelListState.layoutInfo
+                        .visibleItemsInfo
+                        .any { visibleItem ->
+                            visibleItem.index ==
+                                    loadMoreStartItemCount
+                        }
+                }.first { visible ->
+                    visible
                 }
 
-                focusChannelAt(
-                    index = loadMoreStartItemCount,
-                    channel = firstNewChannel
-                )
+                withFrameNanos { }
+
+                /*
+                 * Change focus only.
+                 *
+                 * Do not scroll to the new channel.
+                 */
+                runCatching {
+                    requester.requestFocus()
+                }
             }
         }
 
         /*
-         * Focus handoff is complete.
+         * Pagination is completely finished.
          *
-         * There are no delayed coroutines left that can unexpectedly
-         * steal focus while the user continues pressing DPAD_DOWN.
+         * No delayed focus operations remain after this point.
          */
         loadMorePending = false
         loadMoreObservedLoading = false
@@ -3424,7 +3422,9 @@ private fun LiveTvPlaybackScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF090909))
+            .background(
+                Color(0xFF090909)
+            )
     ) {
         PlayerScreen(
             media = playing,
@@ -3440,7 +3440,8 @@ private fun LiveTvPlaybackScreen(
                     onBack
                 },
 
-            onRetry = onRetry,
+            onRetry =
+                onRetry,
 
             onRetryAlternateDecoder =
                 onRetryAlternateDecoder,
@@ -3483,7 +3484,10 @@ private fun LiveTvPlaybackScreen(
                 fullscreen,
 
             onFullscreenChanged = {
-                if (fullscreen && !it) {
+                if (
+                    fullscreen &&
+                    !it
+                ) {
                     restorePlayingChannelRequest++
                 }
 
@@ -3527,7 +3531,7 @@ private fun LiveTvPlaybackScreen(
                     )
             ) {
                 /*
-                 * LIVE TV SIDEBAR HEADER
+                 * LIVE TV HEADER
                  */
                 Column(
                     modifier = Modifier
@@ -3604,10 +3608,6 @@ private fun LiveTvPlaybackScreen(
 
                 /*
                  * CHANNEL LIST
-                 *
-                 * Explicitly consume the remaining sidebar height.
-                 * This gives the LazyColumn a predictable viewport on
-                 * phones, tablets and TVs.
                  */
                 LazyColumn(
                     modifier = Modifier
@@ -3632,8 +3632,8 @@ private fun LiveTvPlaybackScreen(
                             state.items,
 
                         /*
-                         * Stable keys ensure existing rows retain identity
-                         * when another catalog page is appended.
+                         * Stable keys preserve row identity when
+                         * another page is appended.
                          */
                         key = { item ->
                             "live-player-${item.id}"
@@ -3643,10 +3643,6 @@ private fun LiveTvPlaybackScreen(
                             item.id ==
                                     playing.media.id
 
-                        /*
-                         * If focusChannelAt() pre-created this requester,
-                         * getOrPut() returns the same instance.
-                         */
                         val itemFocusRequester =
                             channelFocusRequesters.getOrPut(
                                 item.id
@@ -3702,14 +3698,11 @@ private fun LiveTvPlaybackScreen(
                     /*
                      * LOAD MORE CHANNELS
                      *
-                     * Keep this item present while loadMorePending=true.
+                     * Keep this row alive while pagination is pending.
                      *
-                     * This matters on the final page:
-                     *
-                     * catalogHasMore becomes false as soon as that page
-                     * arrives. Without "|| loadMorePending", Compose could
-                     * remove the currently focused button before focus has
-                     * been transferred to the first new channel.
+                     * This is especially important on the final page,
+                     * because catalogHasMore may become false before
+                     * focus has moved to the newly appended channel.
                      */
                     if (
                         state.catalogHasMore ||
@@ -3722,9 +3715,11 @@ private fun LiveTvPlaybackScreen(
                             Button(
                                 onClick = {
                                     /*
-                                     * Keep the button enabled/focusable,
-                                     * but ignore repeated activation while
-                                     * loading.
+                                     * Button deliberately stays enabled
+                                     * so it never loses focus simply
+                                     * because loading started.
+                                     *
+                                     * Ignore repeated activations instead.
                                      */
                                     if (
                                         state.catalogLoadingMore ||
@@ -3734,11 +3729,23 @@ private fun LiveTvPlaybackScreen(
                                     }
 
                                     /*
-                                     * This becomes the index of the first
-                                     * newly appended channel.
+                                     * The first new channel will appear
+                                     * at this index after append.
                                      */
                                     loadMoreStartItemCount =
                                         state.items.size
+
+                                    /*
+                                     * Capture EXACT viewport position
+                                     * before modifying the list.
+                                     */
+                                    loadMoreFirstVisibleItemIndex =
+                                        channelListState
+                                            .firstVisibleItemIndex
+
+                                    loadMoreFirstVisibleItemScrollOffset =
+                                        channelListState
+                                            .firstVisibleItemScrollOffset
 
                                     loadMoreObservedLoading =
                                         false
@@ -3752,26 +3759,23 @@ private fun LiveTvPlaybackScreen(
                                 /*
                                  * IMPORTANT:
                                  *
-                                 * Do not disable this Button while loading.
-                                 * A disabled focused component can cause
-                                 * Compose focus search to move focus elsewhere
-                                 * or temporarily lose it.
+                                 * No enabled=false here.
                                  *
-                                 * Duplicate activation is prevented inside
-                                 * onClick instead.
+                                 * Keeping the button focusable prevents
+                                 * focus from being evicted while the
+                                 * network request is running.
                                  */
 
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .height(
-                                            46.dp
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(
+                                        46.dp
+                                    )
+                                    .remoteFocusFrame(
+                                        RoundedCornerShape(
+                                            10.dp
                                         )
-                                        .remoteFocusFrame(
-                                            RoundedCornerShape(
-                                                10.dp
-                                            )
-                                        ),
+                                    ),
 
                                 colors =
                                     ButtonDefaults.buttonColors(
