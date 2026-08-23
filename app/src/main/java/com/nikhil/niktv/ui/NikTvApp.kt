@@ -1305,7 +1305,19 @@ private fun ModernBrowseScreen(
                     ModernSectionHeader(
                         state.selectedCategory?.title ?: state.selectedType.title,
                         "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}",
-                        action = if (state.selectedType != CatalogType.LIVE_TV) {
+                        action = if (state.selectedType == CatalogType.LIVE_TV) {
+                            {
+                                LiveTvColumnSelector(
+                                    selectedColumns = liveTvColumns,
+                                    maxColumns = maxLiveTvColumns,
+                                    onColumnsChanged = {
+                                        liveTvColumns = it
+                                    },
+                                    selectorFocusRequester = layoutToggleRequester,
+                                    firstChannelFocusRequester = firstChannelRequester
+                                )
+                            }
+                        } else {
                             {
                                 FilledTonalIconButton(
                                     onClick = {
@@ -1338,38 +1350,17 @@ private fun ModernBrowseScreen(
                                     )
                                 }
                             }
-                        } else if (state.selectedType == CatalogType.LIVE_TV) {
-                            {
-                                SingleChoiceSegmentedButtonRow {
-                                    (1..maxLiveTvColumns).forEachIndexed { index, count ->
-
-                                        val shape = uniformSegmentShape(
-                                            index = index,
-                                            count = maxLiveTvColumns
-                                        )
-
-                                        SegmentedButton(
-                                            selected = liveTvColumns == count,
-                                            onClick = {
-                                                liveTvColumns = count
-                                            },
-                                            shape = shape,
-                                            modifier = Modifier.remoteFocusFrame(shape)
-                                        ) {
-                                            Text("$count")
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            null
                         }
                     )
                 }
-                items(
-                    state.items,
-                    key = { "catalog-${state.selectedType}-${it.id}" },
-                    span = {
+                itemsIndexed(
+                    items = state.items,
+
+                    key = { _, item ->
+                        "catalog-${state.selectedType}-${item.id}"
+                    },
+
+                    span = { _, _ ->
                         when {
                             state.selectedType == CatalogType.LIVE_TV ->
                                 GridItemSpan(1)
@@ -1381,37 +1372,31 @@ private fun ModernBrowseScreen(
                                 GridItemSpan(1)
                         }
                     }
-                ) { item ->
+                ) { index, item ->
+
                     when {
+
                         state.selectedType == CatalogType.LIVE_TV -> {
 
-                            ModernMediaListCard(
+                            LiveTvChannelCard(
                                 item = item,
-                                modifier = if (
-                                    item.id == state.items.firstOrNull()?.id
-                                ) {
-                                    Modifier.focusRequester(firstChannelRequester)
-                                } else {
-                                    Modifier
+                                index = index,
+                                columnCount = liveTvColumns,
+                                firstChannelFocusRequester = firstChannelRequester,
+                                columnSelectorFocusRequester = layoutToggleRequester,
+
+                                isFavorite = state.favorites.any {
+                                    it.kind == FavoriteKind.CHANNEL &&
+                                            it.media.id == item.id
                                 },
 
-                                onClick = {
+                                onPlay = {
                                     play(item)
                                 },
 
-                                isFavorite = state.favorites.any {
-                                    it.media.id == item.id &&
-                                            it.kind == FavoriteKind.CHANNEL
-                                },
-
-                                toggleFavorite = {
+                                onToggleFavorite = {
                                     toggleFavorite(item)
-                                },
-
-                                supportingText =
-                                    liveChannelSupportingText(item),
-
-                                compact = true
+                                }
                             )
                         }
 
@@ -1435,9 +1420,9 @@ private fun ModernBrowseScreen(
                         else -> {
 
                             ModernPosterCard(
-                                item,
-                                aspectRatio,
-                                Modifier.padding(horizontal = 4.dp),
+                                item = item,
+                                aspectRatio = aspectRatio,
+                                modifier = Modifier.padding(horizontal = 4.dp),
                                 onClick = {
                                     play(item)
                                 },
@@ -1576,6 +1561,96 @@ private fun ModernGrid(
         horizontalArrangement = horizontalArrangement,
         content = content
     )
+}
+
+@Composable
+private fun LiveTvChannelCard(
+    item: MediaItem,
+    index: Int,
+    columnCount: Int,
+    firstChannelFocusRequester: FocusRequester,
+    columnSelectorFocusRequester: FocusRequester,
+    isFavorite: Boolean,
+    onPlay: () -> Unit,
+    onToggleFavorite: () -> Unit
+) {
+    val isFirstChannel = index == 0
+
+    // If there are 4 columns, indexes 0,1,2,3 are the first row.
+    // If there are 2 columns, indexes 0,1 are the first row.
+    val isFirstRow = index < columnCount
+
+    val cardModifier = Modifier
+        .then(
+            if (isFirstChannel) {
+                Modifier.focusRequester(firstChannelFocusRequester)
+            } else {
+                Modifier
+            }
+        )
+        .focusProperties {
+            if (isFirstRow) {
+                up = columnSelectorFocusRequester
+            }
+        }
+
+    ModernMediaListCard(
+        item = item,
+        modifier = cardModifier,
+        onClick = onPlay,
+        isFavorite = isFavorite,
+        toggleFavorite = onToggleFavorite,
+        supportingText = liveChannelSupportingText(item),
+        compact = true
+    )
+}
+
+@Composable
+private fun LiveTvColumnSelector(
+    selectedColumns: Int,
+    maxColumns: Int,
+    onColumnsChanged: (Int) -> Unit,
+    selectorFocusRequester: FocusRequester,
+    firstChannelFocusRequester: FocusRequester
+) {
+    SingleChoiceSegmentedButtonRow {
+        (1..maxColumns).forEachIndexed { index, count ->
+
+            val shape = uniformSegmentShape(
+                index = index,
+                count = maxColumns
+            )
+
+            SegmentedButton(
+                selected = selectedColumns == count,
+                onClick = {
+                    onColumnsChanged(count)
+                },
+                shape = shape,
+                modifier = Modifier
+                    .then(
+                        if (selectedColumns == count) {
+                            Modifier.focusRequester(
+                                selectorFocusRequester
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .focusProperties {
+                        // Down from the column selector always enters
+                        // the channel grid at the first channel.
+                        down = firstChannelFocusRequester
+
+                        // Let Compose find the category row above.
+                        up = FocusRequester.Default
+                    }
+                    .remoteFocusFrame(shape)
+            ) {
+                Text("$count")
+            }
+        }
+    }
 }
 
 @Composable
