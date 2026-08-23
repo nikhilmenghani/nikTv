@@ -134,6 +134,18 @@ fun PlayerScreen(
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var videoDetails by remember(media.progressKey) { mutableStateOf("") }
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
+
+    /*
+     * MTK_AVC_SEAMLESS_RECOVERY_V14
+     *
+     * MediaTek AVC hardware decoders on some TV/Fire TV devices can fail
+     * during an otherwise valid stream. Keep this separate from playbackError
+     * so automatic decoder recovery does not flash the fatal error dialog.
+     */
+    var decoderRecoveryInProgress by remember(media.progressKey) {
+        mutableStateOf(false)
+    }
+
     var startupTimedOut by remember(media.progressKey) { mutableStateOf(false) }
     var playerViewRef by remember(media.progressKey) { mutableStateOf<PlayerView?>(null) }
     var inPictureInPicture by remember { mutableStateOf(false) }
@@ -178,28 +190,93 @@ fun PlayerScreen(
             }
             override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
             override fun onPlayerError(error: PlaybackException) {
-                val failedDecoder = FailedDecoderRegistry.record(context, error)
-                val authorizationFailure = error.causeSequence()
-                    .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
-                    .firstOrNull()?.responseCode in setOf(401, 403)
-                playbackError = buildString {
-                    append(error.errorCodeName.replace('_', ' ').lowercase().replaceFirstChar(Char::uppercase))
-                    error.cause?.message?.takeIf { it.isNotBlank() }?.let { append("\n"); append(it) }
-                    failedDecoder?.let {
-                        append("\nNikTV will avoid $it and use an alternate decoder when you retry.")
+                val failedDecoder =
+                    FailedDecoderRegistry.record(
+                        context,
+                        error
+                    )
+
+                val authorizationFailure =
+                    error.causeSequence()
+                        .filterIsInstance<
+                            HttpDataSource.InvalidResponseCodeException
+                        >()
+                        .firstOrNull()
+                        ?.responseCode in setOf(401, 403)
+
+                when {
+                    authorizationFailure &&
+                        media.authorizationRetryCount == 0 -> {
+
+                        playbackError =
+                            "Stream authorization expired. Requesting a fresh playback link…"
+                        controlsVisible = true
+
+                        coroutineScope.launch {
+                            delay(350L)
+                            onPlaybackAuthorizationFailure(
+                                player.currentPosition
+                                    .coerceAtLeast(0L)
+                            )
+                        }
                     }
-                }
-                controlsVisible = true
-                if (authorizationFailure && media.authorizationRetryCount == 0) {
-                    playbackError = "Stream authorization expired. Requesting a fresh playback link…"
-                    coroutineScope.launch {
-                        delay(350L)
-                        onPlaybackAuthorizationFailure(player.currentPosition.coerceAtLeast(0L))
+
+                    failedDecoder != null -> {
+                        /*
+                         * MTK_AVC_RUNTIME_RECOVERY_V14
+                         *
+                         * Decoder failure is device-side, not a portal/VOD
+                         * failure. Hide the fatal overlay, blacklist the failed
+                         * codec, and recreate the player at a nearby safe
+                         * position so Media3 selects the next decoder.
+                         */
+                        playbackError = null
+                        startupTimedOut = false
+                        controlsVisible = false
+                        controlsFocused = false
+                        decoderRecoveryInProgress = true
+
+                        val recoveryPosition =
+                            (
+                                player.currentPosition -
+                                    1_500L
+                                )
+                                .coerceAtLeast(0L)
+
+                        coroutineScope.launch {
+                            delay(250L)
+
+                            onRetryAlternateDecoder(
+                                recoveryPosition
+                            )
+                        }
                     }
-                } else if (failedDecoder != null) {
-                    coroutineScope.launch {
-                        delay(350L)
-                        onRetryAlternateDecoder(player.currentPosition.coerceAtLeast(0L))
+
+                    else -> {
+                        decoderRecoveryInProgress = false
+
+                        playbackError = buildString {
+                            append(
+                                error.errorCodeName
+                                    .replace('_', ' ')
+                                    .lowercase()
+                                    .replaceFirstChar(
+                                        Char::uppercase
+                                    )
+                            )
+
+                            error.cause
+                                ?.message
+                                ?.takeIf {
+                                    it.isNotBlank()
+                                }
+                                ?.let {
+                                    append("\n")
+                                    append(it)
+                                }
+                        }
+
+                        controlsVisible = true
                     }
                 }
             }
@@ -775,10 +852,32 @@ fun PlayerScreen(
                 }
             }
         }
-        if ((playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE) && playbackError == null && !startupTimedOut) {
-            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                CircularProgressIndicator(color = Color(0xFFE50914))
-                Text("Connecting to stream…", color = Color.White)
+        if (
+            (
+                playbackState == Player.STATE_BUFFERING ||
+                    playbackState == Player.STATE_IDLE ||
+                    decoderRecoveryInProgress
+                ) &&
+            playbackError == null &&
+            !startupTimedOut
+        ) {
+            Column(
+                Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = Color(0xFFE50914)
+                )
+
+                Text(
+                    if (decoderRecoveryInProgress) {
+                        "Switching to a compatible decoder…"
+                    } else {
+                        "Connecting to stream…"
+                    },
+                    color = Color.White
+                )
             }
         }
         val failure = playbackError ?: if (startupTimedOut) "The stream did not start within 25 seconds." else null
@@ -879,29 +978,158 @@ fun PlayerScreen(
 }
 
 private object FailedDecoderRegistry {
-    private val failedNames = java.util.Collections.synchronizedSet(mutableSetOf<String>())
-    private val decoderPattern = Regex("decoder failed:\\s*([^,\\s]+)", RegexOption.IGNORE_CASE)
+    private val failedNames =
+        java.util.Collections.synchronizedSet(
+            mutableSetOf<String>()
+        )
 
-    fun selector(context: Context): MediaCodecSelector {
-        failedNames += context.getSharedPreferences("player_decoder_fallbacks", Context.MODE_PRIVATE)
-            .getStringSet("failed_decoders", emptySet()).orEmpty()
-        return MediaCodecSelector { mimeType, secure, tunneling ->
-        val candidates = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, secure, tunneling)
-        val filtered = candidates.filterNot { it.name.lowercase() in failedNames }
-        // Never turn a recoverable decoder error into an immediate no-decoder error.
-        if (filtered.isEmpty()) candidates else filtered
+    /*
+     * Accept both runtime and initialization failure wording emitted by
+     * different Media3/Android codec layers.
+     */
+    private val decoderPattern =
+        Regex(
+            "(?:decoder failed|decoder init failed):\\s*([^,\\s]+)",
+            RegexOption.IGNORE_CASE
+        )
+
+    private fun isAndroidSoftwareDecoder(
+        name: String
+    ): Boolean {
+        val normalized =
+            name.lowercase()
+
+        return normalized.startsWith(
+            "omx.google."
+        ) ||
+            normalized.startsWith(
+                "c2.android."
+            )
+    }
+
+    fun selector(
+        context: Context
+    ): MediaCodecSelector {
+        failedNames +=
+            context
+                .getSharedPreferences(
+                    "player_decoder_fallbacks",
+                    Context.MODE_PRIVATE
+                )
+                .getStringSet(
+                    "failed_decoders",
+                    emptySet()
+                )
+                .orEmpty()
+
+        return MediaCodecSelector {
+                mimeType,
+                secure,
+                tunneling ->
+
+            val candidates =
+                MediaCodecSelector.DEFAULT
+                    .getDecoderInfos(
+                        mimeType,
+                        secure,
+                        tunneling
+                    )
+
+            val filtered =
+                candidates.filterNot {
+                    it.name.lowercase() in
+                        failedNames
+                }
+
+            /*
+             * MTK_AVC_SOFTWARE_PREFERENCE_V14
+             *
+             * Keep hardware decoding as the default. Only after this device
+             * has actually crashed OMX.MTK.VIDEO.DECODER.AVC do we prefer an
+             * Android software AVC decoder for subsequent player instances.
+             */
+            val mtkAvcPreviouslyFailed =
+                mimeType.equals(
+                    "video/avc",
+                    ignoreCase = true
+                ) &&
+                    "omx.mtk.video.decoder.avc" in
+                        failedNames
+
+            val ordered =
+                if (mtkAvcPreviouslyFailed) {
+                    filtered.sortedBy { codec ->
+                        if (
+                            isAndroidSoftwareDecoder(
+                                codec.name
+                            )
+                        ) {
+                            0
+                        } else {
+                            1
+                        }
+                    }
+                } else {
+                    filtered
+                }
+
+            /*
+             * If the device genuinely exposes no alternative decoder, retain
+             * Media3's original candidates so the app reports the real device
+             * capability rather than manufacturing a no-decoder condition.
+             */
+            if (ordered.isEmpty()) {
+                candidates
+            } else {
+                ordered
+            }
         }
     }
 
-    fun record(context: Context, error: Throwable): String? {
-        val messages = generateSequence(error as Throwable?) { it.cause }
-            .mapNotNull { it.message }
-            .joinToString("\n")
-        val decoder = decoderPattern.find(messages)?.groupValues?.getOrNull(1) ?: return null
-        val newlyRejected = failedNames.add(decoder.lowercase())
-        if (!newlyRejected) return null
-        context.getSharedPreferences("player_decoder_fallbacks", Context.MODE_PRIVATE).edit()
-            .putStringSet("failed_decoders", failedNames.toSet()).apply()
+    fun record(
+        context: Context,
+        error: Throwable
+    ): String? {
+        val messages =
+            generateSequence(
+                error as Throwable?
+            ) {
+                it.cause
+            }
+                .mapNotNull {
+                    it.message
+                }
+                .joinToString("\n")
+
+        val decoder =
+            decoderPattern
+                .find(messages)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?: return null
+
+        val normalized =
+            decoder.lowercase()
+
+        val newlyRejected =
+            failedNames.add(normalized)
+
+        if (!newlyRejected) {
+            return null
+        }
+
+        context
+            .getSharedPreferences(
+                "player_decoder_fallbacks",
+                Context.MODE_PRIVATE
+            )
+            .edit()
+            .putStringSet(
+                "failed_decoders",
+                failedNames.toSet()
+            )
+            .apply()
+
         return decoder
     }
 }

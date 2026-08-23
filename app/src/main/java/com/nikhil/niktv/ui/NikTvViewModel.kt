@@ -966,15 +966,44 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 .onFailure { error -> _state.update { it.copy(error = error.message ?: "Playback retry failed") } }
         }
     }
-    fun retryPlaybackWithAlternateDecoder(positionMillis: Long) {
-        val playing = _state.value.nowPlaying ?: return
+    fun retryPlaybackWithAlternateDecoder(
+        positionMillis: Long
+    ) {
+        val playing =
+            _state.value.nowPlaying
+                ?: return
+
         viewModelScope.launch {
-            // Recreate the player so its decoder selector is queried again. Keep
-            // the already-resolved URL and current position: a codec failure is
-            // neither a portal failure nor a reason to restart the episode.
-            _state.update { it.copy(nowPlaying = null, error = null) }
-            delay(80L)
-            _state.update { it.copy(nowPlaying = playing.copy(resumePositionMillis = positionMillis)) }
+            /*
+             * MTK_DECODER_RELEASE_GRACE_V14
+             *
+             * Recreate the player so the decoder selector is queried again.
+             * MediaTek/Fire TV codec services can take longer than a single
+             * frame to release the failed codec instance, so allow a short
+             * grace period before constructing the replacement player.
+             *
+             * Keep the already-resolved stream URL: a codec crash is not a
+             * portal/link failure.
+             */
+            _state.update {
+                it.copy(
+                    nowPlaying = null,
+                    error = null
+                )
+            }
+
+            delay(450L)
+
+            _state.update {
+                it.copy(
+                    nowPlaying =
+                        playing.copy(
+                            resumePositionMillis =
+                                positionMillis
+                                    .coerceAtLeast(0L)
+                        )
+                )
+            }
         }
     }
     fun retryPlaybackAfterAuthorizationFailure(positionMillis: Long) {
