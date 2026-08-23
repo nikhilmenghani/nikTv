@@ -3121,37 +3121,41 @@ private fun LiveTvPlaybackScreen(
         mutableStateOf(false)
     }
 
-    /*
-     * Used when NikTV first opens the Live TV player,
-     * when the playing channel changes, or when returning
-     * from fullscreen.
-     */
-    val currentChannelRequester = remember {
-        FocusRequester()
+    /* Keep one requester permanently associated with each stable channel ID. */
+    val channelFocusRequesters = remember {
+        mutableMapOf<String, FocusRequester>()
     }
 
-    /*
-     * IMPORTANT:
-     *
-     * This LazyListState must be allowed to preserve its own
-     * scroll position during Load More.
-     *
-     * Do not manually restore its firstVisibleItemIndex
-     * or firstVisibleItemScrollOffset after loading.
-     */
+    /* LazyColumn owns its scroll state across appended catalog pages. */
     val channelListState = rememberLazyListState()
 
     /*
-     * The FocusRequester belonging to whichever channel the
-     * D-pad cursor most recently visited.
-     *
-     * When the user reaches "Load more channels", this still
-     * points at the channel immediately above/before it.
+     * Focus restoration is event-driven. Increment this only when leaving
+     * fullscreen; catalog updates must never restore the playing channel.
      */
-    var lastFocusedChannelRequester by remember {
-        mutableStateOf<FocusRequester?>(
-            currentChannelRequester
-        )
+    var restorePlayingChannelRequest by remember {
+        mutableIntStateOf(0)
+    }
+
+    /*
+     * Load More lifecycle.
+     */
+    var loadMorePending by remember {
+        mutableStateOf(false)
+    }
+
+    var loadMoreObservedLoading by remember {
+        mutableStateOf(false)
+    }
+
+    /*
+     * Number of channels that existed BEFORE Load More.
+     *
+     * The item at this index after loading is therefore the first
+     * newly appended channel.
+     */
+    var loadMoreStartItemCount by remember {
+        mutableIntStateOf(0)
     }
 
     val playerConfiguration =
@@ -3170,59 +3174,82 @@ private fun LiveTvPlaybackScreen(
     val channelWidthFraction =
         1f - playerWidthFraction
 
-    /*
-     * NORMAL PLAYER FOCUS BEHAVIOUR
-     *
-     * Notice that state.items is deliberately NOT a key.
-     *
-     * Previously:
-     *
-     * LaunchedEffect(
-     *     fullscreen,
-     *     playing.media.id,
-     *     state.items
-     * )
-     *
-     * caused Load More to re-run this effect because
-     * state.items changed.
-     *
-     * That forced NikTV back to the currently playing
-     * channel every time another page was appended.
-     */
+    /* Initial entry focus. This never observes catalog or playback updates. */
+    LaunchedEffect(Unit) {
+        val playingIndex = state.items.indexOfFirst { it.id == playing.media.id }
+        if (playingIndex >= 0) {
+            channelListState.scrollToItem(playingIndex)
+            withFrameNanos { }
+            delay(120L)
+            channelFocusRequesters[playing.media.id]?.requestFocus()
+        }
+    }
+
+    /* Restore the playing row only after an explicit fullscreen exit. */
+    LaunchedEffect(restorePlayingChannelRequest) {
+        if (restorePlayingChannelRequest == 0 || fullscreen) {
+            return@LaunchedEffect
+        }
+
+        val playingIndex = state.items.indexOfFirst { it.id == playing.media.id }
+        if (playingIndex >= 0) {
+            channelListState.scrollToItem(playingIndex)
+            withFrameNanos { }
+            delay(120L)
+            channelFocusRequesters[playing.media.id]?.requestFocus()
+        }
+    }
+
+    /* After loading, move once to the stable boundary row and focus it. */
     LaunchedEffect(
-        fullscreen,
-        playing.media.id
+        loadMorePending,
+        state.catalogLoadingMore,
+        state.items.size
     ) {
-        if (!fullscreen) {
+        if (!loadMorePending) {
+            return@LaunchedEffect
+        }
 
-            val playingIndex =
-                state.items.indexOfFirst {
-                    it.id == playing.media.id
-                }
+        /*
+         * Wait until we know loading actually started.
+         */
+        if (state.catalogLoadingMore) {
+            loadMoreObservedLoading = true
+            return@LaunchedEffect
+        }
 
-            if (playingIndex >= 0) {
+        val receivedNewChannels =
+            state.items.size > loadMoreStartItemCount
 
-                /*
-                 * Scrolling is appropriate HERE.
-                 *
-                 * This happens when:
-                 * - player opens
-                 * - channel being played changes
-                 * - fullscreen closes
-                 *
-                 * It does NOT happen when loading more.
-                 */
-                channelListState.scrollToItem(
-                    playingIndex
+        val loadFinished =
+            loadMoreObservedLoading ||
+                    receivedNewChannels
+
+        if (!loadFinished) {
+            return@LaunchedEffect
+        }
+
+        if (receivedNewChannels) {
+
+            val firstNewChannel =
+                state.items.getOrNull(
+                    loadMoreStartItemCount
                 )
 
-                delay(180L)
+            if (firstNewChannel != null) {
 
+                channelListState.scrollToItem(loadMoreStartItemCount)
+                withFrameNanos { }
+                delay(120L)
                 runCatching {
-                    currentChannelRequester.requestFocus()
+                    channelFocusRequesters[firstNewChannel.id]
+                        ?.requestFocus()
                 }
             }
         }
+
+        loadMorePending = false
+        loadMoreObservedLoading = false
     }
 
     Box(
@@ -3237,6 +3264,8 @@ private fun LiveTvPlaybackScreen(
             onBack = if (fullscreen) {
                 {
                     fullscreen = false
+                    restorePlayingChannelRequest++
+                    Unit
                 }
             } else {
                 onBack
@@ -3262,21 +3291,35 @@ private fun LiveTvPlaybackScreen(
             controlsTimeoutSeconds =
                 state.playerControlsTimeoutSeconds,
 
-            modifier = if (fullscreen) {
-                Modifier.fillMaxSize()
-            } else {
-                Modifier
-                    .fillMaxWidth(playerWidthFraction)
-                    .aspectRatio(16f / 9f)
-                    .align(Alignment.CenterStart)
-            },
+            modifier =
+                if (fullscreen) {
 
-            embeddedMode = !fullscreen,
+                    Modifier.fillMaxSize()
+
+                } else {
+
+                    Modifier
+                        .fillMaxWidth(
+                            playerWidthFraction
+                        )
+                        .aspectRatio(
+                            16f / 9f
+                        )
+                        .align(
+                            Alignment.CenterStart
+                        )
+                },
+
+            embeddedMode =
+                !fullscreen,
 
             fullscreenOverride =
                 fullscreen,
 
             onFullscreenChanged = {
+                if (fullscreen && !it) {
+                    restorePlayingChannelRequest++
+                }
                 fullscreen = it
             }
         )
@@ -3285,8 +3328,12 @@ private fun LiveTvPlaybackScreen(
 
             Column(
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxWidth(channelWidthFraction)
+                    .align(
+                        Alignment.CenterEnd
+                    )
+                    .fillMaxWidth(
+                        channelWidthFraction
+                    )
                     .fillMaxHeight()
                     .background(
                         Brush.verticalGradient(
@@ -3309,19 +3356,25 @@ private fun LiveTvPlaybackScreen(
                     ),
 
                 verticalArrangement =
-                    Arrangement.spacedBy(5.dp)
+                    Arrangement.spacedBy(
+                        5.dp
+                    )
             ) {
 
                 /*
-                 * LIVE TV HEADER
+                 * LIVE TV SIDEBAR HEADER
                  */
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp),
+                        .padding(
+                            horizontal = 6.dp
+                        ),
 
                     verticalArrangement =
-                        Arrangement.spacedBy(1.dp)
+                        Arrangement.spacedBy(
+                            1.dp
+                        )
                 ) {
 
                     Text(
@@ -3367,7 +3420,9 @@ private fun LiveTvPlaybackScreen(
 
                     Text(
                         text =
-                            playing.media.liveProgramme?.title
+                            playing.media
+                                .liveProgramme
+                                ?.title
                                 ?: "${state.items.size} channels",
 
                         color =
@@ -3387,7 +3442,8 @@ private fun LiveTvPlaybackScreen(
                  * CHANNEL LIST
                  */
                 LazyColumn(
-                    state = channelListState,
+                    state =
+                        channelListState,
 
                     contentPadding =
                         PaddingValues(
@@ -3395,19 +3451,17 @@ private fun LiveTvPlaybackScreen(
                         ),
 
                     verticalArrangement =
-                        Arrangement.spacedBy(3.dp)
+                        Arrangement.spacedBy(
+                            3.dp
+                        )
                 ) {
 
                     items(
-                        items = state.items,
+                        items =
+                            state.items,
 
                         /*
-                         * Stable keys are important.
-                         *
-                         * When more channels are appended,
-                         * existing channel identities do not change.
-                         * LazyColumn can therefore naturally keep
-                         * the current viewport where it is.
+                         * Stable keys are important when appending pages.
                          */
                         key = { item ->
                             "live-player-${item.id}"
@@ -3418,65 +3472,35 @@ private fun LiveTvPlaybackScreen(
                             item.id ==
                                     playing.media.id
 
-                        /*
-                         * Every visible channel gets its own
-                         * FocusRequester.
-                         *
-                         * The playing channel uses the dedicated
-                         * currentChannelRequester so that the
-                         * normal player-opening effect can find it.
-                         */
                         val itemFocusRequester =
-                            remember(item.id) {
+                            channelFocusRequesters.getOrPut(item.id) {
                                 FocusRequester()
                             }
 
-                        val rowFocusRequester =
-                            if (isPlaying) {
-                                currentChannelRequester
-                            } else {
-                                itemFocusRequester
-                            }
-
                         ModernMediaListCard(
-                            item = item,
+                            item =
+                                item,
 
-                            modifier = Modifier
-
-                                /*
-                                 * Attach exactly one requester
-                                 * to this channel row.
-                                 */
-                                .focusRequester(
-                                    rowFocusRequester
-                                )
-
-                                /*
-                                 * Whenever the D-pad cursor visits
-                                 * this channel, remember its requester.
-                                 *
-                                 * Example:
-                                 *
-                                 * Channel 48
-                                 * Channel 49
-                                 * Channel 50   <- remembered
-                                 * Load more
-                                 */
-                                .onFocusChanged { focusState ->
-
-                                    if (
-                                        focusState.isFocused
-                                    ) {
-                                        lastFocusedChannelRequester =
-                                            rowFocusRequester
-                                    }
-                                },
+                            modifier =
+                                Modifier
+                                    .focusRequester(
+                                        itemFocusRequester
+                                    ),
 
                             onClick = {
 
+                                /*
+                                 * We no longer need to treat this item
+                                 * as the Load More return target after
+                                 * normal playback/navigation begins.
+                                 */
                                 if (isPlaying) {
-                                    fullscreen = true
+
+                                    fullscreen =
+                                        true
+
                                 } else {
+
                                     play(item)
                                 }
                             },
@@ -3490,7 +3514,9 @@ private fun LiveTvPlaybackScreen(
                                 },
 
                             toggleFavorite = {
-                                toggleFavorite(item)
+                                toggleFavorite(
+                                    item
+                                )
                             },
 
                             supportingText =
@@ -3498,7 +3524,8 @@ private fun LiveTvPlaybackScreen(
                                     item
                                 ),
 
-                            compact = true,
+                            compact =
+                                true,
 
                             isCurrentlyPlaying =
                                 isPlaying
@@ -3506,9 +3533,11 @@ private fun LiveTvPlaybackScreen(
                     }
 
                     /*
-                     * LOAD MORE
+                     * LOAD MORE CHANNELS
                      */
-                    if (state.catalogHasMore) {
+                    if (
+                        state.catalogHasMore
+                    ) {
 
                         item(
                             key =
@@ -3518,56 +3547,55 @@ private fun LiveTvPlaybackScreen(
                             Button(
                                 onClick = {
 
+                                    if (
+                                        state.catalogLoadingMore ||
+                                        loadMorePending
+                                    ) {
+                                        return@Button
+                                    }
+
                                     /*
-                                     * THIS IS THE IMPORTANT PART.
-                                     *
-                                     * Move focus off the Load More
-                                     * button immediately, BEFORE
-                                     * appending new items.
-                                     *
-                                     * The cursor goes straight back
-                                     * to the channel the user was on.
-                                     *
-                                     * No scrollToItem().
-                                     * No scroll offset restoration.
-                                     * No waiting until loading finishes.
+                                     * Existing item count becomes the
+                                     * index of the first newly appended
+                                     * channel after loading.
                                      */
-                                    lastFocusedChannelRequester
-                                        ?.let { requester ->
+                                    loadMoreStartItemCount =
+                                        state.items.size
 
-                                            runCatching {
-                                                requester.requestFocus()
-                                            }
-                                        }
+                                    loadMoreObservedLoading =
+                                        false
+
+                                    loadMorePending =
+                                        true
 
                                     /*
-                                     * Now start loading.
-                                     *
-                                     * Because the Load More button no
-                                     * longer owns focus, LazyColumn does
-                                     * not need to chase that button when
-                                     * its index moves downward after new
-                                     * channels are inserted before it.
+                                     * Append the next page.
                                      */
                                     loadMoreCatalog()
                                 },
 
                                 enabled =
-                                    !state.catalogLoadingMore,
+                                    !state.catalogLoadingMore &&
+                                            !loadMorePending,
 
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(46.dp)
-                                    .remoteFocusFrame(
-                                        RoundedCornerShape(
-                                            10.dp
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(
+                                            46.dp
                                         )
-                                    ),
+                                        .remoteFocusFrame(
+                                            RoundedCornerShape(
+                                                10.dp
+                                            )
+                                        ),
 
                                 colors =
                                     ButtonDefaults.buttonColors(
                                         containerColor =
-                                            Color(0xFFE50914),
+                                            Color(
+                                                0xFFE50914
+                                            ),
 
                                         contentColor =
                                             Color.White
@@ -3575,12 +3603,15 @@ private fun LiveTvPlaybackScreen(
                             ) {
 
                                 if (
-                                    state.catalogLoadingMore
+                                    state.catalogLoadingMore ||
+                                    loadMorePending
                                 ) {
 
                                     CircularProgressIndicator(
                                         modifier =
-                                            Modifier.size(20.dp),
+                                            Modifier.size(
+                                                20.dp
+                                            ),
 
                                         strokeWidth =
                                             2.dp,
@@ -3601,17 +3632,22 @@ private fun LiveTvPlaybackScreen(
                                 }
 
                                 Spacer(
-                                    Modifier.width(8.dp)
+                                    modifier =
+                                        Modifier.width(
+                                            8.dp
+                                        )
                                 )
 
                                 Text(
-                                    if (
-                                        state.catalogLoadingMore
-                                    ) {
-                                        "Loading channels…"
-                                    } else {
-                                        "Load more channels"
-                                    }
+                                    text =
+                                        if (
+                                            state.catalogLoadingMore ||
+                                            loadMorePending
+                                        ) {
+                                            "Loading channels…"
+                                        } else {
+                                            "Load more channels"
+                                        }
                                 )
                             }
                         }
