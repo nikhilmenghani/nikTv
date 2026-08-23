@@ -595,24 +595,28 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
         uri?.let(importBackup)
     }
     if (profiles.isNotEmpty() && !editorOpen) {
-        Column(
-            Modifier.fillMaxSize().background(Color(0xFF090909)).statusBarsPadding().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        BoxWithConstraints(
+            Modifier.fillMaxSize().background(Color(0xFF090909)).safeDrawingPadding()
         ) {
-            Text("N", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
-            Spacer(Modifier.height(24.dp))
-            Text("Who's watching?", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = Color.White)
-            Text("Choose an IPTV profile", color = Color.LightGray)
-            FlowRow(Modifier.widthIn(max = 900.dp).padding(top = 32.dp), horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                profiles.forEach { profile ->
-                    ProfileChooserTile(profile.name, profile.portalType.displayName(), if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key) {
-                        selectProfile(profile)
+            Column(
+                Modifier.fillMaxWidth().heightIn(min = maxHeight).verticalScroll(rememberScrollState()).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("N", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black, color = Color(0xFFE50914))
+                Spacer(Modifier.height(24.dp))
+                Text("Who's watching?", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Choose an IPTV profile", color = Color.LightGray)
+                FlowRow(Modifier.widthIn(max = 900.dp).padding(top = 32.dp), horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    profiles.forEach { profile ->
+                        ProfileChooserTile(profile.name, profile.portalType.displayName(), if (profile.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key) {
+                            selectProfile(profile)
+                        }
                     }
-                }
-                ProfileChooserTile("Add profile", "New connection", Icons.Default.Add, addProfile)
-                ProfileChooserTile("Import backup", "Restore NikTV setup", Icons.Default.FileDownload) {
-                    importLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
+                    ProfileChooserTile("Add profile", "New connection", Icons.Default.Add, addProfile)
+                    ProfileChooserTile("Import backup", "Restore NikTV setup", Icons.Default.FileDownload) {
+                        importLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
+                    }
                 }
             }
         }
