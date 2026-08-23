@@ -2,6 +2,8 @@ package com.nikhil.niktv.ui
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +47,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+
+private fun Context.isShowcaseTvLikeDevice(
+    configuration: Configuration
+): Boolean =
+    packageManager.hasSystemFeature(
+        PackageManager.FEATURE_LEANBACK
+    ) ||
+        configuration.uiMode and
+            Configuration.UI_MODE_TYPE_MASK ==
+            Configuration.UI_MODE_TYPE_TELEVISION ||
+        !packageManager.hasSystemFeature(
+            PackageManager.FEATURE_TOUCHSCREEN
+        )
 
 enum class PlaybackDesign(val title: String) {
     SIDE_LIST("Side list"),
@@ -496,8 +511,26 @@ fun ShowcasePlaybackScreen(
     }
 
     val configuration = LocalConfiguration.current
-    val compact = configuration.screenWidthDp < 900 || configuration.screenHeightDp < 520
-    val playerWidthFraction = if (compact) 0.61f else 0.69f
+    val showcaseContext = LocalContext.current
+    val isTv =
+        showcaseContext.isShowcaseTvLikeDevice(
+            configuration
+        )
+    val compact =
+        configuration.screenWidthDp < 900 ||
+            configuration.screenHeightDp < 520
+
+    /*
+     * SHOWCASE_TV_DETAILS_SPACE_V13
+     *
+     * Fire TV commonly reports fewer dp vertically than tablets. Give the
+     * details pane more width so descriptions wrap less aggressively.
+     */
+    val playerWidthFraction = when {
+        isTv -> 0.64f
+        compact -> 0.61f
+        else -> 0.69f
+    }
 
     BoxWithConstraints(
         Modifier.fillMaxSize().background(Color(0xFF050505))
@@ -518,12 +551,34 @@ fun ShowcasePlaybackScreen(
          * This prevents longer names from looking artificially cropped.
          */
         val railHeight = when {
-            type == CatalogType.MOVIES && maxHeight < 480.dp -> 184.dp
-            type == CatalogType.MOVIES && compact -> 204.dp
-            type == CatalogType.MOVIES -> 246.dp
-            maxHeight < 480.dp -> 142.dp
-            compact -> 172.dp
-            else -> 224.dp
+            type == CatalogType.MOVIES &&
+                isTv &&
+                maxHeight < 500.dp ->
+                196.dp
+
+            type == CatalogType.MOVIES &&
+                isTv ->
+                220.dp
+
+            type == CatalogType.MOVIES &&
+                maxHeight < 480.dp ->
+                184.dp
+
+            type == CatalogType.MOVIES &&
+                compact ->
+                204.dp
+
+            type == CatalogType.MOVIES ->
+                246.dp
+
+            maxHeight < 480.dp ->
+                142.dp
+
+            compact ->
+                172.dp
+
+            else ->
+                224.dp
         } + safeBottom
         val mainHeight = (maxHeight - headerHeight - railHeight).coerceAtLeast(120.dp)
         val playerWidth = maxWidth * playerWidthFraction
@@ -701,8 +756,26 @@ private fun ShowcaseDetailsPanel(
     val description = item.description?.trim()?.takeIf {
         it.isNotBlank() && !it.equals(item.title.trim(), ignoreCase = true)
     }
+    val detailsContext = LocalContext.current
+    val detailsConfiguration = LocalConfiguration.current
+    val isTv =
+        detailsContext.isShowcaseTvLikeDevice(
+            detailsConfiguration
+        )
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    /*
+     * SHOWCASE_TV_DESCRIPTION_FIT_V13
+     *
+     * Fire TV has less logical dp-height and a narrower details column than
+     * many tablets. Tighten spacing/typography without changing tablet/mobile.
+     */
+    Column(
+        modifier,
+        verticalArrangement =
+            Arrangement.spacedBy(
+                if (isTv) 7.dp else 10.dp
+            )
+    ) {
         Text(
             if (item.id == playingItem.id) "NOW PLAYING" else "SELECTED",
             color = Color(0xFFE50914),
@@ -713,10 +786,15 @@ private fun ShowcaseDetailsPanel(
         Text(
             item.title,
             color = Color.White,
-            style = if (compact) {
-                MaterialTheme.typography.titleLarge
-            } else {
-                MaterialTheme.typography.headlineMedium
+            style = when {
+                isTv ->
+                    MaterialTheme.typography.titleLarge
+
+                compact ->
+                    MaterialTheme.typography.titleLarge
+
+                else ->
+                    MaterialTheme.typography.headlineMedium
             },
             fontWeight = FontWeight.ExtraBold,
             maxLines = if (compact) 2 else 3,
@@ -750,13 +828,17 @@ private fun ShowcaseDetailsPanel(
                 ?: "No additional metadata was provided by the IPTV portal for this title.",
             modifier = Modifier.weight(1f),
             color = if (description == null) Color.Gray else Color(0xFFE0E0E0),
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = if (compact) {
-                4
-            } else if (LocalConfiguration.current.screenHeightDp < 600) {
-                6
-            } else {
-                12
+            style =
+                if (isTv) {
+                    MaterialTheme.typography.bodySmall
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
+            maxLines = when {
+                isTv -> 10
+                compact -> 4
+                detailsConfiguration.screenHeightDp < 600 -> 6
+                else -> 12
             },
             overflow = TextOverflow.Ellipsis
         )
@@ -824,8 +906,16 @@ private fun BoxScope.ShowcaseRail(
 ) {
     // Keep the Showcase rail visually consistent across content types.
     val aspectRatio = 1f
+    val showcaseConfiguration =
+        LocalConfiguration.current
     val showcaseScreenWidthDp =
-        LocalConfiguration.current.screenWidthDp
+        showcaseConfiguration.screenWidthDp
+    val showcaseContext =
+        LocalContext.current
+    val isTv =
+        showcaseContext.isShowcaseTvLikeDevice(
+            showcaseConfiguration
+        )
 
     /*
      * PLAYER_MOVIE_THUMBNAIL_READABILITY_V7
@@ -967,7 +1057,13 @@ private fun BoxScope.ShowcaseRail(
                     val loadMoreScale by
                         androidx.compose.animation.core.animateFloatAsState(
                             targetValue =
-                                if (loadMoreFocused) 1.06f else 0.96f,
+                                if (isTv) {
+                                    1f
+                                } else if (loadMoreFocused) {
+                                    1.06f
+                                } else {
+                                    0.96f
+                                },
                             animationSpec =
                                 androidx.compose.animation.core.tween(
                                     durationMillis = 140
@@ -1026,13 +1122,19 @@ private fun BoxScope.ShowcaseRail(
                                 .then(
                                     if (loadMoreFocused) {
                                         Modifier
-                                            .shadow(
-                                                12.dp,
-                                                loadMoreShape,
-                                                ambientColor =
-                                                    Color(0xFFE50914),
-                                                spotColor =
-                                                    Color(0xFFE50914)
+                                            .then(
+                                                if (!isTv) {
+                                                    Modifier.shadow(
+                                                        12.dp,
+                                                        loadMoreShape,
+                                                        ambientColor =
+                                                            Color(0xFFE50914),
+                                                        spotColor =
+                                                            Color(0xFFE50914)
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                }
                                             )
                                             .border(
                                                 3.dp,
@@ -1192,6 +1294,11 @@ private fun ShowcasePosterCard(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv =
+        context.isShowcaseTvLikeDevice(
+            configuration
+        )
     val scope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     var focused by remember { mutableStateOf(false) }
@@ -1206,6 +1313,7 @@ private fun ShowcasePosterCard(
      * The LazyRow slot does not change size, so focus movement remains stable.
      */
     val targetScale = when {
+        isTv -> 1f
         focused -> 1.12f
         selected -> 1.04f
         else -> 0.92f
@@ -1229,7 +1337,13 @@ private fun ShowcasePosterCard(
                     focused = it.isFocused
                     if (it.isFocused) {
                         onFocused()
-                        scope.launch { bringIntoViewRequester.bringIntoView() }
+
+                        if (!isTv) {
+                            scope.launch {
+                                bringIntoViewRequester
+                                    .bringIntoView()
+                            }
+                        }
                     }
                 }
                 .graphicsLayer {
@@ -1237,7 +1351,7 @@ private fun ShowcasePosterCard(
                     scaleY = cardScale
                 }
                 .then(
-                    if (focused) {
+                    if (focused && !isTv) {
                         Modifier.shadow(
                             16.dp,
                             RoundedCornerShape(8.dp),
@@ -1333,10 +1447,10 @@ private fun ShowcasePosterCard(
             item.title,
             modifier = Modifier.heightIn(
                 min =
-                    if (width <= 100.dp) {
-                        58.dp
-                    } else {
-                        46.dp
+                    when {
+                        isTv -> 42.dp
+                        width <= 100.dp -> 58.dp
+                        else -> 46.dp
                     }
             ),
             color =
@@ -1345,7 +1459,12 @@ private fun ShowcasePosterCard(
                 } else {
                     Color.LightGray
                 },
-            style = MaterialTheme.typography.labelMedium,
+            style =
+                if (isTv) {
+                    MaterialTheme.typography.labelSmall
+                } else {
+                    MaterialTheme.typography.labelMedium
+                },
             fontWeight =
                 if (focused) {
                     FontWeight.Bold
@@ -1366,19 +1485,38 @@ private fun ShowcasePosterCard(
 @Composable
 private fun Modifier.showcaseFocusFrame(shape: RoundedCornerShape): Modifier {
     var focused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv =
+        context.isShowcaseTvLikeDevice(
+            configuration
+        )
+
     return this
         .onFocusChanged { focused = it.isFocused }
         .then(
             if (focused) {
                 Modifier
-                    .shadow(
-                        12.dp,
-                        shape,
-                        ambientColor = Color(0xFFE50914),
-                        spotColor = Color(0xFFE50914)
+                    .then(
+                        if (!isTv) {
+                            Modifier.shadow(
+                                12.dp,
+                                shape,
+                                ambientColor = Color(0xFFE50914),
+                                spotColor = Color(0xFFE50914)
+                            )
+                        } else {
+                            Modifier
+                        }
                     )
-                    .border(3.dp, Color(0xFFFF3340), shape)
-            } else Modifier
+                    .border(
+                        3.dp,
+                        Color(0xFFFF3340),
+                        shape
+                    )
+            } else {
+                Modifier
+            }
         )
 }
 

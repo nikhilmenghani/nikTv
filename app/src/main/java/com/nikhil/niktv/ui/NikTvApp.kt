@@ -127,18 +127,55 @@ private fun Modifier.remoteFocusFrame(
     var focused by remember { mutableStateOf(false) }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv = context.isTvLikeDevice(configuration)
+
+    /*
+     * FIRE_TV_STABLE_FOCUS_V13
+     *
+     * Lazy containers already keep D-pad focus visible on TV. Re-running
+     * bringIntoView() and drawing a large glow for every focus hop makes
+     * Fire TV navigation look like the entire viewport is bouncing/flashing.
+     *
+     * TV therefore gets a crisp, local border/background only.
+     * Touch/mobile/tablet retain the existing glow + bringIntoView behavior.
+     */
     return this
         .bringIntoViewRequester(bringIntoViewRequester)
         .onFocusChanged {
             focused = it.isFocused
-            if (it.isFocused) scope.launch { bringIntoViewRequester.bringIntoView() }
+
+            if (it.isFocused && !isTv) {
+                scope.launch {
+                    bringIntoViewRequester.bringIntoView()
+                }
+            }
         }
         .then(
-            if (focused) Modifier
-                .shadow(16.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
-                .background(Color(0xFF3A1014), shape)
-                .border(4.dp, Color(0xFFFF3340), shape)
-            else Modifier
+            if (focused) {
+                Modifier
+                    .then(
+                        if (!isTv) {
+                            Modifier.shadow(
+                                16.dp,
+                                shape,
+                                ambientColor = Color(0xFFE50914),
+                                spotColor = Color(0xFFE50914)
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .background(Color(0xFF3A1014), shape)
+                    .border(
+                        if (isTv) 3.dp else 4.dp,
+                        Color(0xFFFF3340),
+                        shape
+                    )
+            } else {
+                Modifier
+            }
         )
 }
 
@@ -1220,6 +1257,32 @@ private fun ModernBrowseScreen(
     val catalogGridState = rememberLazyGridState()
     val movieFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
 
+    /*
+     * LIVE_TV_DASHBOARD_PAGINATION_FOCUS_V13
+     *
+     * Live TV uses the same focus-handoff principle as Movies. The focused
+     * Load More button remains alive during the request, then focus moves to
+     * the first newly appended channel.
+     */
+    val liveTvFocusRequesters =
+        remember { mutableMapOf<String, FocusRequester>() }
+
+    var liveTvLoadMorePending by remember {
+        mutableStateOf(false)
+    }
+    var liveTvLoadMoreObservedLoading by remember {
+        mutableStateOf(false)
+    }
+    var liveTvLoadMoreStartItemCount by remember {
+        mutableIntStateOf(0)
+    }
+    var liveTvLoadMoreFirstVisibleItemIndex by remember {
+        mutableIntStateOf(0)
+    }
+    var liveTvLoadMoreFirstVisibleItemScrollOffset by remember {
+        mutableIntStateOf(0)
+    }
+
     var movieLoadMorePending by remember { mutableStateOf(false) }
     var movieLoadMoreObservedLoading by remember { mutableStateOf(false) }
     var movieLoadMoreStartItemCount by remember { mutableIntStateOf(0) }
@@ -1456,6 +1519,143 @@ private fun ModernBrowseScreen(
          */
         movieLoadMorePending = false
         movieLoadMoreObservedLoading = false
+    }
+
+    /*
+     * LIVE_TV_SMOOTH_APPEND_V13
+     *
+     * Preserve the viewport while channels append, then smoothly reveal and
+     * focus the first new channel. If the final page is empty, focus the last
+     * existing channel before the Load More item disappears.
+     */
+    LaunchedEffect(
+        liveTvLoadMorePending,
+        state.catalogLoadingMore,
+        state.items.size,
+        state.selectedType,
+        state.selectedCategory?.id
+    ) {
+        if (!liveTvLoadMorePending) {
+            return@LaunchedEffect
+        }
+
+        if (state.selectedType != CatalogType.LIVE_TV) {
+            liveTvLoadMorePending = false
+            liveTvLoadMoreObservedLoading = false
+            return@LaunchedEffect
+        }
+
+        if (state.catalogLoadingMore) {
+            liveTvLoadMoreObservedLoading = true
+            return@LaunchedEffect
+        }
+
+        val receivedNewChannels =
+            state.items.size > liveTvLoadMoreStartItemCount
+
+        val loadFinished =
+            liveTvLoadMoreObservedLoading ||
+                receivedNewChannels
+
+        if (!loadFinished) {
+            return@LaunchedEffect
+        }
+
+        val targetChannelIndex =
+            if (receivedNewChannels) {
+                liveTvLoadMoreStartItemCount
+            } else {
+                state.items.lastIndex
+            }
+
+        val targetChannel =
+            state.items.getOrNull(targetChannelIndex)
+
+        if (targetChannel != null) {
+            val requester =
+                if (targetChannelIndex == 0) {
+                    firstChannelRequester
+                } else {
+                    liveTvFocusRequesters
+                        .getOrPut(targetChannel.id) {
+                            FocusRequester()
+                        }
+                }
+
+            val catalogItemOffset =
+                if (isWide) 3 else 4
+
+            val targetGridIndex =
+                catalogItemOffset +
+                    targetChannelIndex
+
+            catalogGridState.scrollToItem(
+                liveTvLoadMoreFirstVisibleItemIndex,
+                liveTvLoadMoreFirstVisibleItemScrollOffset
+            )
+
+            withFrameNanos { }
+
+            val targetAlreadyVisible =
+                catalogGridState
+                    .layoutInfo
+                    .visibleItemsInfo
+                    .any { visible ->
+                        visible.index ==
+                            targetGridIndex
+                    }
+
+            if (!targetAlreadyVisible) {
+                val layoutInfo =
+                    catalogGridState.layoutInfo
+
+                val viewportHeight =
+                    (
+                        layoutInfo.viewportEndOffset -
+                            layoutInfo.viewportStartOffset
+                        )
+                        .coerceAtLeast(1)
+
+                val contextualScrollOffset =
+                    -(viewportHeight * 2 / 3)
+
+                catalogGridState
+                    .animateScrollToItem(
+                        index = targetGridIndex,
+                        scrollOffset =
+                            contextualScrollOffset
+                    )
+            }
+
+            withTimeoutOrNull(1_500L) {
+                snapshotFlow {
+                    catalogGridState
+                        .layoutInfo
+                        .visibleItemsInfo
+                        .any { visible ->
+                            visible.index ==
+                                targetGridIndex
+                        }
+                }.first { it }
+            }
+
+            withFrameNanos { }
+
+            val focused =
+                runCatching {
+                    requester.requestFocus()
+                }.isSuccess
+
+            if (!focused) {
+                delay(60L)
+                runCatching {
+                    requester.requestFocus()
+                }
+            }
+        }
+
+        liveTvLoadMorePending = false
+        liveTvLoadMoreObservedLoading = false
     }
 
     ModernGrid(
@@ -1722,11 +1922,22 @@ private fun ModernBrowseScreen(
 
                         state.selectedType == CatalogType.LIVE_TV -> {
 
+                            val liveTvRequester =
+                                if (index == 0) {
+                                    null
+                                } else {
+                                    liveTvFocusRequesters
+                                        .getOrPut(item.id) {
+                                            FocusRequester()
+                                        }
+                                }
+
                             LiveTvChannelCard(
                                 item = item,
                                 index = index,
                                 columnCount = liveTvColumns,
                                 firstChannelFocusRequester = firstChannelRequester,
+                                itemFocusRequester = liveTvRequester,
                                 columnSelectorFocusRequester = layoutToggleRequester,
 
                                 isFavorite = state.favorites.any {
@@ -1819,6 +2030,10 @@ private fun ModernBrowseScreen(
                             (
                                 state.selectedType == CatalogType.MOVIES &&
                                     movieLoadMorePending
+                            ) ||
+                            (
+                                state.selectedType == CatalogType.LIVE_TV &&
+                                    liveTvLoadMorePending
                             )
                     )
                 ) {
@@ -1836,7 +2051,9 @@ private fun ModernBrowseScreen(
                             val movieLoadMoreScale by
                                 androidx.compose.animation.core.animateFloatAsState(
                                     targetValue =
-                                        if (
+                                        if (isTv) {
+                                            1f
+                                        } else if (
                                             state.selectedType == CatalogType.MOVIES &&
                                             loadMoreFocused
                                         ) {
@@ -1884,6 +2101,29 @@ private fun ModernBrowseScreen(
                                             false
                                         movieLoadMorePending =
                                             true
+                                    } else if (
+                                        state.selectedType ==
+                                            CatalogType.LIVE_TV
+                                    ) {
+                                        if (liveTvLoadMorePending) {
+                                            return@Button
+                                        }
+
+                                        liveTvLoadMoreStartItemCount =
+                                            state.items.size
+
+                                        liveTvLoadMoreFirstVisibleItemIndex =
+                                            catalogGridState
+                                                .firstVisibleItemIndex
+
+                                        liveTvLoadMoreFirstVisibleItemScrollOffset =
+                                            catalogGridState
+                                                .firstVisibleItemScrollOffset
+
+                                        liveTvLoadMoreObservedLoading =
+                                            false
+                                        liveTvLoadMorePending =
+                                            true
                                     }
 
                                     loadMoreCatalog()
@@ -1896,7 +2136,10 @@ private fun ModernBrowseScreen(
                                  * existing behavior.
                                  */
                                 enabled =
-                                    state.selectedType == CatalogType.MOVIES ||
+                                    state.selectedType in setOf(
+                                        CatalogType.MOVIES,
+                                        CatalogType.LIVE_TV
+                                    ) ||
                                         !state.catalogLoadingMore,
 
                                 modifier = Modifier
@@ -1925,6 +2168,11 @@ private fun ModernBrowseScreen(
                                             state.selectedType ==
                                                 CatalogType.MOVIES &&
                                                 movieLoadMorePending
+                                            ) ||
+                                        (
+                                            state.selectedType ==
+                                                CatalogType.LIVE_TV &&
+                                                liveTvLoadMorePending
                                             )
 
                                 if (loading) {
@@ -2076,6 +2324,7 @@ private fun LiveTvChannelCard(
     index: Int,
     columnCount: Int,
     firstChannelFocusRequester: FocusRequester,
+    itemFocusRequester: FocusRequester? = null,
     columnSelectorFocusRequester: FocusRequester,
     isFavorite: Boolean,
     onPlay: () -> Unit,
@@ -2089,10 +2338,19 @@ private fun LiveTvChannelCard(
 
     val cardModifier = Modifier
         .then(
-            if (isFirstChannel) {
-                Modifier.focusRequester(firstChannelFocusRequester)
-            } else {
-                Modifier
+            when {
+                itemFocusRequester != null ->
+                    Modifier.focusRequester(
+                        itemFocusRequester
+                    )
+
+                isFirstChannel ->
+                    Modifier.focusRequester(
+                        firstChannelFocusRequester
+                    )
+
+                else ->
+                    Modifier
             }
         )
         .focusProperties {
@@ -2224,12 +2482,26 @@ private fun ModernSideRail(
 private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean, expanded: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
+    val railContext = LocalContext.current
+    val railConfiguration = LocalConfiguration.current
+    val isTv = railContext.isTvLikeDevice(railConfiguration)
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(50.dp).padding(vertical = 3.dp)
             .onFocusChanged { focused = it.isFocused }
             .semantics { role = Role.Tab; this.selected = selected }
-            .then(if (focused) Modifier.shadow(12.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier),
+            .then(
+                if (focused && !isTv) {
+                    Modifier.shadow(
+                        12.dp,
+                        shape,
+                        ambientColor = Color(0xFFE50914),
+                        spotColor = Color(0xFFE50914)
+                    )
+                } else {
+                    Modifier
+                }
+            ),
         shape = shape,
         color = when {
             focused -> Color(0xFF3A0A0D)
@@ -2650,12 +2922,25 @@ private fun ModernPosterCard(
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv = context.isTvLikeDevice(configuration)
+
     val posterScale by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (focused) focusedScale else unfocusedScale,
-        animationSpec = androidx.compose.animation.core.tween(durationMillis = 140),
+        targetValue =
+            if (isTv) {
+                1f
+            } else if (focused) {
+                focusedScale
+            } else {
+                unfocusedScale
+            },
+        animationSpec =
+            androidx.compose.animation.core.tween(
+                durationMillis = 140
+            ),
         label = "catalogPosterScale"
     )
-    val context = LocalContext.current
     val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
     val fraction = if (progress != null && progress.durationMillis > 0L)
         (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
@@ -2718,7 +3003,12 @@ private fun ModernPosterCard(
                 item.title,
                 modifier = if (focused && titleMaxLines == 1) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                 color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
+                style =
+                    if (isTv) {
+                        MaterialTheme.typography.labelMedium
+                    } else {
+                        MaterialTheme.typography.labelLarge
+                    },
                 maxLines = titleMaxLines,
                 overflow = TextOverflow.Ellipsis
             )
@@ -2764,6 +3054,8 @@ private fun ModernMediaListCard(
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv = context.isTvLikeDevice(configuration)
 
     Surface(
         modifier = modifier
