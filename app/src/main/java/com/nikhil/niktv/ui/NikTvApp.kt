@@ -1194,6 +1194,18 @@ private fun ModernBrowseScreen(
     var movieLoadMoreObservedLoading by remember { mutableStateOf(false) }
     var movieLoadMoreStartItemCount by remember { mutableIntStateOf(0) }
 
+    /*
+     * Preserve the exact grid viewport while a Movies page is loading.
+     * This lets pagination feel like new tiles were simply appended below
+     * the current content instead of causing the existing grid to jump.
+     */
+    var movieLoadMoreFirstVisibleItemIndex by remember {
+        mutableIntStateOf(0)
+    }
+    var movieLoadMoreFirstVisibleItemScrollOffset by remember {
+        mutableIntStateOf(0)
+    }
+
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
     val browseContext = LocalContext.current
@@ -1335,13 +1347,44 @@ private fun ModernBrowseScreen(
             val targetGridIndex =
                 catalogItemOffset + targetMovieIndex
 
-            catalogGridState.scrollToItem(targetGridIndex)
+            /*
+             * MOVIE_DASHBOARD_SMOOTH_APPEND_V2
+             *
+             * Re-establish the viewport from immediately before Load More.
+             * The append itself therefore produces no visible jump.
+             */
+            catalogGridState.scrollToItem(
+                movieLoadMoreFirstVisibleItemIndex,
+                movieLoadMoreFirstVisibleItemScrollOffset
+            )
+
+            withFrameNanos { }
+
+            val targetAlreadyVisible =
+                catalogGridState
+                    .layoutInfo
+                    .visibleItemsInfo
+                    .any { visible ->
+                        visible.index == targetGridIndex
+                    }
+
+            /*
+             * If the new tile is below the current viewport, glide to it
+             * rather than snapping the entire grid to a new position.
+             */
+            if (!targetAlreadyVisible) {
+                catalogGridState
+                    .animateScrollToItem(targetGridIndex)
+            }
 
             withTimeoutOrNull(1_500L) {
                 snapshotFlow {
-                    catalogGridState.layoutInfo.visibleItemsInfo.any { visible ->
-                        visible.index == targetGridIndex
-                    }
+                    catalogGridState
+                        .layoutInfo
+                        .visibleItemsInfo
+                        .any { visible ->
+                            visible.index == targetGridIndex
+                        }
                 }.first { it }
             }
 
@@ -1765,6 +1808,15 @@ private fun ModernBrowseScreen(
 
                                         movieLoadMoreStartItemCount =
                                             state.items.size
+
+                                        movieLoadMoreFirstVisibleItemIndex =
+                                            catalogGridState
+                                                .firstVisibleItemIndex
+
+                                        movieLoadMoreFirstVisibleItemScrollOffset =
+                                            catalogGridState
+                                                .firstVisibleItemScrollOffset
+
                                         movieLoadMoreObservedLoading =
                                             false
                                         movieLoadMorePending =

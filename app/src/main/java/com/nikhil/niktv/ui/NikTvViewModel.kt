@@ -367,21 +367,56 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(catalogLoadingMore = true) }
             runCatching { portal.catalogPage(session, category, snapshot.catalogPage + 1) }
                 .onSuccess { result ->
-                    val merged = (_state.value.items + result.items).distinctBy { it.id }
-                    val existing = _state.value.browseCachesByType[category.type]
+                    /*
+                     * PAGINATION_ACTUALLY_ADDED_V2
+                     *
+                     * Some portals report another page even when that page is
+                     * empty or contains only IDs we already have. Treat that
+                     * as the real end of the catalog so Load More disappears
+                     * instead of repeatedly offering a no-op request.
+                     */
+                    val currentItems = _state.value.items
+                    val merged =
+                        (currentItems + result.items)
+                            .distinctBy { it.id }
+
+                    val actuallyAdded =
+                        merged.size > currentItems.size
+
+                    val existing =
+                        _state.value
+                            .browseCachesByType[category.type]
+
                     val updated = existing?.copy(
-                        cachedAtMillis = System.currentTimeMillis(),
-                        itemsByCategory = existing.itemsByCategory + (category.id to merged)
+                        cachedAtMillis =
+                            System.currentTimeMillis(),
+                        itemsByCategory =
+                            existing.itemsByCategory +
+                                (category.id to merged)
                     )
-                    if (updated != null) store.saveBrowseCatalog(updated)
-                    _state.update { current -> current.copy(
-                        items = merged,
-                        catalogPage = result.page,
-                        catalogHasMore = result.hasMore && result.items.isNotEmpty(),
-                        catalogLoadingMore = false,
-                        browseCache = updated ?: current.browseCache,
-                        browseCachesByType = if (updated == null) current.browseCachesByType else current.browseCachesByType + (category.type to updated)
-                    ) }
+
+                    if (updated != null) {
+                        store.saveBrowseCatalog(updated)
+                    }
+
+                    _state.update { current ->
+                        current.copy(
+                            items = merged,
+                            catalogPage = result.page,
+                            catalogHasMore =
+                                result.hasMore && actuallyAdded,
+                            catalogLoadingMore = false,
+                            browseCache =
+                                updated ?: current.browseCache,
+                            browseCachesByType =
+                                if (updated == null) {
+                                    current.browseCachesByType
+                                } else {
+                                    current.browseCachesByType +
+                                        (category.type to updated)
+                                }
+                        )
+                    }
                 }
                 .onFailure { error -> _state.update { it.copy(catalogLoadingMore = false, error = error.message ?: "Could not load more titles") } }
         }

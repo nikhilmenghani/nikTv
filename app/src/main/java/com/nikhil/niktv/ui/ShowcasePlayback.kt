@@ -838,7 +838,17 @@ private fun BoxScope.ShowcaseRail(
         LazyRow(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             state = railState,
-            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+            /*
+             * Extra end padding is intentional. The compact Load More control
+             * scales up when focused, and without trailing room its right edge
+             * / focus glow is clipped by LazyRow's viewport.
+             */
+            contentPadding = PaddingValues(
+                start = 6.dp,
+                end = 26.dp,
+                top = 8.dp,
+                bottom = 8.dp
+            ),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.Top
         ) {
