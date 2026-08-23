@@ -80,6 +80,7 @@ import com.nikhil.niktv.update.formatDownloadBytes
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 
 private val NikColors = darkColorScheme(
     primary = Color(0xFFE50914), onPrimary = Color.White,
@@ -3121,17 +3122,26 @@ private fun LiveTvPlaybackScreen(
         mutableStateOf(false)
     }
 
-    /* Keep one requester permanently associated with each stable channel ID. */
+    /*
+     * Keep one FocusRequester permanently associated with each channel ID.
+     *
+     * This is important for paged channel loading because the same requester
+     * can be created before a LazyColumn item is composed, then attached to
+     * that item when it enters the viewport.
+     */
     val channelFocusRequesters = remember {
         mutableMapOf<String, FocusRequester>()
     }
 
-    /* LazyColumn owns its scroll state across appended catalog pages. */
+    /*
+     * LazyColumn retains its position while pages are appended.
+     */
     val channelListState = rememberLazyListState()
 
     /*
-     * Focus restoration is event-driven. Increment this only when leaving
-     * fullscreen; catalog updates must never restore the playing channel.
+     * Focus restoration when returning from fullscreen is explicitly
+     * event-driven. Normal catalog updates must not move focus back to
+     * the currently playing channel.
      */
     var restorePlayingChannelRequest by remember {
         mutableIntStateOf(0)
@@ -3139,27 +3149,41 @@ private fun LiveTvPlaybackScreen(
 
     /*
      * Load More lifecycle.
+     *
+     * While this is true, the Load More row remains in the LazyColumn and
+     * remains focusable. This prevents Compose from dropping focus while
+     * the next page is being requested.
      */
     var loadMorePending by remember {
         mutableStateOf(false)
     }
 
+    /*
+     * Tracks whether catalogLoadingMore was actually observed.
+     *
+     * This distinguishes:
+     *
+     * 1. button pressed
+     * 2. ViewModel begins loading
+     * 3. ViewModel finishes loading
+     *
+     * from an unrelated recomposition.
+     */
     var loadMoreObservedLoading by remember {
         mutableStateOf(false)
     }
 
     /*
-     * Number of channels that existed BEFORE Load More.
+     * Number of channels that existed before Load More was pressed.
      *
-     * The item at this index after loading is therefore the first
-     * newly appended channel.
+     * After the page is appended, this index points at the first new
+     * channel.
      */
     var loadMoreStartItemCount by remember {
         mutableIntStateOf(0)
     }
 
-    val playerConfiguration =
-        LocalConfiguration.current
+    val playerConfiguration = LocalConfiguration.current
 
     val narrowPlayerLayout =
         playerConfiguration.screenWidthDp < 900
@@ -3174,33 +3198,151 @@ private fun LiveTvPlaybackScreen(
     val channelWidthFraction =
         1f - playerWidthFraction
 
-    /* Initial entry focus. This never observes catalog or playback updates. */
-    LaunchedEffect(Unit) {
-        val playingIndex = state.items.indexOfFirst { it.id == playing.media.id }
-        if (playingIndex >= 0) {
-            channelListState.scrollToItem(playingIndex)
-            withFrameNanos { }
-            delay(120L)
-            channelFocusRequesters[playing.media.id]?.requestFocus()
+    /*
+     * Deterministically scroll to and focus a channel.
+     *
+     * Do NOT use an arbitrary delay here.
+     *
+     * scrollToItem() brings the requested index into the LazyColumn
+     * viewport. snapshotFlow then waits until LazyColumn confirms that
+     * the target row is actually part of its visible layout.
+     *
+     * Only after that row exists do we request focus.
+     */
+    suspend fun focusChannelAt(
+        index: Int,
+        channel: MediaItem
+    ) {
+        if (index < 0) return
+
+        val requester =
+            channelFocusRequesters.getOrPut(channel.id) {
+                FocusRequester()
+            }
+
+        /*
+         * Align the target at the beginning of the channel viewport.
+         *
+         * This gives Load More the desired behaviour:
+         *
+         * old channels
+         * Load More
+         *      ↓
+         * first newly loaded channel at top
+         * second newly loaded channel
+         * third newly loaded channel
+         */
+        channelListState.scrollToItem(
+            index = index,
+            scrollOffset = 0
+        )
+
+        /*
+         * Wait until LazyColumn has actually composed and laid out
+         * the requested row.
+         */
+        snapshotFlow {
+            channelListState.layoutInfo.visibleItemsInfo
+                .any { visibleItem ->
+                    visibleItem.index == index
+                }
+        }.first { visible ->
+            visible
+        }
+
+        /*
+         * Allow the FocusRequester modifier on the newly composed
+         * channel to become attached before requesting focus.
+         */
+        withFrameNanos { }
+
+        runCatching {
+            requester.requestFocus()
         }
     }
 
-    /* Restore the playing row only after an explicit fullscreen exit. */
-    LaunchedEffect(restorePlayingChannelRequest) {
-        if (restorePlayingChannelRequest == 0 || fullscreen) {
+    /*
+     * Initial entry focus.
+     *
+     * Runs once when Live TV playback opens. It deliberately does not
+     * observe normal state/items changes because pagination must never
+     * pull the user back to the currently playing channel.
+     */
+    LaunchedEffect(Unit) {
+        val playingIndex =
+            state.items.indexOfFirst {
+                it.id == playing.media.id
+            }
+
+        val playingChannel =
+            state.items.getOrNull(playingIndex)
+
+        if (
+            playingIndex >= 0 &&
+            playingChannel != null
+        ) {
+            focusChannelAt(
+                index = playingIndex,
+                channel = playingChannel
+            )
+        }
+    }
+
+    /*
+     * Restore the playing channel only after explicitly leaving
+     * fullscreen.
+     */
+    LaunchedEffect(
+        restorePlayingChannelRequest
+    ) {
+        if (
+            restorePlayingChannelRequest == 0 ||
+            fullscreen
+        ) {
             return@LaunchedEffect
         }
 
-        val playingIndex = state.items.indexOfFirst { it.id == playing.media.id }
-        if (playingIndex >= 0) {
-            channelListState.scrollToItem(playingIndex)
-            withFrameNanos { }
-            delay(120L)
-            channelFocusRequesters[playing.media.id]?.requestFocus()
+        val playingIndex =
+            state.items.indexOfFirst {
+                it.id == playing.media.id
+            }
+
+        val playingChannel =
+            state.items.getOrNull(playingIndex)
+
+        if (
+            playingIndex >= 0 &&
+            playingChannel != null
+        ) {
+            focusChannelAt(
+                index = playingIndex,
+                channel = playingChannel
+            )
         }
     }
 
-    /* After loading, move once to the stable boundary row and focus it. */
+    /*
+     * Seamless Load More focus handoff.
+     *
+     * The important sequence is:
+     *
+     * Load More keeps focus
+     *        ↓
+     * ViewModel starts loading
+     *        ↓
+     * channels appended
+     *        ↓
+     * scroll first new channel to top
+     *        ↓
+     * wait until row is laid out
+     *        ↓
+     * focus first new channel
+     *        ↓
+     * loadMorePending = false
+     *
+     * Once loadMorePending becomes false, this effect does nothing else.
+     * Normal D-pad focus navigation completely takes over.
+     */
     LaunchedEffect(
         loadMorePending,
         state.catalogLoadingMore,
@@ -3211,7 +3353,10 @@ private fun LiveTvPlaybackScreen(
         }
 
         /*
-         * Wait until we know loading actually started.
+         * Loading has started.
+         *
+         * Keep Load More alive and focused. Do not attempt any focus
+         * movement yet because the target channel does not exist.
          */
         if (state.catalogLoadingMore) {
             loadMoreObservedLoading = true
@@ -3219,8 +3364,19 @@ private fun LiveTvPlaybackScreen(
         }
 
         val receivedNewChannels =
-            state.items.size > loadMoreStartItemCount
+            state.items.size >
+                    loadMoreStartItemCount
 
+        /*
+         * Loading is considered finished once:
+         *
+         * - catalogLoadingMore was observed and is now false, or
+         * - new items have already appeared.
+         *
+         * The second condition also handles a very fast state update
+         * where Compose may not observe catalogLoadingMore=true in a
+         * separate frame.
+         */
         val loadFinished =
             loadMoreObservedLoading ||
                     receivedNewChannels
@@ -3230,24 +3386,37 @@ private fun LiveTvPlaybackScreen(
         }
 
         if (receivedNewChannels) {
-
             val firstNewChannel =
                 state.items.getOrNull(
                     loadMoreStartItemCount
                 )
 
             if (firstNewChannel != null) {
-
-                channelListState.scrollToItem(loadMoreStartItemCount)
-                withFrameNanos { }
-                delay(120L)
-                runCatching {
-                    channelFocusRequesters[firstNewChannel.id]
-                        ?.requestFocus()
+                /*
+                 * Pre-create the requester before scrolling.
+                 *
+                 * When LazyColumn composes the new row, getOrPut()
+                 * below will return this exact same requester.
+                 */
+                channelFocusRequesters.getOrPut(
+                    firstNewChannel.id
+                ) {
+                    FocusRequester()
                 }
+
+                focusChannelAt(
+                    index = loadMoreStartItemCount,
+                    channel = firstNewChannel
+                )
             }
         }
 
+        /*
+         * Focus handoff is complete.
+         *
+         * There are no delayed coroutines left that can unexpectedly
+         * steal focus while the user continues pressing DPAD_DOWN.
+         */
         loadMorePending = false
         loadMoreObservedLoading = false
     }
@@ -3257,19 +3426,19 @@ private fun LiveTvPlaybackScreen(
             .fillMaxSize()
             .background(Color(0xFF090909))
     ) {
-
         PlayerScreen(
             media = playing,
 
-            onBack = if (fullscreen) {
-                {
-                    fullscreen = false
-                    restorePlayingChannelRequest++
-                    Unit
-                }
-            } else {
-                onBack
-            },
+            onBack =
+                if (fullscreen) {
+                    {
+                        fullscreen = false
+                        restorePlayingChannelRequest++
+                        Unit
+                    }
+                } else {
+                    onBack
+                },
 
             onRetry = onRetry,
 
@@ -3293,11 +3462,8 @@ private fun LiveTvPlaybackScreen(
 
             modifier =
                 if (fullscreen) {
-
                     Modifier.fillMaxSize()
-
                 } else {
-
                     Modifier
                         .fillMaxWidth(
                             playerWidthFraction
@@ -3320,12 +3486,12 @@ private fun LiveTvPlaybackScreen(
                 if (fullscreen && !it) {
                     restorePlayingChannelRequest++
                 }
+
                 fullscreen = it
             }
         )
 
         if (!fullscreen) {
-
             Column(
                 modifier = Modifier
                     .align(
@@ -3360,7 +3526,6 @@ private fun LiveTvPlaybackScreen(
                         5.dp
                     )
             ) {
-
                 /*
                  * LIVE TV SIDEBAR HEADER
                  */
@@ -3376,7 +3541,6 @@ private fun LiveTvPlaybackScreen(
                             1.dp
                         )
                 ) {
-
                     Text(
                         text =
                             "LIVE · ${
@@ -3440,8 +3604,16 @@ private fun LiveTvPlaybackScreen(
 
                 /*
                  * CHANNEL LIST
+                 *
+                 * Explicitly consume the remaining sidebar height.
+                 * This gives the LazyColumn a predictable viewport on
+                 * phones, tablets and TVs.
                  */
                 LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+
                     state =
                         channelListState,
 
@@ -3455,25 +3627,30 @@ private fun LiveTvPlaybackScreen(
                             3.dp
                         )
                 ) {
-
                     items(
                         items =
                             state.items,
 
                         /*
-                         * Stable keys are important when appending pages.
+                         * Stable keys ensure existing rows retain identity
+                         * when another catalog page is appended.
                          */
                         key = { item ->
                             "live-player-${item.id}"
                         }
                     ) { item ->
-
                         val isPlaying =
                             item.id ==
                                     playing.media.id
 
+                        /*
+                         * If focusChannelAt() pre-created this requester,
+                         * getOrPut() returns the same instance.
+                         */
                         val itemFocusRequester =
-                            channelFocusRequesters.getOrPut(item.id) {
+                            channelFocusRequesters.getOrPut(
+                                item.id
+                            ) {
                                 FocusRequester()
                             }
 
@@ -3488,19 +3665,9 @@ private fun LiveTvPlaybackScreen(
                                     ),
 
                             onClick = {
-
-                                /*
-                                 * We no longer need to treat this item
-                                 * as the Load More return target after
-                                 * normal playback/navigation begins.
-                                 */
                                 if (isPlaying) {
-
-                                    fullscreen =
-                                        true
-
+                                    fullscreen = true
                                 } else {
-
                                     play(item)
                                 }
                             },
@@ -3534,19 +3701,31 @@ private fun LiveTvPlaybackScreen(
 
                     /*
                      * LOAD MORE CHANNELS
+                     *
+                     * Keep this item present while loadMorePending=true.
+                     *
+                     * This matters on the final page:
+                     *
+                     * catalogHasMore becomes false as soon as that page
+                     * arrives. Without "|| loadMorePending", Compose could
+                     * remove the currently focused button before focus has
+                     * been transferred to the first new channel.
                      */
                     if (
-                        state.catalogHasMore
+                        state.catalogHasMore ||
+                        loadMorePending
                     ) {
-
                         item(
                             key =
                                 "live-player-load-more"
                         ) {
-
                             Button(
                                 onClick = {
-
+                                    /*
+                                     * Keep the button enabled/focusable,
+                                     * but ignore repeated activation while
+                                     * loading.
+                                     */
                                     if (
                                         state.catalogLoadingMore ||
                                         loadMorePending
@@ -3555,9 +3734,8 @@ private fun LiveTvPlaybackScreen(
                                     }
 
                                     /*
-                                     * Existing item count becomes the
-                                     * index of the first newly appended
-                                     * channel after loading.
+                                     * This becomes the index of the first
+                                     * newly appended channel.
                                      */
                                     loadMoreStartItemCount =
                                         state.items.size
@@ -3568,15 +3746,20 @@ private fun LiveTvPlaybackScreen(
                                     loadMorePending =
                                         true
 
-                                    /*
-                                     * Append the next page.
-                                     */
                                     loadMoreCatalog()
                                 },
 
-                                enabled =
-                                    !state.catalogLoadingMore &&
-                                            !loadMorePending,
+                                /*
+                                 * IMPORTANT:
+                                 *
+                                 * Do not disable this Button while loading.
+                                 * A disabled focused component can cause
+                                 * Compose focus search to move focus elsewhere
+                                 * or temporarily lose it.
+                                 *
+                                 * Duplicate activation is prevented inside
+                                 * onClick instead.
+                                 */
 
                                 modifier =
                                     Modifier
@@ -3601,12 +3784,10 @@ private fun LiveTvPlaybackScreen(
                                             Color.White
                                     )
                             ) {
-
                                 if (
                                     state.catalogLoadingMore ||
                                     loadMorePending
                                 ) {
-
                                     CircularProgressIndicator(
                                         modifier =
                                             Modifier.size(
@@ -3619,9 +3800,7 @@ private fun LiveTvPlaybackScreen(
                                         color =
                                             Color.White
                                     )
-
                                 } else {
-
                                     Icon(
                                         imageVector =
                                             Icons.Default.ExpandMore,
