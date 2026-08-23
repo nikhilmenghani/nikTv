@@ -586,12 +586,18 @@ fun ShowcasePlaybackScreen(
                 onFocused = { previewItem = it },
                 onPlay = { item ->
                     /*
-                     * Touch and D-pad OK both mean "play this tile".
-                     * Keep the movie in its existing rail slot.
+                     * SHOWCASE_NOW_PLAYING_FULLSCREEN_V8
+                     *
+                     * Another tile means "play this item".
+                     * Pressing the tile that is already playing enters
+                     * fullscreen. Stable queue ordering means the tile itself
+                     * remains in the same rail position.
                      */
                     previewItem = item
 
-                    if (item.id != playing.media.id) {
+                    if (item.id == playing.media.id) {
+                        fullscreen = true
+                    } else {
                         play(item)
                     }
                 },
@@ -743,7 +749,8 @@ private fun ShowcaseDetailsPanel(
          * Playback/fullscreen buttons intentionally do not live here.
          *
          * D-pad / touch behavior belongs to the poster rail:
-         *   - OK/tap a tile -> play it
+         *   - OK/tap another tile -> play it
+         *   - OK/tap the active tile -> fullscreen
          *   - the active tile stays in place and shows PLAYING
          *
          * Keeping only My List also reduces accidental focus jumps away

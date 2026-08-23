@@ -798,21 +798,120 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+
+    /*
+     * MOVIE_LIVE_NAVIGATION_QUEUE_V8
+     *
+     * PlayingMedia.episodeQueue is a snapshot. For catalog-style playback,
+     * prefer the current visible catalog when it still contains the active
+     * item so Next/Previous follows exactly what the user sees in the rail.
+     */
+    private fun playbackNavigationQueue(
+        playing: PlayingMedia
+    ): List<MediaItem> {
+        val snapshot = _state.value
+        val currentCatalog =
+            snapshot.items.distinctBy { it.id }
+
+        val catalogCanOwnNavigation =
+            playing.catalogType in setOf(
+                CatalogType.LIVE_TV,
+                CatalogType.MOVIES,
+                CatalogType.RADIO
+            ) &&
+                snapshot.selectedType == playing.catalogType &&
+                currentCatalog.any {
+                    it.id == playing.media.id
+                }
+
+        return if (catalogCanOwnNavigation) {
+            currentCatalog
+        } else {
+            playing.episodeQueue.distinctBy { it.id }
+        }
+    }
+
     fun playNextEpisode() {
         val playing = _state.value.nowPlaying ?: return
-        val next = playing.nextEpisode ?: return
+        val queue = playbackNavigationQueue(playing)
+
+        val index =
+            queue.indexOfFirst {
+                it.id == playing.media.id
+            }
+
+        if (index < 0) return
+
+        val next =
+            queue.getOrNull(index + 1)
+                ?: queue
+                    .firstOrNull()
+                    .takeIf {
+                        playing.catalogType ==
+                            CatalogType.LIVE_TV &&
+                            queue.size > 1
+                    }
+                ?: return
+
         viewModelScope.launch {
-            runCatching { playInternal(next, playing.catalogType, playing.series, playing.episodeQueue) }
-                .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not play the next item") } }
+            runCatching {
+                playInternal(
+                    item = next,
+                    type = playing.catalogType,
+                    series = playing.series,
+                    episodes = queue
+                )
+            }.onFailure { error ->
+                _state.update {
+                    it.copy(
+                        error =
+                            error.message
+                                ?: "Could not play the next item"
+                    )
+                }
+            }
         }
     }
 
     fun playPreviousEpisode() {
         val playing = _state.value.nowPlaying ?: return
-        val previous = playing.previousEpisode ?: return
+        val queue = playbackNavigationQueue(playing)
+
+        val index =
+            queue.indexOfFirst {
+                it.id == playing.media.id
+            }
+
+        if (index < 0) return
+
+        val previous =
+            queue.getOrNull(index - 1)
+                ?: queue
+                    .lastOrNull()
+                    .takeIf {
+                        playing.catalogType ==
+                            CatalogType.LIVE_TV &&
+                            queue.size > 1
+                    }
+                ?: return
+
         viewModelScope.launch {
-            runCatching { playInternal(previous, playing.catalogType, playing.series, playing.episodeQueue) }
-                .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not play the previous item") } }
+            runCatching {
+                playInternal(
+                    item = previous,
+                    type = playing.catalogType,
+                    series = playing.series,
+                    episodes = queue
+                )
+            }.onFailure { error ->
+                _state.update {
+                    it.copy(
+                        error =
+                            error.message
+                                ?: "Could not play the previous item"
+                    )
+                }
+            }
         }
     }
 
