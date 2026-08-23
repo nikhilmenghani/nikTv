@@ -1282,30 +1282,99 @@ private fun ModernBrowseScreen(
                     ModernSectionHeader(
                         state.selectedCategory?.title ?: state.selectedType.title,
                         "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}",
-                        action = {
-                            FilledTonalIconButton(onClick = {
-                                setBrowseLayout(if (state.browseLayout == BrowseLayout.GRID) BrowseLayout.LIST else BrowseLayout.GRID)
-                            }, modifier = Modifier.focusRequester(layoutToggleRequester)
-                                .focusProperties { up = FocusRequester.Default }
-                                .remoteFocusFrame(CircleShape)) {
-                                Icon(if (state.browseLayout == BrowseLayout.GRID) Icons.Default.ViewList else Icons.Default.GridView,
-                                    if (state.browseLayout == BrowseLayout.GRID) "Show as list" else "Show as grid")
+                        action = if (state.selectedType != CatalogType.LIVE_TV) {
+                            {
+                                FilledTonalIconButton(
+                                    onClick = {
+                                        setBrowseLayout(
+                                            if (state.browseLayout == BrowseLayout.GRID) {
+                                                BrowseLayout.LIST
+                                            } else {
+                                                BrowseLayout.GRID
+                                            }
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(layoutToggleRequester)
+                                        .focusProperties {
+                                            up = FocusRequester.Default
+                                        }
+                                        .remoteFocusFrame(CircleShape)
+                                ) {
+                                    Icon(
+                                        if (state.browseLayout == BrowseLayout.GRID) {
+                                            Icons.Default.ViewList
+                                        } else {
+                                            Icons.Default.GridView
+                                        },
+                                        if (state.browseLayout == BrowseLayout.GRID) {
+                                            "Show as list"
+                                        } else {
+                                            "Show as grid"
+                                        }
+                                    )
+                                }
                             }
+                        } else {
+                            null
                         }
                     )
                 }
+                val effectiveBrowseLayout =
+                    if (state.selectedType == CatalogType.LIVE_TV) {
+                        BrowseLayout.LIST
+                    } else {
+                        state.browseLayout
+                    }
                 items(
                     state.items,
                     key = { "catalog-${state.selectedType}-${it.id}" },
-                    span = { if (state.browseLayout == BrowseLayout.LIST) GridItemSpan(maxLineSpan) else GridItemSpan(1) }
+                    span = {
+                        if (effectiveBrowseLayout == BrowseLayout.LIST) {
+                            GridItemSpan(maxLineSpan)
+                        } else {
+                            GridItemSpan(1)
+                        }
+                    }
                 ) { item ->
-                    if (state.browseLayout == BrowseLayout.LIST) {
+                    if (effectiveBrowseLayout == BrowseLayout.LIST) {
+                        val isLiveTv =
+                            state.selectedType == CatalogType.LIVE_TV
+
                         ModernMediaListCard(
-                            item,
-                            modifier = if (state.selectedType == CatalogType.LIVE_TV && item.id == state.items.first().id) Modifier.focusRequester(firstChannelRequester) else Modifier,
-                            onClick = { play(item) },
-                            isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
-                            toggleFavorite = { toggleFavorite(item) }
+                            item = item,
+
+                            modifier = if (
+                                isLiveTv &&
+                                item.id == state.items.first().id
+                            ) {
+                                Modifier.focusRequester(firstChannelRequester)
+                            } else {
+                                Modifier
+                            },
+
+                            onClick = {
+                                play(item)
+                            },
+
+                            isFavorite = state.favorites.any {
+                                it.media.id == item.id &&
+                                        it.kind == state.selectedType.favoriteKind()
+                            },
+
+                            toggleFavorite = {
+                                toggleFavorite(item)
+                            },
+
+                            supportingText = if (isLiveTv) {
+                                item.liveProgramme?.let {
+                                    liveProgrammeSummary(it)
+                                } ?: item.description
+                            } else {
+                                item.description
+                            },
+
+                            compact = isLiveTv
                         )
                     } else {
                         ModernPosterCard(
@@ -1356,6 +1425,39 @@ private fun ModernBrowseScreen(
                 }
             }
     }
+}
+
+private fun liveProgrammeSummary(
+    programme: LiveProgramme
+): String {
+    val formatter = java.text.SimpleDateFormat(
+        "h:mm a",
+        java.util.Locale.getDefault()
+    )
+
+    val schedule = when {
+        programme.startTimeMillis != null &&
+                programme.endTimeMillis != null -> {
+
+            "${formatter.format(java.util.Date(programme.startTimeMillis))}" +
+                    "–${formatter.format(java.util.Date(programme.endTimeMillis))}"
+        }
+
+        programme.startTimeMillis != null -> {
+            "From ${
+                formatter.format(
+                    java.util.Date(programme.startTimeMillis)
+                )
+            }"
+        }
+
+        else -> null
+    }
+
+    return listOfNotNull(
+        programme.title.takeIf { it.isNotBlank() },
+        schedule
+    ).joinToString("  •  ")
 }
 
 @Composable
@@ -1524,32 +1626,52 @@ private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit,
 
 @Composable
 private fun LiveTvPreviewPlaceholder(categoryTitle: String?) {
-    Box(
-        Modifier.fillMaxWidth().height(330.dp).background(Color.Black),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(Color(0xFF050505), Color(0xFF151515)))
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(
+                WindowInsets.safeDrawing.only(
+                    WindowInsetsSides.Top
+                )
             )
-        )
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Surface(shape = CircleShape, color = Color(0xFF242424)) {
-                Icon(Icons.Default.LiveTv, null, Modifier.padding(18.dp).size(42.dp), tint = Color(0xFFE50914))
-            }
-            Text("Choose a channel to start watching", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text(categoryTitle ?: "Live TV", color = Color.LightGray, style = MaterialTheme.typography.bodyLarge)
-        }
+            .padding(
+                horizontal = 20.dp,
+                vertical = 8.dp
+            ),
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFF111111)
+    ) {
         Row(
-            Modifier.align(Alignment.BottomStart).padding(horizontal = 24.dp, vertical = 18.dp),
+            modifier = Modifier.padding(
+                horizontal = 16.dp,
+                vertical = 12.dp
+            ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFE50914)))
-            Text("LIVE TV", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            Icon(
+                Icons.Default.LiveTv,
+                contentDescription = null,
+                modifier = Modifier.size(28.dp),
+                tint = Color(0xFFE50914)
+            )
+
+            Column(
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    "Choose a channel to start watching",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Text(
+                    categoryTitle ?: "Live TV",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
 }
