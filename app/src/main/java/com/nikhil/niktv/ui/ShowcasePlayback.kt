@@ -383,7 +383,22 @@ fun ShowcasePlaybackScreen(
             else -> emptyList()
         }
 
-        (listOf(playing.media) + source).distinctBy { it.id }
+        /*
+         * SHOWCASE_STABLE_QUEUE_V3
+         *
+         * Preserve the catalog/queue order when playback changes.
+         * The currently playing movie should become visually "PLAYING"
+         * in its existing slot instead of being moved to the far left.
+         */
+        val orderedSource = source.distinctBy { it.id }
+
+        if (orderedSource.any { it.id == playing.media.id }) {
+            orderedSource
+        } else {
+            // Playback may have been opened from Search/My List. In that
+            // case the active item genuinely is not present in the source.
+            listOf(playing.media) + orderedSource
+        }
     }
 
     val posterFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
@@ -431,8 +446,18 @@ fun ShowcasePlaybackScreen(
                     loadMoreFirstVisibleItemScrollOffset
                 )
 
-                val refreshedQueue = (listOf(playing.media) + state.items).distinctBy { it.id }
-                val newIndex = refreshedQueue.indexOfFirst { it.id == firstNewItem.id }
+                val refreshedCatalog =
+                    state.items.distinctBy { it.id }
+
+                val refreshedQueue =
+                    if (refreshedCatalog.any { it.id == playing.media.id }) {
+                        refreshedCatalog
+                    } else {
+                        listOf(playing.media) + refreshedCatalog
+                    }
+
+                val newIndex =
+                    refreshedQueue.indexOfFirst { it.id == firstNewItem.id }
 
                 if (newIndex >= 0) {
                     val visible = withTimeoutOrNull(800L) {
@@ -552,7 +577,15 @@ fun ShowcasePlaybackScreen(
                 loadMorePending = loadMorePending,
                 onFocused = { previewItem = it },
                 onPlay = { item ->
-                    if (item.id == playing.media.id) fullscreen = true else play(item)
+                    /*
+                     * Touch and D-pad OK both mean "play this tile".
+                     * Keep the movie in its existing rail slot.
+                     */
+                    previewItem = item
+
+                    if (item.id != playing.media.id) {
+                        play(item)
+                    }
                 },
                 onLoadMore = {
                     if (!state.catalogLoadingMore && !loadMorePending) {
@@ -702,8 +735,8 @@ private fun ShowcaseDetailsPanel(
          * Playback/fullscreen buttons intentionally do not live here.
          *
          * D-pad / touch behavior belongs to the poster rail:
-         *   - OK/tap another tile -> play it
-         *   - OK/tap the currently playing tile -> fullscreen
+         *   - OK/tap a tile -> play it
+         *   - the active tile stays in place and shows PLAYING
          *
          * Keeping only My List also reduces accidental focus jumps away
          * from the horizontal movie rail.
@@ -833,44 +866,91 @@ private fun BoxScope.ShowcaseRail(
             if (showLoadMore) {
                 item(key = "showcase-load-more-${type.name}") {
                     var loadMoreFocused by remember { mutableStateOf(false) }
-                    val loadMoreScale by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = if (loadMoreFocused) 1.10f else 0.94f,
-                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 140),
-                        label = "showcaseLoadMoreScale"
-                    )
 
-                    Button(
-                        onClick = {
-                            if (!state.catalogLoadingMore && !loadMorePending) onLoadMore()
-                        },
+                    val loadMoreScale by
+                        androidx.compose.animation.core.animateFloatAsState(
+                            targetValue = if (loadMoreFocused) 1.08f else 0.96f,
+                            animationSpec =
+                                androidx.compose.animation.core.tween(
+                                    durationMillis = 140
+                                ),
+                            label = "showcaseCompactLoadMoreScale"
+                        )
+
+                    /*
+                     * The outer slot follows the tile row. The control itself
+                     * is intentionally compact rather than artwork-sized.
+                     */
+                    Box(
                         modifier = Modifier
-                            .width(posterWidth)
-                            .height(posterWidth)
-                            .graphicsLayer {
-                                scaleX = loadMoreScale
-                                scaleY = loadMoreScale
-                            }
-                            .onFocusChanged { loadMoreFocused = it.isFocused }
-                            .showcaseFocusFrame(RoundedCornerShape(10.dp)),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFE50914),
-                            contentColor = Color.White
-                        )
+                            .width(if (compact) 98.dp else 116.dp)
+                            .height(posterWidth),
+                        contentAlignment = Alignment.Center
                     ) {
-                        if (state.catalogLoadingMore || loadMorePending) {
-                            CircularProgressIndicator(
-                                Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = Color.White
+                        Button(
+                            onClick = {
+                                if (
+                                    !state.catalogLoadingMore &&
+                                    !loadMorePending
+                                ) {
+                                    onLoadMore()
+                                }
+                            },
+                            modifier = Modifier
+                                .width(if (compact) 92.dp else 108.dp)
+                                .height(44.dp)
+                                .graphicsLayer {
+                                    scaleX = loadMoreScale
+                                    scaleY = loadMoreScale
+                                }
+                                .onFocusChanged {
+                                    loadMoreFocused = it.isFocused
+                                }
+                                .showcaseFocusFrame(
+                                    RoundedCornerShape(8.dp)
+                                ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(
+                                horizontal = 10.dp,
+                                vertical = 0.dp
+                            ),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE50914),
+                                contentColor = Color.White
                             )
-                        } else {
-                            Icon(Icons.Default.Add, null)
+                        ) {
+                            if (
+                                state.catalogLoadingMore ||
+                                loadMorePending
+                            ) {
+                                CircularProgressIndicator(
+                                    Modifier.size(17.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Loading",
+                                    maxLines = 1,
+                                    style =
+                                        MaterialTheme.typography.labelMedium
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    "Load more",
+                                    maxLines = 1,
+                                    style =
+                                        MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (state.catalogLoadingMore || loadMorePending) "Loading…" else "Load more",
-                            maxLines = 2
-                        )
                     }
                 }
             }
