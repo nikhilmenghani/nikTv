@@ -1717,47 +1717,149 @@ private fun ModernMediaListCard(
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
+
     Surface(
-        modifier = modifier.fillMaxWidth().padding(horizontal = if (compact) 4.dp else 10.dp)
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = if (compact) 2.dp else 10.dp)
             .onFocusChanged { focused = it.isFocused }
-            .then(if (focused) Modifier.shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
-            .remoteCombinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
+            .then(
+                if (focused) {
+                    Modifier.shadow(
+                        16.dp,
+                        RoundedCornerShape(12.dp),
+                        ambientColor = Color(0xFFE50914),
+                        spotColor = Color(0xFFE50914)
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .remoteCombinedClickable(
+                onClick = onClick,
+                onLongClick = { menuOpen = true }
+            ),
         shape = RoundedCornerShape(12.dp),
-        color = if (focused) Color(0xFF292929) else Color(0xFF171717),
+        color = when {
+            focused -> Color(0xFF292929)
+            isCurrentlyPlaying -> Color(0xFF211719)
+            else -> Color(0xFF171717)
+        },
         border = when {
             focused -> BorderStroke(4.dp, Color(0xFFFF2633))
             isCurrentlyPlaying -> BorderStroke(2.dp, Color(0xFFE50914))
             else -> null
         }
     ) {
-        Row(Modifier.padding(if (compact) 5.dp else 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)) {
+        Row(
+            modifier = Modifier.padding(
+                horizontal = if (compact) 6.dp else 8.dp,
+                vertical = if (compact) 7.dp else 8.dp
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(
+                if (compact) 8.dp else 12.dp
+            )
+        ) {
             if (isCurrentlyPlaying) {
-                Box(Modifier.width(4.dp).height(42.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFFE50914)))
+                Box(
+                    Modifier
+                        .width(3.dp)
+                        .height(if (compact) 52.dp else 42.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0xFFE50914))
+                )
             }
-            Box(Modifier.width(if (compact) 60.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
-                if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
-                else SubcomposeAsyncImage(artworkRequest(context, item), item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
-                    when (painter.state.value) {
-                        is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
-                        else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
+
+            Box(
+                modifier = Modifier
+                    .width(if (compact) 72.dp else 132.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF242424)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (item.logo.isNullOrBlank()) {
+                    Icon(
+                        Icons.Default.SmartDisplay,
+                        contentDescription = null,
+                        modifier = Modifier.size(
+                            if (compact) 30.dp else 42.dp
+                        ),
+                        tint = Color.LightGray
+                    )
+                } else {
+                    SubcomposeAsyncImage(
+                        model = artworkRequest(context, item),
+                        contentDescription = item.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    ) {
+                        when (painter.state.value) {
+                            is coil3.compose.AsyncImagePainter.State.Success ->
+                                SubcomposeAsyncImageContent()
+
+                            else -> Icon(
+                                Icons.Default.SmartDisplay,
+                                contentDescription = null,
+                                modifier = Modifier.size(
+                                    if (compact) 30.dp else 42.dp
+                                ),
+                                tint = Color.LightGray
+                            )
+                        }
                     }
                 }
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(item.title, Modifier.then(if (focused) Modifier.basicMarquee(Int.MAX_VALUE) else Modifier), color = Color.White, style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium, maxLines = 1)
-                supportingText?.takeIf { it.isNotBlank() }?.let {
-                    Text(
-                        it,
-                        color = if (it == "NOW PLAYING") Color(0xFFE50914) else Color.Gray,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = if (it == "NOW PLAYING") FontWeight.Bold else FontWeight.Normal,
-                        maxLines = if (compact) 1 else 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = item.title,
+                    color = Color.White,
+                    style = if (compact) {
+                        MaterialTheme.typography.titleSmall
+                    } else {
+                        MaterialTheme.typography.titleMedium
+                    },
+                    fontWeight = if (focused || isCurrentlyPlaying) {
+                        FontWeight.SemiBold
+                    } else {
+                        FontWeight.Normal
+                    },
+                    maxLines = if (compact) 2 else 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                supportingText
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { text ->
+                        Text(
+                            text = text,
+                            color = if (focused) {
+                                Color(0xFFD5D5D5)
+                            } else {
+                                Color(0xFFAAAAAA)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
             }
-            if (!compact) Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(24.dp), tint = if (focused) Color.White else Color.Gray)
+
+            if (!compact) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = if (focused) Color.White else Color.Gray
+                )
+            }
         }
+
         DropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
@@ -1765,9 +1867,29 @@ private fun ModernMediaListCard(
             shape = RoundedCornerShape(12.dp)
         ) {
             DropdownMenuItem(
-                text = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
-                leadingIcon = { Icon(if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder, null) },
-                onClick = { menuOpen = false; toggleFavorite() }
+                text = {
+                    Text(
+                        if (isFavorite) {
+                            "Remove from My List"
+                        } else {
+                            "Add to My List"
+                        }
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        if (isFavorite) {
+                            Icons.Default.HeartBroken
+                        } else {
+                            Icons.Default.FavoriteBorder
+                        },
+                        contentDescription = null
+                    )
+                },
+                onClick = {
+                    menuOpen = false
+                    toggleFavorite()
+                }
             )
         }
     }
@@ -2726,7 +2848,7 @@ private fun LiveTvPlaybackScreen(
     val channelListState = rememberLazyListState()
     val playerConfiguration = LocalConfiguration.current
     val narrowPlayerLayout = playerConfiguration.screenWidthDp < 900
-    val playerWidthFraction = if (narrowPlayerLayout) 0.64f else 0.72f
+    val playerWidthFraction = if (narrowPlayerLayout) 0.58f else 0.72f
     val channelWidthFraction = 1f - playerWidthFraction
 
     LaunchedEffect(fullscreen, playing.media.id, state.items) {
@@ -2760,11 +2882,17 @@ private fun LiveTvPlaybackScreen(
             Column(
                 Modifier.align(Alignment.CenterEnd).fillMaxWidth(channelWidthFraction).fillMaxHeight()
                     .background(Brush.verticalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0D0D0D))))
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Top +
+                                    WindowInsetsSides.End +
+                                    WindowInsetsSides.Bottom
+                        )
+                    )
                     .padding(top = 8.dp, bottom = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
                         "LIVE · ${state.selectedCategory?.title ?: "Channels"}",
                         color = Color(0xFFE50914),
@@ -2784,7 +2912,7 @@ private fun LiveTvPlaybackScreen(
                 }
                 LazyColumn(
                     state = channelListState,
-                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                    contentPadding = PaddingValues(vertical = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     items(state.items, key = { item -> "live-player-${item.id}" }) { item ->
@@ -2797,7 +2925,7 @@ private fun LiveTvPlaybackScreen(
                             },
                             isFavorite = state.favorites.any { it.kind == FavoriteKind.CHANNEL && it.media.id == item.id },
                             toggleFavorite = { toggleFavorite(item) },
-                            supportingText = if (isPlaying) "NOW PLAYING" else item.liveProgramme?.title,
+                            supportingText = item.liveProgramme?.title ?: item.description,
                             compact = true,
                             isCurrentlyPlaying = isPlaying
                         )
