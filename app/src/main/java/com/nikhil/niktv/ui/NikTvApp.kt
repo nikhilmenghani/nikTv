@@ -3116,45 +3116,186 @@ private fun LiveTvPlaybackScreen(
     loadMoreCatalog: () -> Unit
 ) {
     val playing = state.nowPlaying ?: return
-    var fullscreen by remember { mutableStateOf(false) }
-    val currentChannelRequester = remember { FocusRequester() }
-    val channelListState = rememberLazyListState()
-    val playerConfiguration = LocalConfiguration.current
-    val narrowPlayerLayout = playerConfiguration.screenWidthDp < 900
-    val playerWidthFraction = if (narrowPlayerLayout) 0.58f else 0.72f
-    val channelWidthFraction = 1f - playerWidthFraction
 
-    LaunchedEffect(fullscreen, playing.media.id, state.items) {
+    var fullscreen by remember {
+        mutableStateOf(false)
+    }
+
+    /*
+     * Used when NikTV first opens the Live TV player,
+     * when the playing channel changes, or when returning
+     * from fullscreen.
+     */
+    val currentChannelRequester = remember {
+        FocusRequester()
+    }
+
+    /*
+     * IMPORTANT:
+     *
+     * This LazyListState must be allowed to preserve its own
+     * scroll position during Load More.
+     *
+     * Do not manually restore its firstVisibleItemIndex
+     * or firstVisibleItemScrollOffset after loading.
+     */
+    val channelListState = rememberLazyListState()
+
+    /*
+     * The FocusRequester belonging to whichever channel the
+     * D-pad cursor most recently visited.
+     *
+     * When the user reaches "Load more channels", this still
+     * points at the channel immediately above/before it.
+     */
+    var lastFocusedChannelRequester by remember {
+        mutableStateOf<FocusRequester?>(
+            currentChannelRequester
+        )
+    }
+
+    val playerConfiguration =
+        LocalConfiguration.current
+
+    val narrowPlayerLayout =
+        playerConfiguration.screenWidthDp < 900
+
+    val playerWidthFraction =
+        if (narrowPlayerLayout) {
+            0.58f
+        } else {
+            0.72f
+        }
+
+    val channelWidthFraction =
+        1f - playerWidthFraction
+
+    /*
+     * NORMAL PLAYER FOCUS BEHAVIOUR
+     *
+     * Notice that state.items is deliberately NOT a key.
+     *
+     * Previously:
+     *
+     * LaunchedEffect(
+     *     fullscreen,
+     *     playing.media.id,
+     *     state.items
+     * )
+     *
+     * caused Load More to re-run this effect because
+     * state.items changed.
+     *
+     * That forced NikTV back to the currently playing
+     * channel every time another page was appended.
+     */
+    LaunchedEffect(
+        fullscreen,
+        playing.media.id
+    ) {
         if (!fullscreen) {
-            val playingIndex = state.items.indexOfFirst { it.id == playing.media.id }
+
+            val playingIndex =
+                state.items.indexOfFirst {
+                    it.id == playing.media.id
+                }
+
             if (playingIndex >= 0) {
-                channelListState.scrollToItem(playingIndex)
+
+                /*
+                 * Scrolling is appropriate HERE.
+                 *
+                 * This happens when:
+                 * - player opens
+                 * - channel being played changes
+                 * - fullscreen closes
+                 *
+                 * It does NOT happen when loading more.
+                 */
+                channelListState.scrollToItem(
+                    playingIndex
+                )
+
                 delay(180L)
-                runCatching { currentChannelRequester.requestFocus() }
+
+                runCatching {
+                    currentChannelRequester.requestFocus()
+                }
             }
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF090909))
+    ) {
+
         PlayerScreen(
             media = playing,
-            onBack = if (fullscreen) {{ fullscreen = false }} else onBack,
+
+            onBack = if (fullscreen) {
+                {
+                    fullscreen = false
+                }
+            } else {
+                onBack
+            },
+
             onRetry = onRetry,
-            onRetryAlternateDecoder = onRetryAlternateDecoder,
-            onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
-            onPlayPrevious = onPlayPrevious,
-            onPlayNext = onPlayNext,
-            onProgress = onProgress,
-            controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
-            modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth(playerWidthFraction).aspectRatio(16f / 9f).align(Alignment.CenterStart),
+
+            onRetryAlternateDecoder =
+                onRetryAlternateDecoder,
+
+            onPlaybackAuthorizationFailure =
+                onPlaybackAuthorizationFailure,
+
+            onPlayPrevious =
+                onPlayPrevious,
+
+            onPlayNext =
+                onPlayNext,
+
+            onProgress =
+                onProgress,
+
+            controlsTimeoutSeconds =
+                state.playerControlsTimeoutSeconds,
+
+            modifier = if (fullscreen) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier
+                    .fillMaxWidth(playerWidthFraction)
+                    .aspectRatio(16f / 9f)
+                    .align(Alignment.CenterStart)
+            },
+
             embeddedMode = !fullscreen,
-            fullscreenOverride = fullscreen,
-            onFullscreenChanged = { fullscreen = it }
+
+            fullscreenOverride =
+                fullscreen,
+
+            onFullscreenChanged = {
+                fullscreen = it
+            }
         )
+
         if (!fullscreen) {
+
             Column(
-                Modifier.align(Alignment.CenterEnd).fillMaxWidth(channelWidthFraction).fillMaxHeight()
-                    .background(Brush.verticalGradient(listOf(Color(0xFF1A1A1A), Color(0xFF0D0D0D))))
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxWidth(channelWidthFraction)
+                    .fillMaxHeight()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color(0xFF1A1A1A),
+                                Color(0xFF0D0D0D)
+                            )
+                        )
+                    )
                     .windowInsetsPadding(
                         WindowInsets.safeDrawing.only(
                             WindowInsetsSides.Top +
@@ -3162,58 +3303,317 @@ private fun LiveTvPlaybackScreen(
                                     WindowInsetsSides.Bottom
                         )
                     )
-                    .padding(top = 8.dp, bottom = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                    .padding(
+                        top = 8.dp,
+                        bottom = 8.dp
+                    ),
+
+                verticalArrangement =
+                    Arrangement.spacedBy(5.dp)
             ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+
+                /*
+                 * LIVE TV HEADER
+                 */
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp),
+
+                    verticalArrangement =
+                        Arrangement.spacedBy(1.dp)
+                ) {
+
                     Text(
-                        "LIVE · ${state.selectedCategory?.title ?: "Channels"}",
-                        color = Color(0xFFE50914),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
+                        text =
+                            "LIVE · ${
+                                state.selectedCategory?.title
+                                    ?: "Channels"
+                            }",
+
+                        color =
+                            Color(0xFFE50914),
+
+                        style =
+                            MaterialTheme.typography.labelSmall,
+
+                        fontWeight =
+                            FontWeight.Bold,
+
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+
+                        overflow =
+                            TextOverflow.Ellipsis
                     )
-                    Text(playing.media.title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
                     Text(
-                        playing.media.liveProgramme?.title ?: "${state.items.size} channels",
-                        color = Color.LightGray,
-                        style = MaterialTheme.typography.bodySmall,
+                        text =
+                            playing.media.title,
+
+                        color =
+                            Color.White,
+
+                        style =
+                            MaterialTheme.typography.titleMedium,
+
+                        fontWeight =
+                            FontWeight.Bold,
+
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+
+                        overflow =
+                            TextOverflow.Ellipsis
+                    )
+
+                    Text(
+                        text =
+                            playing.media.liveProgramme?.title
+                                ?: "${state.items.size} channels",
+
+                        color =
+                            Color.LightGray,
+
+                        style =
+                            MaterialTheme.typography.bodySmall,
+
+                        maxLines = 1,
+
+                        overflow =
+                            TextOverflow.Ellipsis
                     )
                 }
+
+                /*
+                 * CHANNEL LIST
+                 */
                 LazyColumn(
                     state = channelListState,
-                    contentPadding = PaddingValues(vertical = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
+
+                    contentPadding =
+                        PaddingValues(
+                            vertical = 2.dp
+                        ),
+
+                    verticalArrangement =
+                        Arrangement.spacedBy(3.dp)
                 ) {
-                    items(state.items, key = { item -> "live-player-${item.id}" }) { item ->
-                        val isPlaying = item.id == playing.media.id
+
+                    items(
+                        items = state.items,
+
+                        /*
+                         * Stable keys are important.
+                         *
+                         * When more channels are appended,
+                         * existing channel identities do not change.
+                         * LazyColumn can therefore naturally keep
+                         * the current viewport where it is.
+                         */
+                        key = { item ->
+                            "live-player-${item.id}"
+                        }
+                    ) { item ->
+
+                        val isPlaying =
+                            item.id ==
+                                    playing.media.id
+
+                        /*
+                         * Every visible channel gets its own
+                         * FocusRequester.
+                         *
+                         * The playing channel uses the dedicated
+                         * currentChannelRequester so that the
+                         * normal player-opening effect can find it.
+                         */
+                        val itemFocusRequester =
+                            remember(item.id) {
+                                FocusRequester()
+                            }
+
+                        val rowFocusRequester =
+                            if (isPlaying) {
+                                currentChannelRequester
+                            } else {
+                                itemFocusRequester
+                            }
+
                         ModernMediaListCard(
                             item = item,
-                            modifier = Modifier.then(if (isPlaying) Modifier.focusRequester(currentChannelRequester) else Modifier),
+
+                            modifier = Modifier
+
+                                /*
+                                 * Attach exactly one requester
+                                 * to this channel row.
+                                 */
+                                .focusRequester(
+                                    rowFocusRequester
+                                )
+
+                                /*
+                                 * Whenever the D-pad cursor visits
+                                 * this channel, remember its requester.
+                                 *
+                                 * Example:
+                                 *
+                                 * Channel 48
+                                 * Channel 49
+                                 * Channel 50   <- remembered
+                                 * Load more
+                                 */
+                                .onFocusChanged { focusState ->
+
+                                    if (
+                                        focusState.isFocused
+                                    ) {
+                                        lastFocusedChannelRequester =
+                                            rowFocusRequester
+                                    }
+                                },
+
                             onClick = {
-                                if (isPlaying) fullscreen = true else play(item)
+
+                                if (isPlaying) {
+                                    fullscreen = true
+                                } else {
+                                    play(item)
+                                }
                             },
-                            isFavorite = state.favorites.any { it.kind == FavoriteKind.CHANNEL && it.media.id == item.id },
-                            toggleFavorite = { toggleFavorite(item) },
-                            supportingText = item.liveProgramme?.title ?: item.description,
+
+                            isFavorite =
+                                state.favorites.any {
+                                    it.kind ==
+                                            FavoriteKind.CHANNEL &&
+                                            it.media.id ==
+                                            item.id
+                                },
+
+                            toggleFavorite = {
+                                toggleFavorite(item)
+                            },
+
+                            supportingText =
+                                liveChannelSupportingText(
+                                    item
+                                ),
+
                             compact = true,
-                            isCurrentlyPlaying = isPlaying
+
+                            isCurrentlyPlaying =
+                                isPlaying
                         )
                     }
-                    if (state.catalogHasMore) item("live-player-load-more") {
-                        Button(
-                            onClick = loadMoreCatalog,
-                            enabled = !state.catalogLoadingMore,
-                            modifier = Modifier.fillMaxWidth().height(46.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+
+                    /*
+                     * LOAD MORE
+                     */
+                    if (state.catalogHasMore) {
+
+                        item(
+                            key =
+                                "live-player-load-more"
                         ) {
-                            if (state.catalogLoadingMore) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
-                            else Icon(Icons.Default.ExpandMore, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (state.catalogLoadingMore) "Loading channels…" else "Load more channels")
+
+                            Button(
+                                onClick = {
+
+                                    /*
+                                     * THIS IS THE IMPORTANT PART.
+                                     *
+                                     * Move focus off the Load More
+                                     * button immediately, BEFORE
+                                     * appending new items.
+                                     *
+                                     * The cursor goes straight back
+                                     * to the channel the user was on.
+                                     *
+                                     * No scrollToItem().
+                                     * No scroll offset restoration.
+                                     * No waiting until loading finishes.
+                                     */
+                                    lastFocusedChannelRequester
+                                        ?.let { requester ->
+
+                                            runCatching {
+                                                requester.requestFocus()
+                                            }
+                                        }
+
+                                    /*
+                                     * Now start loading.
+                                     *
+                                     * Because the Load More button no
+                                     * longer owns focus, LazyColumn does
+                                     * not need to chase that button when
+                                     * its index moves downward after new
+                                     * channels are inserted before it.
+                                     */
+                                    loadMoreCatalog()
+                                },
+
+                                enabled =
+                                    !state.catalogLoadingMore,
+
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .remoteFocusFrame(
+                                        RoundedCornerShape(
+                                            10.dp
+                                        )
+                                    ),
+
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor =
+                                            Color(0xFFE50914),
+
+                                        contentColor =
+                                            Color.White
+                                    )
+                            ) {
+
+                                if (
+                                    state.catalogLoadingMore
+                                ) {
+
+                                    CircularProgressIndicator(
+                                        modifier =
+                                            Modifier.size(20.dp),
+
+                                        strokeWidth =
+                                            2.dp,
+
+                                        color =
+                                            Color.White
+                                    )
+
+                                } else {
+
+                                    Icon(
+                                        imageVector =
+                                            Icons.Default.ExpandMore,
+
+                                        contentDescription =
+                                            null
+                                    )
+                                }
+
+                                Spacer(
+                                    Modifier.width(8.dp)
+                                )
+
+                                Text(
+                                    if (
+                                        state.catalogLoadingMore
+                                    ) {
+                                        "Loading channels…"
+                                    } else {
+                                        "Load more channels"
+                                    }
+                                )
+                            }
                         }
                     }
                 }
