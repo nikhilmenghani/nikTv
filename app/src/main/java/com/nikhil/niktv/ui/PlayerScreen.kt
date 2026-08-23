@@ -304,20 +304,36 @@ fun PlayerScreen(
             controlsVisible = true
         }
     }
+    /*
+     * SHOWCASE_EMBEDDED_CONTROLS_TIMEOUT_V11
+     *
+     * Player controls already used controlsTimeoutSeconds for standalone /
+     * fullscreen playback (3 seconds by default). Apply the same timeout to
+     * the Showcase embedded player.
+     *
+     * Do not dismiss controls while the user is actively focused on one of
+     * the embedded control buttons. When focus is on the video surface, the
+     * overlay disappears after the configured timeout.
+     */
     LaunchedEffect(
         controlsVisible,
+        controlsFocused,
         isPlaying,
         controlsTimeoutSeconds,
         media.progressKey,
         embeddedMode
     ) {
-        if (
-            !embeddedMode &&
+        val canAutoHide =
             controlsVisible &&
-            isPlaying &&
-            playbackError == null &&
-            !startupTimedOut
-        ) {
+                isPlaying &&
+                playbackError == null &&
+                !startupTimedOut &&
+                (
+                    !embeddedMode ||
+                        !controlsFocused
+                    )
+
+        if (canAutoHide) {
             delay(
                 controlsTimeoutSeconds
                     .coerceIn(1, 30) * 1_000L
@@ -325,7 +341,17 @@ fun PlayerScreen(
 
             controlsVisible = false
             controlsFocused = false
-            playerViewRef?.requestFocus()
+
+            /*
+             * Standalone/fullscreen keeps the previous behavior of returning
+             * focus to PlayerView. In embedded Showcase mode the video surface
+             * already owns focus when this timeout normally fires; requesting
+             * focus again would trigger its focus listener and immediately
+             * show the controls again.
+             */
+            if (!embeddedMode) {
+                playerViewRef?.requestFocus()
+            }
         }
     }
 /*
