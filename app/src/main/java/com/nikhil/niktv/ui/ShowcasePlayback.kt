@@ -499,10 +499,17 @@ fun ShowcasePlaybackScreen(
         val safeEnd = safePadding.calculateEndPadding(layoutDirection)
 
         val headerHeight = (if (compact) 50.dp else 58.dp) + safeTop
+        /*
+         * MOVIE_RAIL_READABILITY_V7
+         *
+         * Square movie artwork became too small at 100dp on larger screens.
+         * Give the rail enough vertical room for readable 112–124dp artwork
+         * while still leaving the majority of the screen to the video player.
+         */
         val railHeight = when {
-            type == CatalogType.MOVIES && maxHeight < 480.dp -> 128.dp
-            type == CatalogType.MOVIES && compact -> 148.dp
-            type == CatalogType.MOVIES -> 176.dp
+            type == CatalogType.MOVIES && maxHeight < 480.dp -> 146.dp
+            type == CatalogType.MOVIES && compact -> 164.dp
+            type == CatalogType.MOVIES -> 206.dp
             maxHeight < 480.dp -> 142.dp
             compact -> 172.dp
             else -> 224.dp
@@ -793,11 +800,32 @@ private fun BoxScope.ShowcaseRail(
 ) {
     // Keep the Showcase rail visually consistent across content types.
     val aspectRatio = 1f
+    val showcaseScreenWidthDp =
+        LocalConfiguration.current.screenWidthDp
+
+    /*
+     * PLAYER_MOVIE_THUMBNAIL_READABILITY_V7
+     *
+     * Keep square tiles, but make the artwork large enough that poster text
+     * and faces remain recognizable. On wide screens (such as 1280px
+     * landscape tablets/TVs) use 124dp instead of 100dp.
+     */
     val posterWidth = when {
-        type == CatalogType.MOVIES && compact -> 72.dp
-        type == CatalogType.MOVIES -> 100.dp
-        compact -> 136.dp
-        else -> 184.dp
+        type == CatalogType.MOVIES && compact ->
+            88.dp
+
+        type == CatalogType.MOVIES &&
+            showcaseScreenWidthDp >= 1200 ->
+            124.dp
+
+        type == CatalogType.MOVIES ->
+            112.dp
+
+        compact ->
+            136.dp
+
+        else ->
+            184.dp
     }
     val showLoadMore =
         state.selectedType == type &&
