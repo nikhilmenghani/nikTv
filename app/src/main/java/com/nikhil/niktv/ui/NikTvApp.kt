@@ -205,6 +205,11 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null
     ) }
     val clipboard = LocalClipboardManager.current
+    val playbackProfileKey = state.session?.profile?.cacheKey().orEmpty()
+    val liveTvPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.LIVE_TV)
+    val moviePlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.MOVIES)
+    val seriesPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.SERIES)
+
     LaunchedEffect(updateEnforcementEnabled) {
         if (updateEnforcementEnabled && pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
             discoveredUpdate = runCatching { AppUpdates.check() }.getOrNull()
@@ -226,7 +231,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
           } else {
            Box(Modifier.fillMaxSize()) {
             when {
-                state.nowPlaying?.catalogType == CatalogType.LIVE_TV -> LiveTvPlaybackScreen(
+                state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
+                    liveTvPlaybackDesign == PlaybackDesign.SIDE_LIST -> LiveTvPlaybackScreen(
                     state = state,
                     play = vm::openMedia,
                     onBack = vm::closePlayer,
@@ -239,6 +245,52 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     toggleFavorite = vm::toggleFavorite,
                     loadMoreCatalog = vm::loadMoreCatalog
                 )
+
+                state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
+                    liveTvPlaybackDesign == PlaybackDesign.SHOWCASE -> ShowcasePlaybackScreen(
+                    state = state,
+                    play = vm::openMedia,
+                    onBack = vm::closePlayer,
+                    onRetry = vm::retryPlayback,
+                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
+                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
+                    onPlayPrevious = vm::playPreviousEpisode,
+                    onPlayNext = vm::playNextEpisode,
+                    onProgress = vm::savePlaybackProgress,
+                    toggleFavorite = vm::toggleFavorite,
+                    loadMoreCatalog = vm::loadMoreCatalog
+                )
+
+                state.nowPlaying?.catalogType == CatalogType.MOVIES &&
+                    moviePlaybackDesign == PlaybackDesign.SHOWCASE -> ShowcasePlaybackScreen(
+                    state = state,
+                    play = vm::openMedia,
+                    onBack = vm::closePlayer,
+                    onRetry = vm::retryPlayback,
+                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
+                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
+                    onPlayPrevious = vm::playPreviousEpisode,
+                    onPlayNext = vm::playNextEpisode,
+                    onProgress = vm::savePlaybackProgress,
+                    toggleFavorite = vm::toggleFavorite,
+                    loadMoreCatalog = vm::loadMoreCatalog
+                )
+
+                state.nowPlaying?.catalogType == CatalogType.SERIES &&
+                    seriesPlaybackDesign == PlaybackDesign.SHOWCASE -> ShowcasePlaybackScreen(
+                    state = state,
+                    play = vm::openMedia,
+                    onBack = vm::closePlayer,
+                    onRetry = vm::retryPlayback,
+                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
+                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
+                    onPlayPrevious = vm::playPreviousEpisode,
+                    onPlayNext = vm::playNextEpisode,
+                    onProgress = vm::savePlaybackProgress,
+                    toggleFavorite = vm::toggleFavorite,
+                    loadMoreCatalog = vm::loadMoreCatalog
+                )
+
                 state.nowPlaying != null -> PlayerScreen(
                     media = state.nowPlaying!!,
                     onBack = vm::closePlayer,
@@ -1130,8 +1182,10 @@ private fun ModernBrowseScreen(
     val firstChannelRequester = remember { FocusRequester() }
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
-    val isTv = LocalContext.current.isTvLikeDevice(configuration)
+    val browseContext = LocalContext.current
+    val isTv = browseContext.isTvLikeDevice(configuration)
     val isWide = configuration.screenWidthDp >= 720 || isTv
+    val profileKey = state.savedProfile?.cacheKey().orEmpty()
 
     var liveTvColumns by rememberSaveable {
         mutableIntStateOf(
@@ -1152,15 +1206,39 @@ private fun ModernBrowseScreen(
         }
     }
 
-    val columns = when {
-        state.selectedType == CatalogType.LIVE_TV ->
-            liveTvColumns
-
-        isWide -> 6
-
+    val maxMovieColumns = when {
+        isTv || configuration.screenWidthDp >= 1400 -> 8
+        configuration.screenWidthDp >= 1200 -> 7
+        configuration.screenWidthDp >= 1000 -> 6
+        configuration.screenWidthDp >= 800 -> 5
+        configuration.screenWidthDp >= 600 -> 4
         else -> 3
     }
-    val aspectRatio = 16f / 9f
+
+    val defaultMovieColumns = when {
+        isTv -> 6
+        configuration.screenWidthDp >= 1000 -> 5
+        configuration.screenWidthDp >= 600 -> 4
+        else -> 3
+    }
+
+    val storedMovieColumns by rememberCatalogColumns(
+        profileKey = profileKey,
+        type = CatalogType.MOVIES,
+        defaultValue = defaultMovieColumns
+    )
+
+    val movieColumns = storedMovieColumns.coerceIn(2, maxMovieColumns)
+
+    val columns = when {
+        state.selectedType == CatalogType.LIVE_TV -> liveTvColumns
+        state.selectedType == CatalogType.MOVIES -> movieColumns
+        isWide -> 6
+        else -> 3
+    }
+
+    val aspectRatio =
+        if (state.selectedType == CatalogType.MOVIES) 2f / 3f else 16f / 9f
     val gridSpan: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
 
     LaunchedEffect(state.selectedType, state.selectedCategory?.id, state.items.firstOrNull()?.id) {
@@ -1182,11 +1260,20 @@ private fun ModernBrowseScreen(
             }
             item("modern-hero", span = gridSpan) {
                 val recent = state.recentlyPlayed.firstOrNull()
-                if (!home && state.selectedType == CatalogType.LIVE_TV) {
-                    LiveTvPreviewPlaceholder(state.selectedCategory?.title)
-                } else {
-                    ModernHero(hero, if (home && recent != null) {{ openRecent(recent) }} else null,
-                        if (!home && hero != null) {{ play(hero) }} else null, state.savedProfile?.name.orEmpty())
+                when {
+                    !home && state.selectedType == CatalogType.LIVE_TV ->
+                        LiveTvPreviewPlaceholder(state.selectedCategory?.title)
+
+                    !home && state.selectedType == CatalogType.MOVIES ->
+                        MovieBrowseHeaderPlaceholder(state.selectedCategory?.title)
+
+                    else ->
+                        ModernHero(
+                            hero,
+                            if (home && recent != null) {{ openRecent(recent) }} else null,
+                            if (!home && hero != null) {{ play(hero) }} else null,
+                            state.savedProfile?.name.orEmpty()
+                        )
                 }
             }
             if (!home) item("modern-categories", span = gridSpan) {
@@ -1305,50 +1392,77 @@ private fun ModernBrowseScreen(
                 item("catalog-header", span = gridSpan) {
                     ModernSectionHeader(
                         state.selectedCategory?.title ?: state.selectedType.title,
-                        "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}",
-                        action = if (state.selectedType == CatalogType.LIVE_TV) {
-                            {
-                                LiveTvColumnSelector(
-                                    selectedColumns = liveTvColumns,
-                                    maxColumns = maxLiveTvColumns,
-                                    onColumnsChanged = {
-                                        liveTvColumns = it
-                                    },
-                                    selectorFocusRequester = layoutToggleRequester,
-                                    firstChannelFocusRequester = firstChannelRequester
-                                )
+                        when (state.selectedType) {
+                            CatalogType.MOVIES ->
+                                "${state.items.size} movies · ←/→ browse · OK play · Hold OK My List"
+                            else ->
+                                "${state.items.size} ${state.selectedType.itemLabel(state.items.size)}"
+                        },
+                        action = when (state.selectedType) {
+                            CatalogType.LIVE_TV -> {
+                                {
+                                    LiveTvColumnSelector(
+                                        selectedColumns = liveTvColumns,
+                                        maxColumns = maxLiveTvColumns,
+                                        onColumnsChanged = {
+                                            liveTvColumns = it
+                                        },
+                                        selectorFocusRequester = layoutToggleRequester,
+                                        firstChannelFocusRequester = firstChannelRequester
+                                    )
+                                }
                             }
-                        } else {
-                            {
-                                FilledTonalIconButton(
-                                    onClick = {
-                                        setBrowseLayout(
+
+                            CatalogType.MOVIES -> {
+                                {
+                                    CatalogColumnSelector(
+                                        selectedColumns = movieColumns,
+                                        maxColumns = maxMovieColumns,
+                                        onColumnsChanged = {
+                                            PlaybackUiPreferences.setCatalogColumns(
+                                                context = browseContext,
+                                                profileKey = profileKey,
+                                                type = CatalogType.MOVIES,
+                                                columns = it
+                                            )
+                                        },
+                                        selectorFocusRequester = layoutToggleRequester
+                                    )
+                                }
+                            }
+
+                            else -> {
+                                {
+                                    FilledTonalIconButton(
+                                        onClick = {
+                                            setBrowseLayout(
+                                                if (state.browseLayout == BrowseLayout.GRID) {
+                                                    BrowseLayout.LIST
+                                                } else {
+                                                    BrowseLayout.GRID
+                                                }
+                                            )
+                                        },
+                                        modifier = Modifier
+                                            .focusRequester(layoutToggleRequester)
+                                            .focusProperties {
+                                                up = FocusRequester.Default
+                                            }
+                                            .remoteFocusFrame(CircleShape)
+                                    ) {
+                                        Icon(
                                             if (state.browseLayout == BrowseLayout.GRID) {
-                                                BrowseLayout.LIST
+                                                Icons.Default.ViewList
                                             } else {
-                                                BrowseLayout.GRID
+                                                Icons.Default.GridView
+                                            },
+                                            if (state.browseLayout == BrowseLayout.GRID) {
+                                                "Show as list"
+                                            } else {
+                                                "Show as grid"
                                             }
                                         )
-                                    },
-                                    modifier = Modifier
-                                        .focusRequester(layoutToggleRequester)
-                                        .focusProperties {
-                                            up = FocusRequester.Default
-                                        }
-                                        .remoteFocusFrame(CircleShape)
-                                ) {
-                                    Icon(
-                                        if (state.browseLayout == BrowseLayout.GRID) {
-                                            Icons.Default.ViewList
-                                        } else {
-                                            Icons.Default.GridView
-                                        },
-                                        if (state.browseLayout == BrowseLayout.GRID) {
-                                            "Show as list"
-                                        } else {
-                                            "Show as grid"
-                                        }
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -1364,6 +1478,9 @@ private fun ModernBrowseScreen(
                     span = { _, _ ->
                         when {
                             state.selectedType == CatalogType.LIVE_TV ->
+                                GridItemSpan(1)
+
+                            state.selectedType == CatalogType.MOVIES ->
                                 GridItemSpan(1)
 
                             state.browseLayout == BrowseLayout.LIST ->
@@ -1396,6 +1513,25 @@ private fun ModernBrowseScreen(
                                 },
 
                                 onToggleFavorite = {
+                                    toggleFavorite(item)
+                                }
+                            )
+                        }
+
+                        state.selectedType == CatalogType.MOVIES -> {
+
+                            ModernPosterCard(
+                                item = item,
+                                aspectRatio = aspectRatio,
+                                modifier = Modifier.padding(horizontal = 4.dp),
+                                onClick = {
+                                    play(item)
+                                },
+                                isFavorite = state.favorites.any {
+                                    it.media.id == item.id &&
+                                        it.kind == FavoriteKind.MOVIE
+                                },
+                                toggleFavorite = {
                                     toggleFavorite(item)
                                 }
                             )
@@ -2773,6 +2909,8 @@ private fun ModernSettingsScreen(
                 }
             }
         }
+        PlaybackDesignSettingsSection(profile.cacheKey())
+
         SettingsSection("Connection") {
             SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
             HorizontalDivider()
