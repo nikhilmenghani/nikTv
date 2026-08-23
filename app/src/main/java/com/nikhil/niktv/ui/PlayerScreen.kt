@@ -278,18 +278,54 @@ fun PlayerScreen(
             controlsVisible = true
         }
     }
-    LaunchedEffect(controlsVisible, isPlaying, controlsTimeoutSeconds, media.progressKey) {
-        if (controlsVisible && isPlaying && playbackError == null && !startupTimedOut) {
-            delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
+    LaunchedEffect(
+        controlsVisible,
+        isPlaying,
+        controlsTimeoutSeconds,
+        media.progressKey,
+        embeddedMode
+    ) {
+        if (
+            !embeddedMode &&
+            controlsVisible &&
+            isPlaying &&
+            playbackError == null &&
+            !startupTimedOut
+        ) {
+            delay(
+                controlsTimeoutSeconds
+                    .coerceIn(1, 30) * 1_000L
+            )
+
             controlsVisible = false
             controlsFocused = false
             playerViewRef?.requestFocus()
         }
     }
-    LaunchedEffect(controlsVisible, media.progressKey) {
-        if (controlsVisible && playbackError == null && !startupTimedOut) {
+/*
+ * Automatically focus Play/Pause only for the standalone/fullscreen player.
+ *
+ * In embedded Live TV mode, the channel list owns initial focus.
+ * Otherwise the embedded PlayerView can briefly receive focus, make
+ * controlsVisible=true, and this delayed requestFocus() steals focus
+ * from the currently playing channel row.
+ */
+    LaunchedEffect(
+        controlsVisible,
+        media.progressKey,
+        embeddedMode
+    ) {
+        if (
+            !embeddedMode &&
+            controlsVisible &&
+            playbackError == null &&
+            !startupTimedOut
+        ) {
             delay(80L)
-            runCatching { playPauseFocusRequester.requestFocus() }
+
+            runCatching {
+                playPauseFocusRequester.requestFocus()
+            }
         }
     }
     LaunchedEffect(playbackError, startupTimedOut, media.progressKey) {
