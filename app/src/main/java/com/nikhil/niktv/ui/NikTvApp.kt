@@ -1131,9 +1131,32 @@ private fun ModernBrowseScreen(
     val configuration = LocalConfiguration.current
     val isTv = LocalContext.current.isTvLikeDevice(configuration)
     val isWide = configuration.screenWidthDp >= 720 || isTv
+
+    var liveTvColumns by rememberSaveable {
+        mutableIntStateOf(
+            if (isWide) 2 else 1
+        )
+    }
+
+    val maxLiveTvColumns = when {
+        isTv || configuration.screenWidthDp >= 1200 -> 4
+        configuration.screenWidthDp >= 900 -> 3
+        configuration.screenWidthDp >= 600 -> 2
+        else -> 1
+    }
+
+    LaunchedEffect(maxLiveTvColumns) {
+        if (liveTvColumns > maxLiveTvColumns) {
+            liveTvColumns = maxLiveTvColumns
+        }
+    }
+
     val columns = when {
-        state.selectedType == CatalogType.LIVE_TV -> if (isWide) 6 else 4
+        state.selectedType == CatalogType.LIVE_TV ->
+            liveTvColumns
+
         isWide -> 6
+
         else -> 3
     }
     val aspectRatio = 16f / 9f
@@ -1315,81 +1338,121 @@ private fun ModernBrowseScreen(
                                     )
                                 }
                             }
+                        } else if (state.selectedType == CatalogType.LIVE_TV) {
+                            {
+                                SingleChoiceSegmentedButtonRow {
+                                    (1..maxLiveTvColumns).forEach { count ->
+
+                                        SegmentedButton(
+                                            selected = liveTvColumns == count,
+                                            onClick = {
+                                                liveTvColumns = count
+                                            },
+                                            shape = SegmentedButtonDefaults.itemShape(
+                                                index = count - 1,
+                                                count = maxLiveTvColumns
+                                            ),
+                                            modifier = Modifier.remoteFocusFrame(
+                                                SegmentedButtonDefaults.itemShape(
+                                                    index = count - 1,
+                                                    count = maxLiveTvColumns
+                                                )
+                                            )
+                                        ) {
+                                            Text("$count")
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             null
                         }
                     )
                 }
-                val effectiveBrowseLayout =
-                    if (state.selectedType == CatalogType.LIVE_TV) {
-                        BrowseLayout.LIST
-                    } else {
-                        state.browseLayout
-                    }
                 items(
                     state.items,
                     key = { "catalog-${state.selectedType}-${it.id}" },
                     span = {
-                        if (effectiveBrowseLayout == BrowseLayout.LIST) {
-                            GridItemSpan(maxLineSpan)
-                        } else {
-                            GridItemSpan(1)
+                        when {
+                            state.selectedType == CatalogType.LIVE_TV ->
+                                GridItemSpan(1)
+
+                            state.browseLayout == BrowseLayout.LIST ->
+                                GridItemSpan(maxLineSpan)
+
+                            else ->
+                                GridItemSpan(1)
                         }
                     }
                 ) { item ->
-                    if (effectiveBrowseLayout == BrowseLayout.LIST) {
-                        val isLiveTv =
-                            state.selectedType == CatalogType.LIVE_TV
+                    when {
+                        state.selectedType == CatalogType.LIVE_TV -> {
 
-                        ModernMediaListCard(
-                            item = item,
+                            ModernMediaListCard(
+                                item = item,
+                                modifier = if (
+                                    item.id == state.items.firstOrNull()?.id
+                                ) {
+                                    Modifier.focusRequester(firstChannelRequester)
+                                } else {
+                                    Modifier
+                                },
 
-                            modifier = if (
-                                isLiveTv &&
-                                item.id == state.items.first().id
-                            ) {
-                                Modifier.focusRequester(firstChannelRequester)
-                            } else {
-                                Modifier
-                            },
+                                onClick = {
+                                    play(item)
+                                },
 
-                            onClick = {
-                                play(item)
-                            },
+                                isFavorite = state.favorites.any {
+                                    it.media.id == item.id &&
+                                            it.kind == FavoriteKind.CHANNEL
+                                },
 
-                            isFavorite = state.favorites.any {
-                                it.media.id == item.id &&
-                                        it.kind == state.selectedType.favoriteKind()
-                            },
+                                toggleFavorite = {
+                                    toggleFavorite(item)
+                                },
 
-                            toggleFavorite = {
-                                toggleFavorite(item)
-                            },
+                                supportingText =
+                                    liveChannelSupportingText(item),
 
-                            supportingText = if (isLiveTv) {
-                                item.liveProgramme?.let {
-                                    liveProgrammeSummary(it)
-                                } ?: item.description
-                            } else {
-                                item.description
-                            },
+                                compact = true
+                            )
+                        }
 
-                            compact = isLiveTv
-                        )
-                    } else {
-                        ModernPosterCard(
-                            item,
-                            aspectRatio,
-                            Modifier.padding(horizontal = 4.dp).then(
-                                if (state.selectedType == CatalogType.LIVE_TV && item.id == state.items.first().id) Modifier.focusRequester(firstChannelRequester) else Modifier
-                            ),
-                            onClick = { play(item) },
-                            isFavorite = state.favorites.any { it.media.id == item.id && it.kind == state.selectedType.favoriteKind() },
-                            toggleFavorite = { toggleFavorite(item) },
-                            footer = if (state.selectedType == CatalogType.LIVE_TV && item.liveProgramme != null) {{
-                                LiveProgrammeFooter(item.liveProgramme)
-                            }} else null
-                        )
+                        state.browseLayout == BrowseLayout.LIST -> {
+
+                            ModernMediaListCard(
+                                item = item,
+                                onClick = {
+                                    play(item)
+                                },
+                                isFavorite = state.favorites.any {
+                                    it.media.id == item.id &&
+                                            it.kind == state.selectedType.favoriteKind()
+                                },
+                                toggleFavorite = {
+                                    toggleFavorite(item)
+                                }
+                            )
+                        }
+
+                        else -> {
+
+                            ModernPosterCard(
+                                item,
+                                aspectRatio,
+                                Modifier.padding(horizontal = 4.dp),
+                                onClick = {
+                                    play(item)
+                                },
+                                isFavorite = state.favorites.any {
+                                    it.media.id == item.id &&
+                                            it.kind == state.selectedType.favoriteKind()
+                                },
+                                toggleFavorite = {
+                                    toggleFavorite(item)
+                                }
+                            )
+                        }
                     }
                 }
                 if (state.selectedType in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) && state.catalogHasMore) {
@@ -1424,6 +1487,22 @@ private fun ModernBrowseScreen(
                     Text("Nothing to show in this category", color = Color.White.copy(alpha = .72f))
                 }
             }
+    }
+}
+
+private fun liveChannelSupportingText(
+    item: MediaItem
+): String? {
+    item.liveProgramme?.let { programme ->
+        return liveProgrammeSummary(programme)
+    }
+
+    val description = item.description
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+    return description?.takeIf {
+        !it.equals(item.title.trim(), ignoreCase = true)
     }
 }
 
