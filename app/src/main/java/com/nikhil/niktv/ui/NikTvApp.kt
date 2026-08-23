@@ -1341,23 +1341,20 @@ private fun ModernBrowseScreen(
                         } else if (state.selectedType == CatalogType.LIVE_TV) {
                             {
                                 SingleChoiceSegmentedButtonRow {
-                                    (1..maxLiveTvColumns).forEach { count ->
+                                    (1..maxLiveTvColumns).forEachIndexed { index, count ->
+
+                                        val shape = uniformSegmentShape(
+                                            index = index,
+                                            count = maxLiveTvColumns
+                                        )
 
                                         SegmentedButton(
                                             selected = liveTvColumns == count,
                                             onClick = {
                                                 liveTvColumns = count
                                             },
-                                            shape = SegmentedButtonDefaults.itemShape(
-                                                index = count - 1,
-                                                count = maxLiveTvColumns
-                                            ),
-                                            modifier = Modifier.remoteFocusFrame(
-                                                SegmentedButtonDefaults.itemShape(
-                                                    index = count - 1,
-                                                    count = maxLiveTvColumns
-                                                )
-                                            )
+                                            shape = shape,
+                                            modifier = Modifier.remoteFocusFrame(shape)
                                         ) {
                                             Text("$count")
                                         }
