@@ -3,7 +3,6 @@ package com.nikhil.niktv.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.provider.Settings
@@ -140,7 +139,6 @@ fun PlayerScreen(
     var inPictureInPicture by remember { mutableStateOf(false) }
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
-    val rotateFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -215,12 +213,19 @@ fun PlayerScreen(
             player.release()
         }
     }
+    /*
+     * PLAYER_RESPECTS_GLOBAL_ORIENTATION_V12
+     *
+     * Keep the screen awake during playback, but let NikTvApp own orientation.
+     */
     DisposableEffect(activity) {
-        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        activity?.window?.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
         onDispose {
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            activity?.window?.clearFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
         }
     }
     DisposableEffect(pipActivity) {
@@ -643,7 +648,14 @@ fun PlayerScreen(
                     IconButton(
                         onClick = onBack,
                         modifier = Modifier.focusRequester(backFocusRequester)
-                            .focusProperties { right = rotateFocusRequester; down = playPauseFocusRequester }
+                            .focusProperties {
+                                right = if (pipAvailable) {
+                                    pipFocusRequester
+                                } else {
+                                    fullscreenFocusRequester
+                                }
+                                down = playPauseFocusRequester
+                            }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
@@ -653,12 +665,7 @@ fun PlayerScreen(
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
                     }
-                    IconButton(onClick = {
-                        val landscape = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-                        activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    }, modifier = Modifier.focusRequester(rotateFocusRequester)
-                        .focusProperties { left = backFocusRequester; right = if (pipAvailable) pipFocusRequester else fullscreenFocusRequester; down = playPauseFocusRequester }
-                        .playerControlFocus(CircleShape) { controlsFocused = it }) { Icon(Icons.Default.ScreenRotation, "Rotate", tint = Color.White) }
+                    // PLAYER_GLOBAL_ORIENTATION_NO_ROTATE_V12
                     if (pipAvailable) {
                         IconButton(
                             onClick = {
@@ -667,7 +674,11 @@ fun PlayerScreen(
                                 pipActivity?.enterPlayerPictureInPicture()
                             },
                             modifier = Modifier.focusRequester(pipFocusRequester)
-                                .focusProperties { left = rotateFocusRequester; right = fullscreenFocusRequester; down = playPauseFocusRequester }
+                                .focusProperties {
+                                    left = backFocusRequester
+                                    right = fullscreenFocusRequester
+                                    down = playPauseFocusRequester
+                                }
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     }
@@ -683,7 +694,14 @@ fun PlayerScreen(
                             playerViewRef?.requestFocus()
                         }
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
-                        .focusProperties { left = if (pipAvailable) pipFocusRequester else rotateFocusRequester; down = playPauseFocusRequester }
+                        .focusProperties {
+                            left = if (pipAvailable) {
+                                pipFocusRequester
+                            } else {
+                                backFocusRequester
+                            }
+                            down = playPauseFocusRequester
+                        }
                         .playerControlFocus(CircleShape) { controlsFocused = it }) {
                         Icon(if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
                     }

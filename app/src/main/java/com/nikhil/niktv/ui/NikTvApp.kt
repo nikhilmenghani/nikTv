@@ -197,6 +197,11 @@ private tailrec fun android.content.Context.findHostActivity(): android.app.Acti
 
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
+    val orientationMode by rememberUiOrientationMode()
+
+    // APP_WIDE_ORIENTATION_OWNER_V12
+    ApplyUiOrientation(orientationMode)
+
     val state by vm.state.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
@@ -648,6 +653,11 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(importBackup)
     }
+
+    // PROFILE_CHOOSER_APP_SETTINGS_V12
+    var appSettingsOpen by rememberSaveable {
+        mutableStateOf(false)
+    }
     if (profiles.isNotEmpty() && !editorOpen) {
         val configuration = LocalConfiguration.current
 
@@ -746,6 +756,15 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                 }
 
                 ProfileChooserTile(
+                    "Settings",
+                    "Display & orientation",
+                    Icons.Default.Settings,
+                    compactLandscape
+                ) {
+                    appSettingsOpen = true
+                }
+
+                ProfileChooserTile(
                     "Add profile",
                     "New connection",
                     Icons.Default.Add,
@@ -768,6 +787,14 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     )
                 }
             }
+        }
+
+        if (appSettingsOpen) {
+            OrientationSettingsDialog(
+                onDismiss = {
+                    appSettingsOpen = false
+                }
+            )
         }
 
         return
@@ -1118,8 +1145,11 @@ private fun CatalogScreen(
                 openSearch = openSearch,
                 openSettings = openSettings,
                 openProfileSwitcher = openProfileSwitcher,
-                expanded = isTv,
-                modifier = Modifier.width(if (isTv) 196.dp else 72.dp).fillMaxHeight()
+                // TABLET_NAVIGATION_TITLES_V12
+                expanded = true,
+                modifier = Modifier
+                    .width(if (isTv) 196.dp else 176.dp)
+                    .fillMaxHeight()
             )
             MainContent(Modifier.weight(1f).fillMaxHeight())
         }
@@ -2233,22 +2263,175 @@ private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean
 }
 
 @Composable
-private fun ModernTopBar(state: NikTvState, home: Boolean, openHome: () -> Unit, selectType: (CatalogType) -> Unit, openFavorites: () -> Unit, openSearch: () -> Unit, openSettings: () -> Unit, openProfileSwitcher: () -> Unit) {
-    Row(Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = openProfileSwitcher, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))) {
-            Text(state.savedProfile?.name.orEmpty().ifBlank { "Profile" }, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
-        }
-        Spacer(Modifier.width(8.dp))
-        TextButton(onClick = openHome, modifier = Modifier.remoteFocusFrame(CircleShape)) { Text("Home", color = if (home) Color.White else Color.Gray) }
-        visibleCatalogTypes.forEach { type ->
-            TextButton(onClick = { selectType(type) }, modifier = Modifier.remoteFocusFrame(CircleShape), contentPadding = PaddingValues(horizontal = 6.dp)) {
-                Text(type.title, color = if (!home && state.selectedType == type) Color.White else Color.Gray, style = MaterialTheme.typography.labelMedium)
+private fun ModernTopBar(
+    state: NikTvState,
+    home: Boolean,
+    openHome: () -> Unit,
+    selectType: (CatalogType) -> Unit,
+    openFavorites: () -> Unit,
+    openSearch: () -> Unit,
+    openSettings: () -> Unit,
+    openProfileSwitcher: () -> Unit
+) {
+    /*
+     * MOBILE_NAVIGATION_TITLES_V12
+     *
+     * Every destination has visible text. Horizontal scrolling keeps the
+     * labels readable instead of squeezing them on narrow phones.
+     */
+    Surface(color = Color(0xFF090909)) {
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding(),
+            contentPadding = PaddingValues(
+                horizontal = 12.dp,
+                vertical = 8.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            item("mobile-profile") {
+                TextButton(
+                    onClick = openProfileSwitcher,
+                    modifier = Modifier.remoteFocusFrame(
+                        RoundedCornerShape(10.dp)
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.AccountCircle,
+                        null,
+                        Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        state.savedProfile?.name.orEmpty()
+                            .ifBlank { "Profile" },
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            item("mobile-home") {
+                TextButton(
+                    onClick = openHome,
+                    modifier = Modifier.remoteFocusFrame(
+                        RoundedCornerShape(10.dp)
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Home,
+                        null,
+                        Modifier.size(18.dp),
+                        tint = if (home) Color.White else Color.Gray
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Home",
+                        color = if (home) Color.White else Color.Gray
+                    )
+                }
+            }
+
+            visibleCatalogTypes.forEach { type ->
+                item("mobile-${type.name}") {
+                    val selected =
+                        !home &&
+                            !state.favoritesOpen &&
+                            !state.searchOpen &&
+                            !state.settingsOpen &&
+                            state.selectedType == type
+
+                    TextButton(
+                        onClick = { selectType(type) },
+                        modifier = Modifier.remoteFocusFrame(
+                            RoundedCornerShape(10.dp)
+                        )
+                    ) {
+                        Icon(
+                            type.icon(),
+                            null,
+                            Modifier.size(18.dp),
+                            tint = if (selected) Color.White else Color.Gray
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            type.title,
+                            color = if (selected) Color.White else Color.Gray,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
+
+            item("mobile-my-list") {
+                val selected = state.favoritesOpen
+                TextButton(
+                    onClick = openFavorites,
+                    modifier = Modifier.remoteFocusFrame(
+                        RoundedCornerShape(10.dp)
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.FavoriteBorder,
+                        null,
+                        Modifier.size(18.dp),
+                        tint = if (selected) Color.White else Color.Gray
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "My List",
+                        color = if (selected) Color.White else Color.Gray
+                    )
+                }
+            }
+
+            item("mobile-search") {
+                val selected = state.searchOpen
+                TextButton(
+                    onClick = openSearch,
+                    modifier = Modifier.remoteFocusFrame(
+                        RoundedCornerShape(10.dp)
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Search,
+                        null,
+                        Modifier.size(18.dp),
+                        tint = if (selected) Color.White else Color.Gray
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Search",
+                        color = if (selected) Color.White else Color.Gray
+                    )
+                }
+            }
+
+            item("mobile-settings") {
+                val selected = state.settingsOpen
+                TextButton(
+                    onClick = openSettings,
+                    modifier = Modifier.remoteFocusFrame(
+                        RoundedCornerShape(10.dp)
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        null,
+                        Modifier.size(18.dp),
+                        tint = if (selected) Color.White else Color.Gray
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Settings",
+                        color = if (selected) Color.White else Color.Gray
+                    )
+                }
             }
         }
-        Spacer(Modifier.weight(1f))
-        IconButton(onClick = openSearch, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
-        IconButton(onClick = openFavorites, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.FavoriteBorder, "My List", tint = Color.White) }
-        IconButton(onClick = openSettings, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
     }
 }
 
@@ -3363,6 +3546,8 @@ private fun ModernSettingsScreen(
                 }
             }
         }
+        OrientationSettingsSection()
+
         PlaybackDesignSettingsSection(profile.cacheKey())
 
         SettingsSection("Connection") {
