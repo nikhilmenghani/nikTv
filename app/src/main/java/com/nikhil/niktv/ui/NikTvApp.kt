@@ -1348,10 +1348,11 @@ private fun ModernBrowseScreen(
                 catalogItemOffset + targetMovieIndex
 
             /*
-             * MOVIE_DASHBOARD_SMOOTH_APPEND_V2
+             * MOVIE_DASHBOARD_SMOOTH_APPEND_V6
              *
-             * Re-establish the viewport from immediately before Load More.
-             * The append itself therefore produces no visible jump.
+             * First restore the exact pre-request viewport. This neutralizes
+             * any LazyGrid anchor movement caused by the full-width Load More
+             * item moving after newly appended movies.
              */
             catalogGridState.scrollToItem(
                 movieLoadMoreFirstVisibleItemIndex,
@@ -1368,13 +1369,30 @@ private fun ModernBrowseScreen(
                         visible.index == targetGridIndex
                     }
 
-            /*
-             * If the new tile is below the current viewport, glide to it
-             * rather than snapping the entire grid to a new position.
-             */
             if (!targetAlreadyVisible) {
-                catalogGridState
-                    .animateScrollToItem(targetGridIndex)
+                /*
+                 * Do not align the new tile hard to the top. Keep roughly
+                 * two-thirds of a viewport of previous-page context above it,
+                 * which makes the append read as a continuation rather than
+                 * a page jump.
+                 */
+                val layoutInfo =
+                    catalogGridState.layoutInfo
+
+                val viewportHeight =
+                    (
+                        layoutInfo.viewportEndOffset -
+                            layoutInfo.viewportStartOffset
+                        )
+                        .coerceAtLeast(1)
+
+                val contextualScrollOffset =
+                    -(viewportHeight * 2 / 3)
+
+                catalogGridState.animateScrollToItem(
+                    index = targetGridIndex,
+                    scrollOffset = contextualScrollOffset
+                )
             }
 
             withTimeoutOrNull(1_500L) {
@@ -1448,6 +1466,28 @@ private fun ModernBrowseScreen(
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // CATEGORY_REFRESH_FIRST_V6
+                        item {
+                            AssistChip(
+                                onClick = refreshCatalog,
+                                modifier = Modifier
+                                    .remoteFocusFrame(CircleShape)
+                                    .focusProperties {
+                                        if (state.items.isNotEmpty()) {
+                                            down = layoutToggleRequester
+                                        }
+                                    },
+                                label = { Text("Refresh") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Refresh,
+                                        null,
+                                        Modifier.size(16.dp)
+                                    )
+                                }
+                            )
+                        }
+
                         item {
                             AssistChip(
                                 onClick = { openCategoryManager(state.selectedType) },
@@ -1468,13 +1508,6 @@ private fun ModernBrowseScreen(
                                 }
                                 Box(Modifier.width(30.dp).height(3.dp).background(if (selected) Color(0xFFE50914) else Color.Transparent))
                             }
-                        }
-                        item {
-                            AssistChip(onClick = refreshCatalog, modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
-                                if (state.items.isNotEmpty()) down = layoutToggleRequester
-                            }, label = { Text("Refresh") }, leadingIcon = {
-                                Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
-                            })
                         }
                     }
                 }
@@ -2337,6 +2370,82 @@ private fun <T> ModernRail(
     }
 }
 
+@Composable
+private fun ModernArtworkFallback(
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    /*
+     * MODERN_TYPOGRAPHY_POSTER_V6
+     *
+     * A missing image becomes a deliberate mini-poster instead of an error
+     * state. The title hash picks a stable dark gradient, so different titles
+     * get subtle variety while staying inside the NikTV visual language.
+     */
+    val palette = remember(title) {
+        val palettes = listOf(
+            Color(0xFF111827) to Color(0xFF3A1014),
+            Color(0xFF20242D) to Color(0xFF101827),
+            Color(0xFF26172D) to Color(0xFF12121A),
+            Color(0xFF162727) to Color(0xFF101416),
+            Color(0xFF2B1D16) to Color(0xFF15100D),
+            Color(0xFF222222) to Color(0xFF351015)
+        )
+
+        palettes[
+            (title.hashCode() and Int.MAX_VALUE) %
+                palettes.size
+        ]
+    }
+
+    val initial = remember(title) {
+        title
+            .trim()
+            .firstOrNull()
+            ?.uppercaseChar()
+            ?.toString()
+            ?: "N"
+    }
+
+    Box(
+        modifier = modifier
+            .background(
+                Brush.linearGradient(
+                    listOf(palette.first, palette.second)
+                )
+            )
+            .padding(12.dp)
+    ) {
+        Text(
+            "NIKTV",
+            modifier = Modifier.align(Alignment.TopStart),
+            color = Color(0xFFFF7A82),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Black,
+            maxLines = 1
+        )
+
+        Text(
+            initial,
+            modifier = Modifier.align(Alignment.Center),
+            color = Color.White.copy(alpha = 0.11f),
+            style = MaterialTheme.typography.displayMedium,
+            fontWeight = FontWeight.Black,
+            maxLines = 1
+        )
+
+        Text(
+            title,
+            modifier = Modifier.align(Alignment.BottomStart),
+            color = Color.White.copy(alpha = 0.96f),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ModernPosterCard(
@@ -2395,11 +2504,27 @@ private fun ModernPosterCard(
                 .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(8.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
                 .clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
                 .border(if (focused) 4.dp else 0.dp, Color(0xFFFF2633), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                if (item.logo.isNullOrBlank()) Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
-                else SubcomposeAsyncImage(artworkModel, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) {
-                    when (painter.state.value) {
-                        is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
-                        else -> Icon(Icons.Default.SmartDisplay, null, Modifier.size(42.dp), tint = Color.LightGray)
+                if (item.logo.isNullOrBlank()) {
+                    ModernArtworkFallback(
+                        title = item.title,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    SubcomposeAsyncImage(
+                        artworkModel,
+                        item.title,
+                        Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    ) {
+                        when (painter.state.value) {
+                            is coil3.compose.AsyncImagePainter.State.Success ->
+                                SubcomposeAsyncImageContent()
+                            else ->
+                                ModernArtworkFallback(
+                                    title = item.title,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                        }
                     }
                 }
                 if (fraction > 0f) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0xFF333333))) {

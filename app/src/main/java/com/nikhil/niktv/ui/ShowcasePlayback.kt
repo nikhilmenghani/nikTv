@@ -24,6 +24,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -803,6 +804,21 @@ private fun BoxScope.ShowcaseRail(
             type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) &&
             (state.catalogHasMore || loadMorePending)
 
+    /*
+     * SHOWCASE_LOAD_MORE_EXCLUSIVE_FOCUS_V5
+     *
+     * Keep metadata selection separate from visual focus. When Load More
+     * owns focus, the previously browsed movie may remain the details item,
+     * but it must not also look selected.
+     */
+    var loadMoreFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showLoadMore) {
+        if (!showLoadMore) {
+            loadMoreFocused = false
+        }
+    }
+
     Column(
         Modifier
             .align(Alignment.BottomStart)
@@ -845,7 +861,7 @@ private fun BoxScope.ShowcaseRail(
              */
             contentPadding = PaddingValues(
                 start = 6.dp,
-                end = 26.dp,
+                end = 40.dp,
                 top = 8.dp,
                 bottom = 8.dp
             ),
@@ -862,7 +878,9 @@ private fun BoxScope.ShowcaseRail(
                     width = posterWidth,
                     aspectRatio = aspectRatio,
                     focusRequester = requester,
-                    selected = selectedItem.id == item.id,
+                    selected =
+                        !loadMoreFocused &&
+                            selectedItem.id == item.id,
                     playing = playingItem.id == item.id,
                     favorite = state.favorites.any {
                         it.media.id == item.id &&
@@ -875,26 +893,40 @@ private fun BoxScope.ShowcaseRail(
 
             if (showLoadMore) {
                 item(key = "showcase-load-more-${type.name}") {
-                    var loadMoreFocused by remember { mutableStateOf(false) }
+                    val loadMoreShape =
+                        RoundedCornerShape(8.dp)
+
+                    val loadMoreSlotBringIntoViewRequester =
+                        remember { BringIntoViewRequester() }
+
+                    val loadMoreScope =
+                        rememberCoroutineScope()
 
                     val loadMoreScale by
                         androidx.compose.animation.core.animateFloatAsState(
-                            targetValue = if (loadMoreFocused) 1.08f else 0.96f,
+                            targetValue =
+                                if (loadMoreFocused) 1.06f else 0.96f,
                             animationSpec =
                                 androidx.compose.animation.core.tween(
                                     durationMillis = 140
                                 ),
-                            label = "showcaseCompactLoadMoreScale"
+                            label = "showcaseCompactLoadMoreScaleV6"
                         )
 
                     /*
-                     * The outer slot follows the tile row. The control itself
-                     * is intentionally compact rather than artwork-sized.
+                     * SHOWCASE_LOAD_MORE_EDGE_SAFE_V6
+                     *
+                     * Reserve substantially more width than the visible
+                     * button. We bring this whole slot into view when focus
+                     * arrives, leaving room for scale, border and shadow.
                      */
                     Box(
                         modifier = Modifier
-                            .width(if (compact) 98.dp else 116.dp)
-                            .height(posterWidth),
+                            .width(if (compact) 136.dp else 156.dp)
+                            .height(posterWidth)
+                            .bringIntoViewRequester(
+                                loadMoreSlotBringIntoViewRequester
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Button(
@@ -913,13 +945,39 @@ private fun BoxScope.ShowcaseRail(
                                     scaleX = loadMoreScale
                                     scaleY = loadMoreScale
                                 }
-                                .onFocusChanged {
-                                    loadMoreFocused = it.isFocused
+                                .onFocusChanged { focusState ->
+                                    loadMoreFocused =
+                                        focusState.isFocused
+
+                                    if (focusState.isFocused) {
+                                        loadMoreScope.launch {
+                                            withFrameNanos { }
+                                            loadMoreSlotBringIntoViewRequester
+                                                .bringIntoView()
+                                        }
+                                    }
                                 }
-                                .showcaseFocusFrame(
-                                    RoundedCornerShape(8.dp)
+                                .then(
+                                    if (loadMoreFocused) {
+                                        Modifier
+                                            .shadow(
+                                                12.dp,
+                                                loadMoreShape,
+                                                ambientColor =
+                                                    Color(0xFFE50914),
+                                                spotColor =
+                                                    Color(0xFFE50914)
+                                            )
+                                            .border(
+                                                3.dp,
+                                                Color(0xFFFF3340),
+                                                loadMoreShape
+                                            )
+                                    } else {
+                                        Modifier
+                                    }
                                 ),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = loadMoreShape,
                             contentPadding = PaddingValues(
                                 horizontal = 10.dp,
                                 vertical = 0.dp
@@ -965,6 +1023,93 @@ private fun BoxScope.ShowcaseRail(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ShowcaseArtworkFallback(
+    title: String,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    /*
+     * SHOWCASE_TYPOGRAPHY_POSTER_V6
+     *
+     * Missing artwork should look intentional, not broken. The title hash
+     * selects one of several restrained NikTV gradients so a row of missing
+     * posters still has visual variety without inventing movie artwork.
+     */
+    val palette = remember(title) {
+        val palettes = listOf(
+            Color(0xFF111827) to Color(0xFF3A1014),
+            Color(0xFF20242D) to Color(0xFF101827),
+            Color(0xFF26172D) to Color(0xFF12121A),
+            Color(0xFF162727) to Color(0xFF101416),
+            Color(0xFF2B1D16) to Color(0xFF15100D),
+            Color(0xFF222222) to Color(0xFF351015)
+        )
+
+        palettes[
+            (title.hashCode() and Int.MAX_VALUE) %
+                palettes.size
+        ]
+    }
+
+    val initial = remember(title) {
+        title
+            .trim()
+            .firstOrNull()
+            ?.uppercaseChar()
+            ?.toString()
+            ?: "N"
+    }
+
+    Box(
+        modifier = modifier
+            .background(
+                Brush.linearGradient(
+                    listOf(palette.first, palette.second)
+                )
+            )
+            .padding(if (compact) 7.dp else 10.dp)
+    ) {
+        Text(
+            "NIKTV",
+            modifier = Modifier.align(Alignment.TopStart),
+            color = Color(0xFFFF7A82),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Black,
+            maxLines = 1
+        )
+
+        Text(
+            initial,
+            modifier = Modifier.align(Alignment.Center),
+            color = Color.White.copy(alpha = 0.12f),
+            style =
+                if (compact) {
+                    MaterialTheme.typography.headlineLarge
+                } else {
+                    MaterialTheme.typography.displaySmall
+                },
+            fontWeight = FontWeight.Black,
+            maxLines = 1
+        )
+
+        Text(
+            title,
+            modifier = Modifier.align(Alignment.BottomStart),
+            color = Color.White.copy(alpha = 0.94f),
+            style =
+                if (compact) {
+                    MaterialTheme.typography.labelSmall
+                } else {
+                    MaterialTheme.typography.labelMedium
+                },
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -1045,7 +1190,11 @@ private fun ShowcasePosterCard(
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) {
-                    Icon(Icons.Default.Movie, null, Modifier.size(38.dp), tint = Color.Gray)
+                    ShowcaseArtworkFallback(
+                        title = item.title,
+                        compact = width <= 100.dp,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 } else {
                     SubcomposeAsyncImage(
                         model = artwork,
@@ -1057,7 +1206,11 @@ private fun ShowcasePosterCard(
                             is coil3.compose.AsyncImagePainter.State.Success ->
                                 SubcomposeAsyncImageContent()
                             else ->
-                                Icon(Icons.Default.Movie, null, Modifier.size(38.dp), tint = Color.Gray)
+                                ShowcaseArtworkFallback(
+                                    title = item.title,
+                                    compact = width <= 100.dp,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                         }
                     }
                 }
