@@ -474,9 +474,9 @@ fun ShowcasePlaybackScreen(
 
         val headerHeight = (if (compact) 50.dp else 58.dp) + safeTop
         val railHeight = when {
-            type == CatalogType.MOVIES && maxHeight < 480.dp -> 132.dp
-            type == CatalogType.MOVIES && compact -> 154.dp
-            type == CatalogType.MOVIES -> 200.dp
+            type == CatalogType.MOVIES && maxHeight < 480.dp -> 128.dp
+            type == CatalogType.MOVIES && compact -> 148.dp
+            type == CatalogType.MOVIES -> 176.dp
             maxHeight < 480.dp -> 142.dp
             compact -> 172.dp
             else -> 224.dp
@@ -757,11 +757,8 @@ private fun BoxScope.ShowcaseRail(
     onPlay: (MediaItem) -> Unit,
     onLoadMore: () -> Unit
 ) {
-    val aspectRatio = when (type) {
-        CatalogType.MOVIES -> 2f / 3f
-        CatalogType.SERIES -> if (state.selectedSeries != null) 16f / 9f else 2f / 3f
-        else -> 16f / 9f
-    }
+    // Keep the Showcase rail visually consistent across content types.
+    val aspectRatio = 1f
     val posterWidth = when {
         type == CatalogType.MOVIES && compact -> 72.dp
         type == CatalogType.MOVIES -> 100.dp
@@ -808,7 +805,7 @@ private fun BoxScope.ShowcaseRail(
         LazyRow(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             state = railState,
-            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.Top
         ) {
@@ -835,13 +832,25 @@ private fun BoxScope.ShowcaseRail(
 
             if (showLoadMore) {
                 item(key = "showcase-load-more-${type.name}") {
+                    var loadMoreFocused by remember { mutableStateOf(false) }
+                    val loadMoreScale by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (loadMoreFocused) 1.10f else 0.94f,
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 140),
+                        label = "showcaseLoadMoreScale"
+                    )
+
                     Button(
                         onClick = {
                             if (!state.catalogLoadingMore && !loadMorePending) onLoadMore()
                         },
                         modifier = Modifier
                             .width(posterWidth)
-                            .height(if (type == CatalogType.MOVIES) posterWidth / (2f / 3f) else 92.dp)
+                            .height(posterWidth)
+                            .graphicsLayer {
+                                scaleX = loadMoreScale
+                                scaleY = loadMoreScale
+                            }
+                            .onFocusChanged { loadMoreFocused = it.isFocused }
                             .showcaseFocusFrame(RoundedCornerShape(10.dp)),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFFE50914),
@@ -849,7 +858,11 @@ private fun BoxScope.ShowcaseRail(
                         )
                     ) {
                         if (state.catalogLoadingMore || loadMorePending) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                            CircularProgressIndicator(
+                                Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
                         } else {
                             Icon(Icons.Default.Add, null)
                         }

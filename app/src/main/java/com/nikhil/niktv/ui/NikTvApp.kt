@@ -81,6 +81,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val NikColors = darkColorScheme(
     primary = Color(0xFFE50914), onPrimary = Color.White,
@@ -1180,6 +1181,19 @@ private fun ModernBrowseScreen(
     val home = state.homeOpen
     val layoutToggleRequester = remember { FocusRequester() }
     val firstChannelRequester = remember { FocusRequester() }
+
+    // MOVIE_DASHBOARD_PAGINATION_FOCUS_V2
+    //
+    // Movies pagination owns focus explicitly. The Load More item remains
+    // focusable during the request, then focus is handed to the first movie
+    // appended by that request instead of falling back to the Profile control.
+    val catalogGridState = rememberLazyGridState()
+    val movieFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
+
+    var movieLoadMorePending by remember { mutableStateOf(false) }
+    var movieLoadMoreObservedLoading by remember { mutableStateOf(false) }
+    var movieLoadMoreStartItemCount by remember { mutableIntStateOf(0) }
+
     val hero = if (home) state.recentlyPlayed.firstOrNull()?.media ?: state.favorites.firstOrNull()?.media else state.items.firstOrNull()
     val configuration = LocalConfiguration.current
     val browseContext = LocalContext.current
@@ -1238,7 +1252,7 @@ private fun ModernBrowseScreen(
     }
 
     val aspectRatio =
-        if (state.selectedType == CatalogType.MOVIES) 2f / 3f else 16f / 9f
+        if (state.selectedType == CatalogType.MOVIES) 1f else 16f / 9f
     val gridSpan: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
 
     LaunchedEffect(state.selectedType, state.selectedCategory?.id, state.items.firstOrNull()?.id) {
@@ -1248,8 +1262,114 @@ private fun ModernBrowseScreen(
         }
     }
 
+    /*
+     * Seamless Movies pagination.
+     *
+     * Keep the focused Load More item in the composition while loading.
+     * Once state.items grows, scroll to the actual first appended movie,
+     * wait until Compose lays it out, then request focus on that tile.
+     */
+    LaunchedEffect(
+        movieLoadMorePending,
+        state.catalogLoadingMore,
+        state.items.size,
+        state.selectedType,
+        state.selectedCategory?.id
+    ) {
+        if (!movieLoadMorePending) {
+            return@LaunchedEffect
+        }
+
+        if (state.selectedType != CatalogType.MOVIES) {
+            movieLoadMorePending = false
+            movieLoadMoreObservedLoading = false
+            return@LaunchedEffect
+        }
+
+        if (state.catalogLoadingMore) {
+            movieLoadMoreObservedLoading = true
+            return@LaunchedEffect
+        }
+
+        val receivedNewMovies =
+            state.items.size > movieLoadMoreStartItemCount
+
+        val loadFinished =
+            movieLoadMoreObservedLoading || receivedNewMovies
+
+        if (!loadFinished) {
+            return@LaunchedEffect
+        }
+
+        /*
+         * Normally this is the first newly loaded movie.
+         * If the portal returns an empty final page, move focus to the
+         * last existing movie before removing Load More so focus still
+         * cannot escape to Profile.
+         */
+        val targetMovieIndex =
+            if (receivedNewMovies) {
+                movieLoadMoreStartItemCount
+            } else {
+                state.items.lastIndex
+            }
+
+        val targetMovie = state.items.getOrNull(targetMovieIndex)
+
+        if (targetMovie != null) {
+            val requester =
+                movieFocusRequesters.getOrPut(targetMovie.id) {
+                    FocusRequester()
+                }
+
+            /*
+             * LazyVerticalGrid indexes include full-width items above the
+             * movie cards:
+             *
+             * wide/TV: hero + categories + catalog header = 3
+             * narrow : top bar + hero + categories + catalog header = 4
+             */
+            val catalogItemOffset =
+                if (isWide) 3 else 4
+
+            val targetGridIndex =
+                catalogItemOffset + targetMovieIndex
+
+            catalogGridState.scrollToItem(targetGridIndex)
+
+            withTimeoutOrNull(1_500L) {
+                snapshotFlow {
+                    catalogGridState.layoutInfo.visibleItemsInfo.any { visible ->
+                        visible.index == targetGridIndex
+                    }
+                }.first { it }
+            }
+
+            withFrameNanos { }
+
+            val focused = runCatching {
+                requester.requestFocus()
+            }.isSuccess
+
+            if (!focused) {
+                delay(60L)
+                runCatching {
+                    requester.requestFocus()
+                }
+            }
+        }
+
+        /*
+         * Clear pending only AFTER focus was moved away from Load More.
+         * On the final page this allows the button to disappear safely.
+         */
+        movieLoadMorePending = false
+        movieLoadMoreObservedLoading = false
+    }
+
     ModernGrid(
         columns = columns,
+        state = catalogGridState,
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
         contentPadding = PaddingValues(bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1520,6 +1640,11 @@ private fun ModernBrowseScreen(
 
                         state.selectedType == CatalogType.MOVIES -> {
 
+                            val movieRequester =
+                                movieFocusRequesters.getOrPut(item.id) {
+                                    FocusRequester()
+                                }
+
                             ModernPosterCard(
                                 item = item,
                                 aspectRatio = aspectRatio,
@@ -1534,6 +1659,7 @@ private fun ModernBrowseScreen(
                                 toggleFavorite = {
                                     toggleFavorite(item)
                                 },
+                                focusRequester = movieRequester,
                                 unfocusedScale = 0.90f,
                                 focusedScale = 1.06f
                             )
@@ -1576,25 +1702,150 @@ private fun ModernBrowseScreen(
                         }
                     }
                 }
-                if (state.selectedType in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) && state.catalogHasMore) {
+                if (
+                    state.selectedType in setOf(
+                        CatalogType.LIVE_TV,
+                        CatalogType.MOVIES,
+                        CatalogType.SERIES
+                    ) &&
+                    (
+                        state.catalogHasMore ||
+                            (
+                                state.selectedType == CatalogType.MOVIES &&
+                                    movieLoadMorePending
+                            )
+                    )
+                ) {
                     item("catalog-load-more", span = gridSpan) {
-                        Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp, vertical = 18.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            var loadMoreFocused by remember {
+                                mutableStateOf(false)
+                            }
+
+                            val movieLoadMoreScale by
+                                androidx.compose.animation.core.animateFloatAsState(
+                                    targetValue =
+                                        if (
+                                            state.selectedType == CatalogType.MOVIES &&
+                                            loadMoreFocused
+                                        ) {
+                                            1.10f
+                                        } else if (
+                                            state.selectedType == CatalogType.MOVIES
+                                        ) {
+                                            0.94f
+                                        } else {
+                                            1f
+                                        },
+                                    animationSpec =
+                                        androidx.compose.animation.core.tween(
+                                            durationMillis = 140
+                                        ),
+                                    label = "movieDashboardLoadMoreScale"
+                                )
+
                             Button(
-                                onClick = loadMoreCatalog,
-                                enabled = !state.catalogLoadingMore,
-                                modifier = Modifier.height(48.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
+                                onClick = {
+                                    if (state.catalogLoadingMore) {
+                                        return@Button
+                                    }
+
+                                    if (
+                                        state.selectedType ==
+                                            CatalogType.MOVIES
+                                    ) {
+                                        if (movieLoadMorePending) {
+                                            return@Button
+                                        }
+
+                                        movieLoadMoreStartItemCount =
+                                            state.items.size
+                                        movieLoadMoreObservedLoading =
+                                            false
+                                        movieLoadMorePending =
+                                            true
+                                    }
+
+                                    loadMoreCatalog()
+                                },
+
+                                /*
+                                 * Movies deliberately remain enabled while
+                                 * loading so the focused button stays a valid
+                                 * focus owner. Other catalog types retain the
+                                 * existing behavior.
+                                 */
+                                enabled =
+                                    state.selectedType == CatalogType.MOVIES ||
+                                        !state.catalogLoadingMore,
+
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .graphicsLayer {
+                                        scaleX = movieLoadMoreScale
+                                        scaleY = movieLoadMoreScale
+                                    }
+                                    .onFocusChanged {
+                                        loadMoreFocused = it.isFocused
+                                    }
+                                    .remoteFocusFrame(
+                                        RoundedCornerShape(10.dp)
+                                    ),
+
                                 shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFE50914),
+                                    contentColor = Color.White
+                                )
                             ) {
-                                if (state.catalogLoadingMore) {
-                                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                                val loading =
+                                    state.catalogLoadingMore ||
+                                        (
+                                            state.selectedType ==
+                                                CatalogType.MOVIES &&
+                                                movieLoadMorePending
+                                            )
+
+                                if (loading) {
+                                    CircularProgressIndicator(
+                                        Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color.White
+                                    )
                                     Spacer(Modifier.width(10.dp))
-                                    Text("Loading…", color = Color.White)
+                                    Text(
+                                        if (
+                                            state.selectedType ==
+                                                CatalogType.LIVE_TV
+                                        ) {
+                                            "Loading channels…"
+                                        } else {
+                                            "Loading titles…"
+                                        },
+                                        color = Color.White
+                                    )
                                 } else {
-                                    Icon(Icons.Default.Add, null, Modifier.size(20.dp))
+                                    Icon(
+                                        Icons.Default.Add,
+                                        null,
+                                        Modifier.size(20.dp)
+                                    )
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        if (state.selectedType == CatalogType.LIVE_TV) "Load more channels" else "Load more titles",
+                                        if (
+                                            state.selectedType ==
+                                                CatalogType.LIVE_TV
+                                        ) {
+                                            "Load more channels"
+                                        } else {
+                                            "Load more titles"
+                                        },
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -1686,6 +1937,7 @@ private fun LiveProgrammeFooter(programme: LiveProgramme) {
 @Composable
 private fun ModernGrid(
     columns: Int,
+    state: LazyGridState = rememberLazyGridState(),
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(16.dp),
     verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(12.dp),
@@ -1694,6 +1946,7 @@ private fun ModernGrid(
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
+        state = state,
         modifier = modifier,
         contentPadding = contentPadding,
         verticalArrangement = verticalArrangement,
@@ -2045,6 +2298,7 @@ private fun ModernPosterCard(
     isFavorite: Boolean = false,
     toggleFavorite: (() -> Unit)? = null,
     removeAction: (() -> Unit)? = null,
+    focusRequester: FocusRequester? = null,
     unfocusedScale: Float = 1f,
     focusedScale: Float = 1f,
     footer: (@Composable () -> Unit)? = null
@@ -2065,6 +2319,13 @@ private fun ModernPosterCard(
         Column(
             Modifier
                 .fillMaxWidth()
+                .then(
+                    if (focusRequester != null) {
+                        Modifier.focusRequester(focusRequester)
+                    } else {
+                        Modifier
+                    }
+                )
                 .graphicsLayer {
                     scaleX = posterScale
                     scaleY = posterScale
