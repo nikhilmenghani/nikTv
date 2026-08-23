@@ -359,6 +359,17 @@ fun ShowcasePlaybackScreen(
 
     LaunchedEffect(playing.media.id) { previewItem = playing.media }
 
+    /*
+     * IMPORTANT:
+     * PlayingMedia.episodeQueue is a snapshot taken when playback starts.
+     * For Movies/Live TV that snapshot does NOT grow when loadMoreCatalog()
+     * appends another page to state.items.
+     *
+     * While the player was opened from the currently selected catalog,
+     * state.items must therefore remain the source of truth for the rail.
+     * Fall back to episodeQueue only for playback opened outside that catalog
+     * (for example from search/favorites).
+     */
     val queue = remember(
         playing.media.id,
         playing.episodeQueue,
@@ -366,9 +377,12 @@ fun ShowcasePlaybackScreen(
         state.selectedType,
         type
     ) {
-        val source = if (state.selectedType == type) {
-            playing.episodeQueue.ifEmpty { state.items }
-        } else emptyList()
+        val source = when {
+            state.selectedType == type && state.items.isNotEmpty() -> state.items
+            playing.episodeQueue.isNotEmpty() -> playing.episodeQueue
+            else -> emptyList()
+        }
+
         (listOf(playing.media) + source).distinctBy { it.id }
     }
 
@@ -516,12 +530,7 @@ fun ShowcasePlaybackScreen(
                     .width(detailsWidth)
                     .height(mainHeight)
                     .padding(start = 12.dp, end = safeEnd + 14.dp, top = 12.dp, bottom = 8.dp),
-                onPlay = {
-                    if (previewItem.id == playing.media.id) fullscreen = true
-                    else play(previewItem)
-                },
-                onToggleFavorite = { toggleFavorite(previewItem) },
-                onFullscreen = { fullscreen = true }
+                onToggleFavorite = { toggleFavorite(previewItem) }
             )
 
             ShowcaseRail(
@@ -600,7 +609,7 @@ private fun ShowcaseHeader(
         }
         if (LocalConfiguration.current.screenWidthDp >= 850) {
             Text(
-                "←/→ Browse  •  OK Play  •  ↑ Player  •  Back Exit",
+                "←/→ Browse  •  OK Play/Open  •  ↑ Player  •  Back Exit",
                 color = Color.LightGray,
                 style = MaterialTheme.typography.labelMedium,
                 maxLines = 1
@@ -619,9 +628,7 @@ private fun ShowcaseDetailsPanel(
     type: CatalogType,
     compact: Boolean,
     modifier: Modifier,
-    onPlay: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onFullscreen: () -> Unit
+    onToggleFavorite: () -> Unit
 ) {
     val favoriteKind = showcaseFavoriteKind(type, state.selectedSeries != null)
     val favorite = state.favorites.any { it.kind == favoriteKind && it.media.id == item.id }
@@ -636,14 +643,20 @@ private fun ShowcaseDetailsPanel(
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold
         )
+
         Text(
             item.title,
             color = Color.White,
-            style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+            style = if (compact) {
+                MaterialTheme.typography.titleLarge
+            } else {
+                MaterialTheme.typography.headlineMedium
+            },
             fontWeight = FontWeight.ExtraBold,
             maxLines = if (compact) 2 else 3,
             overflow = TextOverflow.Ellipsis
         )
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ShowcaseInfoBadge(type.title)
             ShowcaseInfoBadge(showcaseCategoryTitle(state, type))
@@ -651,89 +664,59 @@ private fun ShowcaseDetailsPanel(
 
         item.liveProgramme?.let { programme ->
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("ON NOW", color = Color.LightGray, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                Text(programme.title, color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "ON NOW",
+                    color = Color.LightGray,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    programme.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
 
         Text(
-            description ?: "No additional metadata was provided by the IPTV portal for this title.",
+            description
+                ?: "No additional metadata was provided by the IPTV portal for this title.",
             modifier = Modifier.weight(1f),
             color = if (description == null) Color.Gray else Color(0xFFE0E0E0),
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = if (compact) 3 else if (LocalConfiguration.current.screenHeightDp < 600) 5 else 10,
+            maxLines = if (compact) {
+                4
+            } else if (LocalConfiguration.current.screenHeightDp < 600) {
+                6
+            } else {
+                12
+            },
             overflow = TextOverflow.Ellipsis
         )
 
-        if (compact) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalIconButton(
-                    onClick = onToggleFavorite,
-                    modifier = Modifier.showcaseFocusFrame(RoundedCornerShape(10.dp))
-                ) {
-                    Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null)
-                }
-
-                Button(
-                    onClick = onPlay,
-                    modifier = Modifier
-                        .weight(1f)
-                        .showcaseFocusFrame(RoundedCornerShape(10.dp)),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFE50914),
-                        contentColor = Color.White
-                    )
-                ) {
-                    Icon(Icons.Default.PlayArrow, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (item.id == playingItem.id) "Fullscreen" else "Play", fontWeight = FontWeight.Bold)
-                }
-
-                OutlinedIconButton(
-                    onClick = onFullscreen,
-                    modifier = Modifier.showcaseFocusFrame(RoundedCornerShape(10.dp))
-                ) {
-                    Icon(Icons.Default.Fullscreen, null)
-                }
-            }
-        } else {
-            FilledTonalButton(
-                onClick = onToggleFavorite,
-                modifier = Modifier.fillMaxWidth().showcaseFocusFrame(RoundedCornerShape(10.dp))
-            ) {
-                Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (favorite) "Remove from My List" else "Add to My List")
-            }
-
-            Button(
-                onClick = onPlay,
-                modifier = Modifier.fillMaxWidth().showcaseFocusFrame(RoundedCornerShape(10.dp)),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFE50914),
-                    contentColor = Color.White
-                )
-            ) {
-                Icon(Icons.Default.PlayArrow, null)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (item.id == playingItem.id) "Open fullscreen" else "Play selected",
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            OutlinedButton(
-                onClick = onFullscreen,
-                modifier = Modifier.fillMaxWidth().showcaseFocusFrame(RoundedCornerShape(10.dp))
-            ) {
-                Icon(Icons.Default.Fullscreen, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Fullscreen")
-            }
+        /*
+         * Playback/fullscreen buttons intentionally do not live here.
+         *
+         * D-pad / touch behavior belongs to the poster rail:
+         *   - OK/tap another tile -> play it
+         *   - OK/tap the currently playing tile -> fullscreen
+         *
+         * Keeping only My List also reduces accidental focus jumps away
+         * from the horizontal movie rail.
+         */
+        FilledTonalButton(
+            onClick = onToggleFavorite,
+            modifier = Modifier
+                .fillMaxWidth()
+                .showcaseFocusFrame(RoundedCornerShape(10.dp))
+        ) {
+            Icon(
+                if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                contentDescription = null
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(if (favorite) "Remove from My List" else "Add to My List")
         }
     }
 }
@@ -784,8 +767,8 @@ private fun BoxScope.ShowcaseRail(
     }
     val showLoadMore =
         state.selectedType == type &&
-            type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) &&
-            (state.catalogHasMore || loadMorePending)
+                type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) &&
+                (state.catalogHasMore || loadMorePending)
 
     Column(
         Modifier
@@ -840,7 +823,7 @@ private fun BoxScope.ShowcaseRail(
                     playing = playingItem.id == item.id,
                     favorite = state.favorites.any {
                         it.media.id == item.id &&
-                            it.kind == showcaseFavoriteKind(type, state.selectedSeries != null)
+                                it.kind == showcaseFavoriteKind(type, state.selectedSeries != null)
                     },
                     onFocused = { onFocused(item) },
                     onClick = { onPlay(item) }
