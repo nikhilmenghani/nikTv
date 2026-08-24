@@ -55,6 +55,13 @@ import java.util.concurrent.TimeUnit
 
 data class UpdateInfo(val version: String, val downloadUrl: String)
 
+data class DownloadedApkCleanup(
+    val fileCount: Int,
+    val totalBytes: Long,
+    val deletedCount: Int = 0,
+    val deletedBytes: Long = 0L
+)
+
 sealed interface UpdateDownloadState {
     data object Idle : UpdateDownloadState
 
@@ -491,6 +498,57 @@ object AppUpdates {
     }
 
     fun savedLocation(version: String): String = "Downloads/NikTV/${apkFileName(version)}"
+
+    suspend fun obsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
+        withContext(Dispatchers.IO) {
+            ensureInitialized(context)
+            val files = obsoleteApkFiles()
+            DownloadedApkCleanup(files.size, files.sumOf(File::length))
+        }
+
+    suspend fun deleteObsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
+        withContext(Dispatchers.IO) {
+            ensureInitialized(context)
+            val files = obsoleteApkFiles()
+            var deletedCount = 0
+            var deletedBytes = 0L
+            files.forEach { file ->
+                val bytes = file.length()
+                if (file.delete()) {
+                    deletedCount++
+                    deletedBytes += bytes
+                }
+            }
+            DownloadedApkCleanup(
+                fileCount = files.size,
+                totalBytes = files.sumOf(File::length) + deletedBytes,
+                deletedCount = deletedCount,
+                deletedBytes = deletedBytes
+            )
+        }
+
+    private fun obsoleteApkFiles(): List<File> {
+        val protectedVersion = when (val state = mutableDownloadState.value) {
+            is UpdateDownloadState.Queued -> state.version
+            is UpdateDownloadState.Downloading -> state.version
+            is UpdateDownloadState.Paused -> state.version
+            is UpdateDownloadState.Ready -> state.version
+            is UpdateDownloadState.Installing -> state.version
+            is UpdateDownloadState.InstallerLaunched -> state.version
+            else -> null
+        }
+        val protectedName = protectedVersion?.let(::apkFileName)
+        val directory = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "NikTV"
+        )
+        return directory.listFiles().orEmpty().filter { file ->
+            file.isFile &&
+                file.name.startsWith("NikTV-") &&
+                file.extension.equals("apk", ignoreCase = true) &&
+                file.name != protectedName
+        }
+    }
 
     fun notifyAvailable(context: Context, update: UpdateInfo) {
         if (!notificationsAllowed(context)) return

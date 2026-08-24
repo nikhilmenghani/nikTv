@@ -79,6 +79,7 @@ import com.nikhil.niktv.model.*
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
+import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -4189,6 +4190,12 @@ private fun ModernSettingsScreen(
     val downloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
+    var obsoleteApks by remember { mutableStateOf<DownloadedApkCleanup?>(null) }
+    var cleaningObsoleteApks by remember { mutableStateOf(false) }
+    var apkCleanupMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(downloadState) {
+        obsoleteApks = runCatching { AppUpdates.obsoleteDownloadedApks(context) }.getOrNull()
+    }
     val performDownload: (UpdateInfo) -> Unit = { update ->
         downloadActionMessage = null
         runCatching { AppUpdates.download(context, update) }
@@ -4589,6 +4596,48 @@ private fun ModernSettingsScreen(
                         },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).remoteFocusFrame()
                     ) { Text("Retry download") }
+                }
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("Delete older update APKs") },
+                    supportingContent = {
+                        Text(
+                            obsoleteApks?.let { cleanup ->
+                                if (cleanup.fileCount == 0) "No obsolete NikTV installers found"
+                                else "${cleanup.fileCount} installer${if (cleanup.fileCount == 1) "" else "s"} · ${formatDownloadBytes(cleanup.totalBytes)}"
+                            } ?: "Checking Downloads/NikTV…"
+                        )
+                    },
+                    leadingContent = { Icon(Icons.Default.DeleteSweep, null) },
+                    trailingContent = {
+                        if (cleaningObsoleteApks) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    },
+                    modifier = Modifier
+                        .remoteFocusFrame()
+                        .clickable(
+                            enabled = !cleaningObsoleteApks && (obsoleteApks?.fileCount ?: 0) > 0
+                        ) {
+                            cleaningObsoleteApks = true
+                            apkCleanupMessage = null
+                            scope.launch {
+                                runCatching { AppUpdates.deleteObsoleteDownloadedApks(context) }
+                                    .onSuccess { result ->
+                                        apkCleanupMessage = "Deleted ${result.deletedCount} installer${if (result.deletedCount == 1) "" else "s"} and reclaimed ${formatDownloadBytes(result.deletedBytes)}"
+                                        obsoleteApks = AppUpdates.obsoleteDownloadedApks(context)
+                                    }
+                                    .onFailure { apkCleanupMessage = "Could not delete old installers: ${it.message}" }
+                                cleaningObsoleteApks = false
+                            }
+                        },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                apkCleanupMessage?.let {
+                    Text(
+                        it,
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 downloadActionMessage?.let {
                     Text(
