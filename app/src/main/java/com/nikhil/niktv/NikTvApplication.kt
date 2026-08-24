@@ -13,7 +13,9 @@ class NikTvApplication : Application(), SingletonImageLoader.Factory {
         ImageLoader.Builder(context)
             .memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(context, 0.25)
+                    // Leave headroom for large Xtream JSON responses. Posters
+                    // remain in the 256 MB disk cache and are decoded on demand.
+                    .maxSizePercent(context, 0.10)
                     .build()
             }
             .diskCache {

@@ -1117,6 +1117,7 @@ private fun CatalogScreen(
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
                     setSeriesStartSeason = setSeriesStartSeason,
+                    setBrowseLayout = setBrowseLayout,
                     openCategoryManager = openCategoryManager
                 )
                 state.searchOpen -> ModernSearchScreen(
@@ -1669,14 +1670,14 @@ private fun ModernBrowseScreen(
         columns = columns,
         state = catalogGridState,
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
-        contentPadding = PaddingValues(bottom = 48.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
             if (!isWide) item("modern-top", span = gridSpan) {
                 ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings, openProfileSwitcher)
             }
-            if (!home) item("modern-hero", span = gridSpan) {
+            if (!home && state.browseLayout != BrowseLayout.SECTIONS) item("modern-hero", span = gridSpan) {
                 val recent = state.recentlyPlayed.firstOrNull()
                 when {
                     !home && state.selectedType == CatalogType.LIVE_TV ->
@@ -1694,7 +1695,7 @@ private fun ModernBrowseScreen(
                         )
                 }
             }
-            if (!home) item("modern-categories", span = gridSpan) {
+            if (!home && state.browseLayout != BrowseLayout.SECTIONS) item("modern-categories", span = gridSpan) {
                 val profileKey = state.savedProfile?.cacheKey()
                 val filterKey = "$profileKey|${state.selectedType.name}"
                 val isFiltered = state.categoryFilters.containsKey(filterKey)
@@ -1889,6 +1890,26 @@ private fun ModernBrowseScreen(
                             Text("No categories enabled for ${state.selectedType.title}", color = Color.White, style = MaterialTheme.typography.titleMedium)
                             Text("Adjust your category filters to include content.", color = Color.LightGray)
                             Button(onClick = { openCategoryManager(state.selectedType) }) { Text("Manage categories") }
+                        }
+                    }
+                }
+            } else if (state.browseLayout == BrowseLayout.SECTIONS) {
+                val sectionCache = state.browseCachesByType[state.selectedType]
+                state.categories.forEach { category ->
+                    val sectionItems = sectionCache?.itemsByCategory?.get(category.id).orEmpty()
+                    if (sectionItems.isNotEmpty()) {
+                        item("section-${state.selectedType}-${category.id}", span = gridSpan) {
+                            ModernRail(
+                                title = category.title,
+                                entries = sectionItems,
+                                media = { it },
+                                open = { play(it) },
+                                aspectRatio = {
+                                    if (state.selectedType == CatalogType.LIVE_TV) 16f / 9f else 2f / 3f
+                                },
+                                isFavorite = { item -> state.favorites.any { it.media.id == item.id } },
+                                toggleFavorite = { toggleFavorite(it) }
+                            )
                         }
                     }
                 }
@@ -3876,6 +3897,7 @@ private fun ModernSettingsScreen(
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
+    setBrowseLayout: (BrowseLayout) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
 ) {
     val profile = state.savedProfile ?: return
@@ -4044,6 +4066,35 @@ private fun ModernSettingsScreen(
             }
         }
         OrientationSettingsSection()
+
+        SettingsSection("Browse layout") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Choose how Live TV, Movies, and Series are presented.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf(
+                        BrowseLayout.SECTIONS to "Sections",
+                        BrowseLayout.GRID to "Grid",
+                        BrowseLayout.LIST to "List"
+                    ).forEachIndexed { index, (layout, label) ->
+                        val shape = uniformSegmentShape(index, 3)
+                        SegmentedButton(
+                            selected = state.browseLayout == layout,
+                            onClick = { setBrowseLayout(layout) },
+                            modifier = Modifier.remoteFocusFrame(shape),
+                            shape = shape
+                        ) { Text(label) }
+                    }
+                }
+                Text(
+                    "Sections loads a limited set of categories as Home-style horizontal rows. Grid and List load one selected category at a time.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
 
         PlaybackDesignSettingsSection(profile.cacheKey())
 

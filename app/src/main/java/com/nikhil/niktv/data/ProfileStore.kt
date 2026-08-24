@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.security.MessageDigest
 
 private val Context.dataStore by preferencesDataStore("nik_tv_profiles")
 
@@ -178,20 +179,36 @@ class ProfileStore(private val context: Context) {
         it[playbackUrlsKey] = Json.encodeToString(items)
     }
     fun browseCatalog(type: CatalogType, profileKey: String? = null): Flow<BrowseCatalogCache?> {
-        val browseKey = stringPreferencesKey("browse_catalog_${type.name.lowercase()}")
+        if (profileKey == null) return context.dataStore.data.map { null }
+        val browseKey = browseCatalogKey(type, profileKey)
         return context.dataStore.data.map { prefs ->
             val raw = prefs[browseKey] ?: return@map null
-            val caches = runCatching { Json.decodeFromString<List<BrowseCatalogCache>>(raw) }.getOrNull()
-                ?: runCatching { listOf(Json.decodeFromString<BrowseCatalogCache>(raw)) }.getOrDefault(emptyList())
-            caches.firstOrNull { profileKey == null || it.profileKey == profileKey }
+            runCatching { Json.decodeFromString<BrowseCatalogCache>(raw) }.getOrNull()
+                ?.takeIf { it.profileKey == profileKey }
         }
     }
     suspend fun saveBrowseCatalog(cache: BrowseCatalogCache) {
-        val browseKey = stringPreferencesKey("browse_catalog_${cache.type.name.lowercase()}")
+        val browseKey = browseCatalogKey(cache.type, cache.profileKey)
+        val legacyKey = stringPreferencesKey("browse_catalog_${cache.type.name.lowercase()}")
         context.dataStore.edit { prefs ->
-            val existing = prefs[browseKey]?.let { raw -> runCatching { Json.decodeFromString<List<BrowseCatalogCache>>(raw) }.getOrNull() }.orEmpty()
-            prefs[browseKey] = Json.encodeToString(listOf(cache) + existing.filterNot { it.profileKey == cache.profileKey })
+            prefs[browseKey] = Json.encodeToString(cache)
+            // Older builds kept every profile in one potentially enormous JSON
+            // value. Never deserialize it; the scoped cache replaces it safely.
+            prefs.remove(legacyKey)
         }
+    }
+
+    suspend fun discardLegacyBrowseCatalogs() = context.dataStore.edit { prefs ->
+        CatalogType.entries.forEach { type ->
+            prefs.remove(stringPreferencesKey("browse_catalog_${type.name.lowercase()}"))
+        }
+    }
+
+    private fun browseCatalogKey(type: CatalogType, profileKey: String): androidx.datastore.preferences.core.Preferences.Key<String> {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(profileKey.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return stringPreferencesKey("browse_catalog_v2_${type.name.lowercase()}_$digest")
     }
     suspend fun saveTmdbMapping(mapping: TmdbIptvMapping) = context.dataStore.edit { prefs ->
         val current = prefs[tmdbMappingsKey]

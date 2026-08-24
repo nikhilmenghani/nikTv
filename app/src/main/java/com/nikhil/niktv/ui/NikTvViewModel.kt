@@ -68,7 +68,7 @@ data class NikTvState(
     val availableSeriesSeasons: List<Int> = emptyList(),
     val selectedSeriesSeason: Int? = null,
     val watchedSeries: List<WatchedSeries> = emptyList(),
-    val browseLayout: BrowseLayout = BrowseLayout.GRID,
+    val browseLayout: BrowseLayout = BrowseLayout.SECTIONS,
     val browseCache: BrowseCatalogCache? = null,
     val browseCachesByType: Map<CatalogType, BrowseCatalogCache> = emptyMap(),
     val searchOpen: Boolean = false,
@@ -128,7 +128,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.browseLayouts.collect { layouts ->
             browseLayouts = layouts
             val key = _state.value.session?.profile?.cacheKey()
-            _state.update { it.copy(browseLayout = key?.let(layouts::get) ?: BrowseLayout.GRID) }
+            _state.update { it.copy(browseLayout = key?.let(layouts::get) ?: BrowseLayout.SECTIONS) }
         } }
         viewModelScope.launch { store.watchedSeries.collect { entries ->
             allWatchedSeries = entries
@@ -203,18 +203,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
      * TTL, so choosing a profile cannot fan out into a burst of portal calls.
      */
     private suspend fun preloadDashboard(session: PortalSession) {
+        // Old builds combined every profile's browse data in a single value.
+        // Remove it without decoding before creating bounded, profile-scoped caches.
+        store.discardLegacyBrowseCatalogs()
         updateProfileLoad(0.30f, "Loading Movies…")
         loadTypeInternal(session, CatalogType.MOVIES)
-        warmVisibleArtwork(0.40f, "Preparing Movies artwork…")
+        updateProfileLoad(0.40f, "Preparing Movies…")
         updateProfileLoad(0.48f, "Loading Series…")
         loadTypeInternal(session, CatalogType.SERIES)
-        warmVisibleArtwork(0.60f, "Preparing Series artwork…")
+        updateProfileLoad(0.60f, "Preparing Series…")
         updateProfileLoad(0.68f, "Loading Live TV…")
         loadTypeInternal(session, CatalogType.LIVE_TV)
-        warmVisibleArtwork(0.82f, "Preparing Live TV artwork…")
+        updateProfileLoad(0.82f, "Preparing Live TV…")
         updateProfileLoad(0.92f, "Preparing your dashboard…")
-        val homeArtwork = _state.value.recentlyPlayed.map { it.media } + _state.value.favorites.map { it.media }
-        withTimeoutOrNull(5_000L) { prefetchArtwork(getApplication(), homeArtwork, limit = 8) }
         refreshWatchedSeriesIfDue()
         loadDashboardDiscovery()
         viewModelScope.launch { enrichHomeArtwork(session.profile.cacheKey()) }
@@ -278,7 +279,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun warmVisibleArtwork(progress: Float, message: String) {
         updateProfileLoad(progress, message)
-        withTimeoutOrNull(5_000L) { prefetchArtwork(getApplication(), _state.value.items, limit = 8) }
+        withTimeoutOrNull(3_000L) { prefetchArtwork(getApplication(), _state.value.items, limit = 3) }
     }
 
     private fun updateProfileLoad(progress: Float, message: String) =
@@ -290,7 +291,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             favorites = if (profileKey == null) emptyList() else allFavorites.filter { entry -> entry.profileKey == profileKey },
             recentlyPlayed = if (profileKey == null) emptyList() else allRecentlyPlayed.filter { entry -> entry.profileKey == profileKey },
             watchedSeries = if (profileKey == null) emptyList() else allWatchedSeries.filter { entry -> entry.profileKey == profileKey },
-            browseLayout = profileKey?.let(browseLayouts::get) ?: BrowseLayout.GRID
+            browseLayout = profileKey?.let(browseLayouts::get) ?: BrowseLayout.SECTIONS
         ) }
     }
 
@@ -318,7 +319,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openCatalogType(type: CatalogType) {
-        if (activateWarmedType(type, closeOverlays = true)) return
+        if (activateWarmedType(type, closeOverlays = true)) {
+            if (_state.value.browseLayout == BrowseLayout.SECTIONS) {
+                _state.value.session?.let { session ->
+                    viewModelScope.launch { loadCategorySections(session, type) }
+                }
+            }
+            return
+        }
 
         _state.update { it.copy(
             homeOpen = false, favoritesOpen = false, settingsOpen = false, searchOpen = false,
@@ -394,7 +402,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (!forceRefresh && cachedBrowse != null && cachedForSelected != null && (System.currentTimeMillis() - cachedBrowse.cachedAtMillis < maxAge)) {
                 cachedForSelected
             } else {
-                portal.catalog(session, selected)
+                portal.catalog(session, selected).let { loaded ->
+                    if (session.profile.portalType == PortalType.XTREAM) loaded.take(120) else loaded
+                }
             }
         } else emptyList()
 
@@ -421,6 +431,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 browseCache = cache,
                 browseCachesByType = current.browseCachesByType + (type to cache)
             )
+        }
+
+        if (
+            _state.value.browseLayout == BrowseLayout.SECTIONS &&
+            _state.value.profileLoadProgress == null
+        ) {
+            loadCategorySections(session, type)
+        } else if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
+            viewModelScope.launch { enrichCatalogArtwork(session, type) }
         }
     }
 
@@ -542,6 +561,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         _state.update { it.copy(browseLayout = layout) }
         store.setBrowseLayout(profileKey, layout)
+        if (layout == BrowseLayout.SECTIONS) {
+            _state.value.session?.let { loadCategorySections(it, _state.value.selectedType) }
+        }
     }
 
     fun loadSeriesSeason(season: Int) = task {
@@ -887,6 +909,72 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 homeOpen = true
             )
         }
+    }
+
+    private suspend fun loadCategorySections(session: PortalSession, type: CatalogType) {
+        val profileKey = session.profile.cacheKey()
+        val sectionLimit = if (session.profile.portalType == PortalType.STALKER) 6 else 10
+        val categories = _state.value.categories.take(sectionLimit)
+
+        for (category in categories) {
+            if (_state.value.session?.profile?.cacheKey() != profileKey ||
+                _state.value.selectedType != type ||
+                _state.value.browseLayout != BrowseLayout.SECTIONS
+            ) return
+
+            val existing = _state.value.browseCachesByType[type] ?: return
+            if (existing.itemsByCategory.containsKey(category.id)) continue
+            val items = runCatching { portal.catalog(session, category) }
+                .getOrDefault(emptyList())
+                .filter { it.portalCategoryId == null || it.portalCategoryId == category.id }
+                .take(30)
+            val updated = existing.copy(
+                cachedAtMillis = System.currentTimeMillis(),
+                itemsByCategory = existing.itemsByCategory + (category.id to items)
+            )
+            store.saveBrowseCatalog(updated)
+            _state.update { current ->
+                if (current.session?.profile?.cacheKey() != profileKey) current
+                else current.copy(
+                    browseCache = updated,
+                    browseCachesByType = current.browseCachesByType + (type to updated)
+                )
+            }
+        }
+
+        if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
+            enrichCatalogArtwork(session, type)
+        }
+    }
+
+    private suspend fun enrichCatalogArtwork(session: PortalSession, type: CatalogType) = coroutineScope {
+        if (!tmdb.configured) return@coroutineScope
+        val profileKey = session.profile.cacheKey()
+        val cache = _state.value.browseCachesByType[type] ?: return@coroutineScope
+        val targets = cache.itemsByCategory.values.flatten()
+            .distinctBy { it.id }
+            .filterNot { it.logo.orEmpty().startsWith("https://image.tmdb.org/") }
+            .take(16)
+
+        val artwork = targets.map { media ->
+            async { media.id to runCatching { tmdb.artworkFor(media, type) }.getOrNull() }
+        }.awaitAll().mapNotNull { (id, logo) -> logo?.let { id to it } }.toMap()
+        if (artwork.isEmpty() || _state.value.session?.profile?.cacheKey() != profileKey) return@coroutineScope
+
+        val enrichedItems = cache.itemsByCategory.mapValues { (_, items) ->
+            items.map { media -> artwork[media.id]?.let { media.copy(logo = it) } ?: media }
+        }
+        val enrichedCache = cache.copy(itemsByCategory = enrichedItems)
+        store.saveBrowseCatalog(enrichedCache)
+        _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profileKey) current
+            else current.copy(
+                items = enrichedItems[current.selectedCategory?.id] ?: current.items,
+                browseCache = enrichedCache,
+                browseCachesByType = current.browseCachesByType + (type to enrichedCache)
+            )
+        }
+        prefetchArtwork(getApplication(), enrichedItems.values.flatten(), limit = 16)
     }
 
     private suspend fun resolveTmdbMovieFromPortal(

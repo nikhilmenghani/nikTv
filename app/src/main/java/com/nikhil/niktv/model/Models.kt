@@ -172,7 +172,7 @@ data class FavoriteItem(
 enum class SeriesStartSeason { FIRST, LAST }
 
 @Serializable
-enum class BrowseLayout { GRID, LIST }
+enum class BrowseLayout { SECTIONS, GRID, LIST }
 
 @Serializable
 data class WatchedSeries(

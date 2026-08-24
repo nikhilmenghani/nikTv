@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
+import kotlinx.serialization.ExperimentalSerializationApi
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -425,6 +426,7 @@ class StalkerPortalClient(private val context: Context) {
     private fun xtreamCatalog(session: PortalSession, category: Category): List<MediaItem> =
         xtreamCatalog(session, category.type, category.id)
 
+    @OptIn(ExperimentalSerializationApi::class)
     private fun xtreamCatalog(session: PortalSession, type: CatalogType, categoryId: String?): List<MediaItem> {
         val action = when (type) {
             CatalogType.LIVE_TV -> "get_live_streams"
@@ -433,7 +435,19 @@ class StalkerPortalClient(private val context: Context) {
             CatalogType.RADIO -> return emptyList()
         }
         val profile = session.profile
-        return xtreamRequest(profile, action, categoryId).array().mapNotNull { node ->
+        val url = "${profile.portalUrl}/player_api.php".toHttpUrl().newBuilder()
+            .addQueryParameter("username", profile.username)
+            .addQueryParameter("password", profile.password)
+            .addQueryParameter("action", action)
+            .apply { categoryId?.let { addQueryParameter("category_id", it) } }
+            .build()
+        val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").header("Accept", "application/json").build()
+        val nodes = http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("Xtream server returned HTTP ${response.code}")
+            val body = response.body ?: error("Xtream server returned an empty response")
+            json.decodeToSequence<JsonElement>(body.byteStream()).take(XTREAM_CATALOG_LIMIT).toList()
+        }
+        return nodes.mapNotNull { node ->
             val o = node as? JsonObject ?: return@mapNotNull null
             val id = o.string("stream_id") ?: o.string("series_id") ?: return@mapNotNull null
             val extension = o.string("container_extension") ?: "mp4"
@@ -770,6 +784,7 @@ class StalkerPortalClient(private val context: Context) {
         private const val MIN_REQUEST_SPACING_MS = 1_000L
         private const val REQUEST_WINDOW_MS = 60_000L
         private const val MAX_REQUESTS_PER_WINDOW = 20
+        private const val XTREAM_CATALOG_LIMIT = 120
     }
 
     private data class DeviceIdentity(val serial: String, val stbType: String, val clientType: String, val metrics: String, val hardwareVersion2: String)
