@@ -67,6 +67,7 @@ data class NikTvState(
     val playbackUrls: List<PlaybackUrl> = emptyList(),
     val cacheIntervalMinutes: Int = 60,
     val playerControlsTimeoutSeconds: Int = 3,
+    val playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
     val seriesStartSeason: SeriesStartSeason = SeriesStartSeason.FIRST,
     val availableSeriesSeasons: List<Int> = emptyList(),
     val selectedSeriesSeason: Int? = null,
@@ -126,6 +127,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
         viewModelScope.launch { store.playerControlsTimeoutSeconds.collect { seconds -> _state.update { it.copy(playerControlsTimeoutSeconds = seconds) } } }
+        viewModelScope.launch { store.playbackEngine.collect { engine -> _state.update { it.copy(playbackEngine = engine) } } }
         viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
         viewModelScope.launch { store.rememberedSeriesSeasons.collect { rememberedSeriesSeasons = it } }
         viewModelScope.launch { store.episodeSeasonCaches.collect { episodeSeasonCaches = it } }
@@ -567,6 +569,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setPlayerControlsTimeoutSeconds(seconds: Int) = viewModelScope.launch {
         store.setPlayerControlsTimeoutSeconds(seconds)
+    }
+
+    fun setPlaybackEngine(engine: PlaybackEngine) = viewModelScope.launch {
+        store.setPlaybackEngine(engine)
     }
 
     fun setSeriesStartSeason(value: SeriesStartSeason) = viewModelScope.launch {

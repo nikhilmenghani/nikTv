@@ -23,6 +23,7 @@ import com.nikhil.niktv.model.BrowseLayout
 import com.nikhil.niktv.model.TmdbIptvMapping
 import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.model.DashboardSurface
+import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.model.canonicalSearchQuery
 import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
@@ -54,6 +55,7 @@ class ProfileStore(private val context: Context) {
     private val playbackUrlsKey = stringPreferencesKey("playback_urls")
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
     private val playerControlsTimeoutKey = intPreferencesKey("player_controls_timeout_seconds")
+    private val playbackEngineKey = stringPreferencesKey("playback_engine")
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
     private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
     private val categoryFiltersKey = stringPreferencesKey("category_filters")
@@ -95,6 +97,10 @@ class ProfileStore(private val context: Context) {
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
     val playerControlsTimeoutSeconds: Flow<Int> = context.dataStore.data.map { it[playerControlsTimeoutKey] ?: 3 }
+    val playbackEngine: Flow<PlaybackEngine> = context.dataStore.data.map { prefs ->
+        prefs[playbackEngineKey]?.let { runCatching { PlaybackEngine.valueOf(it) }.getOrNull() }
+            ?: PlaybackEngine.AUTO
+    }
     val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
         decodeRecentSearches(prefs[recentSearchesKey]).deduplicatedRecentSearches()
     }
@@ -229,6 +235,9 @@ class ProfileStore(private val context: Context) {
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
     suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = context.dataStore.edit {
         it[playerControlsTimeoutKey] = seconds.coerceIn(1, 30)
+    }
+    suspend fun setPlaybackEngine(engine: PlaybackEngine) = context.dataStore.edit {
+        it[playbackEngineKey] = engine.name
     }
     suspend fun setSeriesStartSeason(value: SeriesStartSeason) = context.dataStore.edit { it[seriesStartSeasonKey] = value.name }
     suspend fun saveWatchedSeries(items: List<WatchedSeries>) = context.dataStore.edit {

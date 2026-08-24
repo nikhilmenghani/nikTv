@@ -596,6 +596,7 @@ fun ShowcasePlaybackScreen(
             onPlayNext = onPlayNext,
             onProgress = onProgress,
             controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+            playbackEngine = state.playbackEngine,
             modifier = if (fullscreen) {
                 Modifier.fillMaxSize()
             } else {

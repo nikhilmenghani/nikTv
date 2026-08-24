@@ -63,6 +63,7 @@ import androidx.media3.ui.PlayerView
 import com.nikhil.niktv.R
 import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.PlayingMedia
+import com.nikhil.niktv.model.PlaybackEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -79,6 +80,7 @@ fun PlayerScreen(
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
     controlsTimeoutSeconds: Int = 3,
+    playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
     embeddedControlsDismissRequest: Int = 0,
@@ -87,6 +89,24 @@ fun PlayerScreen(
     onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
+    val effectiveEngine = when (playbackEngine) {
+        PlaybackEngine.VLC -> PlaybackEngine.VLC
+        PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
+        PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
+    }
+    if (effectiveEngine == PlaybackEngine.VLC) {
+        VlcPlayerScreen(
+            media = media,
+            onBack = onBack,
+            onPlayPrevious = onPlayPrevious,
+            onPlayNext = onPlayNext,
+            onProgress = onProgress,
+            modifier = modifier,
+            embeddedMode = embeddedMode
+        )
+        return
+    }
     val coroutineScope = rememberCoroutineScope()
     val activity = remember(context) { context.findActivity() }
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
@@ -173,7 +193,7 @@ fun PlayerScreen(
             // Some TV devices advertise a hardware decoder that later rejects or
             // stalls on a stream. Let Media3 try the next compatible decoder.
             .setEnableDecoderFallback(true)
-            .setMediaCodecSelector(FailedDecoderRegistry.selector(context))
+            .setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope))
         ExoPlayer.Builder(context, renderersFactory).build().apply {
             setMediaItem(MediaItem.fromUri(media.url))
             if (media.resumePositionMillis > 0L) seekTo(media.resumePositionMillis)
@@ -193,7 +213,8 @@ fun PlayerScreen(
                 val failedDecoder =
                     FailedDecoderRegistry.record(
                         context,
-                        error
+                        error,
+                        playbackScope
                     )
 
                 val authorizationFailure =
@@ -1008,7 +1029,8 @@ private object FailedDecoderRegistry {
     }
 
     fun selector(
-        context: Context
+        context: Context,
+        playbackScope: String
     ): MediaCodecSelector {
         failedNames +=
             context
@@ -1053,8 +1075,8 @@ private object FailedDecoderRegistry {
                     "video/avc",
                     ignoreCase = true
                 ) &&
-                    "omx.mtk.video.decoder.avc" in
-                        failedNames
+                    ("omx.mtk.video.decoder.avc" in failedNames ||
+                        PlayerEngineFallback.prefersSoftwareAvc(context, playbackScope))
 
             val ordered =
                 if (mtkAvcPreviouslyFailed) {
@@ -1088,7 +1110,8 @@ private object FailedDecoderRegistry {
 
     fun record(
         context: Context,
-        error: Throwable
+        error: Throwable,
+        playbackScope: String
     ): String? {
         val messages =
             generateSequence(
@@ -1111,12 +1134,7 @@ private object FailedDecoderRegistry {
         val normalized =
             decoder.lowercase()
 
-        val newlyRejected =
-            failedNames.add(normalized)
-
-        if (!newlyRejected) {
-            return null
-        }
+        failedNames.add(normalized)
 
         context
             .getSharedPreferences(
@@ -1130,7 +1148,29 @@ private object FailedDecoderRegistry {
             )
             .apply()
 
+        if (normalized == "omx.mtk.video.decoder.avc") {
+            PlayerEngineFallback.recordMtkAvcFailure(context, playbackScope)
+        }
+
         return decoder
+    }
+}
+
+private object PlayerEngineFallback {
+    private const val PREFS = "player_engine_fallbacks"
+
+    fun prefersSoftwareAvc(context: Context, scope: String): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt("mtk:$scope", 0) >= 1
+
+    fun prefersVlc(context: Context, scope: String): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getInt("mtk:$scope", 0) >= 2
+
+    fun recordMtkAvcFailure(context: Context, scope: String) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val key = "mtk:$scope"
+        prefs.edit().putInt(key, (prefs.getInt(key, 0) + 1).coerceAtMost(3)).apply()
     }
 }
 

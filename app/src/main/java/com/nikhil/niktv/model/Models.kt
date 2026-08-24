@@ -259,6 +259,9 @@ data class PlayingMedia(
 )
 
 @Serializable
+enum class PlaybackEngine { AUTO, MEDIA3, VLC }
+
+@Serializable
 data class PlaybackProgress(
     val key: String,
     val positionMillis: Long,

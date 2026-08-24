@@ -347,6 +347,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
                     controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+                    playbackEngine = state.playbackEngine,
                     startFullscreen = true
                 )
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -381,6 +382,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
                     ,setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds
+                    ,setPlaybackEngine = vm::setPlaybackEngine
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
                     ,loadSeriesSeason = vm::loadSeriesSeason
                     ,toggleSeriesWatch = vm::toggleSeriesWatch
@@ -1049,6 +1051,7 @@ private fun CatalogScreen(
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
+    setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     loadSeriesSeason: (Int) -> Unit,
     toggleSeriesWatch: () -> Unit,
@@ -1123,6 +1126,7 @@ private fun CatalogScreen(
                     logout = logout,
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
+                    setPlaybackEngine = setPlaybackEngine,
                     setSeriesStartSeason = setSeriesStartSeason,
                     setBrowseLayout = setBrowseLayout,
                     openCategoryManager = openCategoryManager
@@ -4097,6 +4101,7 @@ private fun ModernSettingsScreen(
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
+    setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     setBrowseLayout: (BrowseLayout) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
@@ -4604,6 +4609,27 @@ private fun ModernSettingsScreen(
                 }
             }
         }
+        SettingsSection("Playback engine") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Video player", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Auto remembers decoder failures per series and moves persistent failures to VLC. Media3 keeps the integrated player; VLC offers broader codec compatibility.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    PlaybackEngine.entries.forEachIndexed { index, engine ->
+                        val shape = uniformSegmentShape(index, PlaybackEngine.entries.size)
+                        SegmentedButton(
+                            selected = state.playbackEngine == engine,
+                            onClick = { setPlaybackEngine(engine) },
+                            modifier = Modifier.remoteFocusFrame(shape),
+                            shape = shape
+                        ) { Text(engine.name.lowercase().replaceFirstChar(Char::uppercase)) }
+                    }
+                }
+            }
+        }
         SettingsSection("Player controls") {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Hide controls after", style = MaterialTheme.typography.titleMedium)
@@ -4986,6 +5012,9 @@ private fun LiveTvPlaybackScreen(
 
             controlsTimeoutSeconds =
                 state.playerControlsTimeoutSeconds,
+
+            playbackEngine =
+                state.playbackEngine,
 
             modifier =
                 if (fullscreen) {
