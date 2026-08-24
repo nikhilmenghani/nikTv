@@ -258,6 +258,10 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val liveTvPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.LIVE_TV)
     val moviePlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.MOVIES)
     val seriesPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.SERIES)
+    val mobileUiDesign by rememberMobileUiDesign()
+    val useYouTubeMobilePlayback =
+        LocalConfiguration.current.screenWidthDp < 600 &&
+            mobileUiDesign == MobileUiDesign.YOUTUBE
 
     LaunchedEffect(updateEnforcementEnabled) {
         if (updateEnforcementEnabled && pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
@@ -311,7 +315,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.MOVIES &&
-                    moviePlaybackDesign == PlaybackDesign.SHOWCASE -> ShowcasePlaybackScreen(
+                    (moviePlaybackDesign == PlaybackDesign.SHOWCASE || useYouTubeMobilePlayback) -> ShowcasePlaybackScreen(
                     state = state,
                     play = vm::openMedia,
                     onBack = vm::closePlayer,
@@ -326,7 +330,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.SERIES &&
-                    seriesPlaybackDesign == PlaybackDesign.SHOWCASE -> ShowcasePlaybackScreen(
+                    (seriesPlaybackDesign == PlaybackDesign.SHOWCASE || useYouTubeMobilePlayback) -> ShowcasePlaybackScreen(
                     state = state,
                     play = vm::openMedia,
                     onBack = vm::closePlayer,
@@ -444,7 +448,20 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     setFilter = { type, list -> vm.setCategoryFilter(type, list) }
                 )
             }
-            if (state.loading && state.profileLoadProgress == null) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            if (state.loading && state.profileLoadProgress == null) {
+                if (state.session == null) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    // Connected screens remain interactive while a portal or
+                    // catalog request runs. A full-screen overlay made a slow
+                    // request look like a frozen app and intercepted actions.
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(3.dp).align(Alignment.TopCenter)
+                    )
+                }
+            }
             state.error?.let { error ->
                 val authorizationExpired = error.isAuthorizationFailureText()
                 var showDiagnostics by remember(error) { mutableStateOf(!authorizationExpired) }
@@ -2736,12 +2753,32 @@ private fun LiveTvColumnSelector(
 
 @Composable
 private fun ModernSectionHeader(title: String, subtitle: String? = null, action: (@Composable () -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
-            subtitle?.let { Text(it, color = Color.Gray, style = MaterialTheme.typography.labelMedium) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val compact = maxWidth < 600.dp
+        if (compact) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+                subtitle?.let { Text(it, color = Color.Gray, style = MaterialTheme.typography.bodySmall) }
+                action?.let { actions ->
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) { actions() }
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
+                    subtitle?.let { Text(it, color = Color.Gray, style = MaterialTheme.typography.labelMedium) }
+                }
+                action?.invoke()
+            }
         }
-        action?.invoke()
     }
 }
 
@@ -4971,6 +5008,12 @@ private fun LiveTvPlaybackScreen(
     val narrowPlayerLayout =
         playerConfiguration.screenWidthDp < 900
 
+    val mobilePlaylistLayout =
+        playerConfiguration.screenWidthDp < 600
+
+    val mobilePlayerHeight =
+        (playerConfiguration.screenWidthDp.dp * 9f / 16f)
+
     val playerWidthFraction =
         if (narrowPlayerLayout) {
             0.58f
@@ -5258,6 +5301,11 @@ private fun LiveTvPlaybackScreen(
             modifier =
                 if (fullscreen) {
                     Modifier.fillMaxSize()
+                } else if (mobilePlaylistLayout) {
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f)
+                        .align(Alignment.TopCenter)
                 } else {
                     Modifier
                         .fillMaxWidth(
@@ -5291,14 +5339,17 @@ private fun LiveTvPlaybackScreen(
 
         if (!fullscreen) {
             Column(
-                modifier = Modifier
-                    .align(
-                        Alignment.CenterEnd
-                    )
-                    .fillMaxWidth(
-                        channelWidthFraction
-                    )
-                    .fillMaxHeight()
+                modifier = (if (mobilePlaylistLayout) {
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxSize()
+                        .padding(top = mobilePlayerHeight)
+                } else {
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxWidth(channelWidthFraction)
+                        .fillMaxHeight()
+                })
                     .background(
                         Brush.verticalGradient(
                             listOf(
@@ -5309,13 +5360,15 @@ private fun LiveTvPlaybackScreen(
                     )
                     .windowInsetsPadding(
                         WindowInsets.safeDrawing.only(
-                            WindowInsetsSides.Top +
-                                    WindowInsetsSides.End +
-                                    WindowInsetsSides.Bottom
+                            if (mobilePlaylistLayout) {
+                                WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
+                            } else {
+                                WindowInsetsSides.Top + WindowInsetsSides.End + WindowInsetsSides.Bottom
+                            }
                         )
                     )
                     .padding(
-                        top = 8.dp,
+                        top = if (mobilePlaylistLayout) 12.dp else 8.dp,
                         bottom = 8.dp
                     ),
 
@@ -5331,7 +5384,7 @@ private fun LiveTvPlaybackScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
-                            horizontal = 6.dp
+                            horizontal = if (mobilePlaylistLayout) 16.dp else 6.dp
                         ),
 
                     verticalArrangement =
@@ -5350,7 +5403,7 @@ private fun LiveTvPlaybackScreen(
                             Color(0xFFE50914),
 
                         style =
-                            MaterialTheme.typography.labelSmall,
+                            if (mobilePlaylistLayout) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall,
 
                         fontWeight =
                             FontWeight.Bold,
@@ -5369,7 +5422,7 @@ private fun LiveTvPlaybackScreen(
                             Color.White,
 
                         style =
-                            MaterialTheme.typography.titleMedium,
+                            if (mobilePlaylistLayout) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
 
                         fontWeight =
                             FontWeight.Bold,
@@ -5391,7 +5444,7 @@ private fun LiveTvPlaybackScreen(
                             Color.LightGray,
 
                         style =
-                            MaterialTheme.typography.bodySmall,
+                            if (mobilePlaylistLayout) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
 
                         maxLines = 1,
 

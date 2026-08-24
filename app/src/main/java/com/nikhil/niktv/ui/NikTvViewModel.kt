@@ -16,6 +16,7 @@ import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
@@ -2093,8 +2094,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private fun task(block: suspend () -> Unit) {
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
-            runCatching { block() }.onFailure { e -> _state.update { it.copy(error = e.message ?: "Unexpected error") } }
-            _state.update { it.copy(loading = false, profileLoadProgress = null, profileLoadMessage = "Preparing profile…") }
+            try {
+                withTimeout(90_000L) { block() }
+            } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+                _state.update { it.copy(error = "The portal did not respond within 90 seconds. Please try again.") }
+            } catch (error: Throwable) {
+                _state.update { it.copy(error = error.message ?: "Unexpected error") }
+            } finally {
+                _state.update { it.copy(loading = false, profileLoadProgress = null, profileLoadMessage = "Preparing profile…") }
+            }
         }
     }
 

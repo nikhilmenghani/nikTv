@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -519,6 +520,42 @@ fun ShowcasePlaybackScreen(
     val compact =
         configuration.screenWidthDp < 900 ||
             configuration.screenHeightDp < 520
+    val mobileUiDesign by rememberMobileUiDesign()
+    val youtubeMobile =
+        configuration.screenWidthDp < 600 &&
+            mobileUiDesign == MobileUiDesign.YOUTUBE
+
+    if (youtubeMobile) {
+        YouTubeMobileShowcase(
+            state = state,
+            playingItem = playing.media,
+            type = type,
+            items = queue,
+            fullscreen = fullscreen,
+            onFullscreenChanged = { fullscreen = it },
+            onBack = onBack,
+            onRetry = onRetry,
+            onRetryAlternateDecoder = onRetryAlternateDecoder,
+            onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
+            onPlayPrevious = onPlayPrevious,
+            onPlayNext = onPlayNext,
+            onProgress = onProgress,
+            onPlay = { item ->
+                if (item.id == playing.media.id) fullscreen = true else play(item)
+            },
+            onToggleFavorite = { toggleFavorite(playing.media) },
+            loadMorePending = loadMorePending,
+            onLoadMore = {
+                if (!state.catalogLoadingMore && !loadMorePending) {
+                    loadMoreStartItemCount = state.items.size
+                    loadMoreObservedLoading = false
+                    loadMorePending = true
+                    loadMoreCatalog()
+                }
+            }
+        )
+        return
+    }
 
     /*
      * SHOWCASE_TV_DETAILS_SPACE_V13
@@ -684,6 +721,262 @@ fun ShowcasePlaybackScreen(
                     }
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun YouTubeMobileShowcase(
+    state: NikTvState,
+    playingItem: MediaItem,
+    type: CatalogType,
+    items: List<MediaItem>,
+    fullscreen: Boolean,
+    onFullscreenChanged: (Boolean) -> Unit,
+    onBack: () -> Unit,
+    onRetry: () -> Unit,
+    onRetryAlternateDecoder: (Long) -> Unit,
+    onPlaybackAuthorizationFailure: (Long) -> Unit,
+    onPlayPrevious: () -> Unit,
+    onPlayNext: () -> Unit,
+    onProgress: (String, Long, Long) -> Unit,
+    onPlay: (MediaItem) -> Unit,
+    onToggleFavorite: () -> Unit,
+    loadMorePending: Boolean,
+    onLoadMore: () -> Unit
+) {
+    val playing = state.nowPlaying ?: return
+    val favoriteKind = showcaseFavoriteKind(type, state.selectedSeries != null)
+    val favorite = state.favorites.any {
+        it.kind == favoriteKind && it.media.id == playingItem.id
+    }
+    val description = playingItem.description?.trim()?.takeIf {
+        it.isNotBlank() && !it.equals(playingItem.title.trim(), ignoreCase = true)
+    }
+    var descriptionExpanded by remember(playingItem.id) { mutableStateOf(false) }
+    var descriptionOverflows by remember(playingItem.id) { mutableStateOf(false) }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0F0F0F))
+    ) {
+        if (fullscreen) {
+            PlayerScreen(
+                media = playing,
+                onBack = { onFullscreenChanged(false) },
+                onRetry = onRetry,
+                onRetryAlternateDecoder = onRetryAlternateDecoder,
+                onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
+                onPlayPrevious = onPlayPrevious,
+                onPlayNext = onPlayNext,
+                onProgress = onProgress,
+                controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+                playbackEngine = state.playbackEngine,
+                modifier = Modifier.fillMaxSize(),
+                embeddedMode = false,
+                fullscreenOverride = true,
+                onFullscreenChanged = onFullscreenChanged
+            )
+            return@Box
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+        ) {
+            PlayerScreen(
+                media = playing,
+                onBack = onBack,
+                onRetry = onRetry,
+                onRetryAlternateDecoder = onRetryAlternateDecoder,
+                onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
+                onPlayPrevious = onPlayPrevious,
+                onPlayNext = onPlayNext,
+                onProgress = onProgress,
+                controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+                playbackEngine = state.playbackEngine,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f),
+                embeddedMode = true,
+                fullscreenOverride = false,
+                onFullscreenChanged = onFullscreenChanged
+            )
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                item(key = "details-${playingItem.id}") {
+                    Column(
+                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        Text(
+                            playingItem.title,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                ShowcaseInfoBadge(type.title)
+                                ShowcaseInfoBadge(showcaseCategoryTitle(state, type))
+                            }
+                            FilledTonalIconButton(onClick = onToggleFavorite) {
+                                Icon(
+                                    if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                    contentDescription = if (favorite) "Remove from My List" else "Add to My List"
+                                )
+                            }
+                        }
+
+                        Text(
+                            description ?: "No description is available for this title.",
+                            color = if (description == null) Color.Gray else Color(0xFFD6D6D6),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = if (descriptionExpanded) Int.MAX_VALUE else 3,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = {
+                                if (!descriptionExpanded) descriptionOverflows = it.hasVisualOverflow
+                            }
+                        )
+                        if (descriptionOverflows || descriptionExpanded) {
+                            TextButton(
+                                onClick = { descriptionExpanded = !descriptionExpanded },
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(if (descriptionExpanded) "Show less" else "Show more")
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
+                    Text(
+                        if (type == CatalogType.SERIES) "Episodes" else "Up next",
+                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                itemsIndexed(items, key = { _, item -> item.id }) { _, item ->
+                    YouTubeMobileQueueItem(
+                        item = item,
+                        playing = item.id == playingItem.id,
+                        onClick = { onPlay(item) }
+                    )
+                }
+
+                if (state.catalogHasMore || state.catalogLoadingMore || loadMorePending) {
+                    item(key = "load-more") {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (state.catalogLoadingMore || loadMorePending) {
+                                CircularProgressIndicator(Modifier.size(28.dp))
+                            } else {
+                                OutlinedButton(onClick = onLoadMore) { Text("Load more") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun YouTubeMobileQueueItem(
+    item: MediaItem,
+    playing: Boolean,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val artwork = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
+
+    Surface(
+        onClick = onClick,
+        color = if (playing) Color(0xFF242424) else Color.Transparent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                Modifier
+                    .width(150.dp)
+                    .aspectRatio(16f / 9f),
+                shape = RoundedCornerShape(9.dp),
+                color = Color(0xFF252525)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (item.logo.isNullOrBlank()) {
+                        ShowcaseArtworkFallback(item.title, true, Modifier.fillMaxSize())
+                    } else {
+                        SubcomposeAsyncImage(
+                            model = artwork,
+                            contentDescription = item.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        ) {
+                            when (painter.state.value) {
+                                is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                                else -> ShowcaseArtworkFallback(item.title, true, Modifier.fillMaxSize())
+                            }
+                        }
+                    }
+                    if (playing) {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.72f),
+                            shape = RoundedCornerShape(5.dp)
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.PlayArrow, null, Modifier.size(15.dp))
+                                Text("PLAYING", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    item.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (item.seasonNumber != null || item.episodeNumber != null) {
+                    Text(
+                        listOfNotNull(
+                            item.seasonNumber?.let { "Season $it" },
+                            item.episodeNumber?.let { "Episode $it" }
+                        ).joinToString(" · "),
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            Icon(Icons.Default.MoreVert, "More options", tint = Color.LightGray)
         }
     }
 }
