@@ -442,9 +442,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     state = state,
                     close = vm::closeCategoryManager,
                     setType = vm::setCategoryManagerType,
-                    toggleCategory = { type, id -> vm.toggleCategoryFilter(type, id) },
-                    selectAll = { vm.selectAllCategories(it) },
-                    deselectAll = { vm.deselectAllCategories(it) },
                     setFilter = { type, list -> vm.setCategoryFilter(type, list) }
                 )
             }
@@ -5988,9 +5985,6 @@ private fun CategoryManagerDialog(
     state: NikTvState,
     close: () -> Unit,
     setType: (CatalogType) -> Unit,
-    toggleCategory: (CatalogType, String) -> Unit,
-    selectAll: (CatalogType) -> Unit,
-    deselectAll: (CatalogType) -> Unit,
     setFilter: (CatalogType, List<String>) -> Unit
 ) {
     val type = state.categoryManagerType
@@ -5999,8 +5993,14 @@ private fun CategoryManagerDialog(
     val raw = state.rawCategoriesByType[type].orEmpty().ifEmpty { if (state.selectedType == type) state.categories else emptyList() }
     val filterKey = "$profileKey|${type.name}"
     val enabledIds = state.categoryFilters[filterKey]
-    val currentEnabledSet = remember(enabledIds, raw) {
-        enabledIds?.take(10)?.toSet() ?: raw.take(10).map { it.id }.toSet()
+    var draftSelections by remember(profileKey) {
+        mutableStateOf<Map<CatalogType, Set<String>>>(emptyMap())
+    }
+    val currentEnabledSet = draftSelections[type]
+        ?: enabledIds?.take(10)?.toSet()
+        ?: raw.take(10).map { it.id }.toSet()
+    val updateCurrentSelection: (Set<String>) -> Unit = { selection ->
+        draftSelections = draftSelections + (type to selection.take(10).toSet())
     }
     var searchQuery by rememberSaveable(type) { mutableStateOf("") }
     val filteredRaw = remember(raw, searchQuery) {
@@ -6088,10 +6088,15 @@ private fun CategoryManagerDialog(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Category Filters", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text("Selections save immediately · Back also closes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Choose up to 10 categories, then apply", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Button(
-                        onClick = close,
+                        onClick = {
+                            draftSelections.forEach { (catalogType, ids) ->
+                                setFilter(catalogType, ids.toList())
+                            }
+                            close()
+                        },
                         modifier = Modifier
                             .height(48.dp)
                             .focusRequester(applyRequester)
@@ -6167,7 +6172,7 @@ private fun CategoryManagerDialog(
                     )
                     if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
                         TextButton(onClick = {
-                            setFilter(type, (currentEnabledSet + filteredRaw.map { it.id }).take(10))
+                            updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet())
                         }, modifier = Modifier.heightIn(min = 64.dp).focusRequester(selectMatchingRequester)) { Text("Select matching") }
                     }
                 }
@@ -6200,7 +6205,14 @@ private fun CategoryManagerDialog(
                             val rowRequester = categoryRequesters.getValue(category.id)
                             val rowFocused = focusedCategoryId == category.id
                             Surface(
-                                onClick = { if (!selectionLimitReached) toggleCategory(type, category.id) },
+                                onClick = {
+                                    if (!selectionLimitReached) {
+                                        updateCurrentSelection(
+                                            if (selected) currentEnabledSet - category.id
+                                            else currentEnabledSet + category.id
+                                        )
+                                    }
+                                },
                                 shape = RoundedCornerShape(12.dp),
                                 color = when {
                                     rowFocused -> Color(0xFF292929)
@@ -6339,7 +6351,7 @@ private fun CategoryManagerDialog(
                     }
                     CategoryDialogActionButton(
                         text = "Select first 10",
-                        onClick = { selectAll(type) },
+                        onClick = { updateCurrentSelection(raw.take(10).map { it.id }.toSet()) },
                         modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
                             left = searchRequester
                             right = deselectAllRequester
@@ -6349,7 +6361,7 @@ private fun CategoryManagerDialog(
                     )
                     CategoryDialogActionButton(
                         text = "Deselect All",
-                        onClick = { deselectAll(type) },
+                        onClick = { updateCurrentSelection(emptySet()) },
                         modifier = Modifier.weight(1f).focusRequester(deselectAllRequester).focusProperties {
                             left = selectAllRequester
                             right = FocusRequester.Cancel

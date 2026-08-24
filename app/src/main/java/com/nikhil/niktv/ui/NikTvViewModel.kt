@@ -163,6 +163,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             store.categoryFilters.collect { filters ->
                 val snapshot = _state.value
                 val profileKey = snapshot.session?.profile?.cacheKey()
+                val activeFilterChanged = profileKey != null &&
+                    snapshot.categoryFilters[filterKey(profileKey, snapshot.selectedType)] !=
+                    filters[filterKey(profileKey, snapshot.selectedType)]
                 val raw = snapshot.rawCategoriesByType[snapshot.selectedType] ?: snapshot.categories
                 val filtered = filterCategories(raw, profileKey, snapshot.selectedType, filters)
                 val selected = if (snapshot.selectedCategory != null && filtered.any { it.id == snapshot.selectedCategory.id }) {
@@ -173,8 +176,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val needsReload = selected != snapshot.selectedCategory
                 _state.update { it.copy(categoryFilters = filters, categories = filtered, selectedCategory = selected) }
-                if (needsReload && selected != null && snapshot.session != null) {
+                if (
+                    needsReload &&
+                    snapshot.browseLayout != BrowseLayout.SECTIONS &&
+                    selected != null &&
+                    snapshot.session != null
+                ) {
                     loadCategory(selected)
+                }
+                if (
+                    activeFilterChanged &&
+                    snapshot.browseLayout == BrowseLayout.SECTIONS
+                ) {
+                    viewModelScope.launch {
+                        loadCategorySections(snapshot.session, snapshot.selectedType)
+                    }
                 }
             }
         }
