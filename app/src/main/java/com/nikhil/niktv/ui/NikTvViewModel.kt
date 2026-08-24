@@ -750,15 +750,39 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openTrendingSeries(entry: TrendingSeries) = task {
         val session = requireNotNull(_state.value.session)
 
-        val resolved =
+        /*
+         * Enter the detail destination before a provider lookup. Xtream may
+         * need to resolve an uncached TMDB title, and keeping homeOpen visible
+         * during that work made the click appear to open the Series dashboard.
+         */
+        _state.update { current ->
+            current.copy(
+                homeOpen = false,
+                favoritesOpen = false,
+                settingsOpen = false,
+                searchOpen = false,
+                categoryManagerOpen = false,
+                selectedType = CatalogType.SERIES,
+                selectedSeries = entry.tmdb.asMediaItem(),
+                seriesOpenedFromHome = true,
+                seriesOpenedFromFavorites = false,
+                items = emptyList(),
+                availableSeriesSeasons = emptyList(),
+                selectedSeriesSeason = null
+            )
+        }
+
+        val resolved = runCatching {
             entry.iptv
-                ?: matchTmdbSeries(
-                    entry.tmdb,
-                    localSeriesCandidates(_state.value)
-                )
+                ?: matchTmdbSeries(entry.tmdb, localSeriesCandidates(_state.value))
                 ?: resolveTmdbSeriesFromPortal(session, entry)
+        }.getOrElse { error ->
+            returnToHomeAfterTrendingSeriesFailure()
+            throw error
+        }
 
         if (resolved == null) {
+            returnToHomeAfterTrendingSeriesFailure()
             error(
                 "\"${entry.tmdb.name}\" was not found in this IPTV profile."
             )
@@ -791,6 +815,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         loadSeriesEpisodes(resolved)
+    }
+
+    private fun returnToHomeAfterTrendingSeriesFailure() {
+        _state.update {
+            it.copy(
+                selectedSeries = null,
+                seriesOpenedFromHome = false,
+                items = emptyList(),
+                availableSeriesSeasons = emptyList(),
+                selectedSeriesSeason = null,
+                homeOpen = true
+            )
+        }
     }
 
     private suspend fun resolveTmdbMovieFromPortal(
