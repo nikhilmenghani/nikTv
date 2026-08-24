@@ -21,6 +21,7 @@ import com.nikhil.niktv.model.WatchedSeries
 import com.nikhil.niktv.model.EpisodeSeasonCache
 import com.nikhil.niktv.model.BrowseLayout
 import com.nikhil.niktv.model.TmdbIptvMapping
+import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.model.canonicalSearchQuery
 import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
@@ -60,6 +61,7 @@ class ProfileStore(private val context: Context) {
     private val rememberedSeriesSeasonsKey = stringPreferencesKey("remembered_series_seasons")
     private val episodeSeasonCachesKey = stringPreferencesKey("episode_season_caches")
     private val browseLayoutsKey = stringPreferencesKey("browse_layouts")
+    private val tmdbHomeSectionsKey = stringPreferencesKey("tmdb_home_sections")
     private val tmdbMappingsKey = stringPreferencesKey("tmdb_iptv_mappings")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
@@ -116,6 +118,11 @@ class ProfileStore(private val context: Context) {
     }
     val browseLayouts: Flow<Map<String, BrowseLayout>> = context.dataStore.data.map { prefs ->
         prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
+    }
+    val tmdbHomeSections: Flow<List<TmdbHomeSection>> = context.dataStore.data.map { prefs ->
+        prefs[tmdbHomeSectionsKey]
+            ?.let { runCatching { Json.decodeFromString<List<TmdbHomeSection>>(it) }.getOrNull() }
+            ?: TmdbHomeSection.defaults
     }
     val tmdbMappings: Flow<List<TmdbIptvMapping>> = context.dataStore.data.map { prefs ->
         prefs[tmdbMappingsKey]
@@ -238,6 +245,10 @@ class ProfileStore(private val context: Context) {
         val current = prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
         prefs[browseLayoutsKey] = Json.encodeToString(current + (profileKey to layout))
     }
+    suspend fun setTmdbHomeSections(sections: List<TmdbHomeSection>) = context.dataStore.edit {
+        it[tmdbHomeSectionsKey] = Json.encodeToString(sections.distinct())
+    }
+    suspend fun resetTmdbHomeSections() = context.dataStore.edit { it.remove(tmdbHomeSectionsKey) }
     suspend fun addRecentSearch(search: RecentSearch) = context.dataStore.edit { prefs ->
         val entry = search.copy(query = search.query.canonicalSearchQuery())
         val current = decodeRecentSearches(prefs[recentSearchesKey])

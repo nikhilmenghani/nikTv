@@ -42,6 +42,8 @@ data class NikTvState(
     val thrillerMovies: List<TrendingMovie> = emptyList(),
     val thrillerMoviesLoading: Boolean = false,
     val thrillerMoviesError: String? = null,
+    val tmdbHomeSections: List<TmdbHomeSection> = TmdbHomeSection.defaults,
+    val tmdbHomeMovieRows: Map<TmdbHomeSection, List<TrendingMovie>> = emptyMap(),
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
     val profileLoadMessage: String = "Preparing profile…",
@@ -129,6 +131,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             browseLayouts = layouts
             val key = _state.value.session?.profile?.cacheKey()
             _state.update { it.copy(browseLayout = key?.let(layouts::get) ?: BrowseLayout.SECTIONS) }
+        } }
+        viewModelScope.launch { store.tmdbHomeSections.collect { sections ->
+            _state.update { it.copy(tmdbHomeSections = sections) }
+            if (_state.value.session != null) loadConfiguredTmdbHomeSections()
         } }
         viewModelScope.launch { store.watchedSeries.collect { entries ->
             allWatchedSeries = entries
@@ -623,6 +629,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         loadTrendingMovies(forceRefresh)
         loadTrendingSeries(forceRefresh)
         loadThrillerMovies(forceRefresh)
+        loadConfiguredTmdbHomeSections(forceRefresh)
+    }
+
+    fun setTmdbHomeSections(sections: List<TmdbHomeSection>) = viewModelScope.launch {
+        store.setTmdbHomeSections(sections)
+    }
+
+    fun resetTmdbHomeSections() = viewModelScope.launch {
+        store.resetTmdbHomeSections()
+    }
+
+    private fun loadConfiguredTmdbHomeSections(forceRefresh: Boolean = false) {
+        val snapshot = _state.value
+        val profileKey = snapshot.session?.profile?.cacheKey() ?: return
+        if (!tmdb.configured) return
+        snapshot.tmdbHomeSections.filterNot { it.series }.forEach { section ->
+            if (!forceRefresh && snapshot.tmdbHomeMovieRows[section].orEmpty().isNotEmpty()) return@forEach
+            viewModelScope.launch {
+                val rows = runCatching {
+                    val candidates = localMovieCandidates(_state.value)
+                    tmdb.homeMovies(section, 50).map { movie ->
+                        TrendingMovie(movie, matchTmdbMovie(movie, candidates))
+                    }
+                }.getOrDefault(emptyList())
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(tmdbHomeMovieRows = current.tmdbHomeMovieRows + (section to rows))
+                }
+            }
+        }
     }
 
     fun loadTrendingMovies(forceRefresh: Boolean = false) {
@@ -644,7 +680,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             runCatching {
                 val movies = tmdb.trendingMovies(
-                    limit = 10,
+                    limit = 50,
                     forceRefresh = forceRefresh
                 )
                 val localCandidates = localMovieCandidates(_state.value)
@@ -699,7 +735,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             runCatching {
                 val series = tmdb.trendingSeries(
-                    limit = 10,
+                    limit = 50,
                     forceRefresh = forceRefresh
                 )
                 val localCandidates = localSeriesCandidates(_state.value)
@@ -754,7 +790,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             runCatching {
                 val movies = tmdb.thrillerMovies(
-                    limit = 10,
+                    limit = 50,
                     forceRefresh = forceRefresh
                 )
                 val localCandidates = localMovieCandidates(_state.value)

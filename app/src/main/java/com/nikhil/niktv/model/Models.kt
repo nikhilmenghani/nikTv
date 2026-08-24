@@ -174,6 +174,24 @@ enum class SeriesStartSeason { FIRST, LAST }
 @Serializable
 enum class BrowseLayout { SECTIONS, GRID, LIST }
 
+enum class TmdbHomeSection(val title: String, val series: Boolean = false) {
+    TRENDING_MOVIES("Trending Movies"),
+    TRENDING_SERIES("Trending Series", series = true),
+    TOP_RATED_MOVIES("Top Rated Movies"),
+    HOLLYWOOD("Hollywood"),
+    BOLLYWOOD("Bollywood"),
+    ACTION("Action"),
+    COMEDY("Comedy"),
+    HORROR("Horror"),
+    THRILLER("Thriller"),
+    FAMILY("Family"),
+    DOCUMENTARY("Documentary");
+
+    companion object {
+        val defaults = listOf(TRENDING_MOVIES, TRENDING_SERIES, TOP_RATED_MOVIES, HOLLYWOOD, BOLLYWOOD)
+    }
+}
+
 @Serializable
 data class WatchedSeries(
     val profileKey: String,

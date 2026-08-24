@@ -14,6 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import com.nikhil.niktv.model.TmdbHomeSection
 import java.text.Normalizer
 import java.util.concurrent.TimeUnit
 
@@ -198,16 +199,37 @@ class TmdbClient {
         movies
     }
 
+    suspend fun homeMovies(section: TmdbHomeSection, limit: Int = 50): List<TmdbMovie> = withContext(Dispatchers.IO) {
+        if (!configured || section.series) return@withContext emptyList()
+        when (section) {
+            TmdbHomeSection.TRENDING_MOVIES -> trendingMovies(limit)
+            TmdbHomeSection.TOP_RATED_MOVIES -> fetchMovies("/3/movie/top_rated", limit)
+            TmdbHomeSection.HOLLYWOOD -> fetchMovies("/3/discover/movie", limit, mapOf("with_original_language" to "en", "region" to "US", "sort_by" to "popularity.desc"))
+            TmdbHomeSection.BOLLYWOOD -> fetchMovies("/3/discover/movie", limit, mapOf("with_original_language" to "hi", "region" to "IN", "sort_by" to "popularity.desc"))
+            TmdbHomeSection.ACTION -> discoverGenre("28", limit)
+            TmdbHomeSection.COMEDY -> discoverGenre("35", limit)
+            TmdbHomeSection.HORROR -> discoverGenre("27", limit)
+            TmdbHomeSection.THRILLER -> thrillerMovies(limit)
+            TmdbHomeSection.FAMILY -> discoverGenre("10751", limit)
+            TmdbHomeSection.DOCUMENTARY -> discoverGenre("99", limit)
+            TmdbHomeSection.TRENDING_SERIES -> emptyList()
+        }
+    }
+
+    private fun discoverGenre(genreId: String, limit: Int) = fetchMovies(
+        "/3/discover/movie", limit,
+        mapOf("with_genres" to genreId, "sort_by" to "popularity.desc", "include_adult" to "false")
+    )
+
     private fun fetchMovies(
         path: String,
         limit: Int,
         query: Map<String, String> = emptyMap()
     ): List<TmdbMovie> {
-        val root = execute(path, query)
-
-        return root["results"]
-            ?.jsonArray
-            .orEmpty()
+        val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(3)
+        return (1..pages).flatMap { page ->
+            execute(path, query + ("page" to page.toString()))["results"]?.jsonArray.orEmpty()
+        }
             .mapNotNull { element ->
                 val obj = element.jsonObject
                 val id = obj["id"]?.jsonPrimitive?.intOrNull
@@ -248,11 +270,10 @@ class TmdbClient {
         limit: Int,
         query: Map<String, String> = emptyMap()
     ): List<TmdbSeries> {
-        val root = execute(path, query)
-
-        return root["results"]
-            ?.jsonArray
-            .orEmpty()
+        val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(3)
+        return (1..pages).flatMap { page ->
+            execute(path, query + ("page" to page.toString()))["results"]?.jsonArray.orEmpty()
+        }
             .mapNotNull { element ->
                 val obj = element.jsonObject
                 val id = obj["id"]?.jsonPrimitive?.intOrNull
