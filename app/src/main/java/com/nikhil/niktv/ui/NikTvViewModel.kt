@@ -231,9 +231,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         updateProfileLoad(0.68f, "Loading Live TV…")
         loadTypeInternal(session, CatalogType.LIVE_TV)
         updateProfileLoad(0.82f, "Preparing Live TV…")
-        updateProfileLoad(0.92f, "Preparing your dashboard…")
+        updateProfileLoad(0.90f, "Preparing your dashboard…")
         refreshWatchedSeriesIfDue()
         loadDashboardDiscovery()
+        updateProfileLoad(0.94f, "Loading selected TMDB sections…")
+        // Keep the existing profile loading screen visible while discovery
+        // rows settle. The dashboard is never exposed in a half-composed state
+        // where late row insertion can steal focus or appear frozen.
+        withTimeoutOrNull(20_000L) {
+            state.map { current ->
+                current.tmdbSectionsLoading.isEmpty() &&
+                    !current.trendingMoviesLoading &&
+                    !current.trendingSeriesLoading &&
+                    !current.thrillerMoviesLoading
+            }.first { ready -> ready }
+        }
         viewModelScope.launch { enrichHomeArtwork(session.profile.cacheKey()) }
         updateProfileLoad(1f, "Opening dashboard…")
     }
@@ -1761,6 +1773,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openSettings() = _state.update { it.copy(settingsOpen = true) }
+    fun openSettingsFromProfileChooser(profile: PortalProfile) =
+        _state.update { it.copy(savedProfile = profile, settingsOpen = true, profileEditorOpen = false) }
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }

@@ -8,6 +8,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -357,7 +359,25 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     message = state.profileLoadMessage,
                     progress = state.profileLoadProgress ?: 0f
                 )
-                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup)
+                state.session == null && state.settingsOpen && state.savedProfile != null -> ModernSettingsScreen(
+                    state = state,
+                    closeSettings = vm::closeSettings,
+                    reauthenticate = vm::reauthenticate,
+                    editProfile = vm::editProfile,
+                    addProfile = vm::addProfile,
+                    exportBackup = vm::exportBackup,
+                    importBackup = vm::importBackup,
+                    switchProfile = vm::switchProfile,
+                    removeProfile = vm::removeProfile,
+                    logout = vm::logout,
+                    setCacheIntervalMinutes = vm::setCacheIntervalMinutes,
+                    setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds,
+                    setPlaybackEngine = vm::setPlaybackEngine,
+                    setSeriesStartSeason = vm::setSeriesStartSeason,
+                    setBrowseLayout = vm::setBrowseLayout,
+                    openCategoryManager = vm::openCategoryManager
+                )
+                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::openSettingsFromProfileChooser, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup)
                 else -> CatalogScreen(
                     state = state,
                     selectType = vm::openCatalogType,
@@ -664,6 +684,11 @@ private fun MandatoryNikTvUpdateScreen(
 
 @Composable
 private fun ProfileLoadingScreen(profileName: String?, message: String, progress: Float) {
+    val displayedProgress by animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 1_100),
+        label = "profile-load-progress"
+    )
     Box(
         modifier = Modifier.fillMaxSize().background(
             Brush.verticalGradient(listOf(Color(0xFF070707), Color(0xFF111111), Color.Black))
@@ -675,9 +700,17 @@ private fun ProfileLoadingScreen(profileName: String?, message: String, progress
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Surface(shape = CircleShape, color = Color(0xFFE50914), modifier = Modifier.size(84.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("N", color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+            Box(Modifier.size(104.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    modifier = Modifier.fillMaxSize(),
+                    color = Color(0xFFFF5964),
+                    trackColor = Color(0xFF2A1518),
+                    strokeWidth = 3.dp
+                )
+                Surface(shape = CircleShape, color = Color(0xFFE50914), modifier = Modifier.size(84.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("N", color = Color.White, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+                    }
                 }
             }
             Text(
@@ -687,25 +720,21 @@ private fun ProfileLoadingScreen(profileName: String?, message: String, progress
             )
             Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { displayedProgress },
                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(999.dp)),
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
             )
-            Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text("${(displayedProgress * 100).toInt()}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
 
 @Composable
-private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit) {
+private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit) {
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(importBackup)
     }
 
-    // PROFILE_CHOOSER_APP_SETTINGS_V12
-    var appSettingsOpen by rememberSaveable {
-        mutableStateOf(false)
-    }
     if (profiles.isNotEmpty() && !editorOpen) {
         val configuration = LocalConfiguration.current
 
@@ -805,11 +834,11 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
 
                 ProfileChooserTile(
                     "Settings",
-                    "Display & orientation",
+                    "Playback, display & orientation",
                     Icons.Default.Settings,
                     compactLandscape
                 ) {
-                    appSettingsOpen = true
+                    profiles.firstOrNull()?.let(openSettings)
                 }
 
                 ProfileChooserTile(
@@ -835,14 +864,6 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     )
                 }
             }
-        }
-
-        if (appSettingsOpen) {
-            OrientationSettingsDialog(
-                onDismiss = {
-                    appSettingsOpen = false
-                }
-            )
         }
 
         return
@@ -2744,11 +2765,11 @@ private fun ModernSideRail(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            ModernRailButton(Icons.Default.Home, "Home", state.homeOpen, expanded, openHome)
+            ModernRailButton(Icons.Default.Home, "Home", state.homeOpen && !state.favoritesOpen && !state.searchOpen && !state.settingsOpen, expanded, openHome)
             visibleCatalogTypes.forEach { type ->
-                ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && state.selectedType == type, expanded) { selectType(type) }
+                ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && !state.searchOpen && !state.settingsOpen && state.selectedType == type, expanded) { selectType(type) }
             }
-            ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen, expanded, openFavorites)
+            ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen && !state.searchOpen && !state.settingsOpen, expanded, openFavorites)
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Search, "Search", state.searchOpen, expanded, openSearch)
             ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
@@ -2763,13 +2784,14 @@ private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean
     val railContext = LocalContext.current
     val railConfiguration = LocalConfiguration.current
     val isTv = railContext.isTvLikeDevice(railConfiguration)
+    val focusHighlight = focused && isTv
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(50.dp).padding(vertical = 3.dp)
             .onFocusChanged { focused = it.isFocused }
             .semantics { role = Role.Tab; this.selected = selected }
             .then(
-                if (focused && !isTv) {
+                if (focusHighlight) {
                     Modifier.shadow(
                         12.dp,
                         shape,
@@ -2782,12 +2804,12 @@ private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean
             ),
         shape = shape,
         color = when {
-            focused -> Color(0xFF3A0A0D)
+            focusHighlight -> Color(0xFF3A0A0D)
             selected -> Color(0xFF241012)
             else -> Color.Transparent
         },
         border = when {
-            focused -> BorderStroke(3.dp, Color(0xFFFF3340))
+            focusHighlight -> BorderStroke(3.dp, Color(0xFFFF3340))
             selected -> BorderStroke(1.dp, Color(0xFFE50914))
             else -> null
         }
@@ -2797,14 +2819,14 @@ private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
         ) {
-            Icon(icon, label, Modifier.size(24.dp), tint = if (focused || selected) Color.White else Color.Gray)
+            Icon(icon, label, Modifier.size(24.dp), tint = if (focusHighlight || selected) Color.White else Color.Gray)
             if (expanded) {
                 Spacer(Modifier.width(14.dp))
                 Text(
                     label,
-                    color = if (focused || selected) Color.White else Color.LightGray,
+                    color = if (focusHighlight || selected) Color.White else Color.LightGray,
                     style = MaterialTheme.typography.labelLarge,
-                    fontWeight = if (focused || selected) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (focusHighlight || selected) FontWeight.Bold else FontWeight.Medium,
                     maxLines = 1
                 )
             }
@@ -2874,12 +2896,12 @@ private fun ModernTopBar(
                         Icons.Default.Home,
                         null,
                         Modifier.size(18.dp),
-                        tint = if (home) Color.White else Color.Gray
+                        tint = if (home && !state.favoritesOpen && !state.searchOpen && !state.settingsOpen) Color.White else Color.Gray
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(
                         "Home",
-                        color = if (home) Color.White else Color.Gray
+                        color = if (home && !state.favoritesOpen && !state.searchOpen && !state.settingsOpen) Color.White else Color.Gray
                     )
                 }
             }
@@ -2916,7 +2938,7 @@ private fun ModernTopBar(
             }
 
             item("mobile-my-list") {
-                val selected = state.favoritesOpen
+                val selected = state.favoritesOpen && !state.searchOpen && !state.settingsOpen
                 TextButton(
                     onClick = openFavorites,
                     modifier = Modifier.remoteFocusFrame(
@@ -4175,6 +4197,7 @@ private fun ModernSettingsScreen(
     openCategoryManager: (CatalogType) -> Unit
 ) {
     val profile = state.savedProfile ?: return
+    BackHandler(onBack = closeSettings)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -4190,6 +4213,7 @@ private fun ModernSettingsScreen(
     var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     val updateDownloadRequester = remember { FocusRequester() }
     val versionRequester = remember { FocusRequester() }
+    val settingsEntryRequester = remember { FocusRequester() }
     var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
     var restoreVersionFocus by remember { mutableStateOf(false) }
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
@@ -4283,6 +4307,10 @@ private fun ModernSettingsScreen(
         is UpdateDownloadState.Queued -> 0L to null
         else -> null
     }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { settingsEntryRequester.requestFocus() }
+    }
     Scaffold(
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
         containerColor = Color(0xFF090909),
@@ -4322,10 +4350,23 @@ private fun ModernSettingsScreen(
                     supportingContent = { Text("${saved.portalType.displayName()} · ${saved.portalUrl}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = { Icon(if (saved.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
                     trailingContent = {
-                        Row {
-                            if (saved == profile) Icon(Icons.Default.CheckCircle, "Active", tint = MaterialTheme.colorScheme.primary)
-                            else TextButton(onClick = { switchProfile(saved) }, modifier = Modifier.remoteFocusFrame()) { Text("Open") }
-                            IconButton(onClick = { pendingRemoval = saved }, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (saved == profile) {
+                                Icon(Icons.Default.CheckCircle, "Active", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                            } else {
+                                TextButton(
+                                    onClick = { switchProfile(saved) },
+                                    modifier = Modifier.height(48.dp).then(if (index == 0) Modifier.focusRequester(settingsEntryRequester) else Modifier).remoteFocusFrame(CircleShape),
+                                    shape = CircleShape
+                                ) { Text("Open") }
+                            }
+                            IconButton(
+                                onClick = { pendingRemoval = saved },
+                                modifier = Modifier.size(48.dp).then(if (index == 0 && saved == profile) Modifier.focusRequester(settingsEntryRequester) else Modifier).remoteFocusFrame(CircleShape)
+                            ) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
                         }
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -4366,7 +4407,7 @@ private fun ModernSettingsScreen(
                 }
             }
         }
-        OrientationSettingsSection()
+        OrientationSettingsSection(Modifier.focusGroup())
 
         SettingsSection("Browse layout") {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -4397,7 +4438,7 @@ private fun ModernSettingsScreen(
             }
         }
 
-        PlaybackDesignSettingsSection(profile.cacheKey())
+        PlaybackDesignSettingsSection(profile.cacheKey(), Modifier.focusGroup())
 
         SettingsSection("Connection") {
             SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
@@ -5555,7 +5596,7 @@ private fun LiveTvPlaybackScreen(
 
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             title.uppercase(),
             Modifier.padding(horizontal = 10.dp),
