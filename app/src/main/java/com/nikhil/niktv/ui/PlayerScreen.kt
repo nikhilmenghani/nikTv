@@ -104,7 +104,12 @@ fun PlayerScreen(
             onPlayNext = onPlayNext,
             onProgress = onProgress,
             modifier = modifier,
-            embeddedMode = embeddedMode
+            embeddedMode = embeddedMode,
+            controlsTimeoutSeconds = controlsTimeoutSeconds,
+            embeddedControlsDismissRequest = embeddedControlsDismissRequest,
+            startFullscreen = startFullscreen,
+            fullscreenOverride = fullscreenOverride,
+            onFullscreenChanged = onFullscreenChanged
         )
         return
     }
@@ -1185,7 +1190,7 @@ private object PlayerEngineFallback {
  */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun PlaybackProgressBar(
+internal fun PlaybackProgressBar(
     position: Long,
     duration: Long,
     onSeek: (Long) -> Unit,
@@ -1274,7 +1279,7 @@ private fun formatPlayerTime(milliseconds: Long): String {
 }
 
 @Composable
-private fun Modifier.playerControlFocus(
+internal fun Modifier.playerControlFocus(
     shape: Shape = RoundedCornerShape(12.dp),
     onFocused: (Boolean) -> Unit
 ): Modifier {
@@ -1294,7 +1299,7 @@ private fun Modifier.playerControlFocus(
         )
 }
 
-private tailrec fun Context.findActivity(): Activity? = when (this) {
+internal tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
