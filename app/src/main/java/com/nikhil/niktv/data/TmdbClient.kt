@@ -321,6 +321,7 @@ fun matchTmdbMovie(
     movie: TmdbMovie,
     candidates: List<MediaItem>
 ): MediaItem? = matchTmdbTitle(
+    tmdbId = movie.id,
     titles = listOf(movie.title, movie.originalTitle),
     year = movie.releaseYear,
     candidates = candidates
@@ -330,17 +331,21 @@ fun matchTmdbSeries(
     series: TmdbSeries,
     candidates: List<MediaItem>
 ): MediaItem? = matchTmdbTitle(
+    tmdbId = series.id,
     titles = listOf(series.name, series.originalName),
     year = series.firstAirYear,
     candidates = candidates
 )
 
 private fun matchTmdbTitle(
+    tmdbId: Int,
     titles: List<String>,
     year: Int?,
     candidates: List<MediaItem>
 ): MediaItem? {
     if (candidates.isEmpty()) return null
+
+    candidates.firstOrNull { it.externalTmdbId == tmdbId }?.let { return it }
 
     val wantedKeys = titles
         .asSequence()

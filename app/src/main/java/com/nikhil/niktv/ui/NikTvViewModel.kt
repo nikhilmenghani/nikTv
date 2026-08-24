@@ -567,10 +567,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     forceRefresh = forceRefresh
                 )
                 val localCandidates = localMovieCandidates(_state.value)
+                val savedMappings = store.tmdbMappings.first()
+                    .filter { it.profileKey == profileKey && it.type == CatalogType.MOVIES }
+                    .associateBy { it.tmdbId }
                 movies.map { movie ->
                     TrendingMovie(
                         tmdb = movie,
-                        iptv = matchTmdbMovie(movie, localCandidates)
+                        iptv = savedMappings[movie.id]?.media
+                            ?: matchTmdbMovie(movie, localCandidates)
                     )
                 }
             }.onSuccess { movies ->
@@ -618,10 +622,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     forceRefresh = forceRefresh
                 )
                 val localCandidates = localSeriesCandidates(_state.value)
+                val savedMappings = store.tmdbMappings.first()
+                    .filter { it.profileKey == profileKey && it.type == CatalogType.SERIES }
+                    .associateBy { it.tmdbId }
                 series.map { item ->
                     TrendingSeries(
                         tmdb = item,
-                        iptv = matchTmdbSeries(item, localCandidates)
+                        iptv = savedMappings[item.id]?.media
+                            ?: matchTmdbSeries(item, localCandidates)
                     )
                 }
             }.onSuccess { series ->
@@ -669,10 +677,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     forceRefresh = forceRefresh
                 )
                 val localCandidates = localMovieCandidates(_state.value)
+                val savedMappings = store.tmdbMappings.first()
+                    .filter { it.profileKey == profileKey && it.type == CatalogType.MOVIES }
+                    .associateBy { it.tmdbId }
                 movies.map { movie ->
                     TrendingMovie(
                         tmdb = movie,
-                        iptv = matchTmdbMovie(movie, localCandidates)
+                        iptv = savedMappings[movie.id]?.media
+                            ?: matchTmdbMovie(movie, localCandidates)
                     )
                 }
             }.onSuccess { movies ->
@@ -714,6 +726,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
+        store.saveTmdbMapping(
+            TmdbIptvMapping(session.profile.cacheKey(), CatalogType.MOVIES, entry.tmdb.id, resolved)
+        )
+
         _state.update { current ->
             current.copy(
                 trendingMovies =
@@ -748,6 +764,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
+
+        store.saveTmdbMapping(
+            TmdbIptvMapping(session.profile.cacheKey(), CatalogType.SERIES, entry.tmdb.id, resolved)
+        )
+
         _state.update { current ->
             current.copy(
                 trendingSeries = current.trendingSeries.map { item ->
@@ -776,6 +797,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         session: PortalSession,
         entry: TrendingMovie
     ): MediaItem? {
+        if (session.profile.portalType == PortalType.XTREAM) {
+            return resolveTmdbFromXtreamCatalog(
+                session,
+                CatalogType.MOVIES,
+                entry.tmdb.id
+            ) { candidates -> matchTmdbMovie(entry.tmdb, candidates) }
+        }
+
         val queries = listOf(entry.tmdb.title, entry.tmdb.originalTitle)
             .map(String::trim)
             .filter(String::isNotBlank)
@@ -798,6 +827,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         session: PortalSession,
         entry: TrendingSeries
     ): MediaItem? {
+        if (session.profile.portalType == PortalType.XTREAM) {
+            return resolveTmdbFromXtreamCatalog(
+                session,
+                CatalogType.SERIES,
+                entry.tmdb.id
+            ) { candidates -> matchTmdbSeries(entry.tmdb, candidates) }
+        }
+
         val queries = listOf(entry.tmdb.name, entry.tmdb.originalName)
             .map(String::trim)
             .filter(String::isNotBlank)
@@ -814,6 +851,30 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             matchTmdbSeries(entry.tmdb, page.items)?.let { return it }
         }
         return null
+    }
+
+    private suspend fun resolveTmdbFromXtreamCatalog(
+        session: PortalSession,
+        type: CatalogType,
+        tmdbId: Int,
+        titleMatcher: (List<MediaItem>) -> MediaItem?
+    ): MediaItem? {
+        val profileKey = session.profile.cacheKey()
+        val cached = store.searchCatalog(type, profileKey).first()?.items
+        val candidates = if (!cached.isNullOrEmpty()) {
+            cached
+        } else {
+            portal.fullCatalog(session, type, emptyList()).also { items ->
+                if (items.isNotEmpty()) {
+                    store.saveSearchCatalog(
+                        SearchCatalogCache(profileKey, type, System.currentTimeMillis(), items)
+                    )
+                }
+            }
+        }
+
+        return candidates.firstOrNull { it.externalTmdbId == tmdbId }
+            ?: titleMatcher(candidates)
     }
 
     private fun localMovieCandidates(snapshot: NikTvState): List<MediaItem> {

@@ -449,7 +449,9 @@ class StalkerPortalClient(private val context: Context) {
                 url,
                 o.string("plot") ?: o.string("description"),
                 portalCategoryId = o.string("category_id") ?: categoryId,
-                liveProgramme = if (type == CatalogType.LIVE_TV) o.liveProgramme() else null
+                liveProgramme = if (type == CatalogType.LIVE_TV) o.liveProgramme() else null,
+                externalTmdbId = listOf("tmdb", "tmdb_id", "tmdbid")
+                    .firstNotNullOfOrNull { key -> o.string(key)?.toIntOrNull() }
             )
         }
     }

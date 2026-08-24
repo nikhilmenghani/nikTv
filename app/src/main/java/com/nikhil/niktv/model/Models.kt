@@ -112,8 +112,21 @@ data class MediaItem(
     val portalSeasonId: String? = null,
     val portalCategoryId: String? = null,
     val portalEpisodeId: String? = null,
-    val liveProgramme: LiveProgramme? = null
+    val liveProgramme: LiveProgramme? = null,
+    /** Provider-supplied TMDB identity, when available (not a guessed match). */
+    val externalTmdbId: Int? = null
 )
+
+@Serializable
+data class TmdbIptvMapping(
+    val profileKey: String,
+    val type: CatalogType,
+    val tmdbId: Int,
+    val media: MediaItem,
+    val cachedAtMillis: Long = System.currentTimeMillis()
+) {
+    val key: String get() = "$profileKey|${type.name}|$tmdbId"
+}
 
 @Serializable
 data class LiveProgramme(

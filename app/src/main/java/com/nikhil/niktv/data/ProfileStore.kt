@@ -20,6 +20,7 @@ import com.nikhil.niktv.model.SeriesStartSeason
 import com.nikhil.niktv.model.WatchedSeries
 import com.nikhil.niktv.model.EpisodeSeasonCache
 import com.nikhil.niktv.model.BrowseLayout
+import com.nikhil.niktv.model.TmdbIptvMapping
 import com.nikhil.niktv.model.canonicalSearchQuery
 import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
@@ -58,6 +59,7 @@ class ProfileStore(private val context: Context) {
     private val rememberedSeriesSeasonsKey = stringPreferencesKey("remembered_series_seasons")
     private val episodeSeasonCachesKey = stringPreferencesKey("episode_season_caches")
     private val browseLayoutsKey = stringPreferencesKey("browse_layouts")
+    private val tmdbMappingsKey = stringPreferencesKey("tmdb_iptv_mappings")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         val identity = prefs[activeProfileKey]
@@ -113,6 +115,11 @@ class ProfileStore(private val context: Context) {
     }
     val browseLayouts: Flow<Map<String, BrowseLayout>> = context.dataStore.data.map { prefs ->
         prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
+    }
+    val tmdbMappings: Flow<List<TmdbIptvMapping>> = context.dataStore.data.map { prefs ->
+        prefs[tmdbMappingsKey]
+            ?.let { runCatching { Json.decodeFromString<List<TmdbIptvMapping>>(it) }.getOrNull() }
+            .orEmpty()
     }
     suspend fun save(session: PortalSession) = context.dataStore.edit {
         val profiles = decodeProfiles(it[profilesKey], it[key])
@@ -185,6 +192,14 @@ class ProfileStore(private val context: Context) {
             val existing = prefs[browseKey]?.let { raw -> runCatching { Json.decodeFromString<List<BrowseCatalogCache>>(raw) }.getOrNull() }.orEmpty()
             prefs[browseKey] = Json.encodeToString(listOf(cache) + existing.filterNot { it.profileKey == cache.profileKey })
         }
+    }
+    suspend fun saveTmdbMapping(mapping: TmdbIptvMapping) = context.dataStore.edit { prefs ->
+        val current = prefs[tmdbMappingsKey]
+            ?.let { runCatching { Json.decodeFromString<List<TmdbIptvMapping>>(it) }.getOrNull() }
+            .orEmpty()
+        prefs[tmdbMappingsKey] = Json.encodeToString(
+            (listOf(mapping) + current.filterNot { it.key == mapping.key }).take(500)
+        )
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
     suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = context.dataStore.edit {
@@ -288,6 +303,7 @@ class ProfileStore(private val context: Context) {
         it.remove(rememberedSeriesSeasonsKey)
         it.remove(episodeSeasonCachesKey)
         it.remove(browseLayoutsKey)
+        it.remove(tmdbMappingsKey)
     }
 
     private fun decodeProfiles(raw: String?, legacy: String?): List<PortalProfile> =
@@ -304,7 +320,8 @@ class ProfileStore(private val context: Context) {
         private val BACKUP_STRING_KEYS = setOf(
             "active_profile", "saved_profiles", "active_profile_identity", "favorites",
             "recently_played", "playback_progress", "recent_searches", "category_filters",
-            "series_start_season", "watched_series", "remembered_series_seasons", "browse_layouts"
+            "series_start_season", "watched_series", "remembered_series_seasons", "browse_layouts",
+            "tmdb_iptv_mappings"
         )
         private val BACKUP_INT_KEYS = setOf("catalog_cache_interval_minutes", "player_controls_timeout_seconds")
     }
