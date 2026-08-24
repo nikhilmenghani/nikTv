@@ -93,6 +93,7 @@ fun PlayerScreen(
     val effectiveEngine = when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
+        PlaybackEngine.EXOPLAYER -> PlaybackEngine.EXOPLAYER
         PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
     if (effectiveEngine == PlaybackEngine.VLC) {
@@ -188,12 +189,16 @@ fun PlayerScreen(
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
-    val player = remember(media.progressKey) {
-        val renderersFactory = DefaultRenderersFactory(context)
-            // Some TV devices advertise a hardware decoder that later rejects or
-            // stalls on a stream. Let Media3 try the next compatible decoder.
-            .setEnableDecoderFallback(true)
-            .setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope))
+    val player = remember(media.progressKey, effectiveEngine) {
+        val renderersFactory = DefaultRenderersFactory(context).apply {
+            if (effectiveEngine == PlaybackEngine.MEDIA3) {
+                // Media3 mode applies NikTV's learned decoder policy.
+                setEnableDecoderFallback(true)
+                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope))
+            }
+            // ExoPlayer compatibility mode intentionally retains the device's
+            // native decoder order and default fallback behavior.
+        }
         ExoPlayer.Builder(context, renderersFactory).build().apply {
             setMediaItem(MediaItem.fromUri(media.url))
             if (media.resumePositionMillis > 0L) seekTo(media.resumePositionMillis)

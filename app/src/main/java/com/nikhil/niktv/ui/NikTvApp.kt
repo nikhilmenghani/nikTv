@@ -1839,6 +1839,28 @@ private fun ModernBrowseScreen(
                 val recents = state.recentlyPlayed.filter {
                     it.kind == FavoriteKind.MOVIE || it.kind == FavoriteKind.SERIES
                 }
+                val newEpisodes = state.watchedSeries.flatMap { watched -> watched.newEpisodes.map { watched to it } }
+                if (newEpisodes.isNotEmpty()) item("watch-list-updates", span = gridSpan) {
+                    ModernRail(
+                        "New Episodes",
+                        newEpisodes,
+                        media = { (watched, episode) ->
+                            if (episode.logo.isNullOrBlank() && !watched.series.logo.isNullOrBlank()) episode.copy(logo = watched.series.logo)
+                            else episode
+                        },
+                        open = { (watched, episode) -> openWatchedEpisode(watched, episode) },
+                        aspectRatio = { 2f / 3f },
+                        progress = { (_, episode) -> state.playbackProgress.progressFor(episode) },
+                        subtitle = { (watched, episode) ->
+                            listOfNotNull(
+                                watched.series.title,
+                                episode.seasonNumber?.let { season -> episode.episodeNumber?.let { ep -> "S${season} · E${ep}" } }
+                            ).joinToString(" · ")
+                        },
+                        titleMaxLines = 2,
+                        subtitleMaxLines = 2
+                    )
+                }
                 if (recents.isNotEmpty()) item("continue", span = gridSpan) {
                     ModernRail(
                         "Continue Watching", recents, { it.media }, openRecent,
@@ -1900,24 +1922,6 @@ private fun ModernBrowseScreen(
                     }
                 }
 
-                val newEpisodes = state.watchedSeries.flatMap { watched -> watched.newEpisodes.map { watched to it } }
-                if (newEpisodes.isNotEmpty()) item("watch-list-updates", span = gridSpan) {
-                    ModernRail(
-                        "New Episodes",
-                        newEpisodes,
-                        media = { (watched, episode) ->
-                            if (episode.logo.isNullOrBlank() && !watched.series.logo.isNullOrBlank()) {
-                                episode.copy(logo = watched.series.logo)
-                            } else episode
-                        },
-                        open = { (watched, episode) -> openWatchedEpisode(watched, episode) },
-                        aspectRatio = { 2f / 3f },
-                        progress = { (_, episode) -> state.playbackProgress.progressFor(episode) },
-                        subtitle = { (watched, _) -> watched.series.title },
-                        titleMaxLines = Int.MAX_VALUE,
-                        subtitleMaxLines = 2
-                    )
-                }
                 if (state.favorites.isNotEmpty()) item("my-list", span = gridSpan) {
                     ModernRail(
                         "My List", state.favorites, { it.media }, openFavorite,
@@ -3067,6 +3071,7 @@ private fun DashboardMovieRail(
                     subtitle = { entry ->
                         buildList {
                             entry.tmdb.releaseYear?.let { add(it.toString()) }
+                            entry.tmdb.voteAverage?.takeIf { it > 0.0 }?.let { add("★ ${String.format(java.util.Locale.US, "%.1f", it)}") }
                             add(
                                 if (entry.iptv != null) "IPTV ready"
                                 else "IPTV lookup on select"
@@ -3074,7 +3079,7 @@ private fun DashboardMovieRail(
                         }.joinToString(" · ")
                     },
                     titleMaxLines = 2,
-                    subtitleMaxLines = 1,
+                    subtitleMaxLines = 2,
                     initialDisplayCount = 10,
                     maximumDisplayCount = 50
                 )
@@ -3123,6 +3128,7 @@ private fun DashboardSeriesRail(
                     subtitle = { entry ->
                         buildList {
                             entry.tmdb.firstAirYear?.let { add(it.toString()) }
+                            entry.tmdb.voteAverage?.takeIf { it > 0.0 }?.let { add("★ ${String.format(java.util.Locale.US, "%.1f", it)}") }
                             add(
                                 if (entry.iptv != null) "IPTV ready"
                                 else "IPTV lookup on select"
@@ -3130,7 +3136,7 @@ private fun DashboardSeriesRail(
                         }.joinToString(" · ")
                     },
                     titleMaxLines = 2,
-                    subtitleMaxLines = 1,
+                    subtitleMaxLines = 2,
                     initialDisplayCount = 10,
                     maximumDisplayCount = 50
                 )
@@ -4288,6 +4294,27 @@ private fun ModernSettingsScreen(
         Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = Color(0xFF171B2A),
+            border = BorderStroke(1.dp, Color(0x33E50914))
+        ) {
+            Row(
+                Modifier.background(Brush.horizontalGradient(listOf(Color(0x332F80ED), Color(0x33E50914)))).padding(22.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFE50914)) {
+                    Icon(Icons.Default.Tune, null, Modifier.padding(14.dp).size(28.dp), tint = Color.White)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("Make NikTV yours", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("Playback, appearance, content, profiles and updates", color = Color.LightGray)
+                }
+                AssistChip(onClick = {}, enabled = false, label = { Text("v${BuildConfig.VERSION_NAME}") })
+            }
+        }
         SettingsSection("Profiles") {
             state.profiles.forEachIndexed { index, saved ->
                 ListItem(
@@ -4723,19 +4750,39 @@ private fun ModernSettingsScreen(
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Video player", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Auto remembers decoder failures per series and moves persistent failures to VLC. Media3 keeps the integrated player; VLC offers broader codec compatibility.",
+                    "Choose a default engine for Live TV, movies and episodes. Auto learns compatibility per series.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    PlaybackEngine.entries.forEachIndexed { index, engine ->
-                        val shape = uniformSegmentShape(index, PlaybackEngine.entries.size)
-                        SegmentedButton(
-                            selected = state.playbackEngine == engine,
+                val engines = listOf(
+                    Triple(PlaybackEngine.AUTO, "Auto", "Learns failures and uses VLC when needed"),
+                    Triple(PlaybackEngine.MEDIA3, "Media3", "NikTV decoder fallback and recovery"),
+                    Triple(PlaybackEngine.VLC, "VLC player", "Software decoding and broad compatibility"),
+                    Triple(PlaybackEngine.EXOPLAYER, "ExoPlayer", "Native device decoder order")
+                )
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    maxItemsInEachRow = 2
+                ) {
+                    engines.forEach { (engine, label, description) ->
+                        val selected = state.playbackEngine == engine
+                        Surface(
                             onClick = { setPlaybackEngine(engine) },
-                            modifier = Modifier.remoteFocusFrame(shape),
-                            shape = shape
-                        ) { Text(engine.name.lowercase().replaceFirstChar(Char::uppercase)) }
+                            modifier = Modifier.weight(1f).widthIn(min = 210.dp).remoteFocusFrame(RoundedCornerShape(16.dp)),
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (selected) Color(0xFF351416) else Color(0xFF1A1F2E),
+                            border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Color(0xFFE50914) else Color(0xFF30384B))
+                        ) {
+                            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                RadioButton(selected = selected, onClick = null)
+                                Column {
+                                    Text(label, fontWeight = FontWeight.Bold)
+                                    Text(description, style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 2)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -5509,11 +5556,20 @@ private fun LiveTvPlaybackScreen(
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Text(
+            title.uppercase(),
+            Modifier.padding(horizontal = 10.dp),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.1.sp,
+            color = Color(0xFFFF6973)
+        )
         Surface(
             Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF111827),
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF151A28),
+            tonalElevation = 2.dp,
+            border = BorderStroke(1.dp, Color(0xFF252D40)),
             content = { Column(content = content) }
         )
     }
