@@ -71,6 +71,7 @@ import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.data.TrendingMovie
+import com.nikhil.niktv.data.TrendingSeries
 import com.nikhil.niktv.data.artworkRequest
 import com.nikhil.niktv.data.cast4kLegacyDeviceIdentity
 import com.nikhil.niktv.model.*
@@ -360,6 +361,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     openTrendingMovie = vm::openTrendingMovie,
+                    openTrendingSeries = vm::openTrendingSeries,
                     closeSeries = vm::closeSeries,
                     refreshCatalog = vm::refreshCatalog,
                     openFavorites = vm::openFavorites,
@@ -1024,6 +1026,7 @@ private fun CatalogScreen(
     selectCategory: (Category) -> Unit,
     play: (MediaItem) -> Unit,
     openTrendingMovie: (TrendingMovie) -> Unit,
+    openTrendingSeries: (TrendingSeries) -> Unit,
     closeSeries: () -> Unit,
     refreshCatalog: () -> Unit,
     openFavorites: () -> Unit,
@@ -1155,6 +1158,7 @@ private fun CatalogScreen(
                     selectCategory = selectCategory,
                     play = play,
                     openTrendingMovie = openTrendingMovie,
+                    openTrendingSeries = openTrendingSeries,
                     openHome = openHome,
                     openRecent = openRecent,
                     removeRecent = removeRecent,
@@ -1233,6 +1237,7 @@ private fun ModernBrowseScreen(
     selectCategory: (Category) -> Unit,
     play: (MediaItem) -> Unit,
     openTrendingMovie: (TrendingMovie) -> Unit,
+    openTrendingSeries: (TrendingSeries) -> Unit,
     openHome: () -> Unit,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
@@ -1433,24 +1438,11 @@ private fun ModernBrowseScreen(
                 }
 
             /*
-             * LazyVerticalGrid indexes include full-width items above the
-             * movie cards. TMDB adds one full-width trending rail whenever
-             * that section is visible.
+             * LazyVerticalGrid indexes include the fixed full-width items
+             * above the catalog cards.
              */
-            val trendingOffset =
-                if (
-                    state.trendingMoviesLoading ||
-                    state.trendingMovies.isNotEmpty() ||
-                    state.trendingMoviesError != null
-                ) {
-                    1
-                } else {
-                    0
-                }
-
             val catalogItemOffset =
-                (if (isWide) 3 else 4) +
-                    trendingOffset
+                if (isWide) 3 else 4
 
             val targetGridIndex =
                 catalogItemOffset + targetMovieIndex
@@ -1718,10 +1710,7 @@ private fun ModernBrowseScreen(
                                 modifier = Modifier
                                     .remoteFocusFrame(CircleShape)
                                     .focusProperties {
-                                        if (
-                                            state.items.isNotEmpty() &&
-                                            state.selectedType != CatalogType.MOVIES
-                                        ) {
+                                        if (state.items.isNotEmpty()) {
                                             down = layoutToggleRequester
                                         }
                                     },
@@ -1740,10 +1729,7 @@ private fun ModernBrowseScreen(
                             AssistChip(
                                 onClick = { openCategoryManager(state.selectedType) },
                                 modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
-                                    if (
-                                        state.items.isNotEmpty() &&
-                                        state.selectedType != CatalogType.MOVIES
-                                    ) {
+                                    if (state.items.isNotEmpty()) {
                                         down = layoutToggleRequester
                                     }
                                 },
@@ -1755,10 +1741,7 @@ private fun ModernBrowseScreen(
                             val selected = state.selectedCategory?.id == category.id
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 TextButton(onClick = { selectCategory(category) }, modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
-                                    if (
-                                        state.items.isNotEmpty() &&
-                                        state.selectedType != CatalogType.MOVIES
-                                    ) {
+                                    if (state.items.isNotEmpty()) {
                                         down = layoutToggleRequester
                                     }
                                 }) {
@@ -1770,29 +1753,55 @@ private fun ModernBrowseScreen(
                     }
                 }
             }
-            if (
-                !home &&
-                state.selectedType == CatalogType.MOVIES &&
-                (
-                    state.trendingMoviesLoading ||
-                    state.trendingMovies.isNotEmpty() ||
-                    state.trendingMoviesError != null
-                )
-            ) {
-                item(
-                    "tmdb-trending",
-                    span = gridSpan
-                ) {
-                    TrendingMoviesRail(
-                        movies = state.trendingMovies,
-                        loading = state.trendingMoviesLoading,
-                        error = state.trendingMoviesError,
-                        open = openTrendingMovie
-                    )
-                }
-            }
-
             if (home) {
+                val showTrendingMovies =
+                    state.trendingMoviesLoading ||
+                        state.trendingMovies.isNotEmpty() ||
+                        state.trendingMoviesError != null
+                val showTrendingSeries =
+                    state.trendingSeriesLoading ||
+                        state.trendingSeries.isNotEmpty() ||
+                        state.trendingSeriesError != null
+                val showThrillerMovies =
+                    state.thrillerMoviesLoading ||
+                        state.thrillerMovies.isNotEmpty() ||
+                        state.thrillerMoviesError != null
+
+                if (showTrendingMovies) {
+                    item("home-tmdb-trending-movies", span = gridSpan) {
+                        DashboardMovieRail(
+                            title = "Top 10 Trending Movies",
+                            movies = state.trendingMovies,
+                            loading = state.trendingMoviesLoading,
+                            error = state.trendingMoviesError,
+                            open = openTrendingMovie
+                        )
+                    }
+                }
+
+                if (showTrendingSeries) {
+                    item("home-tmdb-trending-series", span = gridSpan) {
+                        DashboardSeriesRail(
+                            series = state.trendingSeries,
+                            loading = state.trendingSeriesLoading,
+                            error = state.trendingSeriesError,
+                            open = openTrendingSeries
+                        )
+                    }
+                }
+
+                if (showThrillerMovies) {
+                    item("home-tmdb-thriller-movies", span = gridSpan) {
+                        DashboardMovieRail(
+                            title = "Top 10 Thriller Movies",
+                            movies = state.thrillerMovies,
+                            loading = state.thrillerMoviesLoading,
+                            error = state.thrillerMoviesError,
+                            open = openTrendingMovie
+                        )
+                    }
+                }
+
                 val newEpisodes = state.watchedSeries.flatMap { watched -> watched.newEpisodes.map { watched to it } }
                 if (newEpisodes.isNotEmpty()) item("watch-list-updates", span = gridSpan) {
                     ModernRail(
@@ -1844,7 +1853,19 @@ private fun ModernBrowseScreen(
                         )
                     }
                 }
-                if (recents.isEmpty() && state.favorites.isEmpty()) item("home-empty", span = gridSpan) {
+                val discoveryVisible =
+                    state.trendingMovies.isNotEmpty() ||
+                        state.trendingSeries.isNotEmpty() ||
+                        state.thrillerMovies.isNotEmpty() ||
+                        state.trendingMoviesLoading ||
+                        state.trendingSeriesLoading ||
+                        state.thrillerMoviesLoading
+
+                if (
+                    recents.isEmpty() &&
+                    state.favorites.isEmpty() &&
+                    !discoveryVisible
+                ) item("home-empty", span = gridSpan) {
                     Box(Modifier.fillMaxWidth().height(260.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Icon(Icons.Default.PlayCircle, null, Modifier.size(64.dp), tint = Color.DarkGray)
@@ -2811,7 +2832,8 @@ private fun LiveTvPreviewPlaceholder(categoryTitle: String?) {
 
 
 @Composable
-private fun TrendingMoviesRail(
+private fun DashboardMovieRail(
+    title: String,
     movies: List<TrendingMovie>,
     loading: Boolean,
     error: String?,
@@ -2824,90 +2846,106 @@ private fun TrendingMoviesRail(
     ) {
         when {
             loading && movies.isEmpty() -> {
-                ModernSectionHeader(
-                    title = "Top 10 Trending Movies",
-                    subtitle = "Loading from TMDB…"
-                )
-
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            horizontal = 24.dp,
-                            vertical = 12.dp
-                        ),
-                    verticalAlignment =
-                        Alignment.CenterVertically,
-                    horizontalArrangement =
-                        Arrangement.spacedBy(12.dp)
-                ) {
-                    CircularProgressIndicator(
-                        Modifier.size(22.dp),
-                        strokeWidth = 2.dp,
-                        color = Color(0xFFE50914)
-                    )
-
-                    Text(
-                        "Finding what is trending now",
-                        color = Color.LightGray
-                    )
-                }
+                ModernSectionHeader(title, "Loading from TMDB…")
+                DashboardDiscoveryLoadingRow()
             }
 
             movies.isNotEmpty() -> {
                 ModernRail(
-                    title = "Top 10 Trending Movies",
+                    title = title,
                     entries = movies,
-                    media = {
-                        it.tmdb.asMediaItem()
-                    },
+                    media = { it.tmdb.asMediaItem() },
                     open = open,
-                    aspectRatio = {
-                        2f / 3f
-                    },
+                    aspectRatio = { 2f / 3f },
                     subtitle = { entry ->
                         buildList {
-                            entry.tmdb.releaseYear
-                                ?.let {
-                                    add(it.toString())
-                                }
-
+                            entry.tmdb.releaseYear?.let { add(it.toString()) }
                             add(
-                                if (entry.iptv != null) {
-                                    "IPTV ready"
-                                } else {
-                                    "IPTV lookup on select"
-                                }
+                                if (entry.iptv != null) "IPTV ready"
+                                else "IPTV lookup on select"
                             )
-                        }
-                            .joinToString(" · ")
+                        }.joinToString(" · ")
                     },
                     titleMaxLines = 2,
                     subtitleMaxLines = 1
                 )
-
-                Text(
-                    "TMDB metadata · Playback from your IPTV provider",
-                    modifier = Modifier.padding(
-                        start = 24.dp,
-                        end = 24.dp,
-                        top = 2.dp
-                    ),
-                    color = Color.Gray,
-                    style =
-                        MaterialTheme.typography.labelSmall
-                )
             }
 
-            !error.isNullOrBlank() -> {
-                ModernSectionHeader(
-                    title = "Top 10 Trending Movies",
-                    subtitle = error
-                )
-            }
+            !error.isNullOrBlank() ->
+                ModernSectionHeader(title, error)
         }
     }
 }
+
+@Composable
+private fun DashboardSeriesRail(
+    series: List<TrendingSeries>,
+    loading: Boolean,
+    error: String?,
+    open: (TrendingSeries) -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        when {
+            loading && series.isEmpty() -> {
+                ModernSectionHeader(
+                    "Top 10 Trending Series",
+                    "Loading from TMDB…"
+                )
+                DashboardDiscoveryLoadingRow()
+            }
+
+            series.isNotEmpty() -> {
+                ModernRail(
+                    title = "Top 10 Trending Series",
+                    entries = series,
+                    media = { it.tmdb.asMediaItem() },
+                    open = open,
+                    aspectRatio = { 2f / 3f },
+                    subtitle = { entry ->
+                        buildList {
+                            entry.tmdb.firstAirYear?.let { add(it.toString()) }
+                            add(
+                                if (entry.iptv != null) "IPTV ready"
+                                else "IPTV lookup on select"
+                            )
+                        }.joinToString(" · ")
+                    },
+                    titleMaxLines = 2,
+                    subtitleMaxLines = 1
+                )
+            }
+
+            !error.isNullOrBlank() ->
+                ModernSectionHeader("Top 10 Trending Series", error)
+        }
+    }
+}
+
+@Composable
+private fun DashboardDiscoveryLoadingRow() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        CircularProgressIndicator(
+            Modifier.size(22.dp),
+            strokeWidth = 2.dp,
+            color = Color(0xFFE50914)
+        )
+        Text(
+            "Finding titles to browse",
+            color = Color.LightGray
+        )
+    }
+}
+
 
 @Composable
 private fun ModernHero(item: MediaItem?, recentAction: (() -> Unit)?, catalogAction: (() -> Unit)?, profileName: String) {

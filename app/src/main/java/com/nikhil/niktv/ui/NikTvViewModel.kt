@@ -8,7 +8,9 @@ import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.data.StalkerPortalClient
 import com.nikhil.niktv.data.TmdbClient
 import com.nikhil.niktv.data.TrendingMovie
+import com.nikhil.niktv.data.TrendingSeries
 import com.nikhil.niktv.data.matchTmdbMovie
+import com.nikhil.niktv.data.matchTmdbSeries
 import com.nikhil.niktv.data.prefetchArtwork
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
@@ -31,6 +33,12 @@ data class NikTvState(
     val trendingMovies: List<TrendingMovie> = emptyList(),
     val trendingMoviesLoading: Boolean = false,
     val trendingMoviesError: String? = null,
+    val trendingSeries: List<TrendingSeries> = emptyList(),
+    val trendingSeriesLoading: Boolean = false,
+    val trendingSeriesError: String? = null,
+    val thrillerMovies: List<TrendingMovie> = emptyList(),
+    val thrillerMoviesLoading: Boolean = false,
+    val thrillerMoviesError: String? = null,
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
     val profileLoadMessage: String = "Preparing profile…",
@@ -166,7 +174,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = portal.authenticate(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         store.save(session)
-        _state.update { it.copy(session = session, savedProfile = session.profile, profileEditorOpen = false) }
+        _state.update {
+            it.copy(
+                session = session,
+                savedProfile = session.profile,
+                profileEditorOpen = false,
+                trendingMovies = emptyList(),
+                trendingMoviesLoading = false,
+                trendingMoviesError = null,
+                trendingSeries = emptyList(),
+                trendingSeriesLoading = false,
+                trendingSeriesError = null,
+                thrillerMovies = emptyList(),
+                thrillerMoviesLoading = false,
+                thrillerMoviesError = null
+            )
+        }
         loadProfileLibrary(session.profile.cacheKey())
         preloadDashboard(session)
     }
@@ -190,6 +213,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val homeArtwork = _state.value.recentlyPlayed.map { it.media } + _state.value.favorites.map { it.media }
         withTimeoutOrNull(5_000L) { prefetchArtwork(getApplication(), homeArtwork, limit = 8) }
         refreshWatchedSeriesIfDue()
+        loadDashboardDiscovery()
         updateProfileLoad(1f, "Opening dashboard…")
     }
 
@@ -235,10 +259,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openCatalogType(type: CatalogType) {
-        if (type == CatalogType.MOVIES) {
-            loadTrendingMovies()
-        }
-
         if (activateWarmedType(type, closeOverlays = true)) return
 
         _state.update { it.copy(
@@ -518,19 +538,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+    fun loadDashboardDiscovery(forceRefresh: Boolean = false) {
+        loadTrendingMovies(forceRefresh)
+        loadTrendingSeries(forceRefresh)
+        loadThrillerMovies(forceRefresh)
+    }
+
     fun loadTrendingMovies(forceRefresh: Boolean = false) {
         val snapshot = _state.value
-
-        if (!tmdb.configured || snapshot.session == null) {
-            return
-        }
-
+        val profileKey = snapshot.session?.profile?.cacheKey() ?: return
+        if (!tmdb.configured) return
         if (
             snapshot.trendingMoviesLoading ||
             (!forceRefresh && snapshot.trendingMovies.isNotEmpty())
-        ) {
-            return
-        }
+        ) return
 
         viewModelScope.launch {
             _state.update {
@@ -541,86 +562,164 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             runCatching {
-                val movies =
-                    tmdb.trendingMovies(
-                        limit = 10,
-                        forceRefresh = forceRefresh
-                    )
-
-                val localCandidates =
-                    localMovieCandidates(_state.value)
-
+                val movies = tmdb.trendingMovies(
+                    limit = 10,
+                    forceRefresh = forceRefresh
+                )
+                val localCandidates = localMovieCandidates(_state.value)
                 movies.map { movie ->
                     TrendingMovie(
                         tmdb = movie,
-                        iptv =
-                            matchTmdbMovie(
-                                movie,
-                                localCandidates
-                            )
+                        iptv = matchTmdbMovie(movie, localCandidates)
+                    )
+                }
+            }.onSuccess { movies ->
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(
+                        trendingMovies = movies,
+                        trendingMoviesLoading = false,
+                        trendingMoviesError = null
+                    )
+                }
+            }.onFailure { error ->
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(
+                        trendingMoviesLoading = false,
+                        trendingMoviesError =
+                            error.message ?: "Could not load TMDB trending movies"
                     )
                 }
             }
-                .onSuccess { movies ->
-                    _state.update {
-                        it.copy(
-                            trendingMovies = movies,
-                            trendingMoviesLoading = false,
-                            trendingMoviesError = null
-                        )
-                    }
+        }
+    }
+
+    fun loadTrendingSeries(forceRefresh: Boolean = false) {
+        val snapshot = _state.value
+        val profileKey = snapshot.session?.profile?.cacheKey() ?: return
+        if (!tmdb.configured) return
+        if (
+            snapshot.trendingSeriesLoading ||
+            (!forceRefresh && snapshot.trendingSeries.isNotEmpty())
+        ) return
+
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    trendingSeriesLoading = true,
+                    trendingSeriesError = null
+                )
+            }
+
+            runCatching {
+                val series = tmdb.trendingSeries(
+                    limit = 10,
+                    forceRefresh = forceRefresh
+                )
+                val localCandidates = localSeriesCandidates(_state.value)
+                series.map { item ->
+                    TrendingSeries(
+                        tmdb = item,
+                        iptv = matchTmdbSeries(item, localCandidates)
+                    )
                 }
-                .onFailure { error ->
-                    _state.update {
-                        it.copy(
-                            trendingMoviesLoading = false,
-                            trendingMoviesError =
-                                error.message
-                                    ?: "Could not load TMDB trending movies"
-                        )
-                    }
+            }.onSuccess { series ->
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(
+                        trendingSeries = series,
+                        trendingSeriesLoading = false,
+                        trendingSeriesError = null
+                    )
                 }
+            }.onFailure { error ->
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(
+                        trendingSeriesLoading = false,
+                        trendingSeriesError =
+                            error.message ?: "Could not load TMDB trending series"
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadThrillerMovies(forceRefresh: Boolean = false) {
+        val snapshot = _state.value
+        val profileKey = snapshot.session?.profile?.cacheKey() ?: return
+        if (!tmdb.configured) return
+        if (
+            snapshot.thrillerMoviesLoading ||
+            (!forceRefresh && snapshot.thrillerMovies.isNotEmpty())
+        ) return
+
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    thrillerMoviesLoading = true,
+                    thrillerMoviesError = null
+                )
+            }
+
+            runCatching {
+                val movies = tmdb.thrillerMovies(
+                    limit = 10,
+                    forceRefresh = forceRefresh
+                )
+                val localCandidates = localMovieCandidates(_state.value)
+                movies.map { movie ->
+                    TrendingMovie(
+                        tmdb = movie,
+                        iptv = matchTmdbMovie(movie, localCandidates)
+                    )
+                }
+            }.onSuccess { movies ->
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(
+                        thrillerMovies = movies,
+                        thrillerMoviesLoading = false,
+                        thrillerMoviesError = null
+                    )
+                }
+            }.onFailure { error ->
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(
+                        thrillerMoviesLoading = false,
+                        thrillerMoviesError =
+                            error.message ?: "Could not load TMDB thriller movies"
+                    )
+                }
+            }
         }
     }
 
     fun openTrendingMovie(entry: TrendingMovie) = task {
-        val session =
-            requireNotNull(_state.value.session)
+        val session = requireNotNull(_state.value.session)
 
-        val localMatch =
+        val resolved =
             entry.iptv
                 ?: matchTmdbMovie(
                     entry.tmdb,
                     localMovieCandidates(_state.value)
                 )
-
-        val resolved =
-            localMatch
-                ?: resolveTrendingMovieFromPortal(
-                    session,
-                    entry
-                )
+                ?: resolveTmdbMovieFromPortal(session, entry)
 
         if (resolved == null) {
             error(
-                "\"${entry.tmdb.title}\" is trending on TMDB, " +
-                    "but no matching movie was found in this IPTV profile."
+                "\"${entry.tmdb.title}\" was not found in this IPTV profile."
             )
         }
 
         _state.update { current ->
             current.copy(
                 trendingMovies =
-                    current.trendingMovies.map { item ->
-                        if (
-                            item.tmdb.id ==
-                            entry.tmdb.id
-                        ) {
-                            item.copy(iptv = resolved)
-                        } else {
-                            item
-                        }
-                    }
+                    current.trendingMovies.resolveMovie(entry.tmdb.id, resolved),
+                thrillerMovies =
+                    current.thrillerMovies.resolveMovie(entry.tmdb.id, resolved)
             )
         }
 
@@ -632,63 +731,129 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private suspend fun resolveTrendingMovieFromPortal(
+    fun openTrendingSeries(entry: TrendingSeries) = task {
+        val session = requireNotNull(_state.value.session)
+
+        val resolved =
+            entry.iptv
+                ?: matchTmdbSeries(
+                    entry.tmdb,
+                    localSeriesCandidates(_state.value)
+                )
+                ?: resolveTmdbSeriesFromPortal(session, entry)
+
+        if (resolved == null) {
+            error(
+                "\"${entry.tmdb.name}\" was not found in this IPTV profile."
+            )
+        }
+
+        _state.update { current ->
+            current.copy(
+                trendingSeries = current.trendingSeries.map { item ->
+                    if (item.tmdb.id == entry.tmdb.id) {
+                        item.copy(iptv = resolved)
+                    } else item
+                },
+                homeOpen = false,
+                favoritesOpen = false,
+                settingsOpen = false,
+                searchOpen = false,
+                selectedType = CatalogType.SERIES,
+                selectedSeries = resolved,
+                seriesOpenedFromHome = true,
+                seriesOpenedFromFavorites = false,
+                items = emptyList(),
+                availableSeriesSeasons = emptyList(),
+                selectedSeriesSeason = null
+            )
+        }
+
+        loadSeriesEpisodes(resolved)
+    }
+
+    private suspend fun resolveTmdbMovieFromPortal(
         session: PortalSession,
         entry: TrendingMovie
     ): MediaItem? {
-        val queries =
-            listOf(
-                entry.tmdb.title,
-                entry.tmdb.originalTitle
-            )
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .distinct()
+        val queries = listOf(entry.tmdb.title, entry.tmdb.originalTitle)
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
 
         for (query in queries) {
-            val page =
-                portal.search(
-                    session = session,
-                    type = SearchContentType.MOVIES,
-                    query = query,
-                    page = 1,
-                    categoryId = "*"
-                )
-
-            matchTmdbMovie(
-                entry.tmdb,
-                page.items
-            )?.let {
-                return it
-            }
+            val page = portal.search(
+                session = session,
+                type = SearchContentType.MOVIES,
+                query = query,
+                page = 1,
+                categoryId = "*"
+            )
+            matchTmdbMovie(entry.tmdb, page.items)?.let { return it }
         }
-
         return null
     }
 
-    private fun localMovieCandidates(
-        snapshot: NikTvState
-    ): List<MediaItem> {
-        val cached =
-            snapshot
-                .browseCachesByType[CatalogType.MOVIES]
-                ?.itemsByCategory
-                ?.values
-                ?.flatten()
-                .orEmpty()
+    private suspend fun resolveTmdbSeriesFromPortal(
+        session: PortalSession,
+        entry: TrendingSeries
+    ): MediaItem? {
+        val queries = listOf(entry.tmdb.name, entry.tmdb.originalName)
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+
+        for (query in queries) {
+            val page = portal.search(
+                session = session,
+                type = SearchContentType.SERIES,
+                query = query,
+                page = 1,
+                categoryId = "*"
+            )
+            matchTmdbSeries(entry.tmdb, page.items)?.let { return it }
+        }
+        return null
+    }
+
+    private fun localMovieCandidates(snapshot: NikTvState): List<MediaItem> {
+        val cached = snapshot
+            .browseCachesByType[CatalogType.MOVIES]
+            ?.itemsByCategory
+            ?.values
+            ?.flatten()
+            .orEmpty()
+
+        val visible =
+            if (snapshot.selectedType == CatalogType.MOVIES) snapshot.items
+            else emptyList()
+
+        return (cached + visible).distinctBy { it.id }
+    }
+
+    private fun localSeriesCandidates(snapshot: NikTvState): List<MediaItem> {
+        val cached = snapshot
+            .browseCachesByType[CatalogType.SERIES]
+            ?.itemsByCategory
+            ?.values
+            ?.flatten()
+            .orEmpty()
 
         val visible =
             if (
-                snapshot.selectedType ==
-                CatalogType.MOVIES
-            ) {
-                snapshot.items
-            } else {
-                emptyList()
-            }
+                snapshot.selectedType == CatalogType.SERIES &&
+                snapshot.selectedSeries == null
+            ) snapshot.items else emptyList()
 
-        return (cached + visible)
-            .distinctBy { it.id }
+        return (cached + visible).distinctBy { it.id }
+    }
+
+    private fun List<TrendingMovie>.resolveMovie(
+        tmdbId: Int,
+        resolved: MediaItem
+    ): List<TrendingMovie> = map { item ->
+        if (item.tmdb.id == tmdbId) item.copy(iptv = resolved)
+        else item
     }
 
     fun openMedia(item: MediaItem) {
@@ -1324,7 +1489,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
-            selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList()) }
+            selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList(),
+            trendingMovies = emptyList(), trendingMoviesLoading = false, trendingMoviesError = null,
+            trendingSeries = emptyList(), trendingSeriesLoading = false, trendingSeriesError = null,
+            thrillerMovies = emptyList(), thrillerMoviesLoading = false, thrillerMoviesError = null) }
         loadProfileLibrary(session.profile.cacheKey())
         preloadDashboard(session)
     }
@@ -1349,6 +1517,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             selectedSeriesSeason = null
         ) }
         viewModelScope.launch { runCatching { refreshWatchedSeriesIfDue() } }
+        loadDashboardDiscovery()
     }
     fun closeHome() = _state.update { it.copy(homeOpen = false) }
 
