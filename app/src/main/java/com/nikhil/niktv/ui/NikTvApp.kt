@@ -405,6 +405,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
                     ,openCategoryManager = vm::openCategoryManager
+                    ,loadMoreCategorySection = vm::loadMoreCategorySection
                 )
             }
             if (state.categoryManagerOpen) {
@@ -1069,7 +1070,8 @@ private fun CatalogScreen(
     openProfileSwitcher: () -> Unit,
     switchProfile: (PortalProfile) -> Unit,
     removeProfile: (PortalProfile) -> Unit,
-    openCategoryManager: (CatalogType) -> Unit
+    openCategoryManager: (CatalogType) -> Unit,
+    loadMoreCategorySection: (Category) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -1176,6 +1178,7 @@ private fun CatalogScreen(
                     openProfileSwitcher = openProfileSwitcher,
                     refreshCatalog = refreshCatalog,
                     openCategoryManager = openCategoryManager,
+                    loadMoreCategorySection = loadMoreCategorySection,
                     loadMoreCatalog = loadMoreCatalog
                 )
             }
@@ -1255,6 +1258,7 @@ private fun ModernBrowseScreen(
     openProfileSwitcher: () -> Unit,
     refreshCatalog: () -> Unit,
     openCategoryManager: (CatalogType) -> Unit,
+    loadMoreCategorySection: (Category) -> Unit,
     loadMoreCatalog: () -> Unit
 ) {
     val home = state.homeOpen
@@ -1927,6 +1931,7 @@ private fun ModernBrowseScreen(
                                 cardWidth = if (state.selectedType == CatalogType.LIVE_TV) 156.dp else 144.dp,
                                 initialDisplayCount = 10,
                                 maximumDisplayCount = 50,
+                                loadMore = { loadMoreCategorySection(category) },
                                 isFavorite = { item -> state.favorites.any { it.media.id == item.id } },
                                 toggleFavorite = { toggleFavorite(it) }
                             )
@@ -3041,11 +3046,13 @@ private fun <T> ModernRail(
     cardWidth: Dp = 180.dp,
     initialDisplayCount: Int = Int.MAX_VALUE,
     maximumDisplayCount: Int = Int.MAX_VALUE,
+    loadMore: (() -> Unit)? = null,
     isFavorite: (T) -> Boolean = { false },
     toggleFavorite: ((T) -> Unit)? = null
 ) {
-    val cappedMaximum = minOf(entries.size, maximumDisplayCount.coerceAtLeast(1))
-    var visibleCount by remember(title, entries.size, initialDisplayCount, maximumDisplayCount) {
+    val maximum = maximumDisplayCount.coerceAtLeast(1)
+    val cappedMaximum = minOf(entries.size, maximum)
+    var visibleCount by remember(title, initialDisplayCount, maximumDisplayCount) {
         mutableIntStateOf(minOf(cappedMaximum, initialDisplayCount.coerceAtLeast(1)))
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
@@ -3074,10 +3081,14 @@ private fun <T> ModernRail(
                     }
                 }
             }
-            if (visibleCount < cappedMaximum) {
+            if (visibleCount < maximum && (visibleCount < entries.size || loadMore != null)) {
                 item("more-$title-$visibleCount") {
                     Surface(
-                        onClick = { visibleCount = minOf(cappedMaximum, visibleCount + 10) },
+                        onClick = {
+                            val requestedCount = minOf(maximum, visibleCount + 10)
+                            visibleCount = requestedCount
+                            if (entries.size < requestedCount) loadMore?.invoke()
+                        },
                         modifier = Modifier
                             .width(cardWidth)
                             .aspectRatio(16f / 9f)
@@ -3093,7 +3104,7 @@ private fun <T> ModernRail(
                             Icon(Icons.Default.ArrowForward, null, tint = Color(0xFFE50914))
                             Spacer(Modifier.height(6.dp))
                             Text("Load 10 more", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                            Text("$visibleCount of $cappedMaximum", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                            Text("${minOf(visibleCount, entries.size)} loaded", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }

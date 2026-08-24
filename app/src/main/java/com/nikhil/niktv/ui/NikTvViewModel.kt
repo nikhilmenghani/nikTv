@@ -913,8 +913,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun loadCategorySections(session: PortalSession, type: CatalogType) {
         val profileKey = session.profile.cacheKey()
-        val sectionLimit = if (session.profile.portalType == PortalType.STALKER) 6 else 10
-        val categories = _state.value.categories.take(sectionLimit)
+        val categories = _state.value.categories.take(DASHBOARD_CATEGORY_LIMIT)
 
         for (category in categories) {
             if (_state.value.session?.profile?.cacheKey() != profileKey ||
@@ -944,6 +943,43 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
             enrichCatalogArtwork(session, type)
+        }
+    }
+
+    fun loadMoreCategorySection(category: Category) = viewModelScope.launch {
+        val snapshot = _state.value
+        val session = snapshot.session ?: return@launch
+        if (snapshot.browseLayout != BrowseLayout.SECTIONS || snapshot.selectedType != category.type) return@launch
+        val profileKey = session.profile.cacheKey()
+        val cache = snapshot.browseCachesByType[category.type] ?: return@launch
+        val currentItems = cache.itemsByCategory[category.id].orEmpty()
+        if (currentItems.size >= 50) return@launch
+
+        val additions = if (session.profile.portalType == PortalType.STALKER) {
+            val nextPage = (currentItems.size / STALKER_SECTION_PAGE_SIZE) + 1
+            runCatching { portal.catalogPage(session, category, nextPage).items }.getOrDefault(emptyList())
+        } else {
+            // Xtream sections are streamed and bounded during their initial request.
+            emptyList()
+        }
+        if (additions.isEmpty()) return@launch
+
+        val merged = (currentItems + additions)
+            .distinctBy { it.id }
+            .take(50)
+        if (merged.size == currentItems.size) return@launch
+        val updated = cache.copy(
+            cachedAtMillis = System.currentTimeMillis(),
+            itemsByCategory = cache.itemsByCategory + (category.id to merged)
+        )
+        store.saveBrowseCatalog(updated)
+        _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profileKey) current
+            else current.copy(
+                items = if (current.selectedCategory?.id == category.id) merged else current.items,
+                browseCache = updated,
+                browseCachesByType = current.browseCachesByType + (category.type to updated)
+            )
         }
     }
 
@@ -2001,5 +2037,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_PROGRESS_ITEMS = 200
         private const val MAX_PLAYBACK_URLS = 500
         private const val DASHBOARD_CATEGORY_LIMIT = 10
+        private const val STALKER_SECTION_PAGE_SIZE = 14
     }
 }
