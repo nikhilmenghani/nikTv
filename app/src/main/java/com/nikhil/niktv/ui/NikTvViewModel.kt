@@ -45,6 +45,7 @@ data class NikTvState(
     val tmdbSectionsBySurface: Map<DashboardSurface, List<TmdbHomeSection>> = emptyMap(),
     val tmdbHomeMovieRows: Map<TmdbHomeSection, List<TrendingMovie>> = emptyMap(),
     val tmdbHomeSeriesRows: Map<TmdbHomeSection, List<TrendingSeries>> = emptyMap(),
+    val tmdbSectionsLoading: Set<TmdbHomeSection> = emptySet(),
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
     val profileLoadMessage: String = "Preparing profile…",
@@ -648,9 +649,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         loadConfiguredTmdbHomeSections(forceRefresh)
     }
 
-    fun setTmdbSections(surface: DashboardSurface, sections: List<TmdbHomeSection>) = viewModelScope.launch {
-        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
-        store.setTmdbDashboardSections(profileKey, surface, sections)
+    fun setTmdbSections(surface: DashboardSurface, sections: List<TmdbHomeSection>) {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return
+        // Publish the complete intended configuration immediately, but keep
+        // the dashboard covered until every newly required row has settled.
+        _state.update { current ->
+            current.copy(tmdbSectionsBySurface = current.tmdbSectionsBySurface + (surface to sections.distinct()))
+        }
+        loadConfiguredTmdbHomeSections()
+        viewModelScope.launch {
+            store.setTmdbDashboardSections(profileKey, surface, sections)
+        }
     }
 
     fun resetScreenConfiguration(surface: DashboardSurface) = viewModelScope.launch {
@@ -669,7 +678,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = _state.value
         val profileKey = snapshot.session?.profile?.cacheKey() ?: return
         if (!tmdb.configured) return
-        snapshot.tmdbSectionsBySurface.values.flatten().distinct().filterNot { it.series }.forEach { section ->
+        val requested = snapshot.tmdbSectionsBySurface.values.flatten().distinct()
+        val pendingMovies = requested.filterNot { it.series }.filter { section ->
+            (forceRefresh || snapshot.tmdbHomeMovieRows[section].orEmpty().isEmpty()) && section !in snapshot.tmdbSectionsLoading
+        }
+        val pendingSeries = requested.filter { it.series }.filter { section ->
+            (forceRefresh || snapshot.tmdbHomeSeriesRows[section].orEmpty().isEmpty()) && section !in snapshot.tmdbSectionsLoading
+        }
+        val pending = (pendingMovies + pendingSeries).toSet()
+        if (pending.isNotEmpty()) {
+            _state.update { it.copy(tmdbSectionsLoading = it.tmdbSectionsLoading + pending) }
+        }
+        pendingMovies.forEach { section ->
             if (!forceRefresh && snapshot.tmdbHomeMovieRows[section].orEmpty().isNotEmpty()) return@forEach
             viewModelScope.launch {
                 val rows = runCatching {
@@ -680,11 +700,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }.getOrDefault(emptyList())
                 _state.update { current ->
                     if (current.session?.profile?.cacheKey() != profileKey) current
-                    else current.copy(tmdbHomeMovieRows = current.tmdbHomeMovieRows + (section to rows))
+                    else current.copy(
+                        tmdbHomeMovieRows = current.tmdbHomeMovieRows + (section to rows),
+                        tmdbSectionsLoading = current.tmdbSectionsLoading - section
+                    )
                 }
             }
         }
-        snapshot.tmdbSectionsBySurface.values.flatten().distinct().filter { it.series }.forEach { section ->
+        pendingSeries.forEach { section ->
             if (!forceRefresh && snapshot.tmdbHomeSeriesRows[section].orEmpty().isNotEmpty()) return@forEach
             viewModelScope.launch {
                 val rows = runCatching {
@@ -695,7 +718,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }.getOrDefault(emptyList())
                 _state.update { current ->
                     if (current.session?.profile?.cacheKey() != profileKey) current
-                    else current.copy(tmdbHomeSeriesRows = current.tmdbHomeSeriesRows + (section to rows))
+                    else current.copy(
+                        tmdbHomeSeriesRows = current.tmdbHomeSeriesRows + (section to rows),
+                        tmdbSectionsLoading = current.tmdbSectionsLoading - section
+                    )
                 }
             }
         }

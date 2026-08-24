@@ -1196,7 +1196,12 @@ private fun CatalogScreen(
     }
 
     if (wide || isTv) {
-        Row(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0xFF090909))
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+        ) {
             ModernSideRail(
                 state = state,
                 selectType = selectType,
@@ -1214,7 +1219,11 @@ private fun CatalogScreen(
             MainContent(Modifier.weight(1f).fillMaxHeight())
         }
     } else {
-        MainContent(Modifier.fillMaxSize())
+        MainContent(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+        )
     }
 
     if (exitConfirmationOpen) {
@@ -1285,6 +1294,14 @@ private fun ModernBrowseScreen(
         CatalogType.RADIO -> DashboardSurface.LIVE_TV
     }
     val selectedTmdbSections = state.tmdbSectionsBySurface[dashboardSurface].orEmpty()
+    val tmdbLayoutLoading = selectedTmdbSections.any { it in state.tmdbSectionsLoading }
+    val tmdbLoadingFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(tmdbLayoutLoading) {
+        if (tmdbLayoutLoading) {
+            withFrameNanos { }
+            runCatching { tmdbLoadingFocusRequester.requestFocus() }
+        }
+    }
 
     // MOVIE_DASHBOARD_PAGINATION_FOCUS_V2
     //
@@ -1692,6 +1709,7 @@ private fun ModernBrowseScreen(
         liveTvLoadMoreObservedLoading = false
     }
 
+    Box(Modifier.fillMaxSize()) {
     ModernGrid(
         columns = columns,
         state = catalogGridState,
@@ -1846,38 +1864,38 @@ private fun ModernBrowseScreen(
                         state.thrillerMovies.isNotEmpty() ||
                         state.thrillerMoviesError != null)
 
-                if (showTrendingMovies) {
-                    item("home-tmdb-trending-movies", span = gridSpan) {
-                        DashboardMovieRail(
-                            title = "Trending Movies",
-                            movies = state.trendingMovies,
-                            loading = state.trendingMoviesLoading,
-                            error = state.trendingMoviesError,
-                            open = openTrendingMovie
-                        )
-                    }
-                }
-
-                if (showTrendingSeries) {
-                    item("home-tmdb-trending-series", span = gridSpan) {
-                        DashboardSeriesRail(
-                            series = state.trendingSeries,
-                            loading = state.trendingSeriesLoading,
-                            error = state.trendingSeriesError,
-                            open = openTrendingSeries
-                        )
-                    }
-                }
-
-                if (showThrillerMovies) {
-                    item("home-tmdb-thriller-movies", span = gridSpan) {
-                        DashboardMovieRail(
-                            title = "Thriller Movies",
-                            movies = state.thrillerMovies,
-                            loading = state.thrillerMoviesLoading,
-                            error = state.thrillerMoviesError,
-                            open = openTrendingMovie
-                        )
+                // Render every configured row in the same order selected in
+                // Settings. The original Home implementation only inserted
+                // three hard-coded discovery rows even though all selected
+                // sections had already been fetched by the ViewModel.
+                selectedTmdbSections.forEach { section ->
+                    when (section) {
+                        TmdbHomeSection.TRENDING_MOVIES -> if (showTrendingMovies) {
+                            item("home-tmdb-${section.name}", span = gridSpan) {
+                                DashboardMovieRail(section.title, state.trendingMovies, state.trendingMoviesLoading, state.trendingMoviesError, openTrendingMovie)
+                            }
+                        }
+                        TmdbHomeSection.TRENDING_SERIES -> if (showTrendingSeries) {
+                            item("home-tmdb-${section.name}", span = gridSpan) {
+                                DashboardSeriesRail(state.trendingSeries, state.trendingSeriesLoading, state.trendingSeriesError, openTrendingSeries, title = section.title)
+                            }
+                        }
+                        TmdbHomeSection.THRILLER -> if (showThrillerMovies) {
+                            item("home-tmdb-${section.name}", span = gridSpan) {
+                                DashboardMovieRail(section.title, state.thrillerMovies, state.thrillerMoviesLoading, state.thrillerMoviesError, openTrendingMovie)
+                            }
+                        }
+                        else -> if (section.series) {
+                            val row = state.tmdbHomeSeriesRows[section].orEmpty()
+                            if (row.isNotEmpty()) item("home-tmdb-${section.name}", span = gridSpan) {
+                                DashboardSeriesRail(row, false, null, openTrendingSeries, title = section.title)
+                            }
+                        } else {
+                            val row = state.tmdbHomeMovieRows[section].orEmpty()
+                            if (row.isNotEmpty()) item("home-tmdb-${section.name}", span = gridSpan) {
+                                DashboardMovieRail(section.title, row, false, null, openTrendingMovie)
+                            }
+                        }
                     }
                 }
 
@@ -2427,6 +2445,35 @@ private fun ModernBrowseScreen(
                 }
             }
     }
+        AnimatedVisibility(
+            visible = tmdbLayoutLoading,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Surface(
+                color = Color(0xFF090909),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .focusRequester(tmdbLoadingFocusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { true }
+            ) {
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(18.dp))
+                    Text("Updating TMDB sections…", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Preparing ${state.tmdbSectionsLoading.count { it in selectedTmdbSections }} selected rows",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+    }
     if (tmdbSetupOpen) {
         TmdbHomeSectionsDialog(
             selected = selectedTmdbSections,
@@ -2670,8 +2717,7 @@ private fun ModernSideRail(
 ) {
     Surface(modifier, color = Color(0xFF070707), shadowElevation = 12.dp) {
         Column(
-            Modifier.statusBarsPadding().navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
+            Modifier.verticalScroll(rememberScrollState())
                 .padding(horizontal = if (expanded) 10.dp else 6.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -2781,8 +2827,7 @@ private fun ModernTopBar(
     Surface(color = Color(0xFF090909)) {
         LazyRow(
             modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding(),
+                .fillMaxWidth(),
             contentPadding = PaddingValues(
                 horizontal = 12.dp,
                 vertical = 8.dp
@@ -3167,6 +3212,8 @@ private fun <T> ModernRail(
     val itemFocusRequesters = remember(title) { mutableMapOf<String, FocusRequester>() }
     var pendingFocusIndex by remember(title) { mutableStateOf<Int?>(null) }
     var pendingRequestedCount by remember(title) { mutableStateOf<Int?>(null) }
+    var preservedFirstVisibleIndex by remember(title) { mutableIntStateOf(0) }
+    var preservedFirstVisibleOffset by remember(title) { mutableIntStateOf(0) }
 
     LaunchedEffect(entries.size, pendingRequestedCount) {
         val requestedCount = pendingRequestedCount ?: return@LaunchedEffect
@@ -3182,7 +3229,13 @@ private fun <T> ModernRail(
         if (targetIndex >= visibleCount || targetIndex >= entries.size) return@LaunchedEffect
         val entry = entries[targetIndex]
         val key = "${media(entry).id}-${media(entry).title}"
-        rowState.animateScrollToItem(targetIndex)
+        // The Load More tile occupied targetIndex before the append. Preserve
+        // the exact viewport while that tile is replaced by the first newly
+        // revealed card. This avoids both LazyRow key relocation and a visible
+        // horizontal jump during rapid D-pad navigation.
+        rowState.scrollToItem(preservedFirstVisibleIndex, preservedFirstVisibleOffset)
+        withFrameNanos { }
+        rowState.scrollToItem(preservedFirstVisibleIndex, preservedFirstVisibleOffset)
         withFrameNanos { }
         runCatching { itemFocusRequesters.getOrPut(key) { FocusRequester() }.requestFocus() }
         pendingFocusIndex = null
@@ -3221,15 +3274,19 @@ private fun <T> ModernRail(
                 item("more-$title") {
                     Surface(
                         onClick = {
-                            val requestedCount = minOf(maximum, visibleCount + 10)
-                            pendingFocusIndex = visibleCount
-                            if (entries.size >= requestedCount) {
-                                visibleCount = requestedCount
-                            } else if (loadMore != null) {
-                                pendingRequestedCount = requestedCount
-                                loadMore.invoke()
-                            } else {
-                                visibleCount = minOf(requestedCount, entries.size)
+                            if (pendingRequestedCount == null) {
+                                val requestedCount = minOf(maximum, visibleCount + 10)
+                                preservedFirstVisibleIndex = rowState.firstVisibleItemIndex
+                                preservedFirstVisibleOffset = rowState.firstVisibleItemScrollOffset
+                                pendingFocusIndex = visibleCount
+                                if (entries.size >= requestedCount) {
+                                    visibleCount = requestedCount
+                                } else if (loadMore != null) {
+                                    pendingRequestedCount = requestedCount
+                                    loadMore.invoke()
+                                } else {
+                                    visibleCount = minOf(requestedCount, entries.size)
+                                }
                             }
                         },
                         modifier = Modifier
@@ -3244,9 +3301,13 @@ private fun <T> ModernRail(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Icon(Icons.Default.ArrowForward, null, tint = Color(0xFFE50914))
+                            if (pendingRequestedCount != null) {
+                                CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
+                            } else {
+                                Icon(Icons.Default.ArrowForward, null, tint = Color(0xFFE50914))
+                            }
                             Spacer(Modifier.height(6.dp))
-                            Text("Load 10 more", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                            Text(if (pendingRequestedCount != null) "Loading…" else "Load 10 more", color = Color.White, style = MaterialTheme.typography.labelLarge)
                             Text("${minOf(visibleCount, entries.size)} loaded", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                         }
                     }
