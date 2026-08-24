@@ -1107,6 +1107,7 @@ private fun CatalogScreen(
     val activity = context.findHostActivity()
     val isTv = context.isTvLikeDevice(configuration)
     val wide = configuration.screenWidthDp >= 720
+    val mobileUiDesign by rememberMobileUiDesign()
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
     val exitFocusRequester = remember { FocusRequester() }
 
@@ -1241,11 +1242,21 @@ private fun CatalogScreen(
             MainContent(Modifier.weight(1f).fillMaxHeight())
         }
     } else {
-        MainContent(
-            Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-        )
+        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+            val showYouTubeNavigation = mobileUiDesign == MobileUiDesign.YOUTUBE && !state.settingsOpen && !state.searchOpen
+            MainContent(
+                Modifier.fillMaxSize().padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
+            )
+            if (showYouTubeNavigation) {
+                YouTubeStyleBottomBar(
+                    state = state,
+                    openHome = openHome,
+                    selectType = selectType,
+                    openFavorites = openFavorites,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
+        }
     }
 
     if (exitConfirmationOpen) {
@@ -1380,6 +1391,7 @@ private fun ModernBrowseScreen(
     val browseContext = LocalContext.current
     val isTv = browseContext.isTvLikeDevice(configuration)
     val isWide = configuration.screenWidthDp >= 720 || isTv
+    val mobileUiDesign by rememberMobileUiDesign()
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
 
     var liveTvColumns by rememberSaveable {
@@ -1741,7 +1753,11 @@ private fun ModernBrowseScreen(
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
             if (!isWide) item("modern-top", span = gridSpan) {
-                ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings, openProfileSwitcher)
+                if (mobileUiDesign == MobileUiDesign.YOUTUBE) {
+                    YouTubeStyleTopBar(state, openSearch, openSettings, openProfileSwitcher)
+                } else {
+                    ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings, openProfileSwitcher)
+                }
             }
             if (!home && state.browseLayout != BrowseLayout.SECTIONS) item("modern-hero", span = gridSpan) {
                 val recent = state.recentlyPlayed.firstOrNull()
@@ -2831,6 +2847,62 @@ private fun ModernRailButton(icon: ImageVector, label: String, selected: Boolean
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun YouTubeStyleTopBar(
+    state: NikTvState,
+    openSearch: () -> Unit,
+    openSettings: () -> Unit,
+    openProfileSwitcher: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().background(Color(0xFF090909)).padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFE50914)) {
+            Icon(Icons.Default.PlayArrow, null, Modifier.padding(5.dp).size(20.dp), tint = Color.White)
+        }
+        Spacer(Modifier.width(9.dp))
+        Text("NikTV", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+        IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
+        IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
+        IconButton(onClick = openProfileSwitcher) {
+            Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
+        }
+    }
+}
+
+@Composable
+private fun YouTubeStyleBottomBar(
+    state: NikTvState,
+    openHome: () -> Unit,
+    selectType: (CatalogType) -> Unit,
+    openFavorites: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    NavigationBar(modifier = modifier.fillMaxWidth(), containerColor = Color(0xFF101010), tonalElevation = 8.dp) {
+        NavigationBarItem(
+            selected = state.homeOpen && !state.favoritesOpen,
+            onClick = openHome,
+            icon = { Icon(Icons.Default.Home, null) },
+            label = { Text("Home") }
+        )
+        listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach { type ->
+            NavigationBarItem(
+                selected = !state.homeOpen && !state.favoritesOpen && state.selectedType == type,
+                onClick = { selectType(type) },
+                icon = { Icon(type.icon(), null) },
+                label = { Text(when (type) { CatalogType.LIVE_TV -> "Live"; else -> type.title }) }
+            )
+        }
+        NavigationBarItem(
+            selected = state.favoritesOpen,
+            onClick = openFavorites,
+            icon = { Icon(Icons.Default.VideoLibrary, null) },
+            label = { Text("Library") }
+        )
     }
 }
 
@@ -4343,6 +4415,37 @@ private fun ModernSettingsScreen(
                 AssistChip(onClick = {}, enabled = false, label = { Text("v${BuildConfig.VERSION_NAME}") })
             }
         }
+        SettingsSection("Mobile appearance") {
+            val mobileDesign by rememberMobileUiDesign()
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Phone navigation", style = MaterialTheme.typography.titleMedium)
+                Text("YouTube style uses a compact header and persistent bottom navigation. Tablet and TV layouts are unchanged.", color = Color.Gray)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf(MobileUiDesign.YOUTUBE to "YouTube style", MobileUiDesign.CLASSIC to "Classic").forEachIndexed { index, (design, label) ->
+                        val shape = uniformSegmentShape(index, 2)
+                        SegmentedButton(
+                            selected = mobileDesign == design,
+                            onClick = { MobileUiPreferences.set(context, design) },
+                            modifier = Modifier.remoteFocusFrame(shape),
+                            shape = shape
+                        ) { Text(label) }
+                    }
+                }
+            }
+        }
+        PlaybackEngineSettingsSection(state.playbackEngine, setPlaybackEngine)
+        SettingsSection("Player controls") {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Hide controls after", style = MaterialTheme.typography.titleMedium)
+                Text("While video is playing, controls automatically disappear after this period of inactivity.", color = Color.Gray)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf(3 to "3s", 5 to "5s", 10 to "10s", 15 to "15s").forEachIndexed { index, (seconds, label) ->
+                        val shape = uniformSegmentShape(index, 4)
+                        SegmentedButton(state.playerControlsTimeoutSeconds == seconds, { setPlayerControlsTimeoutSeconds(seconds) }, shape, modifier = Modifier.remoteFocusFrame(shape)) { Text(label) }
+                    }
+                }
+            }
+        }
         SettingsSection("Profiles") {
             state.profiles.forEachIndexed { index, saved ->
                 ListItem(
@@ -4783,68 +4886,6 @@ private fun ModernSettingsScreen(
                             Spacer(Modifier.width(6.dp))
                             Text(if (AppUpdates.canWritePublicDownloads(context)) "Download" else "Allow & download")
                         }
-                    }
-                }
-            }
-        }
-        SettingsSection("Playback engine") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Video player", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Choose a default engine for Live TV, movies and episodes. Auto learns compatibility per series.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                val engines = listOf(
-                    Triple(PlaybackEngine.AUTO, "Auto", "Learns failures and uses VLC when needed"),
-                    Triple(PlaybackEngine.MEDIA3, "Media3", "NikTV decoder fallback and recovery"),
-                    Triple(PlaybackEngine.VLC, "VLC player", "Software decoding and broad compatibility"),
-                    Triple(PlaybackEngine.EXOPLAYER, "ExoPlayer", "Native device decoder order")
-                )
-                FlowRow(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    maxItemsInEachRow = 2
-                ) {
-                    engines.forEach { (engine, label, description) ->
-                        val selected = state.playbackEngine == engine
-                        Surface(
-                            onClick = { setPlaybackEngine(engine) },
-                            modifier = Modifier.weight(1f).widthIn(min = 210.dp).remoteFocusFrame(RoundedCornerShape(16.dp)),
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (selected) Color(0xFF351416) else Color(0xFF1A1F2E),
-                            border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Color(0xFFE50914) else Color(0xFF30384B))
-                        ) {
-                            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                RadioButton(selected = selected, onClick = null)
-                                Column {
-                                    Text(label, fontWeight = FontWeight.Bold)
-                                    Text(description, style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 2)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        SettingsSection("Player controls") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Hide controls after", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "While video is playing, controls automatically disappear after this period of inactivity.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf(3 to "3s", 5 to "5s", 10 to "10s", 15 to "15s").forEachIndexed { index, (seconds, label) ->
-                        val timeoutShape = uniformSegmentShape(index, 4)
-                        SegmentedButton(
-                            selected = state.playerControlsTimeoutSeconds == seconds,
-                            onClick = { setPlayerControlsTimeoutSeconds(seconds) },
-                            modifier = Modifier.remoteFocusFrame(timeoutShape),
-                            shape = timeoutShape
-                        ) { Text(label) }
                     }
                 }
             }
@@ -5585,6 +5626,50 @@ private fun LiveTvPlaybackScreen(
                                             "Load more channels"
                                         }
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackEngineSettingsSection(
+    selectedEngine: PlaybackEngine,
+    setPlaybackEngine: (PlaybackEngine) -> Unit
+) {
+    SettingsSection("Default media player") {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Used for Live TV, movies and episodes", style = MaterialTheme.typography.titleMedium)
+            Text("Auto learns compatibility per series. You can force a specific engine here.", color = Color.Gray)
+            val engines = listOf(
+                Triple(PlaybackEngine.AUTO, "Auto", "Learns failures and uses VLC when needed"),
+                Triple(PlaybackEngine.MEDIA3, "Media3", "NikTV decoder fallback and recovery"),
+                Triple(PlaybackEngine.VLC, "VLC player", "Software decoding and broad compatibility"),
+                Triple(PlaybackEngine.EXOPLAYER, "ExoPlayer", "Native device decoder order")
+            )
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                maxItemsInEachRow = 2
+            ) {
+                engines.forEach { (engine, label, description) ->
+                    val selected = selectedEngine == engine
+                    Surface(
+                        onClick = { setPlaybackEngine(engine) },
+                        modifier = Modifier.weight(1f).widthIn(min = 150.dp).remoteFocusFrame(RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (selected) Color(0xFF351416) else Color(0xFF1A1F2E),
+                        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Color(0xFFE50914) else Color(0xFF30384B))
+                    ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected, onClick = null)
+                            Column(Modifier.padding(start = 6.dp)) {
+                                Text(label, fontWeight = FontWeight.Bold)
+                                Text(description, style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 2)
                             }
                         }
                     }
