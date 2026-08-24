@@ -212,13 +212,43 @@ class TmdbClient {
             TmdbHomeSection.THRILLER -> thrillerMovies(limit)
             TmdbHomeSection.FAMILY -> discoverGenre("10751", limit)
             TmdbHomeSection.DOCUMENTARY -> discoverGenre("99", limit)
-            TmdbHomeSection.TRENDING_SERIES -> emptyList()
+            TmdbHomeSection.TRENDING_SERIES,
+            TmdbHomeSection.TOP_RATED_SERIES,
+            TmdbHomeSection.HOLLYWOOD_SERIES,
+            TmdbHomeSection.BOLLYWOOD_SERIES,
+            TmdbHomeSection.ACTION_SERIES,
+            TmdbHomeSection.COMEDY_SERIES,
+            TmdbHomeSection.MYSTERY_SERIES,
+            TmdbHomeSection.FAMILY_SERIES,
+            TmdbHomeSection.DOCUMENTARY_SERIES -> emptyList()
+        }
+    }
+
+    suspend fun homeSeries(section: TmdbHomeSection, limit: Int = 50): List<TmdbSeries> = withContext(Dispatchers.IO) {
+        if (!configured || !section.series) return@withContext emptyList()
+        when (section) {
+            TmdbHomeSection.TRENDING_SERIES -> trendingSeries(limit)
+            TmdbHomeSection.TOP_RATED_SERIES -> fetchSeries("/3/tv/top_rated", limit)
+            TmdbHomeSection.HOLLYWOOD_SERIES -> discoverSeries(limit, mapOf("with_original_language" to "en"))
+            TmdbHomeSection.BOLLYWOOD_SERIES -> discoverSeries(limit, mapOf("with_original_language" to "hi"))
+            TmdbHomeSection.ACTION_SERIES -> discoverSeries(limit, mapOf("with_genres" to "10759"))
+            TmdbHomeSection.COMEDY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "35"))
+            TmdbHomeSection.MYSTERY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "9648"))
+            TmdbHomeSection.FAMILY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "10751"))
+            TmdbHomeSection.DOCUMENTARY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "99"))
+            else -> emptyList()
         }
     }
 
     private fun discoverGenre(genreId: String, limit: Int) = fetchMovies(
         "/3/discover/movie", limit,
         mapOf("with_genres" to genreId, "sort_by" to "popularity.desc", "include_adult" to "false")
+    )
+
+    private fun discoverSeries(limit: Int, query: Map<String, String>) = fetchSeries(
+        "/3/discover/tv",
+        limit,
+        query + ("sort_by" to "popularity.desc")
     )
 
     private fun fetchMovies(

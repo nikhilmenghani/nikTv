@@ -187,7 +187,15 @@ enum class TmdbHomeSection(val title: String, val series: Boolean = false) {
     HORROR("Horror"),
     THRILLER("Thriller"),
     FAMILY("Family"),
-    DOCUMENTARY("Documentary");
+    DOCUMENTARY("Documentary"),
+    TOP_RATED_SERIES("Top Rated Series", series = true),
+    HOLLYWOOD_SERIES("Hollywood Series", series = true),
+    BOLLYWOOD_SERIES("Bollywood Series", series = true),
+    ACTION_SERIES("Action & Adventure Series", series = true),
+    COMEDY_SERIES("Comedy Series", series = true),
+    MYSTERY_SERIES("Mystery Series", series = true),
+    FAMILY_SERIES("Family Series", series = true),
+    DOCUMENTARY_SERIES("Documentary Series", series = true);
 
 }
 

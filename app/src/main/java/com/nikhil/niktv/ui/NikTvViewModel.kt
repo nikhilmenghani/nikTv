@@ -44,6 +44,7 @@ data class NikTvState(
     val thrillerMoviesError: String? = null,
     val tmdbSectionsBySurface: Map<DashboardSurface, List<TmdbHomeSection>> = emptyMap(),
     val tmdbHomeMovieRows: Map<TmdbHomeSection, List<TrendingMovie>> = emptyMap(),
+    val tmdbHomeSeriesRows: Map<TmdbHomeSection, List<TrendingSeries>> = emptyMap(),
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
     val profileLoadMessage: String = "Preparing profile…",
@@ -674,6 +675,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { current ->
                     if (current.session?.profile?.cacheKey() != profileKey) current
                     else current.copy(tmdbHomeMovieRows = current.tmdbHomeMovieRows + (section to rows))
+                }
+            }
+        }
+        snapshot.tmdbSectionsBySurface.values.flatten().distinct().filter { it.series }.forEach { section ->
+            if (!forceRefresh && snapshot.tmdbHomeSeriesRows[section].orEmpty().isNotEmpty()) return@forEach
+            viewModelScope.launch {
+                val rows = runCatching {
+                    val candidates = localSeriesCandidates(_state.value)
+                    tmdb.homeSeries(section, 50).map { series ->
+                        TrendingSeries(series, matchTmdbSeries(series, candidates))
+                    }
+                }.getOrDefault(emptyList())
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current
+                    else current.copy(tmdbHomeSeriesRows = current.tmdbHomeSeriesRows + (section to rows))
                 }
             }
         }

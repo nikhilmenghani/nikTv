@@ -1760,6 +1760,18 @@ private fun ModernBrowseScreen(
                                 leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(16.dp)) }
                             )
                         }
+                        if (dashboardSurface == DashboardSurface.MOVIES || dashboardSurface == DashboardSurface.SERIES) {
+                            item {
+                                AssistChip(
+                                    onClick = { tmdbSetupOpen = true },
+                                    modifier = Modifier.remoteFocusFrame(CircleShape),
+                                    label = { Text("TMDB sections") },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.DashboardCustomize, null, Modifier.size(16.dp))
+                                    }
+                                )
+                            }
+                        }
                         item {
                             AssistChip(
                                 onClick = { resetConfirmationOpen = true },
@@ -1935,7 +1947,12 @@ private fun ModernBrowseScreen(
                             Icon(Icons.Default.FilterListOff, null, Modifier.size(48.dp), tint = Color.LightGray)
                             Text("No categories enabled for ${state.selectedType.title}", color = Color.White, style = MaterialTheme.typography.titleMedium)
                             Text("Adjust your category filters to include content.", color = Color.LightGray)
-                            Button(onClick = { openCategoryManager(state.selectedType) }) { Text("Manage categories") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { openCategoryManager(state.selectedType) }) { Text("Manage categories") }
+                                if (dashboardSurface == DashboardSurface.MOVIES || dashboardSurface == DashboardSurface.SERIES) {
+                                    Button(onClick = { tmdbSetupOpen = true }) { Text("TMDB sections") }
+                                }
+                            }
                         }
                     }
                 }
@@ -1969,9 +1986,10 @@ private fun ModernBrowseScreen(
                             DashboardMovieRail(section.title, row, false, null, openTrendingMovie)
                         }
                     }
-                if (TmdbHomeSection.TRENDING_SERIES in selectedTmdbSections && state.trendingSeries.isNotEmpty()) {
-                    item("screen-tmdb-trending-series", span = gridSpan) {
-                        DashboardSeriesRail(state.trendingSeries, false, null, openTrendingSeries)
+                selectedTmdbSections.filter { it.series }.forEach { section ->
+                    val row = state.tmdbHomeSeriesRows[section].orEmpty()
+                    if (row.isNotEmpty()) item("screen-tmdb-${section.name}", span = gridSpan) {
+                        DashboardSeriesRail(row, false, null, openTrendingSeries, title = section.title)
                     }
                 }
                 state.categories.forEach { category ->
@@ -3023,7 +3041,8 @@ private fun DashboardSeriesRail(
     series: List<TrendingSeries>,
     loading: Boolean,
     error: String?,
-    open: (TrendingSeries) -> Unit
+    open: (TrendingSeries) -> Unit,
+    title: String = "Trending Series"
 ) {
     Column(
         Modifier
@@ -3033,7 +3052,7 @@ private fun DashboardSeriesRail(
         when {
             loading && series.isEmpty() -> {
                 ModernSectionHeader(
-                    "Trending Series",
+                    title,
                     "Loading from TMDB…"
                 )
                 DashboardDiscoveryLoadingRow()
@@ -3041,7 +3060,7 @@ private fun DashboardSeriesRail(
 
             series.isNotEmpty() -> {
                 ModernRail(
-                    title = "Trending Series",
+                    title = title,
                     entries = series,
                     media = { entry ->
                         entry.tmdb.asMediaItem().let { tmdbMedia ->
@@ -3140,14 +3159,42 @@ private fun <T> ModernRail(
     var visibleCount by remember(title, initialDisplayCount, maximumDisplayCount) {
         mutableIntStateOf(minOf(cappedMaximum, initialDisplayCount.coerceAtLeast(1)))
     }
+    val rowState = rememberLazyListState()
+    val itemFocusRequesters = remember(title) { mutableMapOf<String, FocusRequester>() }
+    var pendingFocusIndex by remember(title) { mutableStateOf<Int?>(null) }
+    var pendingRequestedCount by remember(title) { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(entries.size, pendingRequestedCount) {
+        val requestedCount = pendingRequestedCount ?: return@LaunchedEffect
+        val firstNewIndex = pendingFocusIndex ?: return@LaunchedEffect
+        if (entries.size > firstNewIndex) {
+            visibleCount = minOf(maximum, requestedCount, entries.size)
+            pendingRequestedCount = null
+        }
+    }
+
+    LaunchedEffect(visibleCount, pendingFocusIndex, entries.size) {
+        val targetIndex = pendingFocusIndex ?: return@LaunchedEffect
+        if (targetIndex >= visibleCount || targetIndex >= entries.size) return@LaunchedEffect
+        val entry = entries[targetIndex]
+        val key = "${media(entry).id}-${media(entry).title}"
+        rowState.animateScrollToItem(targetIndex)
+        withFrameNanos { }
+        runCatching { itemFocusRequesters.getOrPut(key) { FocusRequester() }.requestFocus() }
+        pendingFocusIndex = null
+    }
+
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
-        LazyRow(contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(entries.take(visibleCount), key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry ->
+                val itemKey = "${media(entry).id}-${media(entry).title}"
                 ModernPosterCard(
                     item = media(entry),
                     aspectRatio = aspectRatio(entry),
-                    modifier = Modifier.width(cardWidth),
+                    modifier = Modifier
+                        .width(cardWidth)
+                        .focusRequester(itemFocusRequesters.getOrPut(itemKey) { FocusRequester() }),
                     progress = progress(entry),
                     onClick = { open(entry) },
                     titleMaxLines = titleMaxLines,
@@ -3167,12 +3214,19 @@ private fun <T> ModernRail(
                 }
             }
             if (visibleCount < maximum && (visibleCount < entries.size || loadMore != null)) {
-                item("more-$title-$visibleCount") {
+                item("more-$title") {
                     Surface(
                         onClick = {
                             val requestedCount = minOf(maximum, visibleCount + 10)
-                            visibleCount = requestedCount
-                            if (entries.size < requestedCount) loadMore?.invoke()
+                            pendingFocusIndex = visibleCount
+                            if (entries.size >= requestedCount) {
+                                visibleCount = requestedCount
+                            } else if (loadMore != null) {
+                                pendingRequestedCount = requestedCount
+                                loadMore.invoke()
+                            } else {
+                                visibleCount = minOf(requestedCount, entries.size)
+                            }
                         },
                         modifier = Modifier
                             .width(cardWidth)
@@ -5453,55 +5507,70 @@ private fun TmdbHomeSectionsDialog(
     save: (List<TmdbHomeSection>) -> Unit
 ) {
     var choices by remember(selected) { mutableStateOf(selected.toSet()) }
-    val available = remember(surface) {
-        when (surface) {
-            DashboardSurface.HOME -> TmdbHomeSection.entries
-            DashboardSurface.MOVIES -> TmdbHomeSection.entries.filterNot { it.series }
-            DashboardSurface.SERIES -> TmdbHomeSection.entries.filter { it.series }
-            DashboardSurface.LIVE_TV -> emptyList()
-        }
-    }
-    Dialog(onDismissRequest = close) {
-        Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF181818), modifier = Modifier.widthIn(max = 760.dp)) {
+    val available = remember(surface) { tmdbSectionsForSurface(surface) }
+    Dialog(
+        onDismissRequest = close,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF181818),
+            modifier = Modifier
+                .fillMaxWidth(0.88f)
+                .fillMaxHeight(0.9f)
+                .widthIn(max = 760.dp)
+        ) {
             Column {
-                Column(Modifier.padding(24.dp)) {
+                Column(Modifier.weight(1f).padding(24.dp)) {
                     Text("${surface.displayTitle()} · TMDB sections", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
                     Text("Only this screen is affected.", color = Color.Gray)
                     Spacer(Modifier.height(16.dp))
-            LazyColumn(Modifier.heightIn(max = 520.dp)) {
-                items(available, key = { it.name }) { section ->
-                    val checked = section in choices
-                    Surface(
-                        onClick = { choices = if (checked) choices - section else choices + section },
-                        modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(12.dp)),
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (checked) Color(0xFF351416) else Color(0xFF181818)
-                    ) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked, onCheckedChange = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(section.title, Modifier.weight(1f))
-                            Text(if (section.series) "Series" else "Movies", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                    LazyColumn(Modifier.weight(1f)) {
+                        items(available, key = { it.name }) { section ->
+                            val checked = section in choices
+                            Surface(
+                                onClick = { choices = if (checked) choices - section else choices + section },
+                                modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(12.dp)),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (checked) Color(0xFF351416) else Color(0xFF181818)
+                            ) {
+                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked, onCheckedChange = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(section.title, Modifier.weight(1f))
+                                    Text(if (section.series) "Series" else "Movies", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
-                }
-            }
                 }
                 HorizontalDivider()
-                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { choices = emptySet() }, modifier = Modifier.remoteFocusFrame()) { Text("Clear selections") }
-                TextButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
-                Spacer(Modifier.width(8.dp))
-            Button(onClick = { save(available.filter { it in choices }) }, modifier = Modifier.remoteFocusFrame()) {
-                Text("Apply & Close")
-            }
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { choices = emptySet() }, modifier = Modifier.remoteFocusFrame()) { Text("Clear selections") }
+                    TextButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { save(available.filter { it in choices }) }, modifier = Modifier.remoteFocusFrame()) {
+                        Text("Apply & Close")
+                    }
                 }
             }
         }
     }
 }
+
+internal fun tmdbSectionsForSurface(surface: DashboardSurface): List<TmdbHomeSection> =
+    when (surface) {
+        DashboardSurface.HOME -> TmdbHomeSection.entries
+        DashboardSurface.MOVIES -> TmdbHomeSection.entries.filterNot { it.series }
+        DashboardSurface.SERIES -> TmdbHomeSection.entries.filter { it.series }
+        DashboardSurface.LIVE_TV -> emptyList()
+    }
 
 private fun DashboardSurface.displayTitle() = when (this) {
     DashboardSurface.HOME -> "Home"
