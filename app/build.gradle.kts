@@ -28,6 +28,10 @@ val xtreamUsername = providers.gradleProperty("NIKTV_XTREAM_USERNAME")
     .orElse(providers.environmentVariable("NIKTV_XTREAM_USERNAME")).orElse("")
 val xtreamPassword = providers.gradleProperty("NIKTV_XTREAM_PASSWORD")
     .orElse(providers.environmentVariable("NIKTV_XTREAM_PASSWORD")).orElse("")
+val tmdbApiKey = providers.gradleProperty("NIKTV_TMDB_API_KEY")
+    .orElse(providers.environmentVariable("NIKTV_TMDB_API_KEY")).orElse("")
+val tmdbReadAccessToken = providers.gradleProperty("NIKTV_TMDB_READ_ACCESS_TOKEN")
+    .orElse(providers.environmentVariable("NIKTV_TMDB_READ_ACCESS_TOKEN")).orElse("")
 
 plugins {
     id("com.android.application")
@@ -53,6 +57,8 @@ android {
         buildConfigField("String", "XTREAM_PORTAL_URL", xtreamPortalUrl.get().asBuildConfigString())
         buildConfigField("String", "XTREAM_USERNAME", xtreamUsername.get().asBuildConfigString())
         buildConfigField("String", "XTREAM_PASSWORD", xtreamPassword.get().asBuildConfigString())
+        buildConfigField("String", "TMDB_API_KEY", tmdbApiKey.get().asBuildConfigString())
+        buildConfigField("String", "TMDB_READ_ACCESS_TOKEN", tmdbReadAccessToken.get().asBuildConfigString())
     }
     signingConfigs {
         create("automation") {

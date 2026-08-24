@@ -60,6 +60,8 @@ jobs:
           NIKTV_XTREAM_PORTAL_URL: ${{ secrets.NIKTV_XTREAM_PORTAL_URL }}
           NIKTV_XTREAM_USERNAME: ${{ secrets.NIKTV_XTREAM_USERNAME }}
           NIKTV_XTREAM_PASSWORD: ${{ secrets.NIKTV_XTREAM_PASSWORD }}
+          NIKTV_TMDB_API_KEY: ${{ secrets.NIKTV_TMDB_API_KEY }}
+          NIKTV_TMDB_READ_ACCESS_TOKEN: ${{ secrets.NIKTV_TMDB_READ_ACCESS_TOKEN }}
         run: |
           chmod +x ./gradlew
           ./gradlew assembleDebug
