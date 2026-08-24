@@ -167,7 +167,13 @@ internal fun VlcPlayerScreen(
     DisposableEffect(player, media.url) {
         player.setEventListener { event ->
             when (event.type) {
-                MediaPlayer.Event.Opening, MediaPlayer.Event.Buffering -> buffering = true
+                MediaPlayer.Event.Opening -> buffering = true
+                MediaPlayer.Event.Buffering -> {
+                    // LibVLC emits Buffering for every percentage update, including
+                    // 100%, and may emit another completed update after Playing.
+                    // Treat it as a stall only while VLC is not actively playing.
+                    buffering = event.buffering < 100f && !player.isPlaying
+                }
                 MediaPlayer.Event.Playing -> {
                     playing = true
                     buffering = false
@@ -204,6 +210,10 @@ internal fun VlcPlayerScreen(
         while (true) {
             position = player.time.coerceAtLeast(0L)
             duration = player.length.coerceAtLeast(0L)
+            if (player.isPlaying) {
+                playing = true
+                buffering = false
+            }
             if (media.progressKey.isNotBlank()) onProgress(media.progressKey, position, duration)
             delay(1_000)
         }
