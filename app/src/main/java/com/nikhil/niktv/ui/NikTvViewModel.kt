@@ -927,7 +927,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val items = runCatching { portal.catalog(session, category) }
                 .getOrDefault(emptyList())
                 .filter { it.portalCategoryId == null || it.portalCategoryId == category.id }
-                .take(30)
+                .take(50)
             val updated = existing.copy(
                 cachedAtMillis = System.currentTimeMillis(),
                 itemsByCategory = existing.itemsByCategory + (category.id to items)
@@ -954,7 +954,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val targets = cache.itemsByCategory.values.flatten()
             .distinctBy { it.id }
             .filterNot { it.logo.orEmpty().startsWith("https://image.tmdb.org/") }
-            .take(16)
+            .take(30)
 
         val artwork = targets.map { media ->
             async { media.id to runCatching { tmdb.artworkFor(media, type) }.getOrNull() }
@@ -974,7 +974,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 browseCachesByType = current.browseCachesByType + (type to enrichedCache)
             )
         }
-        prefetchArtwork(getApplication(), enrichedItems.values.flatten(), limit = 16)
+        prefetchArtwork(getApplication(), enrichedItems.values.flatten(), limit = 10)
     }
 
     private suspend fun resolveTmdbMovieFromPortal(
@@ -1695,20 +1695,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun setCategoryFilter(type: CatalogType, enabledCategoryIds: List<String>) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
-        val raw = _state.value.rawCategoriesByType[type].orEmpty()
-        if (raw.isNotEmpty() && enabledCategoryIds.size >= raw.size && raw.all { it.id in enabledCategoryIds }) {
-            store.clearCategoryFilter(profileKey, type)
-        } else {
-            store.saveCategoryFilter(profileKey, type, enabledCategoryIds)
-        }
+        store.saveCategoryFilter(profileKey, type, enabledCategoryIds.distinct().take(DASHBOARD_CATEGORY_LIMIT))
     }
     fun toggleCategoryFilter(type: CatalogType, categoryId: String) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val raw = _state.value.rawCategoriesByType[type].orEmpty()
         val filterKey = filterKey(profileKey, type)
-        val currentEnabled = _state.value.categoryFilters[filterKey] ?: raw.map { it.id }
+        val currentEnabled = _state.value.categoryFilters[filterKey] ?: raw.take(DASHBOARD_CATEGORY_LIMIT).map { it.id }
         val updated = if (categoryId in currentEnabled) {
             currentEnabled - categoryId
+        } else if (currentEnabled.size >= DASHBOARD_CATEGORY_LIMIT) {
+            currentEnabled
         } else {
             currentEnabled + categoryId
         }
@@ -1716,7 +1713,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun selectAllCategories(type: CatalogType) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
-        store.clearCategoryFilter(profileKey, type)
+        val firstCategories = _state.value.rawCategoriesByType[type].orEmpty()
+            .take(DASHBOARD_CATEGORY_LIMIT)
+            .map { it.id }
+        store.saveCategoryFilter(profileKey, type, firstCategories)
     }
     fun deselectAllCategories(type: CatalogType) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
@@ -2000,5 +2000,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_RECENT_ITEMS = 100
         private const val MAX_PROGRESS_ITEMS = 200
         private const val MAX_PLAYBACK_URLS = 500
+        private const val DASHBOARD_CATEGORY_LIMIT = 10
     }
 }
