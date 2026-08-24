@@ -49,6 +49,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -131,9 +132,14 @@ object AppUpdates {
     private const val CHANNEL = "niktv-updates"
     private const val AVAILABLE_NOTIFICATION_ID = 1001
     private const val READY_NOTIFICATION_ID = 1002
-    private const val RELEASES_URL = "https://api.github.com/repos/nikhilmenghani/nikTv/releases?per_page=30"
-    private const val LATEST_URL = "https://api.github.com/repos/nikhilmenghani/nikTv/releases/latest"
+    private const val DEV_VERSION_URL =
+        "https://raw.githubusercontent.com/nikhilmenghani/nikTv/main/dev.txt"
+    private const val RELEASE_VERSION_URL =
+        "https://raw.githubusercontent.com/nikhilmenghani/nikTv/main/release.txt"
+    private const val RELEASE_BY_TAG_URL =
+        "https://api.github.com/repos/nikhilmenghani/nikTv/releases/tags/"
     private const val APK_MIME = "application/vnd.android.package-archive"
+    private val VERSION_PATTERN = Regex("""\\d+\\.\\d+\\.\\d+""")
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableDownloadState = MutableStateFlow<UpdateDownloadState>(UpdateDownloadState.Idle)
@@ -185,18 +191,76 @@ object AppUpdates {
     }
 
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
-        val url = if (BuildConfig.DEBUG) RELEASES_URL else LATEST_URL
-        val response = client.newCall(
-            Request.Builder().url(url).header("Accept", "application/vnd.github+json").build()
-        ).execute()
-        response.use {
-            if (!it.isSuccessful) error("GitHub returned HTTP ${it.code}")
-            val root = Json.parseToJsonElement(it.body?.string().orEmpty())
-            val releases = if (root is JsonArray) root else JsonArray(listOf(root))
-            releases.asSequence().mapNotNull(::parseRelease)
-                .filter { update -> isNewer(update.version, BuildConfig.VERSION_NAME) }
-                .maxWithOrNull { a, b -> compareVersions(a.version, b.version) }
+        val versionFileName = if (BuildConfig.DEBUG) "dev.txt" else "release.txt"
+        val versionFileUrl = if (BuildConfig.DEBUG) DEV_VERSION_URL else RELEASE_VERSION_URL
+
+        val version = fetchText(versionFileUrl).trim()
+
+        require(VERSION_PATTERN.matches(version)) {
+            "$versionFileName must contain a version in x.y.z format; received '$version'"
         }
+
+        if (!isNewer(version, BuildConfig.VERSION_NAME)) {
+            return@withContext null
+        }
+
+        val expectedTag = expectedReleaseTag(version)
+        val expectedAssetName = expectedApkAssetName(version)
+
+        val releaseJson = fetchText(
+            "$RELEASE_BY_TAG_URL$expectedTag",
+            accept = "application/vnd.github+json"
+        )
+
+        val release = Json.parseToJsonElement(releaseJson).jsonObject
+
+        val actualTag =
+            release["tag_name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+
+        if (actualTag != expectedTag) {
+            error(
+                "GitHub release tag mismatch: expected '$expectedTag', " +
+                    "received '$actualTag'"
+            )
+        }
+
+        val prerelease =
+            release["prerelease"]?.jsonPrimitive?.booleanOrNull == true
+
+        if (prerelease != BuildConfig.DEBUG) {
+            val expectedChannel = if (BuildConfig.DEBUG) "development" else "release"
+            error(
+                "GitHub release '$expectedTag' does not belong to the " +
+                    "$expectedChannel update channel"
+            )
+        }
+
+        val assetUrl = release["assets"]
+            ?.jsonArray
+            ?.firstOrNull { asset ->
+                asset.jsonObject["name"]
+                    ?.jsonPrimitive
+                    ?.contentOrNull == expectedAssetName
+            }
+            ?.jsonObject
+            ?.get("browser_download_url")
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?: error(
+                "Release '$expectedTag' does not contain the expected APK " +
+                    "'$expectedAssetName'"
+            )
+
+        val update = UpdateInfo(
+            version = version,
+            downloadUrl = assetUrl
+        )
+
+        check(isUpdateForCurrentChannel(update)) {
+            "Resolved APK URL does not belong to the current update channel"
+        }
+
+        update
     }
 
     @Synchronized
@@ -204,6 +268,10 @@ object AppUpdates {
         ensureInitialized(context)
         require(update.version.isNotBlank()) { "Update version is missing" }
         require(update.downloadUrl.startsWith("https://")) { "Update download URL is invalid" }
+        require(isUpdateForCurrentChannel(update)) {
+            val channel = if (BuildConfig.DEBUG) "debug" else "release"
+            "The requested APK does not belong to the $channel update channel"
+        }
         if (!canWritePublicDownloads(context)) {
             persistPendingUpdate(update)
             throw SecurityException(PUBLIC_DOWNLOADS_PERMISSION_MESSAGE)
@@ -339,6 +407,35 @@ object AppUpdates {
                 error("The downloaded APK is no longer available")
             }
 
+        try {
+            validateDownloadedApk(
+                context = appContext,
+                uri = uri,
+                expectedVersion = candidate.version
+            )
+        } catch (exception: Exception) {
+            val reason =
+                exception.message ?: exception.javaClass.simpleName
+
+            mutableDownloadState.value = UpdateDownloadState.Failed(
+                candidate.downloadId,
+                candidate.version,
+                candidate.downloadUrl,
+                null,
+                "Update APK rejected: $reason"
+            )
+
+            preferences()
+                .edit()
+                .putBoolean(PREF_INSTALL_AFTER_DOWNLOAD, false)
+                .apply()
+
+            throw IllegalStateException(
+                "Update APK rejected: $reason",
+                exception
+            )
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !appContext.packageManager.canRequestPackageInstalls()
         ) {
@@ -453,7 +550,15 @@ object AppUpdates {
             mutableDownloadState.value = UpdateDownloadState.Idle
             return
         }
-        if (!isNewer(version, BuildConfig.VERSION_NAME)) {
+        val restoredUpdate = UpdateInfo(version, url)
+        if (
+            !isNewer(version, BuildConfig.VERSION_NAME) ||
+            !isUpdateForCurrentChannel(restoredUpdate)
+        ) {
+            runCatching { downloadManager().remove(id) }
+                .onFailure {
+                    Log.w(TAG, "Could not remove stale/cross-channel download $id", it)
+                }
             clearDownloadMetadata()
             mutableDownloadState.value = UpdateDownloadState.Idle
             return
@@ -587,7 +692,9 @@ object AppUpdates {
             }
             .onFailure { exception ->
                 Log.w(TAG, "Could not open the installer automatically", exception)
-                notifyReadyToInstall(ready.version)
+                if (mutableDownloadState.value is UpdateDownloadState.Ready) {
+                    notifyReadyToInstall(ready.version)
+                }
             }
     }
 
@@ -599,12 +706,14 @@ object AppUpdates {
         val prefs = preferences()
         val version = prefs.getString(PREF_PENDING_VERSION, null).orEmpty()
         val url = prefs.getString(PREF_PENDING_URL, null).orEmpty()
+        val restoredUpdate = UpdateInfo(version, url)
         mutablePendingUpdate.value = if (
             version.isNotBlank() &&
             url.startsWith("https://") &&
-            isNewer(version, BuildConfig.VERSION_NAME)
+            isNewer(version, BuildConfig.VERSION_NAME) &&
+            isUpdateForCurrentChannel(restoredUpdate)
         ) {
-            UpdateInfo(version, url)
+            restoredUpdate
         } else {
             preferences().edit().remove(PREF_PENDING_VERSION).remove(PREF_PENDING_URL).apply()
             null
@@ -629,23 +738,129 @@ object AppUpdates {
         if (!initialized) initialize(context)
     }
 
-    private fun parseRelease(element: JsonElement): UpdateInfo? {
-        val obj = element as? JsonObject ?: return null
-        val prerelease = obj["prerelease"]?.jsonPrimitive?.booleanOrNull == true
-        val tag = obj["tag_name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        if (BuildConfig.DEBUG && (!prerelease || !tag.startsWith("dev-v"))) return null
-        if (!BuildConfig.DEBUG && prerelease) return null
-        val version = tag.removePrefix("dev-v").removePrefix("v")
-        val asset = obj["assets"]?.jsonArray?.firstOrNull {
-            it.jsonObject["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk", true) == true
-        }?.jsonObject?.get("browser_download_url")?.jsonPrimitive?.contentOrNull ?: return null
-        return UpdateInfo(version, asset)
+    private fun fetchText(
+        url: String,
+        accept: String? = null
+    ): String {
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .header("Cache-Control", "no-cache")
+
+        if (!accept.isNullOrBlank()) {
+            requestBuilder.header("Accept", accept)
+        }
+
+        val response = client.newCall(requestBuilder.build()).execute()
+
+        response.use {
+            if (!it.isSuccessful) {
+                error("GitHub returned HTTP ${it.code} for $url")
+            }
+
+            return it.body?.string().orEmpty()
+        }
+    }
+
+    private fun expectedReleaseTag(version: String): String =
+        if (BuildConfig.DEBUG) {
+            "dev-v$version"
+        } else {
+            "v$version"
+        }
+
+    private fun expectedApkAssetName(version: String): String =
+        "NikTV-${expectedReleaseTag(version)}.apk"
+
+    private fun isUpdateForCurrentChannel(update: UpdateInfo): Boolean {
+        if (!VERSION_PATTERN.matches(update.version)) {
+            return false
+        }
+
+        return runCatching {
+            val uri = Uri.parse(update.downloadUrl)
+            val expectedTag = expectedReleaseTag(update.version)
+            val expectedAsset = expectedApkAssetName(update.version)
+
+            val expectedPath =
+                "/nikhilmenghani/nikTv/releases/download/" +
+                    "$expectedTag/$expectedAsset"
+
+            uri.scheme.equals("https", ignoreCase = true) &&
+                uri.host.equals("github.com", ignoreCase = true) &&
+                uri.path == expectedPath
+        }.getOrDefault(false)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun validateDownloadedApk(
+        context: Context,
+        uri: Uri,
+        expectedVersion: String
+    ) {
+        val temporaryApk = File.createTempFile(
+            "niktv-update-validation-",
+            ".apk",
+            context.cacheDir
+        )
+
+        try {
+            val input = context.contentResolver.openInputStream(uri)
+                ?: error("Downloaded APK could not be opened")
+
+            input.use { source ->
+                temporaryApk.outputStream().use { destination ->
+                    source.copyTo(destination)
+                }
+            }
+
+            val packageInfo = context.packageManager.getPackageArchiveInfo(
+                temporaryApk.absolutePath,
+                0
+            ) ?: error("Downloaded file is not a valid Android APK")
+
+            val expectedPackage = context.packageName
+            val downloadedPackage = packageInfo.packageName
+
+            if (downloadedPackage != expectedPackage) {
+                error(
+                    "APK package mismatch. Expected '$expectedPackage' " +
+                        "but downloaded '$downloadedPackage'"
+                )
+            }
+
+            val downloadedVersion = packageInfo.versionName.orEmpty()
+
+            if (
+                downloadedVersion.isBlank() ||
+                compareAppVersions(
+                    downloadedVersion,
+                    expectedVersion
+                ) != 0
+            ) {
+                error(
+                    "APK version mismatch. Expected '$expectedVersion' " +
+                        "but downloaded '$downloadedVersion'"
+                )
+            }
+
+            Log.i(
+                TAG,
+                "Validated update APK: " +
+                    "package=$downloadedPackage, " +
+                    "version=$downloadedVersion"
+            )
+        } finally {
+            if (!temporaryApk.delete()) {
+                Log.d(
+                    TAG,
+                    "Could not immediately delete temporary APK validation file"
+                )
+            }
+        }
     }
 
     private fun isNewer(candidate: String, installed: String) =
         compareAppVersions(candidate, installed) > 0
-
-    private fun compareVersions(a: String, b: String): Int = compareAppVersions(a, b)
 
     internal fun compareAppVersions(a: String, b: String): Int {
         // Build/channel labels (for example `dev-v` and `-dev`) do not change the
@@ -720,8 +935,15 @@ object AppUpdates {
     }
 
     private fun apkFileName(version: String): String {
-        val safeVersion = version.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "update" }
-        return "NikTV-$safeVersion.apk"
+        val safeVersion =
+            version.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                .ifBlank { "update" }
+
+        return if (BuildConfig.DEBUG) {
+            "NikTV-dev-v$safeVersion.apk"
+        } else {
+            "NikTV-v$safeVersion.apk"
+        }
     }
 
     private val client = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
