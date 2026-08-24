@@ -1676,7 +1676,7 @@ private fun ModernBrowseScreen(
             if (!isWide) item("modern-top", span = gridSpan) {
                 ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings, openProfileSwitcher)
             }
-            item("modern-hero", span = gridSpan) {
+            if (!home) item("modern-hero", span = gridSpan) {
                 val recent = state.recentlyPlayed.firstOrNull()
                 when {
                     !home && state.selectedType == CatalogType.LIVE_TV ->
@@ -1754,6 +1754,22 @@ private fun ModernBrowseScreen(
                 }
             }
             if (home) {
+                val recents = state.recentlyPlayed.filter {
+                    it.kind == FavoriteKind.MOVIE || it.kind == FavoriteKind.SERIES
+                }
+                if (recents.isNotEmpty()) item("continue", span = gridSpan) {
+                    ModernRail(
+                        "Continue Watching", recents, { it.media }, openRecent,
+                        aspectRatio = { 2f / 3f },
+                        progress = { recent -> state.playbackProgress.progressFor(recent.lastPlayed ?: recent.media) },
+                        remove = removeRecent,
+                        isFavorite = { recent -> state.favorites.any { it.kind == recent.kind && it.media.id == recent.media.id } },
+                        toggleFavorite = { recent ->
+                            toggleFavoriteEntry(FavoriteItem(recent.kind, recent.media, recent.series))
+                        }
+                    )
+                }
+
                 val showTrendingMovies =
                     state.trendingMoviesLoading ||
                         state.trendingMovies.isNotEmpty() ||
@@ -1813,27 +1829,17 @@ private fun ModernBrowseScreen(
                             } else episode
                         },
                         open = { (watched, episode) -> openWatchedEpisode(watched, episode) },
+                        aspectRatio = { 2f / 3f },
                         progress = { (_, episode) -> state.playbackProgress.progressFor(episode) },
                         subtitle = { (watched, _) -> watched.series.title },
                         titleMaxLines = Int.MAX_VALUE,
                         subtitleMaxLines = 2
                     )
                 }
-                val recents = state.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE }
-                if (recents.isNotEmpty()) item("continue", span = gridSpan) {
-                    ModernRail(
-                        "Continue Watching", recents, { it.media }, openRecent,
-                        progress = { recent -> state.playbackProgress.progressFor(recent.lastPlayed ?: recent.media) },
-                        remove = removeRecent,
-                        isFavorite = { recent -> state.favorites.any { it.kind == recent.kind && it.media.id == recent.media.id } },
-                        toggleFavorite = { recent ->
-                            toggleFavoriteEntry(FavoriteItem(recent.kind, recent.media, recent.series))
-                        }
-                    )
-                }
                 if (state.favorites.isNotEmpty()) item("my-list", span = gridSpan) {
                     ModernRail(
                         "My List", state.favorites, { it.media }, openFavorite,
+                        aspectRatio = { 2f / 3f },
                         subtitle = { favorite -> listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle).joinToString(" · ") },
                         titleMaxLines = Int.MAX_VALUE,
                         subtitleMaxLines = 2
@@ -1844,6 +1850,7 @@ private fun ModernBrowseScreen(
                     if (entries.isNotEmpty()) item("recent-${kind.name}", span = gridSpan) {
                         ModernRail(
                             "Recently Played ${kind.sectionTitle()}", entries, { it.media }, openRecent,
+                            aspectRatio = { 2f / 3f },
                             remove = removeRecent,
                             isFavorite = { recent -> state.favorites.any { it.kind == recent.kind && it.media.id == recent.media.id } },
                             toggleFavorite = { recent ->
@@ -2854,7 +2861,12 @@ private fun DashboardMovieRail(
                 ModernRail(
                     title = title,
                     entries = movies,
-                    media = { it.tmdb.asMediaItem() },
+                    media = { entry ->
+                        entry.tmdb.asMediaItem().let { tmdbMedia ->
+                            if (!tmdbMedia.logo.isNullOrBlank()) tmdbMedia
+                            else tmdbMedia.copy(logo = entry.iptv?.logo)
+                        }
+                    },
                     open = open,
                     aspectRatio = { 2f / 3f },
                     subtitle = { entry ->
@@ -2902,7 +2914,12 @@ private fun DashboardSeriesRail(
                 ModernRail(
                     title = "Top 10 Trending Series",
                     entries = series,
-                    media = { it.tmdb.asMediaItem() },
+                    media = { entry ->
+                        entry.tmdb.asMediaItem().let { tmdbMedia ->
+                            if (!tmdbMedia.logo.isNullOrBlank()) tmdbMedia
+                            else tmdbMedia.copy(logo = entry.iptv?.logo)
+                        }
+                    },
                     open = open,
                     aspectRatio = { 2f / 3f },
                     subtitle = { entry ->

@@ -3,7 +3,7 @@ package com.nikhil.niktv.data
 import android.content.Context
 import coil3.imageLoader
 import coil3.request.ImageRequest
-import coil3.request.crossfade
+import coil3.request.CachePolicy
 import com.nikhil.niktv.model.MediaItem
 import java.security.MessageDigest
 import kotlinx.coroutines.async
@@ -15,7 +15,9 @@ fun artworkRequest(context: Context, item: MediaItem): ImageRequest =
         .data(item.logo)
         .memoryCacheKey(item.artworkCacheKey())
         .diskCacheKey(item.artworkCacheKey())
-        .crossfade(220)
+        .memoryCachePolicy(CachePolicy.ENABLED)
+        .diskCachePolicy(CachePolicy.ENABLED)
+        .networkCachePolicy(CachePolicy.ENABLED)
         .build()
 
 suspend fun prefetchArtwork(context: Context, items: List<MediaItem>, limit: Int = 8) = coroutineScope {

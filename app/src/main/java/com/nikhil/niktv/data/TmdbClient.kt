@@ -105,6 +105,35 @@ class TmdbClient {
     val configured: Boolean
         get() = readAccessToken.isNotBlank() || apiKey.isNotBlank()
 
+    suspend fun artworkFor(item: MediaItem, type: com.nikhil.niktv.model.CatalogType): String? =
+        withContext(Dispatchers.IO) {
+            if (!configured) return@withContext null
+            val movie = type == com.nikhil.niktv.model.CatalogType.MOVIES
+            val series = type == com.nikhil.niktv.model.CatalogType.SERIES
+            if (!movie && !series) return@withContext null
+
+            item.externalTmdbId?.let { tmdbId ->
+                val root = execute(if (movie) "/3/movie/$tmdbId" else "/3/tv/$tmdbId", emptyMap())
+                val poster = root["poster_path"]?.jsonPrimitive?.contentOrNull
+                val backdrop = root["backdrop_path"]?.jsonPrimitive?.contentOrNull
+                return@withContext poster?.let { "$IMAGE_BASE_URL$it" }
+                    ?: backdrop?.let { "$BACKDROP_BASE_URL$it" }
+            }
+
+            val queryTitle = item.title.tmdbLookupTitle()
+            if (queryTitle.isBlank()) return@withContext null
+            val results = if (movie) {
+                fetchMovies("/3/search/movie", 8, mapOf("query" to queryTitle))
+                    .map { it.title to (it.posterUrl ?: it.backdropUrl) }
+            } else {
+                fetchSeries("/3/search/tv", 8, mapOf("query" to queryTitle))
+                    .map { it.name to (it.posterUrl ?: it.backdropUrl) }
+            }
+            results.firstOrNull { (title, url) ->
+                url != null && title.tmdbLookupTitle() == queryTitle
+            }?.second
+        }
+
     suspend fun trendingMovies(
         limit: Int = 10,
         forceRefresh: Boolean = false
@@ -387,6 +416,16 @@ private fun matchTmdbTitle(
         .maxByOrNull { (_, score) -> score }
         ?.first
 }
+
+private fun String.tmdbLookupTitle(): String =
+    Normalizer.normalize(lowercase(), Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+        .replace(Regex("\\b(?:19|20)\\d{2}\\b"), " ")
+        .replace(Regex("\\([^)]*(?:english|hindi|tamil|telugu|season|complete)[^)]*\\)"), " ")
+        .replace(Regex("\\b(?:4k|uhd|hdr|2160p|1080p|720p|english|multi|dubbed)\\b"), " ")
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .trim()
+        .replace(Regex("\\s+"), " ")
 
 private fun String.mediaMatchKey(): String =
     Normalizer.normalize(lowercase(), Normalizer.Form.NFD)

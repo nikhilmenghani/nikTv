@@ -19,6 +19,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 data class NikTvState(
     val profiles: List<PortalProfile> = emptyList(),
@@ -214,7 +217,63 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         withTimeoutOrNull(5_000L) { prefetchArtwork(getApplication(), homeArtwork, limit = 8) }
         refreshWatchedSeriesIfDue()
         loadDashboardDiscovery()
+        viewModelScope.launch { enrichHomeArtwork(session.profile.cacheKey()) }
         updateProfileLoad(1f, "Opening dashboard…")
+    }
+
+    private suspend fun enrichHomeArtwork(profileKey: String) = coroutineScope {
+        if (!tmdb.configured || _state.value.session?.profile?.cacheKey() != profileKey) {
+            return@coroutineScope
+        }
+
+        data class HomeArtworkTarget(val kind: FavoriteKind, val media: MediaItem)
+
+        val targets = (
+            _state.value.recentlyPlayed.map { HomeArtworkTarget(it.kind, it.media) } +
+                _state.value.favorites.map { HomeArtworkTarget(it.kind, it.media) }
+            )
+            .filter { it.kind == FavoriteKind.MOVIE || it.kind == FavoriteKind.SERIES }
+            .distinctBy { "${it.kind}:${it.media.id}" }
+            .take(8)
+
+        val enriched = targets.map { target ->
+            async {
+                val type = if (target.kind == FavoriteKind.MOVIE) CatalogType.MOVIES else CatalogType.SERIES
+                val tmdbLogo = runCatching { tmdb.artworkFor(target.media, type) }.getOrNull()
+                target to tmdbLogo
+            }
+        }.awaitAll().mapNotNull { (target, logo) ->
+            logo?.let { "${target.kind}:${target.media.id}" to it }
+        }.toMap()
+
+        if (enriched.isEmpty() || _state.value.session?.profile?.cacheKey() != profileKey) {
+            return@coroutineScope
+        }
+
+        fun MediaItem.withPreferredArtwork(kind: FavoriteKind): MediaItem =
+            enriched["$kind:$id"]?.let { copy(logo = it) } ?: this
+
+        val scopedRecent = _state.value.recentlyPlayed.map { recent ->
+            recent.copy(media = recent.media.withPreferredArtwork(recent.kind))
+        }
+        val scopedFavorites = _state.value.favorites.map { favorite ->
+            favorite.copy(media = favorite.media.withPreferredArtwork(favorite.kind))
+        }
+
+        allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + scopedRecent
+        allFavorites = allFavorites.filterNot { it.profileKey == profileKey } + scopedFavorites
+        store.saveRecentlyPlayed(allRecentlyPlayed)
+        store.saveFavorites(allFavorites)
+        _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profileKey) current
+            else current.copy(recentlyPlayed = scopedRecent, favorites = scopedFavorites)
+        }
+
+        prefetchArtwork(
+            getApplication(),
+            (scopedRecent.map { it.media } + scopedFavorites.map { it.media }),
+            limit = 12
+        )
     }
 
     private suspend fun warmVisibleArtwork(progress: Float, message: String) {
