@@ -8,6 +8,11 @@ import org.junit.Test
 
 class AppUpdatesFormattingTest {
     @Test
+    fun updateManifestVersionAcceptsThreeNumericComponents() {
+        assertTrue(AppUpdates.isValidUpdateVersion("0.1.35"))
+    }
+
+    @Test
     fun downloadPercentHandlesKnownUnknownAndOversizedProgress() {
         assertNull(downloadPercent(50, null))
         assertNull(downloadPercent(50, 0))

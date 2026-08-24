@@ -42,7 +42,7 @@ data class NikTvState(
     val thrillerMovies: List<TrendingMovie> = emptyList(),
     val thrillerMoviesLoading: Boolean = false,
     val thrillerMoviesError: String? = null,
-    val tmdbHomeSections: List<TmdbHomeSection> = TmdbHomeSection.defaults,
+    val tmdbSectionsBySurface: Map<DashboardSurface, List<TmdbHomeSection>> = emptyMap(),
     val tmdbHomeMovieRows: Map<TmdbHomeSection, List<TrendingMovie>> = emptyMap(),
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
@@ -108,6 +108,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
     private var browseLayouts: Map<String, BrowseLayout> = emptyMap()
+    private var tmdbDashboardConfigs: Map<String, List<TmdbHomeSection>> = emptyMap()
     private val watchRefreshMutex = Mutex()
 
     init {
@@ -132,8 +133,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val key = _state.value.session?.profile?.cacheKey()
             _state.update { it.copy(browseLayout = key?.let(layouts::get) ?: BrowseLayout.SECTIONS) }
         } }
-        viewModelScope.launch { store.tmdbHomeSections.collect { sections ->
-            _state.update { it.copy(tmdbHomeSections = sections) }
+        viewModelScope.launch { store.tmdbDashboardSections.collect { stored ->
+            tmdbDashboardConfigs = stored
+            val profileKey = _state.value.session?.profile?.cacheKey()
+            val sections = if (profileKey == null) emptyMap() else DashboardSurface.entries.associateWith { surface ->
+                stored["$profileKey|${surface.name}"].orEmpty()
+            }
+            _state.update { it.copy(tmdbSectionsBySurface = sections) }
             if (_state.value.session != null) loadConfiguredTmdbHomeSections()
         } }
         viewModelScope.launch { store.watchedSeries.collect { entries ->
@@ -298,6 +304,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             recentlyPlayed = if (profileKey == null) emptyList() else allRecentlyPlayed.filter { entry -> entry.profileKey == profileKey },
             watchedSeries = if (profileKey == null) emptyList() else allWatchedSeries.filter { entry -> entry.profileKey == profileKey },
             browseLayout = profileKey?.let(browseLayouts::get) ?: BrowseLayout.SECTIONS
+            ,tmdbSectionsBySurface = if (profileKey == null) emptyMap() else DashboardSurface.entries.associateWith { surface ->
+                tmdbDashboardConfigs["$profileKey|${surface.name}"].orEmpty()
+            }
         ) }
     }
 
@@ -632,19 +641,28 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         loadConfiguredTmdbHomeSections(forceRefresh)
     }
 
-    fun setTmdbHomeSections(sections: List<TmdbHomeSection>) = viewModelScope.launch {
-        store.setTmdbHomeSections(sections)
+    fun setTmdbSections(surface: DashboardSurface, sections: List<TmdbHomeSection>) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        store.setTmdbDashboardSections(profileKey, surface, sections)
     }
 
-    fun resetTmdbHomeSections() = viewModelScope.launch {
-        store.resetTmdbHomeSections()
+    fun resetScreenConfiguration(surface: DashboardSurface) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        store.setTmdbDashboardSections(profileKey, surface, emptyList())
+        val type = when (surface) {
+            DashboardSurface.LIVE_TV -> CatalogType.LIVE_TV
+            DashboardSurface.MOVIES -> CatalogType.MOVIES
+            DashboardSurface.SERIES -> CatalogType.SERIES
+            DashboardSurface.HOME -> null
+        }
+        if (type != null) store.saveCategoryFilter(profileKey, type, emptyList())
     }
 
     private fun loadConfiguredTmdbHomeSections(forceRefresh: Boolean = false) {
         val snapshot = _state.value
         val profileKey = snapshot.session?.profile?.cacheKey() ?: return
         if (!tmdb.configured) return
-        snapshot.tmdbHomeSections.filterNot { it.series }.forEach { section ->
+        snapshot.tmdbSectionsBySurface.values.flatten().distinct().filterNot { it.series }.forEach { section ->
             if (!forceRefresh && snapshot.tmdbHomeMovieRows[section].orEmpty().isNotEmpty()) return@forEach
             viewModelScope.launch {
                 val rows = runCatching {

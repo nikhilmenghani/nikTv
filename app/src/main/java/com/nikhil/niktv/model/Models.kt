@@ -174,6 +174,8 @@ enum class SeriesStartSeason { FIRST, LAST }
 @Serializable
 enum class BrowseLayout { SECTIONS, GRID, LIST }
 
+enum class DashboardSurface { HOME, LIVE_TV, MOVIES, SERIES }
+
 enum class TmdbHomeSection(val title: String, val series: Boolean = false) {
     TRENDING_MOVIES("Trending Movies"),
     TRENDING_SERIES("Trending Series", series = true),
@@ -187,9 +189,6 @@ enum class TmdbHomeSection(val title: String, val series: Boolean = false) {
     FAMILY("Family"),
     DOCUMENTARY("Documentary");
 
-    companion object {
-        val defaults = listOf(TRENDING_MOVIES, TRENDING_SERIES, TOP_RATED_MOVIES, HOLLYWOOD, BOLLYWOOD)
-    }
 }
 
 @Serializable

@@ -139,7 +139,7 @@ object AppUpdates {
     private const val RELEASE_BY_TAG_URL =
         "https://api.github.com/repos/nikhilmenghani/nikTv/releases/tags/"
     private const val APK_MIME = "application/vnd.android.package-archive"
-    private val VERSION_PATTERN = Regex("""\\d+\\.\\d+\\.\\d+""")
+    private val VERSION_PATTERN = Regex("""\d+\.\d+\.\d+""")
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableDownloadState = MutableStateFlow<UpdateDownloadState>(UpdateDownloadState.Idle)
@@ -196,7 +196,7 @@ object AppUpdates {
 
         val version = fetchText(versionFileUrl).trim()
 
-        require(VERSION_PATTERN.matches(version)) {
+        require(isValidUpdateVersion(version)) {
             "$versionFileName must contain a version in x.y.z format; received '$version'"
         }
 
@@ -772,7 +772,7 @@ object AppUpdates {
         "NikTV-${expectedReleaseTag(version)}.apk"
 
     private fun isUpdateForCurrentChannel(update: UpdateInfo): Boolean {
-        if (!VERSION_PATTERN.matches(update.version)) {
+        if (!isValidUpdateVersion(update.version)) {
             return false
         }
 
@@ -861,6 +861,9 @@ object AppUpdates {
 
     private fun isNewer(candidate: String, installed: String) =
         compareAppVersions(candidate, installed) > 0
+
+    internal fun isValidUpdateVersion(version: String): Boolean =
+        VERSION_PATTERN.matches(version)
 
     internal fun compareAppVersions(a: String, b: String): Int {
         // Build/channel labels (for example `dev-v` and `-dev`) do not change the

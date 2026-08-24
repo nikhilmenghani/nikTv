@@ -406,8 +406,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,removeProfile = vm::removeProfile
                     ,openCategoryManager = vm::openCategoryManager
                     ,loadMoreCategorySection = vm::loadMoreCategorySection
-                    ,setTmdbHomeSections = vm::setTmdbHomeSections
-                    ,resetTmdbHomeSections = vm::resetTmdbHomeSections
+                    ,setTmdbSections = vm::setTmdbSections
+                    ,resetScreenConfiguration = vm::resetScreenConfiguration
                 )
             }
             if (state.categoryManagerOpen) {
@@ -1074,8 +1074,8 @@ private fun CatalogScreen(
     removeProfile: (PortalProfile) -> Unit,
     openCategoryManager: (CatalogType) -> Unit,
     loadMoreCategorySection: (Category) -> Unit,
-    setTmdbHomeSections: (List<TmdbHomeSection>) -> Unit,
-    resetTmdbHomeSections: () -> Unit
+    setTmdbSections: (DashboardSurface, List<TmdbHomeSection>) -> Unit,
+    resetScreenConfiguration: (DashboardSurface) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -1183,8 +1183,8 @@ private fun CatalogScreen(
                     refreshCatalog = refreshCatalog,
                     openCategoryManager = openCategoryManager,
                     loadMoreCategorySection = loadMoreCategorySection,
-                    setTmdbHomeSections = setTmdbHomeSections,
-                    resetTmdbHomeSections = resetTmdbHomeSections,
+                    setTmdbSections = setTmdbSections,
+                    resetScreenConfiguration = resetScreenConfiguration,
                     loadMoreCatalog = loadMoreCatalog
                 )
             }
@@ -1265,14 +1265,22 @@ private fun ModernBrowseScreen(
     refreshCatalog: () -> Unit,
     openCategoryManager: (CatalogType) -> Unit,
     loadMoreCategorySection: (Category) -> Unit,
-    setTmdbHomeSections: (List<TmdbHomeSection>) -> Unit,
-    resetTmdbHomeSections: () -> Unit,
+    setTmdbSections: (DashboardSurface, List<TmdbHomeSection>) -> Unit,
+    resetScreenConfiguration: (DashboardSurface) -> Unit,
     loadMoreCatalog: () -> Unit
 ) {
     val home = state.homeOpen
     val layoutToggleRequester = remember { FocusRequester() }
     val firstChannelRequester = remember { FocusRequester() }
     var tmdbSetupOpen by rememberSaveable { mutableStateOf(false) }
+    var resetConfirmationOpen by rememberSaveable { mutableStateOf(false) }
+    val dashboardSurface = if (home) DashboardSurface.HOME else when (state.selectedType) {
+        CatalogType.LIVE_TV -> DashboardSurface.LIVE_TV
+        CatalogType.MOVIES -> DashboardSurface.MOVIES
+        CatalogType.SERIES -> DashboardSurface.SERIES
+        CatalogType.RADIO -> DashboardSurface.LIVE_TV
+    }
+    val selectedTmdbSections = state.tmdbSectionsBySurface[dashboardSurface].orEmpty()
 
     // MOVIE_DASHBOARD_PAGINATION_FOCUS_V2
     //
@@ -1752,6 +1760,14 @@ private fun ModernBrowseScreen(
                                 leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(16.dp)) }
                             )
                         }
+                        item {
+                            AssistChip(
+                                onClick = { resetConfirmationOpen = true },
+                                modifier = Modifier.remoteFocusFrame(CircleShape),
+                                label = { Text("Reset to defaults") },
+                                leadingIcon = { Icon(Icons.Default.RestartAlt, null, Modifier.size(16.dp)) }
+                            )
+                        }
                         items(state.categories, key = { it.id }) { category ->
                             val selected = state.selectedCategory?.id == category.id
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1775,11 +1791,11 @@ private fun ModernBrowseScreen(
                         "Choose IPTV categories and TMDB discovery rows",
                         action = {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { openCategoryManager(CatalogType.MOVIES) }, modifier = Modifier.remoteFocusFrame()) {
-                                    Icon(Icons.Default.Tune, null); Spacer(Modifier.width(6.dp)); Text("IPTV categories")
-                                }
                                 TextButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.remoteFocusFrame()) {
                                     Icon(Icons.Default.DashboardCustomize, null); Spacer(Modifier.width(6.dp)); Text("TMDB sections")
+                                }
+                                TextButton(onClick = { resetConfirmationOpen = true }, modifier = Modifier.remoteFocusFrame()) {
+                                    Icon(Icons.Default.RestartAlt, null); Spacer(Modifier.width(6.dp)); Text("Reset to defaults")
                                 }
                             }
                         }
@@ -1801,15 +1817,15 @@ private fun ModernBrowseScreen(
                     )
                 }
 
-                val showTrendingMovies = TmdbHomeSection.TRENDING_MOVIES in state.tmdbHomeSections && (
+                val showTrendingMovies = TmdbHomeSection.TRENDING_MOVIES in selectedTmdbSections && (
                     state.trendingMoviesLoading ||
                         state.trendingMovies.isNotEmpty() ||
                         state.trendingMoviesError != null)
-                val showTrendingSeries = TmdbHomeSection.TRENDING_SERIES in state.tmdbHomeSections && (
+                val showTrendingSeries = TmdbHomeSection.TRENDING_SERIES in selectedTmdbSections && (
                     state.trendingSeriesLoading ||
                         state.trendingSeries.isNotEmpty() ||
                         state.trendingSeriesError != null)
-                val showThrillerMovies = TmdbHomeSection.THRILLER in state.tmdbHomeSections && (
+                val showThrillerMovies = TmdbHomeSection.THRILLER in selectedTmdbSections && (
                     state.thrillerMoviesLoading ||
                         state.thrillerMovies.isNotEmpty() ||
                         state.thrillerMoviesError != null)
@@ -1930,26 +1946,34 @@ private fun ModernBrowseScreen(
                         title = state.selectedType.title,
                         subtitle = "${state.categories.take(10).size} dashboard categories · up to 10",
                         action = {
-                            TextButton(
-                                onClick = { openCategoryManager(state.selectedType) },
-                                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
-                            ) {
-                                Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Choose categories")
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                TextButton(onClick = { openCategoryManager(state.selectedType) }, modifier = Modifier.remoteFocusFrame()) {
+                                    Icon(Icons.Default.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Categories")
+                                }
+                                if (dashboardSurface != DashboardSurface.LIVE_TV) {
+                                    TextButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.remoteFocusFrame()) {
+                                        Icon(Icons.Default.DashboardCustomize, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("TMDB")
+                                    }
+                                }
+                                TextButton(onClick = { resetConfirmationOpen = true }, modifier = Modifier.remoteFocusFrame()) {
+                                    Icon(Icons.Default.RestartAlt, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Reset to defaults")
+                                }
                             }
                         }
                     )
                 }
 
-                state.tmdbHomeSections
-                    .filterNot { it in setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES, TmdbHomeSection.THRILLER) }
-                    .forEach { section ->
+                selectedTmdbSections.filterNot { it.series }.forEach { section ->
                         val row = state.tmdbHomeMovieRows[section].orEmpty()
                         if (row.isNotEmpty()) item("home-tmdb-${section.name}", span = gridSpan) {
                             DashboardMovieRail(section.title, row, false, null, openTrendingMovie)
                         }
                     }
+                if (TmdbHomeSection.TRENDING_SERIES in selectedTmdbSections && state.trendingSeries.isNotEmpty()) {
+                    item("screen-tmdb-trending-series", span = gridSpan) {
+                        DashboardSeriesRail(state.trendingSeries, false, null, openTrendingSeries)
+                    }
+                }
                 state.categories.forEach { category ->
                     val sectionItems = sectionCache?.itemsByCategory?.get(category.id).orEmpty()
                     if (sectionItems.isNotEmpty()) {
@@ -2383,13 +2407,25 @@ private fun ModernBrowseScreen(
     }
     if (tmdbSetupOpen) {
         TmdbHomeSectionsDialog(
-            selected = state.tmdbHomeSections,
+            selected = selectedTmdbSections,
+            surface = dashboardSurface,
             close = { tmdbSetupOpen = false },
             save = {
-                setTmdbHomeSections(it)
+                setTmdbSections(dashboardSurface, it)
                 tmdbSetupOpen = false
-            },
-            reset = resetTmdbHomeSections
+            }
+        )
+    }
+    if (resetConfirmationOpen) {
+        ProjectCardConfirmationDialog(
+            title = "Reset ${dashboardSurface.displayTitle()}?",
+            message = "This clears every IPTV and TMDB selection for this screen so you can configure it again from nothing.",
+            confirmLabel = "Reset screen",
+            close = { resetConfirmationOpen = false },
+            confirm = {
+                resetScreenConfiguration(dashboardSurface)
+                resetConfirmationOpen = false
+            }
         )
     }
 }
@@ -5412,17 +5448,29 @@ private fun SearchContentType.favoriteKind() = when (this) {
 @Composable
 private fun TmdbHomeSectionsDialog(
     selected: List<TmdbHomeSection>,
+    surface: DashboardSurface,
     close: () -> Unit,
-    save: (List<TmdbHomeSection>) -> Unit,
-    reset: () -> Unit
+    save: (List<TmdbHomeSection>) -> Unit
 ) {
     var choices by remember(selected) { mutableStateOf(selected.toSet()) }
-    AlertDialog(
-        onDismissRequest = close,
-        title = { Text("TMDB Home sections") },
-        text = {
+    val available = remember(surface) {
+        when (surface) {
+            DashboardSurface.HOME -> TmdbHomeSection.entries
+            DashboardSurface.MOVIES -> TmdbHomeSection.entries.filterNot { it.series }
+            DashboardSurface.SERIES -> TmdbHomeSection.entries.filter { it.series }
+            DashboardSurface.LIVE_TV -> emptyList()
+        }
+    }
+    Dialog(onDismissRequest = close) {
+        Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF181818), modifier = Modifier.widthIn(max = 760.dp)) {
+            Column {
+                Column(Modifier.padding(24.dp)) {
+                    Text("${surface.displayTitle()} · TMDB sections", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Only this screen is affected.", color = Color.Gray)
+                    Spacer(Modifier.height(16.dp))
             LazyColumn(Modifier.heightIn(max = 520.dp)) {
-                items(TmdbHomeSection.entries, key = { it.name }) { section ->
+                items(available, key = { it.name }) { section ->
                     val checked = section in choices
                     Surface(
                         onClick = { choices = if (checked) choices - section else choices + section },
@@ -5440,22 +5488,55 @@ private fun TmdbHomeSectionsDialog(
                     Spacer(Modifier.height(4.dp))
                 }
             }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = {
-                    choices = TmdbHomeSection.defaults.toSet()
-                    reset()
-                }, modifier = Modifier.remoteFocusFrame()) { Text("Reset defaults") }
+                }
+                HorizontalDivider()
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { choices = emptySet() }, modifier = Modifier.remoteFocusFrame()) { Text("Clear selections") }
                 TextButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
-            }
-        },
-        confirmButton = {
-            Button(onClick = { save(TmdbHomeSection.entries.filter { it in choices }) }, modifier = Modifier.remoteFocusFrame()) {
+                Spacer(Modifier.width(8.dp))
+            Button(onClick = { save(available.filter { it in choices }) }, modifier = Modifier.remoteFocusFrame()) {
                 Text("Apply & Close")
             }
+                }
+            }
         }
-    )
+    }
+}
+
+private fun DashboardSurface.displayTitle() = when (this) {
+    DashboardSurface.HOME -> "Home"
+    DashboardSurface.LIVE_TV -> "Live TV"
+    DashboardSurface.MOVIES -> "Movies"
+    DashboardSurface.SERIES -> "Series"
+}
+
+@Composable
+private fun ProjectCardConfirmationDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    close: () -> Unit,
+    confirm: () -> Unit
+) {
+    Dialog(onDismissRequest = close) {
+        Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF181818), modifier = Modifier.widthIn(max = 620.dp)) {
+            Column {
+                Column(Modifier.padding(24.dp)) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+                    Text(message, color = Color.LightGray)
+                }
+                HorizontalDivider()
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = confirm, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914))) {
+                        Text(confirmLabel)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -5814,7 +5895,7 @@ private fun CategoryManagerDialog(
                         }
                     }
                     CategoryDialogActionButton(
-                        text = "Reset defaults",
+                        text = "Select first 10",
                         onClick = { selectAll(type) },
                         modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
                             left = searchRequester
