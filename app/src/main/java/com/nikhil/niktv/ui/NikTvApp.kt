@@ -442,8 +442,33 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     state = state,
                     close = vm::closeCategoryManager,
                     setType = vm::setCategoryManagerType,
-                    setFilter = { type, list -> vm.setCategoryFilter(type, list) }
+                    applyFilters = vm::applyCategoryFilters
                 )
+            }
+            if (state.feedRefreshing) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.88f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            state.feedRefreshMessage,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White
+                        )
+                        LinearProgressIndicator(Modifier.widthIn(min = 260.dp, max = 520.dp))
+                        Text(
+                            "Loading your selected sections",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.LightGray
+                        )
+                    }
+                }
             }
             if (state.loading && state.profileLoadProgress == null) {
                 if (state.session == null) {
@@ -5985,7 +6010,7 @@ private fun CategoryManagerDialog(
     state: NikTvState,
     close: () -> Unit,
     setType: (CatalogType) -> Unit,
-    setFilter: (CatalogType, List<String>) -> Unit
+    applyFilters: (Map<CatalogType, List<String>>) -> Unit
 ) {
     val type = state.categoryManagerType
     val profile = state.savedProfile
@@ -6092,9 +6117,7 @@ private fun CategoryManagerDialog(
                     }
                     Button(
                         onClick = {
-                            draftSelections.forEach { (catalogType, ids) ->
-                                setFilter(catalogType, ids.toList())
-                            }
+                            applyFilters(draftSelections.mapValues { (_, ids) -> ids.toList() })
                             close()
                         },
                         modifier = Modifier

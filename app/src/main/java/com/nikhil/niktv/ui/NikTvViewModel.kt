@@ -47,6 +47,8 @@ data class NikTvState(
     val tmdbHomeMovieRows: Map<TmdbHomeSection, List<TrendingMovie>> = emptyMap(),
     val tmdbHomeSeriesRows: Map<TmdbHomeSection, List<TrendingSeries>> = emptyMap(),
     val tmdbSectionsLoading: Set<TmdbHomeSection> = emptySet(),
+    val feedRefreshing: Boolean = false,
+    val feedRefreshMessage: String = "Refreshing feed…",
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
     val profileLoadMessage: String = "Preparing profile…",
@@ -108,6 +110,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<NikTvState> = _state.asStateFlow()
     private var allFavorites: List<FavoriteItem> = emptyList()
     private var allRecentlyPlayed: List<RecentItem> = emptyList()
+    private var categoryFilterApplyInProgress = false
     private var allWatchedSeries: List<WatchedSeries> = emptyList()
     private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
@@ -163,7 +166,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             store.categoryFilters.collect { filters ->
                 val snapshot = _state.value
                 val profileKey = snapshot.session?.profile?.cacheKey()
-                val activeFilterChanged = profileKey != null &&
+                val activeFilterChanged = !categoryFilterApplyInProgress && profileKey != null &&
                     snapshot.categoryFilters[filterKey(profileKey, snapshot.selectedType)] !=
                     filters[filterKey(profileKey, snapshot.selectedType)]
                 val raw = snapshot.rawCategoriesByType[snapshot.selectedType] ?: snapshot.categories
@@ -683,9 +686,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // Publish the complete intended configuration immediately, but keep
         // the dashboard covered until every newly required row has settled.
         _state.update { current ->
-            current.copy(tmdbSectionsBySurface = current.tmdbSectionsBySurface + (surface to sections.distinct()))
+            current.copy(
+                tmdbSectionsBySurface = current.tmdbSectionsBySurface + (surface to sections.distinct()),
+                feedRefreshing = true,
+                feedRefreshMessage = "Refreshing ${surface.name.lowercase().replace('_', ' ')} feed…"
+            )
         }
         loadConfiguredTmdbHomeSections()
+        if (_state.value.tmdbSectionsLoading.isEmpty()) {
+            _state.update { it.copy(feedRefreshing = false) }
+        }
         viewModelScope.launch {
             store.setTmdbDashboardSections(profileKey, surface, sections)
         }
@@ -731,7 +741,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     if (current.session?.profile?.cacheKey() != profileKey) current
                     else current.copy(
                         tmdbHomeMovieRows = current.tmdbHomeMovieRows + (section to rows),
-                        tmdbSectionsLoading = current.tmdbSectionsLoading - section
+                        tmdbSectionsLoading = current.tmdbSectionsLoading - section,
+                        feedRefreshing = current.feedRefreshing &&
+                            (current.tmdbSectionsLoading - section).isNotEmpty()
                     )
                 }
             }
@@ -749,7 +761,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     if (current.session?.profile?.cacheKey() != profileKey) current
                     else current.copy(
                         tmdbHomeSeriesRows = current.tmdbHomeSeriesRows + (section to rows),
-                        tmdbSectionsLoading = current.tmdbSectionsLoading - section
+                        tmdbSectionsLoading = current.tmdbSectionsLoading - section,
+                        feedRefreshing = current.feedRefreshing &&
+                            (current.tmdbSectionsLoading - section).isNotEmpty()
                     )
                 }
             }
@@ -1865,6 +1879,63 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun setCategoryFilter(type: CatalogType, enabledCategoryIds: List<String>) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         store.saveCategoryFilter(profileKey, type, enabledCategoryIds.distinct().take(DASHBOARD_CATEGORY_LIMIT))
+    }
+
+    fun applyCategoryFilters(selections: Map<CatalogType, List<String>>) = viewModelScope.launch {
+        val snapshot = _state.value
+        val session = snapshot.session ?: return@launch
+        val profileKey = session.profile.cacheKey()
+        val normalized = selections.mapValues { (_, ids) ->
+            ids.distinct().take(DASHBOARD_CATEGORY_LIMIT)
+        }
+        if (normalized.isEmpty()) return@launch
+
+        _state.update {
+            it.copy(
+                feedRefreshing = true,
+                feedRefreshMessage = "Refreshing ${snapshot.selectedType.title} feed…"
+            )
+        }
+        categoryFilterApplyInProgress = true
+        try {
+            normalized.forEach { (type, ids) ->
+                store.saveCategoryFilter(profileKey, type, ids)
+            }
+
+            val activeIds = normalized[snapshot.selectedType]
+            if (activeIds != null) {
+                val updatedFilters = _state.value.categoryFilters +
+                    (filterKey(profileKey, snapshot.selectedType) to activeIds)
+                val raw = _state.value.rawCategoriesByType[snapshot.selectedType]
+                    ?: _state.value.categories
+                val categories = filterCategories(raw, profileKey, snapshot.selectedType, updatedFilters)
+                val selected = categories.firstOrNull {
+                    it.id == _state.value.selectedCategory?.id
+                } ?: categories.firstOrNull {
+                    snapshot.selectedType != CatalogType.SERIES || it.id != "*"
+                } ?: categories.firstOrNull()
+                _state.update {
+                    it.copy(
+                        categoryFilters = updatedFilters,
+                        categories = categories,
+                        selectedCategory = selected
+                    )
+                }
+
+                if (snapshot.browseLayout == BrowseLayout.SECTIONS) {
+                    loadCategorySections(session, snapshot.selectedType)
+                } else {
+                    loadTypeInternal(
+                        session = session,
+                        type = snapshot.selectedType,
+                        preferredCategoryId = selected?.id
+                    )
+                }
+            }
+        } finally {
+            categoryFilterApplyInProgress = false
+            _state.update { it.copy(feedRefreshing = false) }
+        }
     }
     fun toggleCategoryFilter(type: CatalogType, categoryId: String) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
