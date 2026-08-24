@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -1895,6 +1896,22 @@ private fun ModernBrowseScreen(
                 }
             } else if (state.browseLayout == BrowseLayout.SECTIONS) {
                 val sectionCache = state.browseCachesByType[state.selectedType]
+                item("section-category-controls-${state.selectedType}", span = gridSpan) {
+                    ModernSectionHeader(
+                        title = state.selectedType.title,
+                        subtitle = "${state.categories.take(10).size} dashboard categories · up to 10",
+                        action = {
+                            TextButton(
+                                onClick = { openCategoryManager(state.selectedType) },
+                                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
+                            ) {
+                                Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Choose categories")
+                            }
+                        }
+                    )
+                }
                 state.categories.forEach { category ->
                     val sectionItems = sectionCache?.itemsByCategory?.get(category.id).orEmpty()
                     if (sectionItems.isNotEmpty()) {
@@ -1907,6 +1924,9 @@ private fun ModernBrowseScreen(
                                 aspectRatio = {
                                     if (state.selectedType == CatalogType.LIVE_TV) 16f / 9f else 2f / 3f
                                 },
+                                cardWidth = if (state.selectedType == CatalogType.LIVE_TV) 156.dp else 144.dp,
+                                initialDisplayCount = 10,
+                                maximumDisplayCount = 50,
                                 isFavorite = { item -> state.favorites.any { it.media.id == item.id } },
                                 toggleFavorite = { toggleFavorite(it) }
                             )
@@ -3018,17 +3038,24 @@ private fun <T> ModernRail(
     subtitle: (T) -> String? = { null },
     titleMaxLines: Int = 1,
     subtitleMaxLines: Int = 1,
+    cardWidth: Dp = 180.dp,
+    initialDisplayCount: Int = Int.MAX_VALUE,
+    maximumDisplayCount: Int = Int.MAX_VALUE,
     isFavorite: (T) -> Boolean = { false },
     toggleFavorite: ((T) -> Unit)? = null
 ) {
+    val cappedMaximum = minOf(entries.size, maximumDisplayCount.coerceAtLeast(1))
+    var visibleCount by remember(title, entries.size, initialDisplayCount, maximumDisplayCount) {
+        mutableIntStateOf(minOf(cappedMaximum, initialDisplayCount.coerceAtLeast(1)))
+    }
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
         LazyRow(contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(entries, key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry ->
+            items(entries.take(visibleCount), key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry ->
                 ModernPosterCard(
                     item = media(entry),
                     aspectRatio = aspectRatio(entry),
-                    modifier = Modifier.width(180.dp),
+                    modifier = Modifier.width(cardWidth),
                     progress = progress(entry),
                     onClick = { open(entry) },
                     titleMaxLines = titleMaxLines,
@@ -3044,6 +3071,30 @@ private fun <T> ModernRail(
                             maxLines = subtitleMaxLines,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                }
+            }
+            if (visibleCount < cappedMaximum) {
+                item("more-$title-$visibleCount") {
+                    Surface(
+                        onClick = { visibleCount = minOf(cappedMaximum, visibleCount + 10) },
+                        modifier = Modifier
+                            .width(cardWidth)
+                            .aspectRatio(16f / 9f)
+                            .remoteFocusFrame(RoundedCornerShape(14.dp)),
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF202020)
+                    ) {
+                        Column(
+                            Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(Icons.Default.ArrowForward, null, tint = Color(0xFFE50914))
+                            Spacer(Modifier.height(6.dp))
+                            Text("Load 10 more", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                            Text("$visibleCount of $cappedMaximum", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
@@ -5316,7 +5367,7 @@ private fun CategoryManagerDialog(
     val filterKey = "$profileKey|${type.name}"
     val enabledIds = state.categoryFilters[filterKey]
     val currentEnabledSet = remember(enabledIds, raw) {
-        enabledIds?.toSet() ?: raw.map { it.id }.toSet()
+        enabledIds?.take(10)?.toSet() ?: raw.take(10).map { it.id }.toSet()
     }
     var searchQuery by rememberSaveable(type) { mutableStateOf("") }
     val filteredRaw = remember(raw, searchQuery) {
@@ -5411,6 +5462,11 @@ private fun CategoryManagerDialog(
                         modifier = Modifier
                             .height(48.dp)
                             .focusRequester(applyRequester)
+                            .focusProperties {
+                                left = typeRequesters.getValue(visibleCatalogTypes.last())
+                                right = closeRequester
+                                down = typeRequesters.getValue(type)
+                            }
                             .onFocusChanged { applyFocused = it.isFocused }
                             .border(
                                 if (applyFocused) 3.dp else 0.dp,
@@ -5427,8 +5483,8 @@ private fun CategoryManagerDialog(
                             .size(48.dp)
                             .focusRequester(closeRequester)
                             .focusProperties {
-                                left = typeRequesters.getValue(visibleCatalogTypes.last())
-                                down = searchRequester
+                                left = applyRequester
+                                down = typeRequesters.getValue(type)
                             }
                             .onFocusChanged { closeFocused = it.isFocused }
                             .background(
@@ -5455,7 +5511,7 @@ private fun CategoryManagerDialog(
                                     right = if (index < visibleCatalogTypes.lastIndex) {
                                         typeRequesters.getValue(visibleCatalogTypes[index + 1])
                                     } else closeRequester
-                                    up = closeRequester
+                                    up = applyRequester
                                     down = firstCategoryRequester ?: searchRequester
                                 }
                                 .remoteFocusFrame(shape)
@@ -5467,14 +5523,18 @@ private fun CategoryManagerDialog(
                 val totalCount = raw.size
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = if (searchQuery.isNotBlank()) "${filteredRaw.size} matching · $enabledCount of $totalCount active" else "$enabledCount of $totalCount active",
+                        text = if (searchQuery.isNotBlank()) {
+                            "${filteredRaw.size} matching · $enabledCount of 10 selected ($totalCount available)"
+                        } else {
+                            "$enabledCount of 10 dashboard categories selected · $totalCount available"
+                        },
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
                         TextButton(onClick = {
-                            setFilter(type, (currentEnabledSet + filteredRaw.map { it.id }).toList())
+                            setFilter(type, (currentEnabledSet + filteredRaw.map { it.id }).take(10))
                         }, modifier = Modifier.heightIn(min = 64.dp).focusRequester(selectMatchingRequester)) { Text("Select matching") }
                     }
                 }
@@ -5503,14 +5563,16 @@ private fun CategoryManagerDialog(
                     ) {
                         itemsIndexed(filteredRaw, key = { _, category -> category.id }) { index, category ->
                             val selected = category.id in currentEnabledSet
+                            val selectionLimitReached = !selected && currentEnabledSet.size >= 10
                             val rowRequester = categoryRequesters.getValue(category.id)
                             val rowFocused = focusedCategoryId == category.id
                             Surface(
-                                onClick = { toggleCategory(type, category.id) },
+                                onClick = { if (!selectionLimitReached) toggleCategory(type, category.id) },
                                 shape = RoundedCornerShape(12.dp),
                                 color = when {
                                     rowFocused -> Color(0xFF292929)
                                     selected -> Color(0xFF351416)
+                                    selectionLimitReached -> Color(0xFF111111)
                                     else -> Color(0xFF171717)
                                 },
                                 border = when {
@@ -5556,7 +5618,7 @@ private fun CategoryManagerDialog(
                                     }
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = category.title,
+                                        text = if (selectionLimitReached) "${category.title} · limit reached" else category.title,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                                         maxLines = 1,
