@@ -368,10 +368,50 @@ fun ShowcasePlaybackScreen(
     onProgress: (String, Long, Long) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
     loadMoreCatalog: () -> Unit,
-    refreshPlaybackQueue: () -> Unit
+    refreshPlaybackQueue: () -> Unit,
+    loadMoreEpisodes: () -> Unit = {}
 ) {
     val playing = state.nowPlaying ?: return
     val type = playing.catalogType
+
+    /*
+     * PLAYBACK_SPECIFIC_PAGINATION_V15
+     *
+     * Movies/Live TV paginate the active catalog category. Series playback
+     * paginates episodes from the selected series/season instead. Keep these
+     * states separate so mobile does not accidentally ask the Series catalog
+     * for another page while an episode queue is on screen.
+     */
+    val usesEpisodePagination =
+        type == CatalogType.SERIES &&
+            playing.series != null &&
+            state.selectedSeries?.id == playing.series.id
+
+    val playbackCategoryId =
+        playing.media.portalCategoryId
+
+    val catalogPaginationMatchesPlayback =
+        !usesEpisodePagination &&
+            playbackCategoryId != null &&
+            state.selectedType == type &&
+            state.selectedCategory?.id == playbackCategoryId
+
+    val playbackHasMore =
+        if (usesEpisodePagination) {
+            state.episodeHasMore
+        } else {
+            catalogPaginationMatchesPlayback &&
+                state.catalogHasMore
+        }
+
+    val playbackLoadingMore =
+        if (usesEpisodePagination) {
+            state.episodeLoadingMore
+        } else {
+            catalogPaginationMatchesPlayback &&
+                state.catalogLoadingMore
+        }
+
     var fullscreen by remember { mutableStateOf(false) }
     var previewItem by remember { mutableStateOf(playing.media) }
 
@@ -443,10 +483,10 @@ fun ShowcasePlaybackScreen(
         }
     }
 
-    LaunchedEffect(loadMorePending, state.catalogLoadingMore, state.items.size) {
+    LaunchedEffect(loadMorePending, playbackLoadingMore, state.items.size) {
         if (!loadMorePending) return@LaunchedEffect
 
-        if (state.catalogLoadingMore) {
+        if (playbackLoadingMore) {
             loadMoreObservedLoading = true
             return@LaunchedEffect
         }
@@ -533,13 +573,20 @@ fun ShowcasePlaybackScreen(
             },
             onToggleFavorite = { toggleFavorite(playing.media) },
             onRefresh = refreshPlaybackQueue,
+            hasMore = playbackHasMore,
+            loadingMore = playbackLoadingMore,
             loadMorePending = loadMorePending,
             onLoadMore = {
-                if (!state.catalogLoadingMore && !loadMorePending) {
+                if (!playbackLoadingMore && !loadMorePending) {
                     loadMoreStartItemCount = state.items.size
                     loadMoreObservedLoading = false
                     loadMorePending = true
-                    loadMoreCatalog()
+
+                    if (usesEpisodePagination) {
+                        loadMoreEpisodes()
+                    } else {
+                        loadMoreCatalog()
+                    }
                 }
             }
         )
@@ -677,6 +724,8 @@ fun ShowcasePlaybackScreen(
                 safeStart = safeStart,
                 safeEnd = safeEnd,
                 compact = compact,
+                hasMore = playbackHasMore,
+                loadingMore = playbackLoadingMore,
                 loadMorePending = loadMorePending,
                 onBrowseFocus = {
                     embeddedControlsDismissRequest++
@@ -700,13 +749,18 @@ fun ShowcasePlaybackScreen(
                     }
                 },
                 onLoadMore = {
-                    if (!state.catalogLoadingMore && !loadMorePending) {
+                    if (!playbackLoadingMore && !loadMorePending) {
                         loadMoreStartItemCount = state.items.size
                         loadMoreFirstVisibleItemIndex = railState.firstVisibleItemIndex
                         loadMoreFirstVisibleItemScrollOffset = railState.firstVisibleItemScrollOffset
                         loadMoreObservedLoading = false
                         loadMorePending = true
-                        loadMoreCatalog()
+
+                        if (usesEpisodePagination) {
+                            loadMoreEpisodes()
+                        } else {
+                            loadMoreCatalog()
+                        }
                     }
                 }
             )
@@ -732,6 +786,8 @@ private fun YouTubeMobileShowcase(
     onPlay: (MediaItem) -> Unit,
     onToggleFavorite: () -> Unit,
     onRefresh: () -> Unit,
+    hasMore: Boolean,
+    loadingMore: Boolean,
     loadMorePending: Boolean,
     onLoadMore: () -> Unit
 ) {
@@ -832,7 +888,7 @@ private fun YouTubeMobileShowcase(
                     )
                 }
 
-                if (state.catalogHasMore || state.catalogLoadingMore || loadMorePending) {
+                if (hasMore || loadingMore || loadMorePending) {
                     item(key = "load-more") {
                         Box(
                             Modifier
@@ -840,10 +896,19 @@ private fun YouTubeMobileShowcase(
                                 .padding(16.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (state.catalogLoadingMore || loadMorePending) {
+                            if (loadingMore || loadMorePending) {
                                 CircularProgressIndicator(Modifier.size(28.dp))
                             } else {
-                                OutlinedButton(onClick = onLoadMore) { Text("Load more") }
+                                OutlinedButton(onClick = onLoadMore) {
+                                    Text(
+                                        when (type) {
+                                            CatalogType.LIVE_TV -> "Load more channels"
+                                            CatalogType.MOVIES -> "Load more movies"
+                                            CatalogType.SERIES -> "Load more episodes"
+                                            CatalogType.RADIO -> "Load more"
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1170,6 +1235,8 @@ private fun BoxScope.ShowcaseRail(
     safeStart: Dp,
     safeEnd: Dp,
     compact: Boolean,
+    hasMore: Boolean,
+    loadingMore: Boolean,
     loadMorePending: Boolean,
     onBrowseFocus: () -> Unit,
     onFocused: (MediaItem) -> Unit,
@@ -1214,9 +1281,9 @@ private fun BoxScope.ShowcaseRail(
             184.dp
     }
     val showLoadMore =
-        state.selectedType == type &&
-            type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) &&
-            (state.catalogHasMore || loadMorePending)
+        hasMore ||
+            loadingMore ||
+            loadMorePending
 
     /*
      * SHOWCASE_LOAD_MORE_EXCLUSIVE_FOCUS_V5
@@ -1364,7 +1431,7 @@ private fun BoxScope.ShowcaseRail(
                                 onBrowseFocus()
 
                                 if (
-                                    !state.catalogLoadingMore &&
+                                    !loadingMore &&
                                     !loadMorePending
                                 ) {
                                     onLoadMore()
@@ -1428,7 +1495,7 @@ private fun BoxScope.ShowcaseRail(
                             )
                         ) {
                             if (
-                                state.catalogLoadingMore ||
+                                loadingMore ||
                                 loadMorePending
                             ) {
                                 CircularProgressIndicator(

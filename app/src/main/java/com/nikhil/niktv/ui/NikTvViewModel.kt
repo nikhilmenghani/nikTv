@@ -518,6 +518,52 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         ) }
     }
 
+    /*
+     * PLAYBACK_QUEUE_PAGINATION_SYNC_V15
+     *
+     * The player intentionally owns a category/season-scoped queue snapshot.
+     * Pagination must therefore append to both state.items and the active
+     * PlayingMedia queue. Otherwise the catalog grows while the player list
+     * remains frozen on the first page.
+     */
+    private fun PlayingMedia.withAppendedPlaybackQueue(
+        additions: List<MediaItem>
+    ): PlayingMedia {
+        if (additions.isEmpty()) return this
+
+        val baseQueue =
+            episodeQueue.ifEmpty { listOf(media) }
+
+        val updatedQueue =
+            (baseQueue + additions)
+                .distinctBy { it.id }
+
+        val currentIndex =
+            updatedQueue.indexOfFirst {
+                it.id == media.id
+            }
+
+        val wrap =
+            catalogType == CatalogType.LIVE_TV &&
+                updatedQueue.size > 1
+
+        return copy(
+            episodeQueue = updatedQueue,
+            previousEpisode =
+                updatedQueue.getOrNull(currentIndex - 1)
+                    ?: updatedQueue.lastOrNull()
+                        .takeIf {
+                            wrap && currentIndex >= 0
+                        },
+            nextEpisode =
+                updatedQueue.getOrNull(currentIndex + 1)
+                    ?: updatedQueue.firstOrNull()
+                        .takeIf {
+                            wrap && currentIndex >= 0
+                        }
+        )
+    }
+
     fun loadMoreCatalog() {
         val snapshot = _state.value
         val session = snapshot.session ?: return
@@ -561,6 +607,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     _state.update { current ->
+                        val active =
+                            current.nowPlaying
+
+                        val updatedPlaying =
+                            if (
+                                active != null &&
+                                active.catalogType == category.type &&
+                                active.media.portalCategoryId == category.id
+                            ) {
+                                active.withAppendedPlaybackQueue(
+                                    result.items
+                                )
+                            } else {
+                                active
+                            }
+
                         current.copy(
                             items = merged,
                             catalogPage = result.page,
@@ -575,7 +637,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 } else {
                                     current.browseCachesByType +
                                         (category.type to updated)
-                                }
+                                },
+                            nowPlaying = updatedPlaying
                         )
                     }
                 }
@@ -711,8 +774,32 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }.onSuccess { next ->
                 val combined = (snapshot.items + next.episodes).distinctBy { it.id }
                 val actuallyAdded = combined.size > snapshot.items.size
-                _state.update { it.copy(items = combined, episodePage = next.page,
-                    episodeHasMore = next.hasMore && actuallyAdded, episodeLoadingMore = false) }
+                _state.update { current ->
+                    val active =
+                        current.nowPlaying
+
+                    val updatedPlaying =
+                        if (
+                            active != null &&
+                            active.catalogType == CatalogType.SERIES &&
+                            active.series?.id == series.id
+                        ) {
+                            active.withAppendedPlaybackQueue(
+                                next.episodes
+                            )
+                        } else {
+                            active
+                        }
+
+                    current.copy(
+                        items = combined,
+                        episodePage = next.page,
+                        episodeHasMore =
+                            next.hasMore && actuallyAdded,
+                        episodeLoadingMore = false,
+                        nowPlaying = updatedPlaying
+                    )
+                }
                 val cache = EpisodeSeasonCache(session.profile.cacheKey(), series.id, next.selectedSeason,
                     next.availableSeasons.ifEmpty { snapshot.availableSeriesSeasons }, combined, next.page, next.hasMore && actuallyAdded)
                 episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }

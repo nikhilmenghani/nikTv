@@ -351,7 +351,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
                     loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
+                    loadMoreEpisodes = vm::loadMoreEpisodes
                 )
 
                 state.nowPlaying != null -> PlayerScreen(
@@ -4993,9 +4994,10 @@ private fun LiveTvPlaybackScreen(
     val playing = state.nowPlaying ?: return
     val channels = playing.episodeQueue.ifEmpty { listOf(playing.media) }
     val playbackCategoryId = playing.media.portalCategoryId
-    val canPaginatePlaybackQueue = playbackCategoryId != null &&
-        state.items.isNotEmpty() &&
-        state.items.all { it.portalCategoryId == playbackCategoryId }
+    val canPaginatePlaybackQueue =
+        playbackCategoryId != null &&
+            state.selectedType == CatalogType.LIVE_TV &&
+            state.selectedCategory?.id == playbackCategoryId
 
     var fullscreen by remember {
         mutableStateOf(false)
