@@ -1511,7 +1511,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             it.profileKey == session.profile.cacheKey() &&
                 it.type == CatalogType.MOVIES &&
                 it.tmdbId == entry.tmdb.id &&
-                (it.confirmedByUser || it.media.externalTmdbId == entry.tmdb.id)
+                (it.media.externalTmdbId == entry.tmdb.id ||
+                    it.confirmedByUser && it.playbackVerified)
         }
         if (saved != null) {
             commitTmdbMovieSelection(session, entry.tmdb, saved.media, saved.confirmedByUser)
@@ -1557,13 +1558,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         resolved: MediaItem,
         confirmedByUser: Boolean
     ) {
+        // Do not persist or leave the match page until Wio has accepted the
+        // selected item's real command and produced a playable URL.
+        playInternal(
+            item = resolved,
+            type = CatalogType.MOVIES,
+            series = null,
+            episodes = emptyList()
+        )
         store.saveTmdbMapping(
             TmdbIptvMapping(
                 profileKey = session.profile.cacheKey(),
                 type = CatalogType.MOVIES,
                 tmdbId = movie.id,
                 media = resolved,
-                confirmedByUser = confirmedByUser
+                confirmedByUser = confirmedByUser,
+                playbackVerified = true
             )
         )
         _state.update { current ->
@@ -1576,12 +1586,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 movieMatchLoadingMore = false
             )
         }
-        playInternal(
-            item = resolved,
-            type = CatalogType.MOVIES,
-            series = null,
-            episodes = emptyList()
-        )
     }
 
     fun openTrendingSeries(entry: TrendingSeries) = task {

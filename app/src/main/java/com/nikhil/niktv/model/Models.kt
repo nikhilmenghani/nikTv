@@ -125,6 +125,8 @@ data class TmdbIptvMapping(
     val media: MediaItem,
     /** True when the user explicitly chose this provider result. */
     val confirmedByUser: Boolean = false,
+    /** True only after the provider successfully created a playback URL. */
+    val playbackVerified: Boolean = false,
     val cachedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "$profileKey|${type.name}|$tmdbId"

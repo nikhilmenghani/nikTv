@@ -5,27 +5,35 @@ import org.junit.Test
 
 class StalkerPlaybackCommandTest {
     @Test
-    fun unrelatedFirstDetailCannotReplaceSelectedMovieCommand() {
-        val command = StalkerPortalClient.resolveMoviePlaybackCommand(
-            movieId = "200",
-            originalCommand = "/media/file_200.mpg",
-            details = listOf("100" to "100")
+    fun searchResultProducesWioVodCommandFallbacksWithoutDetailRows() {
+        val commands = StalkerPortalClient.moviePlaybackCommands(
+            itemId = "16037",
+            originalCommand = "/media/16037.mpg",
+            detailCommands = emptyList()
         )
 
-        assertEquals("/media/file_200.mpg", command)
+        assertEquals(
+            listOf(
+                "/media/file_16037.mpg",
+                "ffmpeg /media/file_16037.mpg",
+                "/media/16037.mpg",
+                "ffmpeg /media/16037.mpg"
+            ),
+            commands
+        )
     }
 
     @Test
-    fun matchingDetailCanProvideThePortalFileId() {
-        val command = StalkerPortalClient.resolveMoviePlaybackCommand(
-            movieId = "200",
-            originalCommand = "/media/file_legacy.mpg",
+    fun hindiDetailRanksAheadOfSameTitleEnglishDetail() {
+        val commands = StalkerPortalClient.rankMovieDetailCommands(
+            selectedId = "468667",
+            selectedTitle = "Welcome to the Jungle (2026) (Hindi) - HINDI | LATEST MOVIES 4K",
             details = listOf(
-                "100" to "100",
-                "9876" to "200"
+                VodDetailCandidate("100", null, "Welcome to the Jungle (2003) (English)", "/media/english.mpg"),
+                VodDetailCandidate("900", "468667", "Welcome to the Jungle (2026) (Hindi)", "/media/hindi-file.mpg")
             )
         )
 
-        assertEquals("/media/file_9876.mpg", command)
+        assertEquals(listOf("/media/hindi-file.mpg", "/media/file_900.mpg"), commands)
     }
 }

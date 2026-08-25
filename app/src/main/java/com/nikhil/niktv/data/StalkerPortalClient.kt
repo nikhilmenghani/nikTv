@@ -247,7 +247,7 @@ class StalkerPortalClient(private val context: Context) {
             return@withContext item.command ?: error("This item has no playback URL")
         }
         val cmd = item.command ?: error("This item has no playback command")
-        val playbackCommand = if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
+        val playbackCommands = if (type == CatalogType.SERIES) {
             val movieId = item.id.substringBefore(':')
             val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
                 "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
@@ -255,41 +255,47 @@ class StalkerPortalClient(private val context: Context) {
                 "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
                 "hd" to "0", "ended" to "0", "p" to "1"
             ))).payload().arrayFromData().mapNotNull { it as? JsonObject }
-            if (type == CatalogType.MOVIES) {
-                resolveMoviePlaybackCommand(
-                    movieId = movieId,
-                    originalCommand = cmd,
-                    details = details.map { it.string("id") to it.string("movie_id") }
+            listOf(details.firstOrNull()?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd)
+        } else if (type == CatalogType.MOVIES) {
+            val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+                "type" to "vod", "action" to "get_ordered_list", "movie_id" to item.id,
+                "season_id" to "", "episode_id" to "",
+                "category" to item.portalCategoryId.orEmpty(),
+                "fav" to "0", "sortby" to "added", "hd" to "0", "ended" to "0",
+                "p" to "1"
+            ))).payload().arrayFromData().mapNotNull { node ->
+                val detail = node as? JsonObject ?: return@mapNotNull null
+                val id = detail.string("id") ?: return@mapNotNull null
+                VodDetailCandidate(
+                    id = id,
+                    movieId = detail.string("movie_id"),
+                    title = detail.string("name") ?: detail.string("title"),
+                    command = detail.string("cmd")
                 )
-            } else {
-                details.firstOrNull()?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd
             }
-        } else cmd
-        val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-            "type" to if (type == CatalogType.SERIES) "vod" else type.apiType,
-            "action" to "create_link",
-            "cmd" to playbackCommand,
-            "series" to (item.episodeNumber?.toString() ?: "0"),
-            "download" to "0",
-            "disable_ad" to "0",
-            "force_ch_link_check" to "0"
-        )))
-        val payload = response.payload()
-        val playbackUrl = payload.string("cmd")
-            ?.removePrefix("ffmpeg ")
-            ?.removePrefix("ffrt ")
-            ?.trim()
-        if (playbackUrl.isNullOrBlank()) {
-            val portalError = payload.string("error")?.takeIf { it.isNotBlank() && it != "0" }
-            error(
-                when (portalError) {
-                    "nothing_to_play" -> "The IPTV portal could not reach a VOD storage server for this video. Please try again shortly."
-                    null -> "The IPTV portal returned an empty playback link"
-                    else -> "The IPTV portal could not create a playback link: $portalError"
-                }
-            )
+            val detail = details.firstOrNull()
+                ?: error("Wio returned no playback detail for IPTV ID ${item.id} in category ${item.portalCategoryId ?: "unknown"}.")
+            listOf("/media/file_${detail.id}.mpg")
+        } else listOf(cmd)
+
+        var lastPortalError: String? = null
+        playbackCommands.distinct().forEach { playbackCommand ->
+            val payload = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+                "type" to if (type == CatalogType.SERIES) "vod" else type.apiType,
+                "action" to "create_link", "cmd" to playbackCommand,
+                "series" to (item.episodeNumber?.toString() ?: "0"), "download" to "0",
+                "disable_ad" to "0", "force_ch_link_check" to "0"
+            ))).payload()
+            val playbackUrl = payload.string("cmd")
+                ?.removePrefix("ffmpeg ")?.removePrefix("ffrt ")?.trim()
+            if (!playbackUrl.isNullOrBlank()) return@withContext playbackUrl
+            lastPortalError = payload.string("error")?.takeIf { it.isNotBlank() && it != "0" }
         }
-        playbackUrl
+        error(when (lastPortalError) {
+            "nothing_to_play" -> "Wio rejected ${playbackCommands.distinct().size} playback command variant(s) for IPTV ID ${item.id}. Please try another matching result."
+            null -> "The IPTV portal returned an empty playback link"
+            else -> "The IPTV portal could not create a playback link: $lastPortalError"
+        })
     }
 
     suspend fun episodes(session: PortalSession, series: MediaItem): List<MediaItem> =
@@ -785,16 +791,49 @@ class StalkerPortalClient(private val context: Context) {
         )
     }
     companion object {
-        internal fun resolveMoviePlaybackCommand(
-            movieId: String,
-            originalCommand: String,
-            details: List<Pair<String?, String?>>
-        ): String {
-            val matchingFileId = details.firstOrNull { (id, detailMovieId) ->
-                id == movieId || detailMovieId == movieId
-            }?.first
-            return matchingFileId?.let { "/media/file_$it.mpg" } ?: originalCommand
+        internal fun rankMovieDetailCommands(
+            selectedId: String,
+            selectedTitle: String,
+            details: List<VodDetailCandidate>
+        ): List<String> {
+            val targetTokens = selectedTitle.vodIdentityTokens()
+            val targetYear = selectedTitle.vodYear()
+            val targetLanguages = targetTokens.intersect(VOD_LANGUAGE_TOKENS)
+            return details.mapNotNull { detail ->
+                val title = detail.title ?: return@mapNotNull null
+                val tokens = title.vodIdentityTokens()
+                if (tokens.isEmpty() || targetTokens.isEmpty()) return@mapNotNull null
+                val overlap = targetTokens.intersect(tokens).size.toDouble() / targetTokens.union(tokens).size
+                val detailYear = title.vodYear()
+                val detailLanguages = tokens.intersect(VOD_LANGUAGE_TOKENS)
+                val score = (overlap * 1000).toInt() +
+                    (if (detail.id == selectedId || detail.movieId == selectedId) 120 else 0) +
+                    (if (targetYear != null && detailYear == targetYear) 260 else if (targetYear != null && detailYear != null) -400 else 0) +
+                    (if (targetLanguages.isNotEmpty() && detailLanguages == targetLanguages) 300 else if (targetLanguages.isNotEmpty()) -300 else 0)
+                if (score >= 600) detail to score else null
+            }.sortedByDescending { it.second }
+                .flatMap { (detail, _) ->
+                    listOfNotNull(detail.command?.takeIf(String::isNotBlank), "/media/file_${detail.id}.mpg")
+                }
+                .distinct()
+                .take(5)
         }
+
+        internal fun moviePlaybackCommands(
+            itemId: String,
+            originalCommand: String,
+            detailCommands: List<String>
+        ): List<String> {
+            val fileCommand = "/media/file_$itemId.mpg"
+            return (detailCommands + listOf(
+                fileCommand,
+                "ffmpeg $fileCommand",
+                originalCommand,
+                "ffmpeg $originalCommand"
+            )).filter(String::isNotBlank).distinct()
+        }
+
+        private val VOD_LANGUAGE_TOKENS = setOf("hindi", "english", "tamil", "telugu", "kannada", "malayalam", "punjabi", "bengali")
 
         private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Mobile Safari/533.3"
         private const val MAG_VER = "ImageDescription: 2.20.02-pub-424; ImageDate: Fri May 8 15:39:55 UTC 2020; PORTAL version: 5.6.2; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x588"
@@ -838,6 +877,26 @@ class StalkerPortalClient(private val context: Context) {
         private fun cookieKey(cookie: Cookie) = "${cookie.domain}|${cookie.path}|${cookie.name}"
     }
 }
+
+internal data class VodDetailCandidate(
+    val id: String,
+    val movieId: String?,
+    val title: String?,
+    val command: String? = null
+)
+
+private fun String.vodYear(): Int? = Regex("\\b(?:19|20)\\d{2}\\b").find(this)?.value?.toIntOrNull()
+
+private fun String.vodSearchTitle(): String = substringBefore(" - ")
+    .replace(Regex("\\([^)]*\\)"), " ")
+    .replace(Regex("\\b(?:4k|uhd|hdr|2160p|1080p|720p)\\b", RegexOption.IGNORE_CASE), " ")
+    .trim().replace(Regex("\\s+"), " ")
+
+private fun String.vodIdentityTokens(): Set<String> = lowercase()
+    .substringBefore(" - ")
+    .replace(Regex("\\b(?:4k|uhd|hdr|2160p|1080p|720p|bluray|webrip|web.?dl|x26[45]|h26[45]|hevc|aac|atmos)\\b"), " ")
+    .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+    .trim().split(Regex("\\s+")).filter(String::isNotBlank).toSet()
 
 private class PortalHttpException(
     val statusCode: Int,
