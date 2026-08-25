@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 import android.Manifest
+import android.content.ClipData
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -24,6 +25,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,7 +49,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -52,7 +56,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -253,7 +256,10 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     var checkingForRequiredUpdate by remember { mutableStateOf(
         pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null
     ) }
-    val clipboard = LocalClipboardManager.current
+    val appContext = LocalContext.current
+    val clipboard = remember(appContext) {
+        appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    }
     val playbackProfileKey = state.session?.profile?.cacheKey().orEmpty()
     val liveTvPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.LIVE_TV)
     val moviePlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.MOVIES)
@@ -498,7 +504,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             onClick = { vm.dismissError(); vm.reauthenticate() },
                             modifier = Modifier.focusRequester(reauthenticateRequester)
                         ) { Text("Re-authenticate") }
-                        else TextButton(onClick = { clipboard.setText(AnnotatedString(error)) }) { Text("Copy diagnostics") }
+                        else TextButton(onClick = {
+                            clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error))
+                        }) { Text("Copy diagnostics") }
                     },
                     dismissButton = { TextButton(onClick = vm::dismissError) { Text("Close") } },
                     title = { Text(if (authorizationExpired) "Session expired" else "Portal diagnostics") },
@@ -511,7 +519,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             if (showDiagnostics) SelectionContainer {
                                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(error, style = MaterialTheme.typography.bodySmall)
-                                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(error)) }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(8.dp)); Text("Copy diagnostics") }
+                                    OutlinedButton(onClick = {
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error))
+                                    }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(8.dp)); Text("Copy diagnostics") }
                                 }
                             }
                         }
@@ -1301,7 +1311,7 @@ private fun CatalogScreen(
     if (exitConfirmationOpen) {
         AlertDialog(
             onDismissRequest = { exitConfirmationOpen = false },
-            icon = { Icon(Icons.Default.ExitToApp, null, tint = Color(0xFFE50914)) },
+            icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, null, tint = Color(0xFFE50914)) },
             title = { Text("Exit NikTV?") },
             text = { Text("Are you sure you want to close the app?") },
             dismissButton = {
@@ -2181,7 +2191,7 @@ private fun ModernBrowseScreen(
                                     ) {
                                         Icon(
                                             if (state.browseLayout == BrowseLayout.GRID) {
-                                                Icons.Default.ViewList
+                                                Icons.AutoMirrored.Filled.ViewList
                                             } else {
                                                 Icons.Default.GridView
                                             },
@@ -3464,7 +3474,7 @@ private fun <T> ModernRail(
                             if (pendingRequestedCount != null) {
                                 CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
                             } else {
-                                Icon(Icons.Default.ArrowForward, null, tint = Color(0xFFE50914))
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = Color(0xFFE50914))
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(if (pendingRequestedCount != null) "Loading…" else "Load 10 more", color = Color.White, style = MaterialTheme.typography.labelLarge)
@@ -4104,7 +4114,7 @@ private fun ModernSearchScreen(
                 Row {
                     if (state.searchQuery.isNotEmpty()) IconButton(onClick = { setQuery("") }) { Icon(Icons.Default.Close, "Clear") }
                     FilledIconButton(onClick = { search(false) }, enabled = state.searchQuery.isNotBlank() && !state.searchServerLoading) {
-                        Icon(Icons.Default.ArrowForward, "Search")
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, "Search")
                     }
                 }
             },
@@ -4663,7 +4673,7 @@ private fun ModernSettingsScreen(
             ListItem(
                 headlineContent = { Text("Clear all app data", color = MaterialTheme.colorScheme.error) },
                 supportingContent = { Text("Remove every profile, cache, favorite, recent item, and session") },
-                leadingContent = { Icon(Icons.Default.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                leadingContent = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
                 modifier = Modifier.remoteFocusFrame().clickable(onClick = logout),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )

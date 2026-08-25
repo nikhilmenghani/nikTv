@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -765,7 +767,7 @@ fun PlayerScreen(
                                 down = playPauseFocusRequester
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
-                    ) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(media.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
@@ -953,7 +955,7 @@ fun PlayerScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(
-                        if (isBrightness) Icons.Default.Brightness6 else Icons.Default.VolumeUp,
+                        if (isBrightness) Icons.Default.Brightness6 else Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = null
                     )
                     Text(if (isBrightness) "Brightness" else "Volume", style = MaterialTheme.typography.labelLarge)

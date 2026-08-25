@@ -296,13 +296,13 @@ class ProfileStore(private val context: Context) {
         val integers = values.mapNotNull { (key, value) ->
             if (key.name in BACKUP_INT_KEYS && value is Int) key.name to value else null
         }.toMap()
-        return Json { prettyPrint = true; encodeDefaults = true }.encodeToString(
+        return backupExportJson.encodeToString(
             NikTvBackup(strings = strings, integers = integers)
         )
     }
 
     suspend fun importBackup(content: String) {
-        val backup = Json { ignoreUnknownKeys = true }.decodeFromString<NikTvBackup>(content)
+        val backup = backupImportJson.decodeFromString<NikTvBackup>(content)
         require(backup.formatVersion == 1) { "Unsupported NikTV backup version ${backup.formatVersion}" }
         backup.strings[profilesKey.name]?.let {
             require(runCatching { Json.decodeFromString<List<PortalProfile>>(it) }.getOrNull() != null) {
@@ -357,6 +357,11 @@ class ProfileStore(private val context: Context) {
     private fun PortalProfile.identity() = "$portalType|${portalUrl.trimEnd('/').lowercase()}|${username.ifBlank { macAddress }.lowercase()}"
 
     companion object {
+        private val backupExportJson = Json {
+            prettyPrint = true
+            encodeDefaults = true
+        }
+        private val backupImportJson = Json { ignoreUnknownKeys = true }
         private val BACKUP_STRING_KEYS = setOf(
             "active_profile", "saved_profiles", "active_profile_identity", "favorites",
             "recently_played", "playback_progress", "recent_searches", "category_filters",

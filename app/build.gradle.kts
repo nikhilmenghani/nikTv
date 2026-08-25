@@ -35,7 +35,6 @@ val tmdbReadAccessToken = providers.gradleProperty("NIKTV_TMDB_READ_ACCESS_TOKEN
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
@@ -89,10 +88,15 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    kotlinOptions { jvmTarget = "17" }
     lint {
         disable.addAll(listOf("MissingTvBanner", "OldTargetApi", "GradleDependency", "NewerVersionAvailable"))
         abortOnError = false
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
