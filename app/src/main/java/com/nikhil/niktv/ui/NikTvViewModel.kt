@@ -604,6 +604,56 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.setPlayerControlsTimeoutSeconds(seconds)
     }
 
+    fun refreshPlaybackQueue() = task {
+        val snapshot = _state.value
+        val playing = snapshot.nowPlaying ?: return@task
+        val session = requireNotNull(snapshot.session)
+        val queue = if (playing.catalogType == CatalogType.SERIES && playing.series != null) {
+            portal.episodeSeason(
+                session,
+                playing.series,
+                snapshot.seriesStartSeason,
+                playing.media.seasonNumber
+            ).episodes
+        } else {
+            val categoryId = playing.media.portalCategoryId
+                ?: return@task
+            val category = snapshot.rawCategoriesByType[playing.catalogType]
+                .orEmpty()
+                .firstOrNull { it.id == categoryId }
+                ?: portal.categories(session, playing.catalogType).firstOrNull { it.id == categoryId }
+                ?: return@task
+            portal.catalog(session, category).also { refreshed ->
+                snapshot.browseCachesByType[playing.catalogType]?.let { cached ->
+                    val updated = cached.copy(
+                        cachedAtMillis = System.currentTimeMillis(),
+                        itemsByCategory = cached.itemsByCategory + (category.id to refreshed)
+                    )
+                    store.saveBrowseCatalog(updated)
+                    _state.update { current -> current.copy(
+                        browseCache = updated,
+                        browseCachesByType = current.browseCachesByType + (playing.catalogType to updated)
+                    ) }
+                }
+            }
+        }.distinctBy { it.id }
+
+        if (queue.isEmpty()) return@task
+        _state.update { current ->
+            val active = current.nowPlaying ?: return@update current
+            if (active.media.id != playing.media.id) return@update current
+            val index = queue.indexOfFirst { it.id == active.media.id }
+            val wrap = active.catalogType == CatalogType.LIVE_TV && queue.size > 1
+            current.copy(nowPlaying = active.copy(
+                episodeQueue = queue,
+                previousEpisode = queue.getOrNull(index - 1)
+                    ?: queue.lastOrNull().takeIf { wrap && index >= 0 },
+                nextEpisode = queue.getOrNull(index + 1)
+                    ?: queue.firstOrNull().takeIf { wrap && index >= 0 }
+            ))
+        }
+    }
+
     fun setPlaybackEngine(engine: PlaybackEngine) = viewModelScope.launch {
         store.setPlaybackEngine(engine)
     }

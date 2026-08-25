@@ -302,7 +302,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog
+                    loadMoreCatalog = vm::loadMoreCatalog,
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
@@ -317,7 +318,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog
+                    loadMoreCatalog = vm::loadMoreCatalog,
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.MOVIES &&
@@ -332,7 +334,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog
+                    loadMoreCatalog = vm::loadMoreCatalog,
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.SERIES &&
@@ -347,7 +350,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog
+                    loadMoreCatalog = vm::loadMoreCatalog,
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue
                 )
 
                 state.nowPlaying != null -> PlayerScreen(
@@ -4983,9 +4987,15 @@ private fun LiveTvPlaybackScreen(
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
-    loadMoreCatalog: () -> Unit
+    loadMoreCatalog: () -> Unit,
+    refreshPlaybackQueue: () -> Unit
 ) {
     val playing = state.nowPlaying ?: return
+    val channels = playing.episodeQueue.ifEmpty { listOf(playing.media) }
+    val playbackCategoryId = playing.media.portalCategoryId
+    val canPaginatePlaybackQueue = playbackCategoryId != null &&
+        state.items.isNotEmpty() &&
+        state.items.all { it.portalCategoryId == playbackCategoryId }
 
     var fullscreen by remember {
         mutableStateOf(false)
@@ -5117,12 +5127,12 @@ private fun LiveTvPlaybackScreen(
      */
     LaunchedEffect(Unit) {
         val playingIndex =
-            state.items.indexOfFirst {
+            channels.indexOfFirst {
                 it.id == playing.media.id
             }
 
         val playingChannel =
-            state.items.getOrNull(
+            channels.getOrNull(
                 playingIndex
             )
 
@@ -5151,12 +5161,12 @@ private fun LiveTvPlaybackScreen(
         }
 
         val playingIndex =
-            state.items.indexOfFirst {
+            channels.indexOfFirst {
                 it.id == playing.media.id
             }
 
         val playingChannel =
-            state.items.getOrNull(
+            channels.getOrNull(
                 playingIndex
             )
 
@@ -5479,7 +5489,7 @@ private fun LiveTvPlaybackScreen(
                             playing.media
                                 .liveProgramme
                                 ?.title
-                                ?: "${state.items.size} channels",
+                                ?: "${channels.size} channels",
 
                         color =
                             Color.LightGray,
@@ -5492,6 +5502,12 @@ private fun LiveTvPlaybackScreen(
                         overflow =
                             TextOverflow.Ellipsis
                     )
+
+                    TextButton(onClick = refreshPlaybackQueue) {
+                        Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Clear cache & refresh")
+                    }
                 }
 
                 /*
@@ -5517,7 +5533,7 @@ private fun LiveTvPlaybackScreen(
                 ) {
                     items(
                         items =
-                            state.items,
+                            channels,
 
                         /*
                          * Stable keys preserve row identity when
@@ -5593,7 +5609,7 @@ private fun LiveTvPlaybackScreen(
                      * focus has moved to the newly appended channel.
                      */
                     if (
-                        state.catalogHasMore ||
+                        (canPaginatePlaybackQueue && state.catalogHasMore) ||
                         loadMorePending
                     ) {
                         item(

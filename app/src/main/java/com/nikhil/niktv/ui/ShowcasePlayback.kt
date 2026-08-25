@@ -367,7 +367,8 @@ fun ShowcasePlaybackScreen(
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
-    loadMoreCatalog: () -> Unit
+    loadMoreCatalog: () -> Unit,
+    refreshPlaybackQueue: () -> Unit
 ) {
     val playing = state.nowPlaying ?: return
     val type = playing.catalogType
@@ -387,17 +388,6 @@ fun ShowcasePlaybackScreen(
 
     LaunchedEffect(playing.media.id) { previewItem = playing.media }
 
-    /*
-     * IMPORTANT:
-     * PlayingMedia.episodeQueue is a snapshot taken when playback starts.
-     * For Movies/Live TV that snapshot does NOT grow when loadMoreCatalog()
-     * appends another page to state.items.
-     *
-     * While the player was opened from the currently selected catalog,
-     * state.items must therefore remain the source of truth for the rail.
-     * Fall back to episodeQueue only for playback opened outside that catalog
-     * (for example from search/favorites).
-     */
     val queue = remember(
         playing.media.id,
         playing.episodeQueue,
@@ -405,12 +395,9 @@ fun ShowcasePlaybackScreen(
         state.selectedType,
         type
     ) {
-        val source = when {
-            state.selectedType == type &&
-                state.items.any { it.id == playing.media.id } -> state.items
-            playing.episodeQueue.isNotEmpty() -> playing.episodeQueue
-            else -> emptyList()
-        }
+        // The playback queue is category-specific. state.items may still point
+        // at the first dashboard category and must never replace this list.
+        val source = playing.episodeQueue
 
         /*
          * SHOWCASE_STABLE_QUEUE_V3
@@ -545,6 +532,7 @@ fun ShowcasePlaybackScreen(
                 if (item.id == playing.media.id) fullscreen = true else play(item)
             },
             onToggleFavorite = { toggleFavorite(playing.media) },
+            onRefresh = refreshPlaybackQueue,
             loadMorePending = loadMorePending,
             onLoadMore = {
                 if (!state.catalogLoadingMore && !loadMorePending) {
@@ -743,6 +731,7 @@ private fun YouTubeMobileShowcase(
     onProgress: (String, Long, Long) -> Unit,
     onPlay: (MediaItem) -> Unit,
     onToggleFavorite: () -> Unit,
+    onRefresh: () -> Unit,
     loadMorePending: Boolean,
     onLoadMore: () -> Unit
 ) {
@@ -800,6 +789,9 @@ private fun YouTubeMobileShowcase(
                                     if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                     contentDescription = if (favorite) "Remove from My List" else "Add to My List"
                                 )
+                            }
+                            FilledTonalIconButton(onClick = onRefresh) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Clear cache and refresh list")
                             }
                         }
 
