@@ -440,6 +440,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds,
                     setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback,
+                    setModernUiEnabled = vm::setModernUiEnabled,
                     setPlaybackEngine = vm::setPlaybackEngine,
                     setSeriesStartSeason = vm::setSeriesStartSeason,
                     setBrowseLayout = vm::setBrowseLayout,
@@ -474,6 +475,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
                     ,setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds
                     ,setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback
+                    ,setModernUiEnabled = vm::setModernUiEnabled
                     ,setPlaybackEngine = vm::setPlaybackEngine
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
                     ,loadSeriesSeason = vm::loadSeriesSeason
@@ -502,6 +504,10 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,loadMoreCategorySection = vm::loadMoreCategorySection
                     ,setTmdbSections = vm::setTmdbSections
                     ,resetScreenConfiguration = vm::resetScreenConfiguration
+                    ,openModernTmdbSection = vm::openModernTmdbSection
+                    ,openModernIptvCategory = vm::openModernIptvCategory
+                    ,closeModernSection = vm::closeModernSection
+                    ,loadMoreModernTmdbSection = vm::loadMoreModernTmdbSection
                 )
             }
             if (state.categoryManagerOpen) {
@@ -1220,6 +1226,7 @@ private fun CatalogScreen(
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
+    setModernUiEnabled: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     loadSeriesSeason: (Int) -> Unit,
@@ -1247,7 +1254,11 @@ private fun CatalogScreen(
     openCategoryManager: (CatalogType) -> Unit,
     loadMoreCategorySection: (Category) -> Unit,
     setTmdbSections: (DashboardSurface, List<TmdbHomeSection>) -> Unit,
-    resetScreenConfiguration: (DashboardSurface) -> Unit
+    resetScreenConfiguration: (DashboardSurface) -> Unit,
+    openModernTmdbSection: (TmdbHomeSection) -> Unit,
+    openModernIptvCategory: (Category) -> Unit,
+    closeModernSection: () -> Unit,
+    loadMoreModernTmdbSection: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -1257,6 +1268,9 @@ private fun CatalogScreen(
     val mobileUiDesign by rememberMobileUiDesign()
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
     val exitFocusRequester = remember { FocusRequester() }
+    val modernSectionOpen =
+        state.modernUiEnabled &&
+            (state.modernTmdbSection != null || state.modernIptvCategory != null)
 
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
     BackHandler(enabled = state.movieMatchSelection != null, onBack = closeTmdbMovieMatches)
@@ -1267,7 +1281,23 @@ private fun CatalogScreen(
         onBack = closeSeries
     )
     BackHandler(
-        enabled = !exitConfirmationOpen && state.movieMatchSelection == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries == null
+        enabled =
+            !state.settingsOpen &&
+                !state.searchOpen &&
+                !state.favoritesOpen &&
+                state.selectedSeries == null &&
+                modernSectionOpen,
+        onBack = closeModernSection
+    )
+    BackHandler(
+        enabled =
+            !exitConfirmationOpen &&
+                state.movieMatchSelection == null &&
+                !state.settingsOpen &&
+                !state.searchOpen &&
+                !state.favoritesOpen &&
+                state.selectedSeries == null &&
+                !modernSectionOpen
     ) {
         if (state.homeOpen) exitConfirmationOpen = true else openHome()
     }
@@ -1305,6 +1335,7 @@ private fun CatalogScreen(
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
                     setKeepAwakeOnlyDuringPlayback = setKeepAwakeOnlyDuringPlayback,
+                    setModernUiEnabled = setModernUiEnabled,
                     setPlaybackEngine = setPlaybackEngine,
                     setSeriesStartSeason = setSeriesStartSeason,
                     setBrowseLayout = setBrowseLayout,
@@ -1368,7 +1399,11 @@ private fun CatalogScreen(
                     loadMoreCategorySection = loadMoreCategorySection,
                     setTmdbSections = setTmdbSections,
                     resetScreenConfiguration = resetScreenConfiguration,
-                    loadMoreCatalog = loadMoreCatalog
+                    loadMoreCatalog = loadMoreCatalog,
+                    openModernTmdbSection = openModernTmdbSection,
+                    openModernIptvCategory = openModernIptvCategory,
+                    closeModernSection = closeModernSection,
+                    loadMoreModernTmdbSection = loadMoreModernTmdbSection
                 )
             }
         }
@@ -1469,7 +1504,11 @@ private fun ModernBrowseScreen(
     loadMoreCategorySection: (Category) -> Unit,
     setTmdbSections: (DashboardSurface, List<TmdbHomeSection>) -> Unit,
     resetScreenConfiguration: (DashboardSurface) -> Unit,
-    loadMoreCatalog: () -> Unit
+    loadMoreCatalog: () -> Unit,
+    openModernTmdbSection: (TmdbHomeSection) -> Unit,
+    openModernIptvCategory: (Category) -> Unit,
+    closeModernSection: () -> Unit,
+    loadMoreModernTmdbSection: () -> Unit
 ) {
     val home = state.homeOpen
     val layoutToggleRequester = remember { FocusRequester() }
@@ -1483,6 +1522,61 @@ private fun ModernBrowseScreen(
         CatalogType.RADIO -> DashboardSurface.LIVE_TV
     }
     val selectedTmdbSections = state.tmdbSectionsBySurface[dashboardSurface].orEmpty()
+
+    if (
+        state.modernUiEnabled &&
+        (home || state.selectedType == CatalogType.MOVIES || state.selectedType == CatalogType.SERIES)
+    ) {
+        ModernTileBrowseScreen(
+            state = state,
+            dashboardSurface = dashboardSurface,
+            openHome = openHome,
+            selectType = selectType,
+            openFavorites = openFavorites,
+            openSearch = openSearch,
+            openSettings = openSettings,
+            openProfileSwitcher = openProfileSwitcher,
+            openRecent = openRecent,
+            openTmdbSection = openModernTmdbSection,
+            openIptvCategory = openModernIptvCategory,
+            closeSection = closeModernSection,
+            openTmdbMovie = openTrendingMovie,
+            openTmdbSeries = openTrendingSeries,
+            openIptvItem = play,
+            toggleFavorite = toggleFavorite,
+            loadMoreTmdb = loadMoreModernTmdbSection,
+            loadMoreIptv = loadMoreCatalog,
+            configureTmdb = { tmdbSetupOpen = true },
+            configureIptv = openCategoryManager,
+            resetSurface = { resetConfirmationOpen = true }
+        )
+
+        if (tmdbSetupOpen) {
+            TmdbHomeSectionsDialog(
+                selected = selectedTmdbSections,
+                surface = dashboardSurface,
+                close = { tmdbSetupOpen = false },
+                save = {
+                    setTmdbSections(dashboardSurface, it)
+                    tmdbSetupOpen = false
+                }
+            )
+        }
+        if (resetConfirmationOpen) {
+            ProjectCardConfirmationDialog(
+                title = "Reset ${dashboardSurface.displayTitle()}?",
+                message = "This clears every IPTV and TMDB selection for this screen so you can configure it again from nothing.",
+                confirmLabel = "Reset screen",
+                close = { resetConfirmationOpen = false },
+                confirm = {
+                    resetScreenConfiguration(dashboardSurface)
+                    resetConfirmationOpen = false
+                }
+            )
+        }
+        return
+    }
+
     val tmdbLayoutLoading = selectedTmdbSections.any { it in state.tmdbSectionsLoading }
     val tmdbLoadingFocusRequester = remember { FocusRequester() }
     LaunchedEffect(tmdbLayoutLoading) {
@@ -4519,6 +4613,7 @@ private fun ModernSettingsScreen(
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
+    setModernUiEnabled: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     setBrowseLayout: (BrowseLayout) -> Unit,
@@ -4676,6 +4771,37 @@ private fun ModernSettingsScreen(
         val showMobileAppearance =
             settingsConfiguration.smallestScreenWidthDp < 600 &&
                 orientationMode != UiOrientationMode.LANDSCAPE
+
+        SettingsSection("Interface") {
+            ListItem(
+                headlineContent = { Text("Modern tile-first browsing") },
+                supportingContent = {
+                    Text(
+                        if (state.modernUiEnabled) {
+                            "Home, Movies, and Series show lightweight destination tiles. Media loads only after you open a destination."
+                        } else {
+                            "Use NikTV's existing dashboard, media rails, and Browse layout behavior."
+                        }
+                    )
+                },
+                leadingContent = {
+                    Icon(Icons.Default.DashboardCustomize, null)
+                },
+                trailingContent = {
+                    Switch(
+                        checked = state.modernUiEnabled,
+                        onCheckedChange = setModernUiEnabled,
+                        modifier = Modifier.remoteFocusFrame(
+                            RoundedCornerShape(16.dp)
+                        )
+                    )
+                },
+                colors = ListItemDefaults.colors(
+                    containerColor = Color.Transparent
+                )
+            )
+        }
+
         if (showMobileAppearance) SettingsSection("Mobile appearance") {
             val mobileDesign by rememberMobileUiDesign()
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

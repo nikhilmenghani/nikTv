@@ -78,6 +78,17 @@ data class NikTvState(
     val cacheIntervalMinutes: Int = 60,
     val playerControlsTimeoutSeconds: Int = 3,
     val keepAwakeOnlyDuringPlayback: Boolean = false,
+    val modernUiEnabled: Boolean = true,
+    val modernTmdbSection: TmdbHomeSection? = null,
+    val modernIptvCategory: Category? = null,
+    val modernSectionOriginHome: Boolean = false,
+    val modernTmdbMovies: List<TrendingMovie> = emptyList(),
+    val modernTmdbSeries: List<TrendingSeries> = emptyList(),
+    val modernTmdbLoading: Boolean = false,
+    val modernTmdbPage: Int = 0,
+    val modernTmdbHasMore: Boolean = false,
+    val modernTmdbError: String? = null,
+    val seriesOpenedFromModernSection: Boolean = false,
     val playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
     val seriesStartSeason: SeriesStartSeason = SeriesStartSeason.FIRST,
     val availableSeriesSeasons: List<Int> = emptyList(),
@@ -146,6 +157,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.keepAwakeOnlyDuringPlayback.collect { enabled ->
             _state.update { it.copy(keepAwakeOnlyDuringPlayback = enabled) }
         } }
+        viewModelScope.launch { store.modernUiEnabled.collect { enabled ->
+            _state.update { current ->
+                if (current.modernUiEnabled == enabled) current
+                else current.copy(
+                    modernUiEnabled = enabled,
+                    modernTmdbSection = null,
+                    modernIptvCategory = null,
+                    modernSectionOriginHome = false,
+                    modernTmdbMovies = emptyList(),
+                    modernTmdbSeries = emptyList(),
+                    modernTmdbLoading = false,
+                    modernTmdbPage = 0,
+                    modernTmdbHasMore = false,
+                    modernTmdbError = null,
+                    seriesOpenedFromModernSection = false,
+                    feedRefreshing = if (enabled) false else current.feedRefreshing
+                )
+            }
+        } }
         viewModelScope.launch { store.playbackEngine.collect { engine -> _state.update { it.copy(playbackEngine = engine) } } }
         viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
         viewModelScope.launch { store.rememberedSeriesSeasons.collect { rememberedSeriesSeasons = it } }
@@ -162,7 +192,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 stored["$profileKey|${surface.name}"].orEmpty()
             }
             _state.update { it.copy(tmdbSectionsBySurface = sections) }
-            if (_state.value.session != null) loadConfiguredTmdbHomeSections()
+            if (_state.value.session != null && !_state.value.modernUiEnabled) {
+                loadConfiguredTmdbHomeSections()
+            }
         } }
         viewModelScope.launch { store.watchedSeries.collect { entries ->
             allWatchedSeries = entries
@@ -194,6 +226,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val needsReload = selected != snapshot.selectedCategory
                 _state.update { it.copy(categoryFilters = filters, categories = filtered, selectedCategory = selected) }
                 if (
+                    !snapshot.modernUiEnabled &&
                     needsReload &&
                     snapshot.browseLayout != BrowseLayout.SECTIONS &&
                     selected != null &&
@@ -202,6 +235,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     loadCategory(selected)
                 }
                 if (
+                    !snapshot.modernUiEnabled &&
                     activeFilterChanged &&
                     snapshot.browseLayout == BrowseLayout.SECTIONS
                 ) {
@@ -256,19 +290,33 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // Old builds combined every profile's browse data in a single value.
         // Remove it without decoding before creating bounded, profile-scoped caches.
         store.discardLegacyBrowseCatalogs()
-        updateProfileLoad(0.30f, "Loading Movies…")
-        loadTypeInternal(session, CatalogType.MOVIES)
-        updateProfileLoad(0.40f, "Preparing Movies…")
-        updateProfileLoad(0.48f, "Loading Series…")
-        loadTypeInternal(session, CatalogType.SERIES)
-        updateProfileLoad(0.60f, "Preparing Series…")
-        updateProfileLoad(0.68f, "Loading Live TV…")
-        loadTypeInternal(session, CatalogType.LIVE_TV)
-        updateProfileLoad(0.82f, "Preparing Live TV…")
+        if (_state.value.modernUiEnabled) {
+            updateProfileLoad(0.30f, "Loading Movie categories…")
+            loadTypeMetadataInternal(session, CatalogType.MOVIES)
+            updateProfileLoad(0.48f, "Loading Series categories…")
+            loadTypeMetadataInternal(session, CatalogType.SERIES)
+            updateProfileLoad(0.66f, "Loading Live TV categories…")
+            loadTypeMetadataInternal(session, CatalogType.LIVE_TV)
+            updateProfileLoad(0.82f, "Preparing destinations…")
+        } else {
+            updateProfileLoad(0.30f, "Loading Movies…")
+            loadTypeInternal(session, CatalogType.MOVIES)
+            updateProfileLoad(0.40f, "Preparing Movies…")
+            updateProfileLoad(0.48f, "Loading Series…")
+            loadTypeInternal(session, CatalogType.SERIES)
+            updateProfileLoad(0.60f, "Preparing Series…")
+            updateProfileLoad(0.68f, "Loading Live TV…")
+            loadTypeInternal(session, CatalogType.LIVE_TV)
+            updateProfileLoad(0.82f, "Preparing Live TV…")
+        }
         updateProfileLoad(0.90f, "Preparing your dashboard…")
         refreshWatchedSeriesIfDue()
         loadDashboardDiscovery()
-        updateProfileLoad(0.94f, "Loading selected TMDB sections…")
+        updateProfileLoad(
+            0.94f,
+            if (_state.value.modernUiEnabled) "Opening your destinations…"
+            else "Loading selected TMDB sections…"
+        )
         // Keep the existing profile loading screen visible while discovery
         // rows settle. The dashboard is never exposed in a half-composed state
         // where late row insertion can steal focus or appear frozen.
@@ -384,8 +432,86 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openCatalogType(type: CatalogType) {
+        _state.update { current ->
+            current.copy(
+                modernTmdbSection = null,
+                modernIptvCategory = null,
+                modernSectionOriginHome = false,
+                modernTmdbMovies = emptyList(),
+                modernTmdbSeries = emptyList(),
+                modernTmdbLoading = false,
+                modernTmdbPage = 0,
+                modernTmdbHasMore = false,
+                modernTmdbError = null,
+                seriesOpenedFromModernSection = false
+            )
+        }
+
+        if (_state.value.modernUiEnabled &&
+            type in setOf(CatalogType.MOVIES, CatalogType.SERIES)
+        ) {
+            val snapshot = _state.value
+            val session = snapshot.session ?: return
+            val cached = snapshot.browseCachesByType[type]
+            val categories = cached?.categories.orEmpty()
+
+            if (categories.isNotEmpty()) {
+                val filtered = filterCategories(
+                    categories,
+                    session.profile.cacheKey(),
+                    type,
+                    snapshot.categoryFilters
+                )
+                val selected = filtered.firstOrNull {
+                    type != CatalogType.SERIES || it.id != "*"
+                } ?: filtered.firstOrNull()
+                _state.update {
+                    it.copy(
+                        homeOpen = false,
+                        favoritesOpen = false,
+                        settingsOpen = false,
+                        searchOpen = false,
+                        selectedType = type,
+                        categories = filtered,
+                        selectedCategory = selected,
+                        items = emptyList(),
+                        selectedSeries = null,
+                        browseCache = cached
+                    )
+                }
+                return
+            }
+
+            _state.update {
+                it.copy(
+                    homeOpen = false,
+                    favoritesOpen = false,
+                    settingsOpen = false,
+                    searchOpen = false,
+                    selectedType = type,
+                    items = emptyList(),
+                    selectedSeries = null
+                )
+            }
+            viewModelScope.launch {
+                runCatching { loadTypeMetadataInternal(session, type) }
+                    .onFailure { error ->
+                        _state.update {
+                            it.copy(
+                                error =
+                                    error.message
+                                        ?: "Could not load ${type.title} categories"
+                            )
+                        }
+                    }
+            }
+            return
+        }
+
         if (activateWarmedType(type, closeOverlays = true)) {
-            if (_state.value.browseLayout == BrowseLayout.SECTIONS) {
+            if (!_state.value.modernUiEnabled &&
+                _state.value.browseLayout == BrowseLayout.SECTIONS
+            ) {
                 _state.value.session?.let { session ->
                     viewModelScope.launch { loadCategorySections(session, type) }
                 }
@@ -428,6 +554,72 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             searchOpen = if (closeOverlays) false else current.searchOpen
         ) }
         return true
+    }
+
+    /**
+     * Tile-first browsing only needs destination metadata at startup. Preserve
+     * any existing per-category cache but do not load a media list until a
+     * destination tile is opened.
+     */
+    private suspend fun loadTypeMetadataInternal(
+        session: PortalSession,
+        type: CatalogType,
+        forceRefresh: Boolean = false
+    ) {
+        val profileKey = session.profile.cacheKey()
+        var cachedBrowse = if (!forceRefresh) {
+            _state.value.browseCachesByType[type]
+                ?.takeIf { it.profileKey == profileKey }
+        } else null
+
+        if (!forceRefresh && cachedBrowse == null) {
+            cachedBrowse = store.browseCatalog(type, profileKey).first()
+                ?.takeIf { it.categories.isNotEmpty() }
+        }
+
+        val allCategories = cachedBrowse?.categories
+            ?.takeIf { it.isNotEmpty() }
+            ?: portal.categories(session, type)
+
+        val filteredCategories = filterCategories(
+            allCategories,
+            profileKey,
+            type,
+            _state.value.categoryFilters
+        )
+
+        val selected = filteredCategories.firstOrNull {
+            type != CatalogType.SERIES || it.id != "*"
+        } ?: filteredCategories.firstOrNull()
+
+        val cache = cachedBrowse?.copy(categories = allCategories)
+            ?: BrowseCatalogCache(
+                profileKey = profileKey,
+                type = type,
+                cachedAtMillis = System.currentTimeMillis(),
+                categories = allCategories,
+                itemsByCategory = emptyMap()
+            )
+
+        if (allCategories.isNotEmpty() && cache != cachedBrowse) {
+            store.saveBrowseCatalog(cache)
+        }
+
+        _state.update { current ->
+            val active = current.selectedType == type
+            current.copy(
+                rawCategoriesByType =
+                    current.rawCategoriesByType + (type to allCategories),
+                categories =
+                    if (active) filteredCategories else current.categories,
+                selectedCategory =
+                    if (active) selected else current.selectedCategory,
+                items = if (active) emptyList() else current.items,
+                browseCache = if (active) cache else current.browseCache,
+                browseCachesByType =
+                    current.browseCachesByType + (type to cache)
+            )
+        }
     }
 
     private suspend fun loadTypeInternal(session: PortalSession, type: CatalogType, forceRefresh: Boolean = false, preferredCategoryId: String? = null) {
@@ -499,6 +691,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (
+            !_state.value.modernUiEnabled &&
             _state.value.browseLayout == BrowseLayout.SECTIONS &&
             _state.value.profileLoadProgress == null
         ) {
@@ -722,6 +915,42 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = viewModelScope.launch {
         store.setKeepAwakeOnlyDuringPlayback(enabled)
+    }
+
+    fun setModernUiEnabled(enabled: Boolean) {
+        _state.update { current ->
+            current.copy(
+                modernUiEnabled = enabled,
+                modernTmdbSection = null,
+                modernIptvCategory = null,
+                modernSectionOriginHome = false,
+                modernTmdbMovies = emptyList(),
+                modernTmdbSeries = emptyList(),
+                modernTmdbLoading = false,
+                modernTmdbPage = 0,
+                modernTmdbHasMore = false,
+                modernTmdbError = null,
+                seriesOpenedFromModernSection = false,
+                feedRefreshing = if (enabled) false else current.feedRefreshing
+            )
+        }
+        viewModelScope.launch {
+            store.setModernUiEnabled(enabled)
+            if (!enabled) {
+                loadDashboardDiscovery()
+                val snapshot = _state.value
+                val session = snapshot.session
+                if (session != null && !snapshot.homeOpen) {
+                    runCatching {
+                        loadTypeInternal(
+                            session,
+                            snapshot.selectedType,
+                            preferredCategoryId = snapshot.selectedCategory?.id
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /*
@@ -1163,7 +1392,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         _state.update { it.copy(browseLayout = layout) }
         store.setBrowseLayout(profileKey, layout)
-        if (layout == BrowseLayout.SECTIONS) {
+        if (layout == BrowseLayout.SECTIONS && !_state.value.modernUiEnabled) {
             _state.value.session?.let { loadCategorySections(it, _state.value.selectedType) }
         }
     }
@@ -1245,7 +1474,225 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+    fun openModernTmdbSection(section: TmdbHomeSection) {
+        val snapshot = _state.value
+        if (!snapshot.modernUiEnabled || snapshot.session == null) return
+
+        _state.update { current ->
+            current.copy(
+                modernTmdbSection = section,
+                modernIptvCategory = null,
+                modernSectionOriginHome = current.homeOpen,
+                modernTmdbMovies = emptyList(),
+                modernTmdbSeries = emptyList(),
+                modernTmdbLoading = false,
+                modernTmdbPage = 0,
+                modernTmdbHasMore = true,
+                modernTmdbError = null,
+                selectedType =
+                    if (section.series) CatalogType.SERIES
+                    else CatalogType.MOVIES,
+                selectedSeries = null
+            )
+        }
+        loadModernTmdbPage(section, 1, replace = true)
+    }
+
+    fun openModernIptvCategory(category: Category) {
+        val snapshot = _state.value
+        if (!snapshot.modernUiEnabled ||
+            category.type !in setOf(CatalogType.MOVIES, CatalogType.SERIES)
+        ) return
+
+        _state.update { current ->
+            current.copy(
+                modernTmdbSection = null,
+                modernIptvCategory = category,
+                modernSectionOriginHome = current.homeOpen,
+                modernTmdbMovies = emptyList(),
+                modernTmdbSeries = emptyList(),
+                modernTmdbLoading = false,
+                modernTmdbPage = 0,
+                modernTmdbHasMore = false,
+                modernTmdbError = null,
+                selectedType = category.type,
+                selectedCategory = category,
+                selectedSeries = null,
+                seriesOpenedFromModernSection = false
+            )
+        }
+        loadCategory(category)
+    }
+
+    fun closeModernSection() {
+        _state.update { current ->
+            current.copy(
+                modernTmdbSection = null,
+                modernIptvCategory = null,
+                modernTmdbMovies = emptyList(),
+                modernTmdbSeries = emptyList(),
+                modernTmdbLoading = false,
+                modernTmdbPage = 0,
+                modernTmdbHasMore = false,
+                modernTmdbError = null,
+                homeOpen = current.modernSectionOriginHome,
+                modernSectionOriginHome = false,
+                seriesOpenedFromModernSection = false,
+                items = if (current.modernSectionOriginHome) {
+                    current.items
+                } else {
+                    emptyList()
+                }
+            )
+        }
+    }
+
+    fun loadMoreModernTmdbSection() {
+        val snapshot = _state.value
+        val section = snapshot.modernTmdbSection ?: return
+        if (!snapshot.modernUiEnabled ||
+            snapshot.modernTmdbLoading ||
+            !snapshot.modernTmdbHasMore
+        ) return
+        loadModernTmdbPage(
+            section,
+            snapshot.modernTmdbPage + 1,
+            replace = false
+        )
+    }
+
+    private fun loadModernTmdbPage(
+        section: TmdbHomeSection,
+        page: Int,
+        replace: Boolean
+    ) {
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        if (!tmdb.configured || page !in 1..MODERN_TMDB_MAX_PAGES) return
+        val profileKey = session.profile.cacheKey()
+
+        viewModelScope.launch {
+            _state.update { current ->
+                if (current.modernTmdbSection != section) current
+                else current.copy(
+                    modernTmdbLoading = true,
+                    modernTmdbError = null
+                )
+            }
+
+            if (section.series) {
+                runCatching {
+                    val requested = page * MODERN_TMDB_PAGE_SIZE
+                    val pageItems = tmdb.homeSeries(section, requested)
+                        .drop((page - 1) * MODERN_TMDB_PAGE_SIZE)
+                        .take(MODERN_TMDB_PAGE_SIZE)
+                    val candidates = localSeriesCandidates(_state.value)
+                    val savedMappings = store.tmdbMappings.first()
+                        .filter {
+                            it.profileKey == profileKey &&
+                                it.type == CatalogType.SERIES
+                        }
+                        .associateBy { it.tmdbId }
+                    pageItems.map { series ->
+                        TrendingSeries(
+                            tmdb = series,
+                            iptv = savedMappings[series.id]?.media
+                                ?: matchTmdbSeries(series, candidates)
+                        )
+                    }
+                }.onSuccess { rows ->
+                    _state.update { current ->
+                        if (current.modernTmdbSection != section ||
+                            current.session?.profile?.cacheKey() != profileKey
+                        ) current
+                        else {
+                            val merged = if (replace) rows else {
+                                (current.modernTmdbSeries + rows)
+                                    .distinctBy { it.tmdb.id }
+                            }
+                            current.copy(
+                                modernTmdbSeries = merged,
+                                modernTmdbMovies = emptyList(),
+                                modernTmdbLoading = false,
+                                modernTmdbPage = page,
+                                modernTmdbHasMore =
+                                    rows.size == MODERN_TMDB_PAGE_SIZE &&
+                                        page < MODERN_TMDB_MAX_PAGES,
+                                modernTmdbError = null
+                            )
+                        }
+                    }
+                }.onFailure { error ->
+                    _state.update { current ->
+                        if (current.modernTmdbSection != section) current
+                        else current.copy(
+                            modernTmdbLoading = false,
+                            modernTmdbHasMore = false,
+                            modernTmdbError =
+                                error.message ?: "Could not load ${section.title}"
+                        )
+                    }
+                }
+            } else {
+                runCatching {
+                    val requested = page * MODERN_TMDB_PAGE_SIZE
+                    val pageItems = tmdb.homeMovies(section, requested)
+                        .drop((page - 1) * MODERN_TMDB_PAGE_SIZE)
+                        .take(MODERN_TMDB_PAGE_SIZE)
+                    val candidates = localMovieCandidates(_state.value)
+                    val savedMappings = store.tmdbMappings.first()
+                        .filter {
+                            it.profileKey == profileKey &&
+                                it.type == CatalogType.MOVIES
+                        }
+                        .associateBy { it.tmdbId }
+                    pageItems.map { movie ->
+                        TrendingMovie(
+                            tmdb = movie,
+                            iptv = savedMappings[movie.id]?.media
+                                ?: matchTmdbMovie(movie, candidates)
+                        )
+                    }
+                }.onSuccess { rows ->
+                    _state.update { current ->
+                        if (current.modernTmdbSection != section ||
+                            current.session?.profile?.cacheKey() != profileKey
+                        ) current
+                        else {
+                            val merged = if (replace) rows else {
+                                (current.modernTmdbMovies + rows)
+                                    .distinctBy { it.tmdb.id }
+                            }
+                            current.copy(
+                                modernTmdbMovies = merged,
+                                modernTmdbSeries = emptyList(),
+                                modernTmdbLoading = false,
+                                modernTmdbPage = page,
+                                modernTmdbHasMore =
+                                    rows.size == MODERN_TMDB_PAGE_SIZE &&
+                                        page < MODERN_TMDB_MAX_PAGES,
+                                modernTmdbError = null
+                            )
+                        }
+                    }
+                }.onFailure { error ->
+                    _state.update { current ->
+                        if (current.modernTmdbSection != section) current
+                        else current.copy(
+                            modernTmdbLoading = false,
+                            modernTmdbHasMore = false,
+                            modernTmdbError =
+                                error.message ?: "Could not load ${section.title}"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun loadDashboardDiscovery(forceRefresh: Boolean = false) {
+        // Tile-first mode intentionally fetches TMDB rows only on destination open.
+        if (_state.value.modernUiEnabled) return
         loadTrendingMovies(forceRefresh)
         loadTrendingSeries(forceRefresh)
         loadThrillerMovies(forceRefresh)
@@ -1254,18 +1701,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTmdbSections(surface: DashboardSurface, sections: List<TmdbHomeSection>) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return
-        // Publish the complete intended configuration immediately, but keep
-        // the dashboard covered until every newly required row has settled.
+        val warmLegacyRows = !_state.value.modernUiEnabled
         _state.update { current ->
             current.copy(
-                tmdbSectionsBySurface = current.tmdbSectionsBySurface + (surface to sections.distinct()),
-                feedRefreshing = true,
-                feedRefreshMessage = "Refreshing ${surface.name.lowercase().replace('_', ' ')} feed…"
+                tmdbSectionsBySurface =
+                    current.tmdbSectionsBySurface + (surface to sections.distinct()),
+                feedRefreshing = warmLegacyRows,
+                feedRefreshMessage =
+                    "Refreshing ${surface.name.lowercase().replace('_', ' ')} feed…"
             )
         }
-        loadConfiguredTmdbHomeSections()
-        if (_state.value.tmdbSectionsLoading.isEmpty()) {
-            _state.update { it.copy(feedRefreshing = false) }
+        if (warmLegacyRows) {
+            loadConfiguredTmdbHomeSections()
+            if (_state.value.tmdbSectionsLoading.isEmpty()) {
+                _state.update { it.copy(feedRefreshing = false) }
+            }
         }
         viewModelScope.launch {
             store.setTmdbDashboardSections(profileKey, surface, sections)
@@ -1286,6 +1736,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadConfiguredTmdbHomeSections(forceRefresh: Boolean = false) {
         val snapshot = _state.value
+        if (snapshot.modernUiEnabled) return
         val profileKey = snapshot.session?.profile?.cacheKey() ?: return
         if (!tmdb.configured) return
         val requested = snapshot.tmdbSectionsBySurface.values.flatten().distinct()
@@ -1588,6 +2039,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             current.copy(
                 trendingMovies = current.trendingMovies.resolveMovie(movie.id, resolved),
                 thrillerMovies = current.thrillerMovies.resolveMovie(movie.id, resolved),
+                modernTmdbMovies = current.modernTmdbMovies.resolveMovie(movie.id, resolved),
                 tmdbHomeMovieRows = current.tmdbHomeMovieRows.mapValues { (_, row) -> row.resolveMovie(movie.id, resolved) },
                 movieMatchSelection = if (returnToMatchSelection) current.movieMatchSelection else null,
                 movieMatchCandidates = if (returnToMatchSelection) current.movieMatchCandidates else emptyList(),
@@ -1598,6 +2050,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openTrendingSeries(entry: TrendingSeries) = task {
         val session = requireNotNull(_state.value.session)
+        val openedFromModernSection =
+            _state.value.modernUiEnabled &&
+                _state.value.modernTmdbSection?.series == true
 
         /*
          * Enter the detail destination before a provider lookup. Xtream may
@@ -1613,7 +2068,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categoryManagerOpen = false,
                 selectedType = CatalogType.SERIES,
                 selectedSeries = entry.tmdb.asMediaItem(),
-                seriesOpenedFromHome = true,
+                seriesOpenedFromHome = !openedFromModernSection,
+                seriesOpenedFromModernSection = openedFromModernSection,
                 seriesOpenedFromFavorites = false,
                 items = emptyList(),
                 availableSeriesSeasons = emptyList(),
@@ -1649,13 +2105,26 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         item.copy(iptv = resolved)
                     } else item
                 },
+                modernTmdbSeries = current.modernTmdbSeries.map { item ->
+                    if (item.tmdb.id == entry.tmdb.id) {
+                        item.copy(iptv = resolved)
+                    } else item
+                },
+                tmdbHomeSeriesRows = current.tmdbHomeSeriesRows.mapValues { (_, row) ->
+                    row.map { item ->
+                        if (item.tmdb.id == entry.tmdb.id) {
+                            item.copy(iptv = resolved)
+                        } else item
+                    }
+                },
                 homeOpen = false,
                 favoritesOpen = false,
                 settingsOpen = false,
                 searchOpen = false,
                 selectedType = CatalogType.SERIES,
                 selectedSeries = resolved,
-                seriesOpenedFromHome = true,
+                seriesOpenedFromHome = !openedFromModernSection,
+                seriesOpenedFromModernSection = openedFromModernSection,
                 seriesOpenedFromFavorites = false,
                 items = emptyList(),
                 availableSeriesSeasons = emptyList(),
@@ -1667,14 +2136,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun returnToHomeAfterTrendingSeriesFailure() {
-        _state.update {
-            it.copy(
+        _state.update { current ->
+            val modernReturn =
+                current.seriesOpenedFromModernSection &&
+                    current.modernTmdbSection != null
+            current.copy(
                 selectedSeries = null,
                 seriesOpenedFromHome = false,
+                seriesOpenedFromModernSection = false,
                 items = emptyList(),
                 availableSeriesSeasons = emptyList(),
                 selectedSeriesSeason = null,
-                homeOpen = true
+                homeOpen =
+                    if (modernReturn) current.modernSectionOriginHome else true
             )
         }
     }
@@ -1991,7 +2465,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.selectedType == CatalogType.SERIES && snapshot.selectedSeries == null) {
             task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(selectedSeries = item, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null, seriesOpenedFromFavorites = false, seriesOpenedFromHome = false) }
+                _state.update {
+                    it.copy(
+                        selectedSeries = item,
+                        items = emptyList(),
+                        availableSeriesSeasons = emptyList(),
+                        selectedSeriesSeason = null,
+                        seriesOpenedFromFavorites = false,
+                        seriesOpenedFromHome = false,
+                        seriesOpenedFromModernSection =
+                            snapshot.modernUiEnabled &&
+                                snapshot.modernIptvCategory != null
+                    )
+                }
                 loadSeriesEpisodes(item)
             }
         } else {
@@ -2008,7 +2494,28 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val queue = categoryItems
                 ?: snapshot.items.takeIf { visible -> visible.any { it.id == item.id } }
                 ?: emptyList()
-            play(item, snapshot.selectedType, snapshot.selectedSeries, queue)
+            if (
+                snapshot.modernUiEnabled &&
+                snapshot.modernIptvCategory != null &&
+                snapshot.selectedType == CatalogType.MOVIES
+            ) {
+                task {
+                    playInternal(
+                        item = item,
+                        type = CatalogType.MOVIES,
+                        series = null,
+                        episodes = queue,
+                        directFullscreen = true
+                    )
+                }
+            } else {
+                play(
+                    item,
+                    snapshot.selectedType,
+                    snapshot.selectedSeries,
+                    queue
+                )
+            }
         }
     }
 
@@ -2560,6 +3067,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeSeries() = task {
+        if (_state.value.seriesOpenedFromModernSection) {
+            _state.update { current ->
+                val category = current.modernIptvCategory
+                val restoredItems = category?.let {
+                    current.browseCachesByType[it.type]
+                        ?.itemsByCategory
+                        ?.get(it.id)
+                }.orEmpty()
+                current.copy(
+                    selectedSeries = null,
+                    seriesOpenedFromModernSection = false,
+                    homeOpen = current.modernSectionOriginHome,
+                    items = restoredItems,
+                    availableSeriesSeasons = emptyList(),
+                    selectedSeriesSeason = null
+                )
+            }
+            return@task
+        }
         if (_state.value.seriesOpenedFromHome) {
             _state.update { it.copy(selectedSeries = null, seriesOpenedFromHome = false, homeOpen = true) }
             return@task
@@ -2592,7 +3118,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             session != null &&
             !snapshot.homeOpen &&
             snapshot.selectedSeries == null &&
-            snapshot.browseLayout == BrowseLayout.SECTIONS
+            snapshot.browseLayout == BrowseLayout.SECTIONS &&
+            !(snapshot.modernUiEnabled &&
+                (snapshot.modernTmdbSection != null ||
+                    snapshot.modernIptvCategory != null))
         ) {
             viewModelScope.launch {
                 loadCategorySections(session, snapshot.selectedType)
@@ -2787,7 +3316,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         _state.update {
             it.copy(
-                feedRefreshing = true,
+                feedRefreshing = !snapshot.modernUiEnabled,
                 feedRefreshMessage = "Refreshing ${snapshot.selectedType.title} feed…"
             )
         }
@@ -2817,14 +3346,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                if (snapshot.browseLayout == BrowseLayout.SECTIONS) {
-                    loadCategorySections(session, snapshot.selectedType)
-                } else {
-                    loadTypeInternal(
-                        session = session,
-                        type = snapshot.selectedType,
-                        preferredCategoryId = selected?.id
-                    )
+                if (!snapshot.modernUiEnabled) {
+                    if (snapshot.browseLayout == BrowseLayout.SECTIONS) {
+                        loadCategorySections(session, snapshot.selectedType)
+                    } else {
+                        loadTypeInternal(
+                            session = session,
+                            type = snapshot.selectedType,
+                            preferredCategoryId = selected?.id
+                        )
+                    }
                 }
             }
         } finally {
@@ -2893,6 +3424,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             selectedSeries = null,
             seriesOpenedFromFavorites = false,
             seriesOpenedFromHome = false,
+            seriesOpenedFromModernSection = false,
+            modernTmdbSection = null,
+            modernIptvCategory = null,
+            modernSectionOriginHome = false,
+            modernTmdbMovies = emptyList(),
+            modernTmdbSeries = emptyList(),
+            modernTmdbLoading = false,
+            modernTmdbPage = 0,
+            modernTmdbHasMore = false,
+            modernTmdbError = null,
             availableSeriesSeasons = emptyList(),
             selectedSeriesSeason = null
         ) }
@@ -3143,6 +3684,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_PROGRESS_ITEMS = 200
         private const val MAX_PLAYBACK_URLS = 500
         private const val DASHBOARD_CATEGORY_LIMIT = 10
+        private const val MODERN_TMDB_PAGE_SIZE = 20
+        private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private const val INITIAL_MOVIE_MATCH_LIMIT = 5
         private const val MAX_BACKGROUND_MATCH_REQUESTS = 8
