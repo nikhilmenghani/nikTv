@@ -6,6 +6,26 @@ import org.junit.Test
 
 class TmdbMappingTest {
     @Test
+    fun ambiguousSameTitleReturnsAllPlausibleMatchesInRankOrder() {
+        val english = MediaItem("100", "Welcome to the Jungle (2003)", null, "/english")
+        val hindi = MediaItem("200", "Welcome to the Jungle (2026) Hindi", null, "/hindi")
+        val movie = TmdbMovie(
+            id = 11111,
+            title = "Welcome to the Jungle",
+            originalTitle = "Welcome to the Jungle",
+            overview = null,
+            posterUrl = null,
+            backdropUrl = null,
+            releaseDate = "2026-12-25",
+            voteAverage = null
+        )
+
+        val matches = rankTmdbMovieMatches(movie, listOf(english, hindi))
+
+        assertEquals(listOf("200", "100"), matches.map { it.id })
+    }
+
+    @Test
     fun providerTmdbIdWinsOverACloserTitleGuess() {
         val exactProviderIdentity = MediaItem(
             id = "42",

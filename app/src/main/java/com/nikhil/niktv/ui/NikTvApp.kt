@@ -79,6 +79,7 @@ import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.data.TrendingMovie
 import com.nikhil.niktv.data.TrendingSeries
+import com.nikhil.niktv.data.TmdbMovie
 import com.nikhil.niktv.data.artworkRequest
 import com.nikhil.niktv.data.cast4kLegacyDeviceIdentity
 import com.nikhil.niktv.model.*
@@ -437,6 +438,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
                     openTrendingMovie = vm::openTrendingMovie,
+                    selectTmdbMovieMatch = vm::selectTmdbMovieMatch,
+                    closeTmdbMovieMatches = vm::closeTmdbMovieMatches,
                     openTrendingSeries = vm::openTrendingSeries,
                     closeSeries = vm::closeSeries,
                     refreshCatalog = vm::refreshCatalog,
@@ -541,36 +544,62 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 LaunchedEffect(error, authorizationExpired) {
                     if (authorizationExpired) reauthenticateRequester.requestFocus()
                 }
-                AlertDialog(
-                    onDismissRequest = vm::dismissError,
-                    confirmButton = {
-                        if (authorizationExpired) Button(
-                            onClick = { vm.dismissError(); vm.reauthenticate() },
-                            modifier = Modifier.focusRequester(reauthenticateRequester)
-                        ) { Text("Re-authenticate") }
-                        else TextButton(onClick = {
-                            clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error))
-                        }) { Text("Copy diagnostics") }
-                    },
-                    dismissButton = { TextButton(onClick = vm::dismissError) { Text("Close") } },
-                    title = { Text(if (authorizationExpired) "Session expired" else "Portal diagnostics") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Dialog(onDismissRequest = vm::dismissError) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().widthIn(max = 620.dp),
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
+                        tonalElevation = 2.dp,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(Modifier.size(48.dp), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    if (authorizationExpired) "Session expired" else "Portal diagnostics",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                             if (authorizationExpired) {
                                 Text("The portal rejected the saved authorization token even though the HTTP request completed. Your profile credentials are still saved; request a fresh session to continue.")
                                 if (!showDiagnostics) TextButton(onClick = { showDiagnostics = true }) { Icon(Icons.Default.Info, null); Spacer(Modifier.width(8.dp)); Text("Show diagnostics") }
                             }
                             if (showDiagnostics) SelectionContainer {
-                                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                                     Text(error, style = MaterialTheme.typography.bodySmall)
-                                    OutlinedButton(onClick = {
-                                        clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error))
-                                    }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(8.dp)); Text("Copy diagnostics") }
                                 }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                                FilledTonalButton(
+                                    onClick = vm::dismissError,
+                                    modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
+                                    shape = CircleShape
+                                ) { Text("Close") }
+                                if (showDiagnostics) Button(
+                                    onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
+                                    modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
+                                    shape = CircleShape
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Copy diagnostics")
+                                }
+                                if (authorizationExpired) Button(
+                                    onClick = { vm.dismissError(); vm.reauthenticate() },
+                                    modifier = Modifier.height(44.dp).focusRequester(reauthenticateRequester).remoteFocusFrame(CircleShape),
+                                    shape = CircleShape
+                                ) { Text("Re-authenticate") }
                             }
                         }
                     }
-                )
+                }
             }
             state.backupMessage?.let { message ->
                 AlertDialog(
@@ -1147,6 +1176,8 @@ private fun CatalogScreen(
     selectCategory: (Category) -> Unit,
     play: (MediaItem) -> Unit,
     openTrendingMovie: (TrendingMovie) -> Unit,
+    selectTmdbMovieMatch: (MediaItem) -> Unit,
+    closeTmdbMovieMatches: () -> Unit,
     openTrendingSeries: (TrendingSeries) -> Unit,
     closeSeries: () -> Unit,
     refreshCatalog: () -> Unit,
@@ -1206,6 +1237,7 @@ private fun CatalogScreen(
     val exitFocusRequester = remember { FocusRequester() }
 
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
+    BackHandler(enabled = state.movieMatchSelection != null, onBack = closeTmdbMovieMatches)
     BackHandler(enabled = !state.settingsOpen && state.searchOpen, onBack = closeSearch)
     BackHandler(enabled = !state.settingsOpen && !state.searchOpen && state.favoritesOpen, onBack = closeFavorites)
     BackHandler(
@@ -1213,7 +1245,7 @@ private fun CatalogScreen(
         onBack = closeSeries
     )
     BackHandler(
-        enabled = !exitConfirmationOpen && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries == null
+        enabled = !exitConfirmationOpen && state.movieMatchSelection == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries == null
     ) {
         if (state.homeOpen) exitConfirmationOpen = true else openHome()
     }
@@ -1230,6 +1262,13 @@ private fun CatalogScreen(
     fun MainContent(modifier: Modifier = Modifier) {
         Box(modifier) {
             when {
+                state.movieMatchSelection != null -> TmdbMovieMatchScreen(
+                    movie = state.movieMatchSelection,
+                    candidates = state.movieMatchCandidates,
+                    loadingMore = state.movieMatchLoadingMore,
+                    select = selectTmdbMovieMatch,
+                    close = closeTmdbMovieMatches
+                )
                 state.settingsOpen -> ModernSettingsScreen(
                     state = state,
                     closeSettings = closeSettings,
@@ -3296,6 +3335,85 @@ private fun DashboardMovieRail(
 
             !error.isNullOrBlank() ->
                 ModernSectionHeader(title, error)
+        }
+    }
+}
+
+@Composable
+private fun TmdbMovieMatchScreen(
+    movie: TmdbMovie,
+    candidates: List<MediaItem>,
+    loadingMore: Boolean,
+    select: (MediaItem) -> Unit,
+    close: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 18.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = close, modifier = Modifier.remoteFocusFrame(CircleShape)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text("Choose the IPTV version", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    buildString {
+                        append(movie.title)
+                        movie.releaseYear?.let { append(" ($it)") }
+                        append(" · ${candidates.size} matches found")
+                        if (loadingMore) append(" · Finding more…")
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+            items(candidates, key = { it.id }) { candidate ->
+                Surface(
+                    onClick = { select(candidate) },
+                    modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(14.dp)),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(
+                            model = artworkRequest(LocalContext.current, candidate),
+                            contentDescription = null,
+                            modifier = Modifier.width(72.dp).height(104.dp).clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(candidate.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            candidate.description?.takeIf(String::isNotBlank)?.let {
+                                Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text(
+                                listOfNotNull(
+                                    candidate.portalCategoryId?.let { "Category $it" },
+                                    candidate.externalTmdbId?.let { "TMDB $it" },
+                                    "IPTV ID ${candidate.id}"
+                                ).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Select")
+                    }
+                }
+            }
+            if (loadingMore) item("loading-more-matches") {
+                Row(
+                    Modifier.fillMaxWidth().padding(20.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Searching Wio for more matches…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }

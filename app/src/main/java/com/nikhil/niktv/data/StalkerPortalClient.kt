@@ -249,13 +249,21 @@ class StalkerPortalClient(private val context: Context) {
         val cmd = item.command ?: error("This item has no playback command")
         val playbackCommand = if (type == CatalogType.MOVIES || type == CatalogType.SERIES) {
             val movieId = item.id.substringBefore(':')
-            val detail = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+            val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
                 "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
                 "season_id" to item.portalSeasonId.orEmpty(), "episode_id" to item.portalEpisodeId.orEmpty(),
                 "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
                 "hd" to "0", "ended" to "0", "p" to "1"
-            ))).payload().arrayFromData().firstOrNull() as? JsonObject
-            detail?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd
+            ))).payload().arrayFromData().mapNotNull { it as? JsonObject }
+            if (type == CatalogType.MOVIES) {
+                resolveMoviePlaybackCommand(
+                    movieId = movieId,
+                    originalCommand = cmd,
+                    details = details.map { it.string("id") to it.string("movie_id") }
+                )
+            } else {
+                details.firstOrNull()?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd
+            }
         } else cmd
         val response = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
             "type" to if (type == CatalogType.SERIES) "vod" else type.apiType,
@@ -777,6 +785,17 @@ class StalkerPortalClient(private val context: Context) {
         )
     }
     companion object {
+        internal fun resolveMoviePlaybackCommand(
+            movieId: String,
+            originalCommand: String,
+            details: List<Pair<String?, String?>>
+        ): String {
+            val matchingFileId = details.firstOrNull { (id, detailMovieId) ->
+                id == movieId || detailMovieId == movieId
+            }?.first
+            return matchingFileId?.let { "/media/file_$it.mpg" } ?: originalCommand
+        }
+
         private const val USER_AGENT = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Mobile Safari/533.3"
         private const val MAG_VER = "ImageDescription: 2.20.02-pub-424; ImageDate: Fri May 8 15:39:55 UTC 2020; PORTAL version: 5.6.2; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x588"
         private const val HW_VERSION = "1.7-BD-00"

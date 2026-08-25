@@ -400,7 +400,12 @@ class TmdbClient {
 fun matchTmdbMovie(
     movie: TmdbMovie,
     candidates: List<MediaItem>
-): MediaItem? = matchTmdbTitle(
+): MediaItem? = rankTmdbMovieMatches(movie, candidates).firstOrNull()
+
+fun rankTmdbMovieMatches(
+    movie: TmdbMovie,
+    candidates: List<MediaItem>
+): List<MediaItem> = rankTmdbTitleMatches(
     tmdbId = movie.id,
     titles = listOf(movie.title, movie.originalTitle),
     year = movie.releaseYear,
@@ -410,22 +415,23 @@ fun matchTmdbMovie(
 fun matchTmdbSeries(
     series: TmdbSeries,
     candidates: List<MediaItem>
-): MediaItem? = matchTmdbTitle(
+): MediaItem? = rankTmdbTitleMatches(
     tmdbId = series.id,
     titles = listOf(series.name, series.originalName),
     year = series.firstAirYear,
     candidates = candidates
-)
+).firstOrNull()
 
-private fun matchTmdbTitle(
+private fun rankTmdbTitleMatches(
     tmdbId: Int,
     titles: List<String>,
     year: Int?,
     candidates: List<MediaItem>
-): MediaItem? {
-    if (candidates.isEmpty()) return null
+): List<MediaItem> {
+    if (candidates.isEmpty()) return emptyList()
 
-    candidates.firstOrNull { it.externalTmdbId == tmdbId }?.let { return it }
+    candidates.filter { it.externalTmdbId == tmdbId }.distinctBy { it.id }
+        .takeIf { it.isNotEmpty() }?.let { return it }
 
     val wantedKeys = titles
         .asSequence()
@@ -434,7 +440,7 @@ private fun matchTmdbTitle(
         .distinct()
         .toList()
 
-    if (wantedKeys.isEmpty()) return null
+    if (wantedKeys.isEmpty()) return emptyList()
 
     return candidates
         .asSequence()
@@ -455,17 +461,20 @@ private fun matchTmdbTitle(
 
             if (titleScore == 0) return@mapNotNull null
 
-            val yearScore =
-                if (
-                    year != null &&
-                    Regex("\\b$year\\b").containsMatchIn(candidate.title)
-                ) 120 else 0
+            val candidateYear = Regex("\\b(?:19|20)\\d{2}\\b")
+                .find(candidate.title)?.value?.toIntOrNull()
+            val yearScore = when {
+                year == null || candidateYear == null -> 0
+                candidateYear == year -> 240
+                else -> -300
+            }
 
             candidate to (titleScore + yearScore)
         }
         .filter { (_, score) -> score >= 700 }
-        .maxByOrNull { (_, score) -> score }
-        ?.first
+        .sortedWith(compareByDescending<Pair<MediaItem, Int>> { it.second }.thenBy { it.first.title })
+        .map { it.first }
+        .toList()
 }
 
 private fun String.tmdbLookupTitle(): String =

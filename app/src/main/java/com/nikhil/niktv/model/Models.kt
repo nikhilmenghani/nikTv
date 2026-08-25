@@ -123,6 +123,8 @@ data class TmdbIptvMapping(
     val type: CatalogType,
     val tmdbId: Int,
     val media: MediaItem,
+    /** True when the user explicitly chose this provider result. */
+    val confirmedByUser: Boolean = false,
     val cachedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "$profileKey|${type.name}|$tmdbId"
