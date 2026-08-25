@@ -259,7 +259,8 @@ data class PlayingMedia(
     val episodeQueue: List<MediaItem> = emptyList(),
     val resumePositionMillis: Long = 0L,
     val progressKey: String = "",
-    val authorizationRetryCount: Int = 0
+    val authorizationRetryCount: Int = 0,
+    val directFullscreen: Boolean = false
 )
 
 @Serializable

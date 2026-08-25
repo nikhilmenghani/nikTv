@@ -1558,13 +1558,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         resolved: MediaItem,
         confirmedByUser: Boolean
     ) {
+        val returnToMatchSelection = _state.value.movieMatchSelection != null
         // Do not persist or leave the match page until Wio has accepted the
         // selected item's real command and produced a playable URL.
         playInternal(
             item = resolved,
             type = CatalogType.MOVIES,
             series = null,
-            episodes = emptyList()
+            episodes = emptyList(),
+            directFullscreen = true
         )
         store.saveTmdbMapping(
             TmdbIptvMapping(
@@ -1581,9 +1583,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 trendingMovies = current.trendingMovies.resolveMovie(movie.id, resolved),
                 thrillerMovies = current.thrillerMovies.resolveMovie(movie.id, resolved),
                 tmdbHomeMovieRows = current.tmdbHomeMovieRows.mapValues { (_, row) -> row.resolveMovie(movie.id, resolved) },
-                movieMatchSelection = null,
-                movieMatchCandidates = emptyList(),
-                movieMatchLoadingMore = false
+                movieMatchSelection = if (returnToMatchSelection) current.movieMatchSelection else null,
+                movieMatchCandidates = if (returnToMatchSelection) current.movieMatchCandidates else emptyList(),
+                movieMatchLoadingMore = if (returnToMatchSelection) current.movieMatchLoadingMore else false
             )
         }
     }
@@ -2193,7 +2195,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         episodes: List<MediaItem>,
         forceFreshUrl: Boolean = false,
         authorizationRetryCount: Int = 0,
-        resumePositionOverride: Long? = null
+        resumePositionOverride: Long? = null,
+        directFullscreen: Boolean = false
     ) {
         var session = requireNotNull(_state.value.session)
         val urlKey = "${type.name}:${item.id}"
@@ -2217,7 +2220,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 store.savePlaybackUrls(updated)
             }
         }
-        val playbackQueue = when (type) {
+        val playbackQueue = if (directFullscreen) {
+            listOf(item)
+        } else when (type) {
             CatalogType.SERIES -> episodes.sortedWith(
                 compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
             )
@@ -2339,7 +2344,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     episodeQueue = playbackQueue,
                     resumePositionMillis = resumePosition,
                     progressKey = progressKey,
-                    authorizationRetryCount = authorizationRetryCount
+                    authorizationRetryCount = authorizationRetryCount,
+                    directFullscreen = directFullscreen
                 ),
                 playbackReturnFocusId = item.id,
                 playbackQueueScope = newPlaybackScope,
@@ -2597,7 +2603,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     playing.catalogType,
                     playing.series,
                     playing.episodeQueue,
-                    forceFreshUrl = true
+                    forceFreshUrl = true,
+                    directFullscreen = playing.directFullscreen
                 )
             }
                 .onFailure { error -> _state.update { it.copy(error = error.message ?: "Playback retry failed") } }
@@ -2656,7 +2663,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     episodes = playing.episodeQueue,
                     forceFreshUrl = true,
                     authorizationRetryCount = playing.authorizationRetryCount + 1,
-                    resumePositionOverride = positionMillis
+                    resumePositionOverride = positionMillis,
+                    directFullscreen = playing.directFullscreen
                 )
             }.onFailure { error ->
                 _state.update { it.copy(error = error.message ?: "Could not refresh stream authorization") }

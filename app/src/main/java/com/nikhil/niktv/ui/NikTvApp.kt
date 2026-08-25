@@ -324,6 +324,20 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
           } else {
            Box(Modifier.fillMaxSize()) {
             when {
+                state.nowPlaying?.directFullscreen == true -> PlayerScreen(
+                    media = state.nowPlaying!!,
+                    onBack = vm::closePlayer,
+                    onRetry = vm::retryPlayback,
+                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
+                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
+                    onPlayPrevious = vm::playPreviousEpisode,
+                    onPlayNext = vm::playNextEpisode,
+                    onProgress = vm::savePlaybackProgress,
+                    controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+                    playbackEngine = state.playbackEngine,
+                    startFullscreen = true
+                )
+
                 state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
                     liveTvPlaybackDesign == PlaybackDesign.SIDE_LIST -> LiveTvPlaybackScreen(
                     state = state,
