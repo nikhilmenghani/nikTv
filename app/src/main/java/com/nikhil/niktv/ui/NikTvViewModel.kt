@@ -1511,8 +1511,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             it.profileKey == session.profile.cacheKey() &&
                 it.type == CatalogType.MOVIES &&
                 it.tmdbId == entry.tmdb.id &&
-                (it.media.externalTmdbId == entry.tmdb.id ||
-                    it.confirmedByUser && it.playbackVerified)
+                it.media.externalTmdbId == entry.tmdb.id &&
+                it.playbackVerified
         }
         if (saved != null) {
             commitTmdbMovieSelection(session, entry.tmdb, saved.media, saved.confirmedByUser)
@@ -1568,16 +1568,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             episodes = emptyList(),
             directFullscreen = true
         )
-        store.saveTmdbMapping(
-            TmdbIptvMapping(
-                profileKey = session.profile.cacheKey(),
-                type = CatalogType.MOVIES,
-                tmdbId = movie.id,
-                media = resolved,
-                confirmedByUser = confirmedByUser,
-                playbackVerified = true
+        // A playable stream only proves that the IPTV entry exists; it does
+        // not prove that a manually chosen fuzzy-title result is the same
+        // TMDB movie. Remember only provider-supplied exact TMDB identities.
+        if (resolved.externalTmdbId == movie.id) {
+            store.saveTmdbMapping(
+                TmdbIptvMapping(
+                    profileKey = session.profile.cacheKey(),
+                    type = CatalogType.MOVIES,
+                    tmdbId = movie.id,
+                    media = resolved,
+                    confirmedByUser = confirmedByUser,
+                    playbackVerified = true
+                )
             )
-        )
+        }
         _state.update { current ->
             current.copy(
                 trendingMovies = current.trendingMovies.resolveMovie(movie.id, resolved),
