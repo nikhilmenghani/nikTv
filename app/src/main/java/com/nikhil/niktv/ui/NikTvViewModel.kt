@@ -1283,13 +1283,29 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openMedia(item: MediaItem) {
-        if (_state.value.selectedType == CatalogType.SERIES && _state.value.selectedSeries == null) {
+        val snapshot = _state.value
+        if (snapshot.selectedType == CatalogType.SERIES && snapshot.selectedSeries == null) {
             task {
                 val session = requireNotNull(_state.value.session)
                 _state.update { it.copy(selectedSeries = item, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null, seriesOpenedFromFavorites = false, seriesOpenedFromHome = false) }
                 loadSeriesEpisodes(item)
             }
-        } else play(item, _state.value.selectedType, _state.value.selectedSeries, _state.value.items)
+        } else {
+            val categoryItems = snapshot.browseCachesByType[snapshot.selectedType]
+                ?.itemsByCategory
+                ?.let { itemsByCategory ->
+                    item.portalCategoryId
+                        ?.let(itemsByCategory::get)
+                        ?.takeIf { category -> category.any { it.id == item.id } }
+                        ?: itemsByCategory.values.firstOrNull { category ->
+                            category.any { it.id == item.id }
+                        }
+                }
+            val queue = categoryItems
+                ?: snapshot.items.takeIf { visible -> visible.any { it.id == item.id } }
+                ?: emptyList()
+            play(item, snapshot.selectedType, snapshot.selectedSeries, queue)
+        }
     }
 
     fun prepareFullSearch(forceRefresh: Boolean = false) {
@@ -1509,9 +1525,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             CatalogType.SERIES -> episodes.sortedWith(
                 compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
             )
-            CatalogType.LIVE_TV -> episodes.ifEmpty { _state.value.items }
-            CatalogType.MOVIES -> episodes.ifEmpty { _state.value.items }
-            CatalogType.RADIO -> episodes.ifEmpty { _state.value.items }
+            CatalogType.LIVE_TV,
+            CatalogType.MOVIES,
+            CatalogType.RADIO -> playbackCatalogQueue(session, item, type, episodes)
         }
         val queueIndex = playbackQueue.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
         val wrapLiveQueue = type == CatalogType.LIVE_TV && playbackQueue.size > 1
@@ -1551,6 +1567,44 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         recordRecent(item, type, series)
+    }
+
+    private suspend fun playbackCatalogQueue(
+        session: PortalSession,
+        item: MediaItem,
+        type: CatalogType,
+        supplied: List<MediaItem>
+    ): List<MediaItem> {
+        if (supplied.isNotEmpty()) return supplied.distinctBy { it.id }
+
+        val snapshot = _state.value
+        val visible = snapshot.items.distinctBy { it.id }
+        if (snapshot.selectedType == type && visible.any { it.id == item.id }) {
+            return visible
+        }
+
+        val categoryId = item.portalCategoryId
+        if (!categoryId.isNullOrBlank()) {
+            val cached = snapshot.browseCachesByType[type]
+                ?.itemsByCategory
+                ?.get(categoryId)
+                .orEmpty()
+            if (cached.isNotEmpty()) return (listOf(item) + cached).distinctBy { it.id }
+
+            val category = snapshot.rawCategoriesByType[type]
+                .orEmpty()
+                .firstOrNull { it.id == categoryId }
+                ?: runCatching {
+                    portal.categories(session, type).firstOrNull { it.id == categoryId }
+                }.getOrNull()
+            if (category != null) {
+                val loaded = runCatching { portal.catalog(session, category) }.getOrDefault(emptyList())
+                if (loaded.isNotEmpty()) return (listOf(item) + loaded).distinctBy { it.id }
+            }
+        }
+
+        // A single correct item is safer than presenting an unrelated category.
+        return listOf(item)
     }
 
     private suspend fun refreshSession(profile: PortalProfile): PortalSession {

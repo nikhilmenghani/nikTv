@@ -406,7 +406,8 @@ fun ShowcasePlaybackScreen(
         type
     ) {
         val source = when {
-            state.selectedType == type && state.items.isNotEmpty() -> state.items
+            state.selectedType == type &&
+                state.items.any { it.id == playing.media.id } -> state.items
             playing.episodeQueue.isNotEmpty() -> playing.episodeQueue
             else -> emptyList()
         }
@@ -761,50 +762,12 @@ private fun YouTubeMobileShowcase(
             .fillMaxSize()
             .background(Color(0xFF0F0F0F))
     ) {
-        if (fullscreen) {
-            PlayerScreen(
-                media = playing,
-                onBack = { onFullscreenChanged(false) },
-                onRetry = onRetry,
-                onRetryAlternateDecoder = onRetryAlternateDecoder,
-                onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
-                onPlayPrevious = onPlayPrevious,
-                onPlayNext = onPlayNext,
-                onProgress = onProgress,
-                controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
-                playbackEngine = state.playbackEngine,
-                modifier = Modifier.fillMaxSize(),
-                embeddedMode = false,
-                fullscreenOverride = true,
-                onFullscreenChanged = onFullscreenChanged
-            )
-            return@Box
-        }
-
-        Column(
+        if (!fullscreen) Column(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
         ) {
-            PlayerScreen(
-                media = playing,
-                onBack = onBack,
-                onRetry = onRetry,
-                onRetryAlternateDecoder = onRetryAlternateDecoder,
-                onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
-                onPlayPrevious = onPlayPrevious,
-                onPlayNext = onPlayNext,
-                onProgress = onProgress,
-                controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
-                playbackEngine = state.playbackEngine,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f),
-                embeddedMode = true,
-                fullscreenOverride = false,
-                onFullscreenChanged = onFullscreenChanged
-            )
-
+            Spacer(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 24.dp)
@@ -895,6 +858,29 @@ private fun YouTubeMobileShowcase(
                 }
             }
         }
+
+        // Keep one player instance in a stable composition slot. Resizing it between
+        // embedded and fullscreen must not recreate the engine or reload the stream.
+        PlayerScreen(
+            media = playing,
+            onBack = if (fullscreen) ({ onFullscreenChanged(false) }) else onBack,
+            onRetry = onRetry,
+            onRetryAlternateDecoder = onRetryAlternateDecoder,
+            onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
+            onPlayPrevious = onPlayPrevious,
+            onPlayNext = onPlayNext,
+            onProgress = onProgress,
+            controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+            playbackEngine = state.playbackEngine,
+            modifier = if (fullscreen) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.TopCenter)
+            },
+            embeddedMode = !fullscreen,
+            fullscreenOverride = fullscreen,
+            onFullscreenChanged = onFullscreenChanged
+        )
     }
 }
 

@@ -964,12 +964,17 @@ fun PlayerScreen(
             Surface(
                 modifier = Modifier
                     .align(if (isBrightness) Alignment.CenterStart else Alignment.CenterEnd)
-                    .padding(horizontal = 20.dp),
+                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)
             ) {
                 Column(
-                    Modifier.padding(horizontal = 18.dp, vertical = 16.dp).width(136.dp),
+                    Modifier
+                        .padding(
+                            horizontal = if (compactMobileControls) 10.dp else 18.dp,
+                            vertical = if (compactMobileControls) 12.dp else 16.dp
+                        )
+                        .width(if (compactMobileControls) 88.dp else 136.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
