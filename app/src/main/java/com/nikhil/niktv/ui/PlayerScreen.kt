@@ -825,6 +825,11 @@ fun PlayerScreen(
                             vertical = if (compactMobileControls) 8.dp else 16.dp
                         )
                 ) {
+                    PlayerLevelControls(
+                        modifier = Modifier.fillMaxWidth(),
+                        compact = compactMobileControls,
+                        onFocused = { controlsFocused = it }
+                    )
                     val seekable = duration > 0L && media.catalogType != com.nikhil.niktv.model.CatalogType.LIVE_TV
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->

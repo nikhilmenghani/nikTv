@@ -58,6 +58,7 @@ data class NikTvState(
     val profileLoadProgress: Float? = null,
     val profileLoadMessage: String = "Preparing profile…",
     val error: String? = null,
+    val reauthenticating: Boolean = false,
     val nowPlaying: PlayingMedia? = null,
     val playbackReturnFocusId: String? = null,
     val restoring: Boolean = true,
@@ -2680,7 +2681,28 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openSettingsFromProfileChooser(profile: PortalProfile) =
         _state.update { it.copy(savedProfile = profile, settingsOpen = true, profileEditorOpen = false) }
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
-    fun reauthenticate() { _state.value.savedProfile?.let(::connect) }
+    fun reauthenticate() {
+        val profile = _state.value.savedProfile ?: return
+        if (_state.value.reauthenticating) return
+        viewModelScope.launch {
+            _state.update { it.copy(reauthenticating = true) }
+            runCatching { refreshSession(profile) }
+                .onSuccess {
+                    // Refreshing a token must not rebuild catalogs, TMDB rows,
+                    // or navigation state. Removing the overlay reveals the
+                    // exact screen that was underneath it.
+                    _state.update { current -> current.copy(error = null, reauthenticating = false) }
+                }
+                .onFailure { failure ->
+                    _state.update { current ->
+                        current.copy(
+                            error = failure.message ?: "Re-authentication failed",
+                            reauthenticating = false
+                        )
+                    }
+                }
+        }
+    }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }
     fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
     fun openProfileSwitcher() {

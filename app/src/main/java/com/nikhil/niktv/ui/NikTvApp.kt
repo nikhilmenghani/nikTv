@@ -558,7 +558,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 LaunchedEffect(error, authorizationExpired) {
                     if (authorizationExpired) reauthenticateRequester.requestFocus()
                 }
-                Dialog(onDismissRequest = vm::dismissError) {
+                Dialog(onDismissRequest = { if (!state.reauthenticating) vm.dismissError() }) {
                     Surface(
                         modifier = Modifier.fillMaxWidth().widthIn(max = 620.dp),
                         shape = RoundedCornerShape(18.dp),
@@ -593,6 +593,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                                 FilledTonalButton(
                                     onClick = vm::dismissError,
+                                    enabled = !state.reauthenticating,
                                     modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
                                     shape = CircleShape
                                 ) { Text("Close") }
@@ -606,10 +607,17 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                     Text("Copy diagnostics")
                                 }
                                 if (authorizationExpired) Button(
-                                    onClick = { vm.dismissError(); vm.reauthenticate() },
+                                    onClick = vm::reauthenticate,
+                                    enabled = !state.reauthenticating,
                                     modifier = Modifier.height(44.dp).focusRequester(reauthenticateRequester).remoteFocusFrame(CircleShape),
                                     shape = CircleShape
-                                ) { Text("Re-authenticate") }
+                                ) {
+                                    if (state.reauthenticating) {
+                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Authenticating…")
+                                    } else Text("Re-authenticate")
+                                }
                             }
                         }
                     }

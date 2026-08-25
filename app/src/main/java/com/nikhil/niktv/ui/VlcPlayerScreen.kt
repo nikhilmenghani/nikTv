@@ -1,5 +1,8 @@
 package com.nikhil.niktv.ui
 
+import android.content.Context
+import android.media.AudioManager
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -73,6 +76,7 @@ internal fun VlcPlayerScreen(
     var videoView by remember(media.progressKey) { mutableStateOf<View?>(null) }
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
+    var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenRequester = remember(media.progressKey) { FocusRequester() }
@@ -90,6 +94,16 @@ internal fun VlcPlayerScreen(
     val player = remember(media.progressKey) { MediaPlayer(libVlc) }
     val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
     val activity = remember(context) { context.findActivity() }
+    val audioManager = remember(context) {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
+    LaunchedEffect(gestureFeedback) {
+        if (gestureFeedback != null) {
+            delay(800)
+            gestureFeedback = null
+        }
+    }
 
     val pipActivity = activity as? MainActivity
     val pipAvailable = remember(context) {
@@ -244,11 +258,49 @@ internal fun VlcPlayerScreen(
             AndroidView(
                 factory = { ctx ->
                     VLCVideoLayout(ctx).also { layout ->
+                    var gestureStartY = 0f
+                    var gestureStartValue = 0f
+                    var brightnessGesture = false
+                    var adjustingLevel = false
                     videoView = layout
                     layout.isFocusable = true
                     layout.isFocusableInTouchMode = true
                     layout.setOnTouchListener { _, event ->
-                        if (event.actionMasked == MotionEvent.ACTION_UP) controlsVisible = !controlsVisible
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                gestureStartY = event.y
+                                brightnessGesture = event.x < layout.width / 2f
+                                adjustingLevel = false
+                                gestureStartValue = if (brightnessGesture) {
+                                    val configured = activity?.window?.attributes?.screenBrightness ?: -1f
+                                    if (configured >= 0f) configured else {
+                                        Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                    }
+                                } else {
+                                    audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() /
+                                        audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                }
+                            }
+                            MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1) {
+                                val deltaY = gestureStartY - event.y
+                                if (adjustingLevel || kotlin.math.abs(deltaY) > 24f * layout.resources.displayMetrics.density) {
+                                    adjustingLevel = true
+                                    val level = (gestureStartValue + deltaY / layout.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                    if (brightnessGesture) {
+                                        activity?.window?.attributes = activity?.window?.attributes?.apply {
+                                            screenBrightness = level.coerceAtLeast(0.01f)
+                                        }
+                                    } else {
+                                        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (level * max).toInt(), 0)
+                                    }
+                                    gestureFeedback = brightnessGesture to level
+                                }
+                            }
+                            MotionEvent.ACTION_UP -> if (!adjustingLevel) {
+                                controlsVisible = !controlsVisible
+                            }
+                        }
                         true
                     }
                     layout.setOnKeyListener { _, keyCode, event ->
@@ -358,6 +410,11 @@ internal fun VlcPlayerScreen(
                             vertical = if (compactMobileControls) 8.dp else 16.dp
                         )
                 ) {
+                    PlayerLevelControls(
+                        modifier = Modifier.fillMaxWidth(),
+                        compact = compactMobileControls,
+                        onFocused = { controlsFocused = it }
+                    )
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
@@ -435,6 +492,29 @@ internal fun VlcPlayerScreen(
                     Text(it, color = Color.LightGray)
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = onBack) { Text("Go back") }
+                }
+            }
+        }
+        gestureFeedback?.let { (isBrightness, level) ->
+            Surface(
+                modifier = Modifier
+                    .align(if (isBrightness) Alignment.CenterStart else Alignment.CenterEnd)
+                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 18.dp, vertical = 14.dp).width(112.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        if (isBrightness) Icons.Default.Brightness6 else Icons.Default.VolumeUp,
+                        contentDescription = null
+                    )
+                    Text(if (isBrightness) "Brightness" else "Volume")
+                    LinearProgressIndicator(progress = { level }, modifier = Modifier.fillMaxWidth())
+                    Text("${(level * 100).toInt()}%")
                 }
             }
         }
