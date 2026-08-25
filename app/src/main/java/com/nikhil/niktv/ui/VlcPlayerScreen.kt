@@ -429,11 +429,6 @@ internal fun VlcPlayerScreen(
                             vertical = if (compactMobileControls) 8.dp else 16.dp
                         )
                 ) {
-                    PlayerLevelControls(
-                        modifier = Modifier.fillMaxWidth(),
-                        compact = compactMobileControls,
-                        onFocused = { controlsFocused = it }
-                    )
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
