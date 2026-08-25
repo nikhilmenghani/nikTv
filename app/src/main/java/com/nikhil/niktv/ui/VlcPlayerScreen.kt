@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -227,9 +228,17 @@ internal fun VlcPlayerScreen(
                 else Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
             )
     ) {
-        AndroidView(
-            factory = { ctx ->
-                VLCVideoLayout(ctx).also { layout ->
+        // VLC_PLAYER_SURFACE_PER_MEDIA_V2
+        //
+        // AndroidView normally survives recomposition. Previous/Next replaces
+        // the LibVLC MediaPlayer, so retaining the old VLCVideoLayout leaves it
+        // attached to the released player: the new channel's audio advances
+        // while the visible video frame remains frozen. Recreate and attach the
+        // surface for every playback identity, matching the Media3 lifecycle.
+        key(media.progressKey, media.url) {
+            AndroidView(
+                factory = { ctx ->
+                    VLCVideoLayout(ctx).also { layout ->
                     videoView = layout
                     layout.isFocusable = true
                     layout.isFocusableInTouchMode = true
@@ -258,12 +267,13 @@ internal fun VlcPlayerScreen(
                     }
                     player.attachViews(layout, null, false, false)
                     layout.requestFocus()
-                }
-            },
-            modifier = Modifier.fillMaxSize().then(
-                if (!focusMode && !embeddedMode) Modifier.padding(top = 76.dp, bottom = 148.dp) else Modifier
+                    }
+                },
+                modifier = Modifier.fillMaxSize().then(
+                    if (!focusMode && !embeddedMode) Modifier.padding(top = 76.dp, bottom = 148.dp) else Modifier
+                )
             )
-        )
+        }
 
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             Box(
@@ -288,7 +298,7 @@ internal fun VlcPlayerScreen(
                                 down = playRequester
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
-                    ) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(media.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
