@@ -100,6 +100,10 @@ data class NikTvState(
     ,val episodePage: Int = 1
     ,val episodeHasMore: Boolean = false
     ,val episodeLoadingMore: Boolean = false
+    ,val playbackQueueScope: String? = null
+    ,val playbackQueuePage: Int = 1
+    ,val playbackQueueHasMore: Boolean = false
+    ,val playbackQueueLoadingMore: Boolean = false
 )
 
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
@@ -519,6 +523,45 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /*
+     * PLAYBACK_QUEUE_SCOPE_V16
+     *
+     * The browse screen and player can point at different categories.
+     * Keep pagination keyed to the active playback source.
+     */
+    private fun playbackQueueScope(
+        session: PortalSession,
+        item: MediaItem,
+        type: CatalogType,
+        series: MediaItem?,
+        selectedSeriesSeason: Int?
+    ): String? {
+        val source =
+            when (type) {
+                CatalogType.LIVE_TV,
+                CatalogType.MOVIES ->
+                    item.portalCategoryId
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { "category:$it" }
+
+                CatalogType.SERIES ->
+                    series?.id?.let { seriesId ->
+                        val season =
+                            item.seasonNumber
+                                ?: selectedSeriesSeason
+                                ?: -1
+                        "series:$seriesId:season:$season"
+                    }
+
+                CatalogType.RADIO ->
+                    null
+            }
+
+        return source?.let {
+            "${session.profile.cacheKey()}|${type.name}|$it"
+        }
+    }
+
+    /*
      * PLAYBACK_QUEUE_PAGINATION_SYNC_V15
      *
      * The player intentionally owns a category/season-scoped queue snapshot.
@@ -665,6 +708,376 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setPlayerControlsTimeoutSeconds(seconds: Int) = viewModelScope.launch {
         store.setPlayerControlsTimeoutSeconds(seconds)
+    }
+
+    /*
+     * PLAYER_LOAD_MORE_QUEUE_V16
+     *
+     * This is intentionally independent from loadMoreCatalog(). The latter
+     * belongs to the browse screen and uses selectedCategory. The player must
+     * instead paginate the category/series that is actually playing.
+     */
+    fun loadMorePlaybackQueue() {
+        val snapshot = _state.value
+        val playing = snapshot.nowPlaying ?: return
+        val session = snapshot.session ?: return
+        val scope = snapshot.playbackQueueScope ?: return
+
+        if (
+            snapshot.playbackQueueLoadingMore ||
+            !snapshot.playbackQueueHasMore
+        ) {
+            return
+        }
+
+        viewModelScope.launch {
+            _state.update { current ->
+                if (
+                    current.playbackQueueScope != scope ||
+                    current.nowPlaying == null
+                ) {
+                    current
+                } else {
+                    current.copy(
+                        playbackQueueLoadingMore = true
+                    )
+                }
+            }
+
+            if (
+                playing.catalogType == CatalogType.SERIES &&
+                playing.series != null
+            ) {
+                val series = playing.series
+                val season =
+                    playing.media.seasonNumber
+                        ?: snapshot.selectedSeriesSeason
+
+                runCatching {
+                    portal.episodeSeason(
+                        session,
+                        series,
+                        snapshot.seriesStartSeason,
+                        season,
+                        snapshot.playbackQueuePage + 1,
+                        playing.media.portalSeasonId
+                            ?: playing.episodeQueue
+                                .firstOrNull()
+                                ?.portalSeasonId
+                    )
+                }.onSuccess { next ->
+                    val oldQueue =
+                        playing.episodeQueue.ifEmpty {
+                            listOf(playing.media)
+                        }
+
+                    val mergedQueue =
+                        (oldQueue + next.episodes)
+                            .distinctBy { it.id }
+
+                    val actuallyAdded =
+                        mergedQueue.size > oldQueue.size
+
+                    val hasMore =
+                        next.hasMore && actuallyAdded
+
+                    val cache =
+                        EpisodeSeasonCache(
+                            session.profile.cacheKey(),
+                            series.id,
+                            next.selectedSeason ?: season,
+                            next.availableSeasons.ifEmpty {
+                                snapshot.availableSeriesSeasons
+                            },
+                            mergedQueue,
+                            next.page,
+                            hasMore
+                        )
+
+                    episodeSeasonCaches =
+                        listOf(cache) +
+                            episodeSeasonCaches.filterNot {
+                                it.key == cache.key
+                            }
+                    store.saveEpisodeSeasonCache(cache)
+
+                    _state.update { current ->
+                        if (
+                            current.playbackQueueScope != scope
+                        ) {
+                            current.copy(
+                                playbackQueueLoadingMore = false
+                            )
+                        } else {
+                            val active = current.nowPlaying
+
+                            if (
+                                active == null ||
+                                active.catalogType !=
+                                    CatalogType.SERIES ||
+                                active.series?.id != series.id
+                            ) {
+                                current.copy(
+                                    playbackQueueLoadingMore = false
+                                )
+                            } else {
+                                val updatedPlaying =
+                                    active.withAppendedPlaybackQueue(
+                                        next.episodes
+                                    )
+
+                                val browseMatches =
+                                    current.selectedSeries?.id ==
+                                        series.id
+
+                                current.copy(
+                                    nowPlaying = updatedPlaying,
+                                    playbackQueuePage = next.page,
+                                    playbackQueueHasMore = hasMore,
+                                    playbackQueueLoadingMore = false,
+                                    items =
+                                        if (browseMatches) {
+                                            (
+                                                current.items +
+                                                    next.episodes
+                                            ).distinctBy {
+                                                it.id
+                                            }
+                                        } else {
+                                            current.items
+                                        },
+                                    episodePage =
+                                        if (browseMatches) {
+                                            next.page
+                                        } else {
+                                            current.episodePage
+                                        },
+                                    episodeHasMore =
+                                        if (browseMatches) {
+                                            hasMore
+                                        } else {
+                                            current.episodeHasMore
+                                        }
+                                )
+                            }
+                        }
+                    }
+                }.onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            playbackQueueLoadingMore = false,
+                            error =
+                                error.message
+                                    ?: "Could not load more episodes"
+                        )
+                    }
+                }
+
+                return@launch
+            }
+
+            if (
+                playing.catalogType !in setOf(
+                    CatalogType.LIVE_TV,
+                    CatalogType.MOVIES
+                )
+            ) {
+                _state.update {
+                    it.copy(
+                        playbackQueueHasMore = false,
+                        playbackQueueLoadingMore = false
+                    )
+                }
+                return@launch
+            }
+
+            val categoryId =
+                playing.media.portalCategoryId
+                    ?.takeIf { it.isNotBlank() }
+
+            if (categoryId == null) {
+                _state.update {
+                    it.copy(
+                        playbackQueueHasMore = false,
+                        playbackQueueLoadingMore = false
+                    )
+                }
+                return@launch
+            }
+
+            val category =
+                snapshot.rawCategoriesByType[
+                    playing.catalogType
+                ]
+                    .orEmpty()
+                    .firstOrNull {
+                        it.id == categoryId
+                    }
+                    ?: runCatching {
+                        portal.categories(
+                            session,
+                            playing.catalogType
+                        ).firstOrNull {
+                            it.id == categoryId
+                        }
+                    }.getOrNull()
+
+            if (category == null) {
+                _state.update {
+                    it.copy(
+                        playbackQueueLoadingMore = false,
+                        error =
+                            "Could not identify the playback category"
+                    )
+                }
+                return@launch
+            }
+
+            runCatching {
+                portal.catalogPage(
+                    session,
+                    category,
+                    snapshot.playbackQueuePage + 1
+                )
+            }.onSuccess { result ->
+                val oldQueue =
+                    playing.episodeQueue.ifEmpty {
+                        listOf(playing.media)
+                    }
+
+                val mergedQueue =
+                    (oldQueue + result.items)
+                        .distinctBy { it.id }
+
+                val actuallyAdded =
+                    mergedQueue.size > oldQueue.size
+
+                val hasMore =
+                    result.hasMore && actuallyAdded
+
+                val existingCache =
+                    _state.value
+                        .browseCachesByType[
+                            playing.catalogType
+                        ]
+
+                val cachedCategoryItems =
+                    existingCache
+                        ?.itemsByCategory
+                        ?.get(categoryId)
+                        .orEmpty()
+
+                val updatedCacheItems =
+                    (
+                        cachedCategoryItems +
+                            result.items
+                        ).distinctBy { it.id }
+
+                val updatedCache =
+                    existingCache?.copy(
+                        cachedAtMillis =
+                            System.currentTimeMillis(),
+                        itemsByCategory =
+                            existingCache.itemsByCategory +
+                                (
+                                    categoryId to
+                                        updatedCacheItems
+                                    )
+                    )
+
+                if (updatedCache != null) {
+                    store.saveBrowseCatalog(updatedCache)
+                }
+
+                _state.update { current ->
+                    if (
+                        current.playbackQueueScope != scope
+                    ) {
+                        current.copy(
+                            playbackQueueLoadingMore = false
+                        )
+                    } else {
+                        val active = current.nowPlaying
+
+                        val activeMatches =
+                            active != null &&
+                                active.catalogType ==
+                                    playing.catalogType &&
+                                active.media.portalCategoryId ==
+                                    categoryId
+
+                        if (!activeMatches) {
+                            current.copy(
+                                playbackQueueLoadingMore = false
+                            )
+                        } else {
+                            val updatedPlaying =
+                                active.withAppendedPlaybackQueue(
+                                    result.items
+                                )
+
+                            val browseMatches =
+                                current.selectedType ==
+                                    playing.catalogType &&
+                                    current.selectedCategory?.id ==
+                                        categoryId
+
+                            current.copy(
+                                nowPlaying = updatedPlaying,
+                                playbackQueuePage = result.page,
+                                playbackQueueHasMore = hasMore,
+                                playbackQueueLoadingMore = false,
+                                items =
+                                    if (browseMatches) {
+                                        (
+                                            current.items +
+                                                result.items
+                                            ).distinctBy {
+                                                it.id
+                                            }
+                                    } else {
+                                        current.items
+                                    },
+                                catalogPage =
+                                    if (browseMatches) {
+                                        result.page
+                                    } else {
+                                        current.catalogPage
+                                    },
+                                catalogHasMore =
+                                    if (browseMatches) {
+                                        hasMore
+                                    } else {
+                                        current.catalogHasMore
+                                    },
+                                browseCache =
+                                    updatedCache
+                                        ?: current.browseCache,
+                                browseCachesByType =
+                                    if (updatedCache == null) {
+                                        current.browseCachesByType
+                                    } else {
+                                        current.browseCachesByType +
+                                            (
+                                                playing.catalogType to
+                                                    updatedCache
+                                                )
+                                    }
+                            )
+                        }
+                    }
+                }
+            }.onFailure { error ->
+                _state.update {
+                    it.copy(
+                        playbackQueueLoadingMore = false,
+                        error =
+                            error.message
+                                ?: "Could not load more titles"
+                    )
+                }
+            }
+        }
     }
 
     fun refreshPlaybackQueue() = task {
@@ -1421,6 +1834,35 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openMedia(item: MediaItem) {
         val snapshot = _state.value
+        /*
+         * OPEN_MEDIA_PREFERS_ACTIVE_QUEUE_V16
+         *
+         * If the user selects an item from the currently displayed player
+         * queue, preserve that exact expanded queue rather than rebuilding it
+         * from an unrelated browse surface.
+         */
+        val activePlayback = snapshot.nowPlaying
+        val activeQueue =
+            activePlayback
+                ?.episodeQueue
+                .orEmpty()
+                .distinctBy { it.id }
+
+        if (
+            activePlayback != null &&
+            activeQueue.any { it.id == item.id } &&
+            activePlayback.catalogType ==
+                snapshot.nowPlaying?.catalogType
+        ) {
+            play(
+                item = item,
+                type = activePlayback.catalogType,
+                series = activePlayback.series,
+                episodes = activeQueue
+            )
+            return
+        }
+
         if (snapshot.selectedType == CatalogType.SERIES && snapshot.selectedSeries == null) {
             task {
                 val session = requireNotNull(_state.value.session)
@@ -1686,6 +2128,88 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val resumePosition = resumePositionOverride
             ?: saved?.positionMillis?.takeIf { saved.durationMillis <= 0L || saved.durationMillis - it > 5_000L }
             ?: 0L
+
+        /*
+         * PLAYER_PAGINATION_INIT_V16
+         *
+         * Preserve pagination while moving within the same playback queue.
+         * If playback came from Home/sections rather than the selected browse
+         * category, Stalker starts at page 1 and exposes Load More until the
+         * server reports that no additional unique items exist.
+         */
+        val paginationSnapshot = _state.value
+
+        val newPlaybackScope =
+            playbackQueueScope(
+                session = session,
+                item = item,
+                type = type,
+                series = series,
+                selectedSeriesSeason =
+                    paginationSnapshot.selectedSeriesSeason
+            )
+
+        val preservePlaybackPagination =
+            newPlaybackScope != null &&
+                paginationSnapshot.playbackQueueScope ==
+                    newPlaybackScope
+
+        val selectedSeriesMatches =
+            type == CatalogType.SERIES &&
+                series != null &&
+                paginationSnapshot.selectedSeries?.id ==
+                    series.id
+
+        val selectedCatalogMatches =
+            type in setOf(
+                CatalogType.LIVE_TV,
+                CatalogType.MOVIES
+            ) &&
+                item.portalCategoryId != null &&
+                paginationSnapshot.selectedType == type &&
+                paginationSnapshot.selectedCategory?.id ==
+                    item.portalCategoryId
+
+        val initialPlaybackPage =
+            when {
+                preservePlaybackPagination ->
+                    paginationSnapshot.playbackQueuePage
+
+                selectedSeriesMatches ->
+                    paginationSnapshot.episodePage
+
+                selectedCatalogMatches ->
+                    paginationSnapshot.catalogPage
+
+                else ->
+                    1
+            }
+
+        val initialPlaybackHasMore =
+            when {
+                preservePlaybackPagination ->
+                    paginationSnapshot.playbackQueueHasMore
+
+                selectedSeriesMatches ->
+                    paginationSnapshot.episodeHasMore
+
+                selectedCatalogMatches ->
+                    paginationSnapshot.catalogHasMore
+
+                type in setOf(
+                    CatalogType.LIVE_TV,
+                    CatalogType.MOVIES
+                ) &&
+                    session.profile.portalType ==
+                        PortalType.STALKER &&
+                    !item.portalCategoryId.isNullOrBlank() &&
+                    playbackQueue.isNotEmpty() ->
+                    true
+
+                else ->
+                    false
+            }
+
         _state.update {
             it.copy(
                 nowPlaying = PlayingMedia(
@@ -1700,7 +2224,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     progressKey = progressKey,
                     authorizationRetryCount = authorizationRetryCount
                 ),
-                playbackReturnFocusId = item.id
+                playbackReturnFocusId = item.id,
+                playbackQueueScope = newPlaybackScope,
+                playbackQueuePage = initialPlaybackPage,
+                playbackQueueHasMore = initialPlaybackHasMore,
+                playbackQueueLoadingMore = false
             )
         }
         recordRecent(item, type, series)
@@ -1917,7 +2445,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(items = portal.catalog(session, category)) }
     }
 
-    fun closePlayer() = _state.update { it.copy(nowPlaying = null) }
+    fun closePlayer() = _state.update {
+        it.copy(
+            nowPlaying = null,
+            playbackQueueScope = null,
+            playbackQueuePage = 1,
+            playbackQueueHasMore = false,
+            playbackQueueLoadingMore = false
+        )
+    }
     fun retryPlayback() {
         val playing = _state.value.nowPlaying ?: return
         viewModelScope.launch {

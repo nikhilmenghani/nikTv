@@ -303,7 +303,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
                     loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
+                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
@@ -319,7 +320,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
                     loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
+                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.MOVIES &&
@@ -335,7 +337,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onProgress = vm::savePlaybackProgress,
                     toggleFavorite = vm::toggleFavorite,
                     loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue
+                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
+                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue
                 )
 
                 state.nowPlaying?.catalogType == CatalogType.SERIES &&
@@ -352,6 +355,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     toggleFavorite = vm::toggleFavorite,
                     loadMoreCatalog = vm::loadMoreCatalog,
                     refreshPlaybackQueue = vm::refreshPlaybackQueue,
+                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue,
                     loadMoreEpisodes = vm::loadMoreEpisodes
                 )
 
@@ -4989,16 +4993,11 @@ private fun LiveTvPlaybackScreen(
     onProgress: (String, Long, Long) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
     loadMoreCatalog: () -> Unit,
-    refreshPlaybackQueue: () -> Unit
+    refreshPlaybackQueue: () -> Unit,
+    loadMorePlaybackQueue: () -> Unit
 ) {
     val playing = state.nowPlaying ?: return
     val channels = playing.episodeQueue.ifEmpty { listOf(playing.media) }
-    val playbackCategoryId = playing.media.portalCategoryId
-    val canPaginatePlaybackQueue =
-        playbackCategoryId != null &&
-            state.selectedType == CatalogType.LIVE_TV &&
-            state.selectedCategory?.id == playbackCategoryId
-
     var fullscreen by remember {
         mutableStateOf(false)
     }
@@ -5204,8 +5203,8 @@ private fun LiveTvPlaybackScreen(
      */
     LaunchedEffect(
         loadMorePending,
-        state.catalogLoadingMore,
-        state.items.size
+        state.playbackQueueLoadingMore,
+        channels.size
     ) {
         if (!loadMorePending) {
             return@LaunchedEffect
@@ -5216,13 +5215,13 @@ private fun LiveTvPlaybackScreen(
          *
          * Leave focus on Load More.
          */
-        if (state.catalogLoadingMore) {
+        if (state.playbackQueueLoadingMore) {
             loadMoreObservedLoading = true
             return@LaunchedEffect
         }
 
         val receivedNewChannels =
-            state.items.size >
+            channels.size >
                     loadMoreStartItemCount
 
         val loadFinished =
@@ -5235,7 +5234,7 @@ private fun LiveTvPlaybackScreen(
 
         if (receivedNewChannels) {
             val firstNewChannel =
-                state.items.getOrNull(
+                channels.getOrNull(
                     loadMoreStartItemCount
                 )
 
@@ -5611,7 +5610,8 @@ private fun LiveTvPlaybackScreen(
                      * focus has moved to the newly appended channel.
                      */
                     if (
-                        (canPaginatePlaybackQueue && state.catalogHasMore) ||
+                        state.playbackQueueHasMore ||
+                        state.playbackQueueLoadingMore ||
                         loadMorePending
                     ) {
                         item(
@@ -5628,7 +5628,7 @@ private fun LiveTvPlaybackScreen(
                                      * Ignore repeated activations instead.
                                      */
                                     if (
-                                        state.catalogLoadingMore ||
+                                        state.playbackQueueLoadingMore ||
                                         loadMorePending
                                     ) {
                                         return@Button
@@ -5639,7 +5639,7 @@ private fun LiveTvPlaybackScreen(
                                      * at this index after append.
                                      */
                                     loadMoreStartItemCount =
-                                        state.items.size
+                                        channels.size
 
                                     /*
                                      * Capture EXACT viewport position
@@ -5659,7 +5659,7 @@ private fun LiveTvPlaybackScreen(
                                     loadMorePending =
                                         true
 
-                                    loadMoreCatalog()
+                                    loadMorePlaybackQueue()
                                 },
 
                                 /*
@@ -5695,7 +5695,7 @@ private fun LiveTvPlaybackScreen(
                                     )
                             ) {
                                 if (
-                                    state.catalogLoadingMore ||
+                                    state.playbackQueueLoadingMore ||
                                     loadMorePending
                                 ) {
                                     CircularProgressIndicator(

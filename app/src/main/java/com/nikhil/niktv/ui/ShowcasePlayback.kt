@@ -369,48 +369,23 @@ fun ShowcasePlaybackScreen(
     toggleFavorite: (MediaItem) -> Unit,
     loadMoreCatalog: () -> Unit,
     refreshPlaybackQueue: () -> Unit,
-    loadMoreEpisodes: () -> Unit = {}
+    loadMoreEpisodes: () -> Unit = {},
+    loadMorePlaybackQueue: () -> Unit = {}
 ) {
     val playing = state.nowPlaying ?: return
     val type = playing.catalogType
 
     /*
-     * PLAYBACK_SPECIFIC_PAGINATION_V15
+     * PLAYER_OWNS_PAGINATION_V16
      *
-     * Movies/Live TV paginate the active catalog category. Series playback
-     * paginates episodes from the selected series/season instead. Keep these
-     * states separate so mobile does not accidentally ask the Series catalog
-     * for another page while an episode queue is on screen.
+     * Pagination state belongs to the active playback queue, not to the
+     * underlying browse screen.
      */
-    val usesEpisodePagination =
-        type == CatalogType.SERIES &&
-            playing.series != null &&
-            state.selectedSeries?.id == playing.series.id
-
-    val playbackCategoryId =
-        playing.media.portalCategoryId
-
-    val catalogPaginationMatchesPlayback =
-        !usesEpisodePagination &&
-            playbackCategoryId != null &&
-            state.selectedType == type &&
-            state.selectedCategory?.id == playbackCategoryId
-
     val playbackHasMore =
-        if (usesEpisodePagination) {
-            state.episodeHasMore
-        } else {
-            catalogPaginationMatchesPlayback &&
-                state.catalogHasMore
-        }
+        state.playbackQueueHasMore
 
     val playbackLoadingMore =
-        if (usesEpisodePagination) {
-            state.episodeLoadingMore
-        } else {
-            catalogPaginationMatchesPlayback &&
-                state.catalogLoadingMore
-        }
+        state.playbackQueueLoadingMore
 
     var fullscreen by remember { mutableStateOf(false) }
     var previewItem by remember { mutableStateOf(playing.media) }
@@ -483,7 +458,7 @@ fun ShowcasePlaybackScreen(
         }
     }
 
-    LaunchedEffect(loadMorePending, playbackLoadingMore, state.items.size) {
+    LaunchedEffect(loadMorePending, playbackLoadingMore, queue.size) {
         if (!loadMorePending) return@LaunchedEffect
 
         if (playbackLoadingMore) {
@@ -491,19 +466,19 @@ fun ShowcasePlaybackScreen(
             return@LaunchedEffect
         }
 
-        val receivedNewItems = state.items.size > loadMoreStartItemCount
+        val receivedNewItems = queue.size > loadMoreStartItemCount
         val loadFinished = loadMoreObservedLoading || receivedNewItems
         if (!loadFinished) return@LaunchedEffect
 
         if (receivedNewItems) {
-            state.items.getOrNull(loadMoreStartItemCount)?.let { firstNewItem ->
+            queue.getOrNull(loadMoreStartItemCount)?.let { firstNewItem ->
                 railState.scrollToItem(
                     loadMoreFirstVisibleItemIndex,
                     loadMoreFirstVisibleItemScrollOffset
                 )
 
                 val refreshedCatalog =
-                    state.items.distinctBy { it.id }
+                    queue.distinctBy { it.id }
 
                 val refreshedQueue =
                     if (refreshedCatalog.any { it.id == playing.media.id }) {
@@ -578,15 +553,11 @@ fun ShowcasePlaybackScreen(
             loadMorePending = loadMorePending,
             onLoadMore = {
                 if (!playbackLoadingMore && !loadMorePending) {
-                    loadMoreStartItemCount = state.items.size
+                    loadMoreStartItemCount = queue.size
                     loadMoreObservedLoading = false
                     loadMorePending = true
 
-                    if (usesEpisodePagination) {
-                        loadMoreEpisodes()
-                    } else {
-                        loadMoreCatalog()
-                    }
+                    loadMorePlaybackQueue()
                 }
             }
         )
@@ -750,17 +721,13 @@ fun ShowcasePlaybackScreen(
                 },
                 onLoadMore = {
                     if (!playbackLoadingMore && !loadMorePending) {
-                        loadMoreStartItemCount = state.items.size
+                        loadMoreStartItemCount = queue.size
                         loadMoreFirstVisibleItemIndex = railState.firstVisibleItemIndex
                         loadMoreFirstVisibleItemScrollOffset = railState.firstVisibleItemScrollOffset
                         loadMoreObservedLoading = false
                         loadMorePending = true
 
-                        if (usesEpisodePagination) {
-                            loadMoreEpisodes()
-                        } else {
-                            loadMoreCatalog()
-                        }
+                        loadMorePlaybackQueue()
                     }
                 }
             )
