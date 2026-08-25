@@ -522,8 +522,8 @@ fun ShowcasePlaybackScreen(
             configuration.screenHeightDp < 520
     val mobileUiDesign by rememberMobileUiDesign()
     val youtubeMobile =
-        configuration.screenWidthDp < 600 &&
-            mobileUiDesign == MobileUiDesign.YOUTUBE
+        configuration.smallestScreenWidthDp < 600 &&
+            mobileUiDesign.usesYouTubeOn(configuration)
 
     if (youtubeMobile) {
         YouTubeMobileShowcase(

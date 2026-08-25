@@ -47,6 +47,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -91,6 +92,8 @@ fun PlayerScreen(
     onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val playerConfiguration = LocalConfiguration.current
+    val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
     val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
     val effectiveEngine = when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
@@ -125,6 +128,7 @@ fun PlayerScreen(
     // Fullscreen belongs to the player session, not to an individual queue item.
     // Preserve it while changing channels/episodes/titles.
     var focusMode by remember { mutableStateOf(startFullscreen) }
+    ApplyMobileFullscreenOrientation(focusMode)
     LaunchedEffect(fullscreenOverride) {
         fullscreenOverride?.let { focusMode = it }
     }
@@ -737,7 +741,10 @@ fun PlayerScreen(
             },
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (!focusMode && !inPictureInPicture && !embeddedMode) Modifier.padding(top = 76.dp, bottom = 148.dp) else Modifier)
+                    .then(if (!focusMode && !inPictureInPicture && !embeddedMode) Modifier.padding(
+                        top = if (compactMobileControls) 58.dp else 76.dp,
+                        bottom = if (compactMobileControls) 112.dp else 148.dp
+                    ) else Modifier)
             )
         }
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
@@ -752,7 +759,10 @@ fun PlayerScreen(
                     Modifier.fillMaxWidth()
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(
+                            horizontal = if (compactMobileControls) 8.dp else 16.dp,
+                            vertical = if (compactMobileControls) 4.dp else 10.dp
+                        ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -768,8 +778,13 @@ fun PlayerScreen(
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
-                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(media.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                    Column(Modifier.weight(1f).padding(horizontal = if (compactMobileControls) 4.dp else 10.dp)) {
+                        Text(
+                            media.media.title,
+                            color = Color.White,
+                            style = if (compactMobileControls) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                            maxLines = 1
+                        )
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                         videoDetails.takeIf { it.isNotBlank() }?.let {
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
@@ -821,7 +836,10 @@ fun PlayerScreen(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
-                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .padding(
+                            horizontal = if (compactMobileControls) 10.dp else 24.dp,
+                            vertical = if (compactMobileControls) 8.dp else 16.dp
+                        )
                 ) {
                     val seekable = duration > 0L && media.catalogType != com.nikhil.niktv.model.CatalogType.LIVE_TV
                     Row(
@@ -842,7 +860,7 @@ fun PlayerScreen(
                                 }
                                 FilledIconButton(
                                     onClick = { if (player.isPlaying) player.pause() else player.play() },
-                                    modifier = Modifier.size(52.dp).focusRequester(playPauseFocusRequester)
+                                    modifier = Modifier.size(if (compactMobileControls) 44.dp else 52.dp).focusRequester(playPauseFocusRequester)
                                         .focusProperties {
                                             up = fullscreenFocusRequester
                                             left = if (seekable) rewindFocusRequester else previousFocusRequester
@@ -866,6 +884,7 @@ fun PlayerScreen(
                                 position = position,
                                 duration = duration,
                                 onSeek = { player.seekTo(it) },
+                                compact = compactMobileControls,
                                 modifier = Modifier.weight(1f).focusRequester(progressFocusRequester)
                                     .playerControlFocus(RoundedCornerShape(28.dp)) { controlsFocused = it }
                             ) else if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) Row(
@@ -1196,6 +1215,7 @@ internal fun PlaybackProgressBar(
     position: Long,
     duration: Long,
     onSeek: (Long) -> Unit,
+    compact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val safePosition = position.coerceIn(0L, duration)
@@ -1204,7 +1224,7 @@ internal fun PlaybackProgressBar(
     val remaining = formatPlayerTime(duration - safePosition)
     val total = formatPlayerTime(duration)
     Box(
-        modifier.height(56.dp)
+        modifier.height(if (compact) 44.dp else 56.dp)
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != ComposeKeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -1226,10 +1246,10 @@ internal fun PlaybackProgressBar(
             value = safePosition.toFloat(),
             onValueChange = { onSeek(it.toLong()) },
             valueRange = 0f..duration.toFloat(),
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier.fillMaxWidth().height(if (compact) 44.dp else 56.dp),
             thumb = {
                 Box(
-                    Modifier.width(4.dp).height(44.dp)
+                    Modifier.width(if (compact) 3.dp else 4.dp).height(if (compact) 34.dp else 44.dp)
                         .shadow(5.dp, RoundedCornerShape(99.dp))
                         .clip(RoundedCornerShape(99.dp))
                         .background(MaterialTheme.colorScheme.primary)
@@ -1237,8 +1257,8 @@ internal fun PlaybackProgressBar(
             },
             track = {
                 Box(
-                    Modifier.fillMaxWidth().height(36.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                    Modifier.fillMaxWidth().height(if (compact) 28.dp else 36.dp)
+                        .clip(RoundedCornerShape(if (compact) 14.dp else 18.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Box(
@@ -1261,8 +1281,8 @@ internal fun PlaybackProgressBar(
         ) {
             Text(
                 "$elapsed  •  −$remaining  •  $total",
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 2.dp else 4.dp),
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
                 maxLines = 1
             )
         }
@@ -1287,7 +1307,10 @@ internal fun Modifier.playerControlFocus(
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
     return this
-        .requiredSizeIn(minWidth = 56.dp, minHeight = 56.dp)
+        .requiredSizeIn(
+            minWidth = if (LocalConfiguration.current.smallestScreenWidthDp < 600) 44.dp else 56.dp,
+            minHeight = if (LocalConfiguration.current.smallestScreenWidthDp < 600) 44.dp else 56.dp
+        )
         .onFocusChanged {
             focused = it.isFocused
             onFocused(it.isFocused)

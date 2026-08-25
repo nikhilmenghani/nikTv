@@ -142,6 +142,30 @@ fun ApplyUiOrientation(mode: UiOrientationMode) {
     }
 }
 
+/** Temporarily rotates phone playback to landscape without changing the saved app preference. */
+@Composable
+fun ApplyMobileFullscreenOrientation(fullscreen: Boolean) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val activity = remember(context) { context.findOrientationActivity() }
+    val isPhone = configuration.smallestScreenWidthDp < 600 &&
+        !context.isOrientationTv(configuration)
+
+    DisposableEffect(activity, fullscreen, isPhone) {
+        if (activity == null || !fullscreen || !isPhone) {
+            onDispose { }
+        } else {
+            val previous = activity.requestedOrientation
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            onDispose {
+                if (activity.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+                    activity.requestedOrientation = previous
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun OrientationSettingsSection(
     modifier: Modifier = Modifier

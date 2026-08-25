@@ -266,8 +266,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val seriesPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.SERIES)
     val mobileUiDesign by rememberMobileUiDesign()
     val useYouTubeMobilePlayback =
-        LocalConfiguration.current.screenWidthDp < 600 &&
-            mobileUiDesign == MobileUiDesign.YOUTUBE
+        LocalConfiguration.current.smallestScreenWidthDp < 600 &&
+            mobileUiDesign.usesYouTubeOn(LocalConfiguration.current)
 
     LaunchedEffect(updateEnforcementEnabled) {
         if (updateEnforcementEnabled && pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
@@ -1292,7 +1292,7 @@ private fun CatalogScreen(
         }
     } else {
         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            val showYouTubeNavigation = mobileUiDesign == MobileUiDesign.YOUTUBE && !state.settingsOpen && !state.searchOpen
+            val showYouTubeNavigation = mobileUiDesign.usesYouTubeOn(configuration) && !state.settingsOpen && !state.searchOpen
             MainContent(
                 Modifier.fillMaxSize().padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
             )
@@ -1802,7 +1802,7 @@ private fun ModernBrowseScreen(
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
             if (!isWide) item("modern-top", span = gridSpan) {
-                if (mobileUiDesign == MobileUiDesign.YOUTUBE) {
+                if (mobileUiDesign.usesYouTubeOn(configuration)) {
                     YouTubeStyleTopBar(state, openSearch, openSettings, openProfileSwitcher)
                 } else {
                     ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings, openProfileSwitcher)
@@ -4484,14 +4484,23 @@ private fun ModernSettingsScreen(
                 AssistChip(onClick = {}, enabled = false, label = { Text("v${BuildConfig.VERSION_NAME}") })
             }
         }
-        SettingsSection("Mobile appearance") {
+        val settingsConfiguration = LocalConfiguration.current
+        val orientationMode by rememberUiOrientationMode()
+        val showMobileAppearance =
+            settingsConfiguration.smallestScreenWidthDp < 600 &&
+                orientationMode != UiOrientationMode.LANDSCAPE
+        if (showMobileAppearance) SettingsSection("Mobile appearance") {
             val mobileDesign by rememberMobileUiDesign()
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Phone navigation", style = MaterialTheme.typography.titleMedium)
-                Text("YouTube style uses a compact header and persistent bottom navigation. Tablet and TV layouts are unchanged.", color = Color.Gray)
+                Text("Portrait phone layout", style = MaterialTheme.typography.titleMedium)
+                Text("Auto selects the YouTube layout on phones. Fullscreen video still opens in landscape.", color = Color.Gray)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf(MobileUiDesign.YOUTUBE to "YouTube style", MobileUiDesign.CLASSIC to "Classic").forEachIndexed { index, (design, label) ->
-                        val shape = uniformSegmentShape(index, 2)
+                    listOf(
+                        MobileUiDesign.AUTO to "Auto",
+                        MobileUiDesign.YOUTUBE to "YouTube",
+                        MobileUiDesign.CLASSIC to "Classic"
+                    ).forEachIndexed { index, (design, label) ->
+                        val shape = uniformSegmentShape(index, 3)
                         SegmentedButton(
                             selected = mobileDesign == design,
                             onClick = { MobileUiPreferences.set(context, design) },

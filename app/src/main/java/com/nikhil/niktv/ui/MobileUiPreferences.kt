@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 
-enum class MobileUiDesign { CLASSIC, YOUTUBE }
+enum class MobileUiDesign { AUTO, CLASSIC, YOUTUBE }
 
 object MobileUiPreferences {
     private const val PREFS = "mobile_ui_preferences"
@@ -13,12 +13,16 @@ object MobileUiPreferences {
     fun get(context: Context): MobileUiDesign =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
             ?.let { runCatching { MobileUiDesign.valueOf(it) }.getOrNull() }
-            ?: MobileUiDesign.YOUTUBE
+            ?: MobileUiDesign.AUTO
 
     fun set(context: Context, design: MobileUiDesign) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, design.name).apply()
     }
 }
+
+fun MobileUiDesign.usesYouTubeOn(configuration: android.content.res.Configuration): Boolean =
+    this == MobileUiDesign.YOUTUBE ||
+        (this == MobileUiDesign.AUTO && configuration.smallestScreenWidthDp < 600)
 
 @Composable
 fun rememberMobileUiDesign(): State<MobileUiDesign> {

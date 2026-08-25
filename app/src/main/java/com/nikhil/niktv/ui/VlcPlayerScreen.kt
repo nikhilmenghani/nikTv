@@ -26,6 +26,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -57,6 +58,8 @@ internal fun VlcPlayerScreen(
     onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val playerConfiguration = LocalConfiguration.current
+    val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
     val scope = rememberCoroutineScope()
     var playing by remember(media.progressKey) { mutableStateOf(true) }
     var buffering by remember(media.progressKey) { mutableStateOf(true) }
@@ -64,6 +67,7 @@ internal fun VlcPlayerScreen(
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var error by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
+    ApplyMobileFullscreenOrientation(focusMode)
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var videoView by remember(media.progressKey) { mutableStateOf<View?>(null) }
@@ -270,7 +274,10 @@ internal fun VlcPlayerScreen(
                     }
                 },
                 modifier = Modifier.fillMaxSize().then(
-                    if (!focusMode && !embeddedMode) Modifier.padding(top = 76.dp, bottom = 148.dp) else Modifier
+                    if (!focusMode && !embeddedMode) Modifier.padding(
+                        top = if (compactMobileControls) 58.dp else 76.dp,
+                        bottom = if (compactMobileControls) 112.dp else 148.dp
+                    ) else Modifier
                 )
             )
         }
@@ -287,7 +294,10 @@ internal fun VlcPlayerScreen(
                     Modifier.fillMaxWidth()
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(
+                            horizontal = if (compactMobileControls) 8.dp else 16.dp,
+                            vertical = if (compactMobileControls) 4.dp else 10.dp
+                        ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
@@ -299,8 +309,13 @@ internal fun VlcPlayerScreen(
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
-                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                        Text(media.media.title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                    Column(Modifier.weight(1f).padding(horizontal = if (compactMobileControls) 4.dp else 10.dp)) {
+                        Text(
+                            media.media.title,
+                            color = Color.White,
+                            style = if (compactMobileControls) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                            maxLines = 1
+                        )
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                     }
                     if (pipAvailable) IconButton(
@@ -337,7 +352,10 @@ internal fun VlcPlayerScreen(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
-                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .padding(
+                            horizontal = if (compactMobileControls) 10.dp else 24.dp,
+                            vertical = if (compactMobileControls) 8.dp else 16.dp
+                        )
                 ) {
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->
@@ -357,7 +375,7 @@ internal fun VlcPlayerScreen(
                         ) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White) }
                         FilledIconButton(
                             onClick = { if (player.isPlaying) player.pause() else player.play() },
-                            modifier = Modifier.size(52.dp).focusRequester(playRequester)
+                            modifier = Modifier.size(if (compactMobileControls) 44.dp else 52.dp).focusRequester(playRequester)
                                 .focusProperties {
                                     up = fullscreenRequester
                                     left = if (seekable) rewindRequester else previousRequester
@@ -382,6 +400,7 @@ internal fun VlcPlayerScreen(
                             position = position,
                             duration = duration,
                             onSeek = { player.time = it },
+                            compact = compactMobileControls,
                             modifier = Modifier.weight(1f).focusRequester(progressRequester)
                                 .playerControlFocus(RoundedCornerShape(28.dp)) { controlsFocused = it }
                         ) else Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
