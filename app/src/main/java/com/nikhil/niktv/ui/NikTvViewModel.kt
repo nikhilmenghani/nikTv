@@ -71,6 +71,7 @@ data class NikTvState(
     val playbackUrls: List<PlaybackUrl> = emptyList(),
     val cacheIntervalMinutes: Int = 60,
     val playerControlsTimeoutSeconds: Int = 3,
+    val keepAwakeOnlyDuringPlayback: Boolean = false,
     val playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
     val seriesStartSeason: SeriesStartSeason = SeriesStartSeason.FIRST,
     val availableSeriesSeasons: List<Int> = emptyList(),
@@ -136,6 +137,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
         viewModelScope.launch { store.playerControlsTimeoutSeconds.collect { seconds -> _state.update { it.copy(playerControlsTimeoutSeconds = seconds) } } }
+        viewModelScope.launch { store.keepAwakeOnlyDuringPlayback.collect { enabled ->
+            _state.update { it.copy(keepAwakeOnlyDuringPlayback = enabled) }
+        } }
         viewModelScope.launch { store.playbackEngine.collect { engine -> _state.update { it.copy(playbackEngine = engine) } } }
         viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
         viewModelScope.launch { store.rememberedSeriesSeasons.collect { rememberedSeriesSeasons = it } }
@@ -710,6 +714,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.setPlayerControlsTimeoutSeconds(seconds)
     }
 
+    fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = viewModelScope.launch {
+        store.setKeepAwakeOnlyDuringPlayback(enabled)
+    }
+
     /*
      * PLAYER_LOAD_MORE_QUEUE_V16
      *
@@ -717,17 +725,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
      * belongs to the browse screen and uses selectedCategory. The player must
      * instead paginate the category/series that is actually playing.
      */
-    fun loadMorePlaybackQueue() {
+    fun loadMorePlaybackQueue(): Boolean {
         val snapshot = _state.value
-        val playing = snapshot.nowPlaying ?: return
-        val session = snapshot.session ?: return
-        val scope = snapshot.playbackQueueScope ?: return
+        val playing = snapshot.nowPlaying ?: return false
+        val session = snapshot.session ?: return false
+        val scope = snapshot.playbackQueueScope ?: return false
 
         if (
             snapshot.playbackQueueLoadingMore ||
             !snapshot.playbackQueueHasMore
         ) {
-            return
+            return false
         }
 
         viewModelScope.launch {
@@ -754,17 +762,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         ?: snapshot.selectedSeriesSeason
 
                 runCatching {
-                    portal.episodeSeason(
-                        session,
-                        series,
-                        snapshot.seriesStartSeason,
-                        season,
-                        snapshot.playbackQueuePage + 1,
-                        playing.media.portalSeasonId
-                            ?: playing.episodeQueue
-                                .firstOrNull()
-                                ?.portalSeasonId
-                    )
+                    withTimeout(45_000L) {
+                        portal.episodeSeason(
+                            session,
+                            series,
+                            snapshot.seriesStartSeason,
+                            season,
+                            snapshot.playbackQueuePage + 1,
+                            playing.media.portalSeasonId
+                                ?: playing.episodeQueue
+                                    .firstOrNull()
+                                    ?.portalSeasonId
+                        )
+                    }
                 }.onSuccess { next ->
                     val oldQueue =
                         playing.episodeQueue.ifEmpty {
@@ -914,11 +924,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         it.id == categoryId
                     }
                     ?: runCatching {
-                        portal.categories(
-                            session,
-                            playing.catalogType
-                        ).firstOrNull {
-                            it.id == categoryId
+                        withTimeout(20_000L) {
+                            portal.categories(
+                                session,
+                                playing.catalogType
+                            ).firstOrNull {
+                                it.id == categoryId
+                            }
                         }
                     }.getOrNull()
 
@@ -934,11 +946,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             runCatching {
-                portal.catalogPage(
-                    session,
-                    category,
-                    snapshot.playbackQueuePage + 1
-                )
+                withTimeout(45_000L) {
+                    portal.catalogPage(
+                        session,
+                        category,
+                        snapshot.playbackQueuePage + 1
+                    )
+                }
             }.onSuccess { result ->
                 val oldQueue =
                     playing.episodeQueue.ifEmpty {
@@ -1078,6 +1092,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        return true
     }
 
     fun refreshPlaybackQueue() = task {
@@ -1519,7 +1534,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             item = resolved,
             type = CatalogType.MOVIES,
             series = null,
-            episodes = listOf(resolved)
+            episodes = emptyList()
         )
     }
 
@@ -1613,7 +1628,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         for (category in categories) {
             if (_state.value.session?.profile?.cacheKey() != profileKey ||
                 _state.value.selectedType != type ||
-                _state.value.browseLayout != BrowseLayout.SECTIONS
+                _state.value.browseLayout != BrowseLayout.SECTIONS ||
+                _state.value.nowPlaying != null
             ) return
 
             val existing = _state.value.browseCachesByType[type] ?: return
@@ -2445,14 +2461,30 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(items = portal.catalog(session, category)) }
     }
 
-    fun closePlayer() = _state.update {
-        it.copy(
-            nowPlaying = null,
-            playbackQueueScope = null,
-            playbackQueuePage = 1,
-            playbackQueueHasMore = false,
-            playbackQueueLoadingMore = false
-        )
+    fun closePlayer() {
+        val snapshot = _state.value
+        val session = snapshot.session
+
+        _state.update {
+            it.copy(
+                nowPlaying = null,
+                playbackQueueScope = null,
+                playbackQueuePage = 1,
+                playbackQueueHasMore = false,
+                playbackQueueLoadingMore = false
+            )
+        }
+
+        if (
+            session != null &&
+            !snapshot.homeOpen &&
+            snapshot.selectedSeries == null &&
+            snapshot.browseLayout == BrowseLayout.SECTIONS
+        ) {
+            viewModelScope.launch {
+                loadCategorySections(session, snapshot.selectedType)
+            }
+        }
     }
     fun retryPlayback() {
         val playing = _state.value.nowPlaying ?: return

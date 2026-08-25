@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -257,6 +258,38 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null
     ) }
     val appContext = LocalContext.current
+    val hostActivity = remember(appContext) {
+        appContext.findHostActivity()
+    }
+    val shouldKeepScreenAwake =
+        !state.keepAwakeOnlyDuringPlayback ||
+            state.nowPlaying != null
+
+    /*
+     * APP_KEEP_AWAKE_OWNER_V17
+     *
+     * Default: keep NikTV awake while the app is open.
+     * Optional setting: only keep awake during playback.
+     * This is the sole FLAG_KEEP_SCREEN_ON owner.
+     */
+    DisposableEffect(hostActivity, shouldKeepScreenAwake) {
+        if (shouldKeepScreenAwake) {
+            hostActivity?.window?.addFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        } else {
+            hostActivity?.window?.clearFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
+
+        onDispose {
+            hostActivity?.window?.clearFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
+    }
+
     val clipboard = remember(appContext) {
         appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
@@ -391,6 +424,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds,
+                    setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback,
                     setPlaybackEngine = vm::setPlaybackEngine,
                     setSeriesStartSeason = vm::setSeriesStartSeason,
                     setBrowseLayout = vm::setBrowseLayout,
@@ -422,6 +456,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
                     ,setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds
+                    ,setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback
                     ,setPlaybackEngine = vm::setPlaybackEngine
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
                     ,loadSeriesSeason = vm::loadSeriesSeason
@@ -1131,6 +1166,7 @@ private fun CatalogScreen(
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
+    setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     loadSeriesSeason: (Int) -> Unit,
@@ -1207,6 +1243,7 @@ private fun CatalogScreen(
                     logout = logout,
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
+                    setKeepAwakeOnlyDuringPlayback = setKeepAwakeOnlyDuringPlayback,
                     setPlaybackEngine = setPlaybackEngine,
                     setSeriesStartSeason = setSeriesStartSeason,
                     setBrowseLayout = setBrowseLayout,
@@ -4341,6 +4378,7 @@ private fun ModernSettingsScreen(
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
+    setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     setBrowseLayout: (BrowseLayout) -> Unit,
@@ -4532,6 +4570,37 @@ private fun ModernSettingsScreen(
                     }
                 }
             }
+        }
+        SettingsSection("Screen awake") {
+            ListItem(
+                headlineContent = {
+                    Text("Only keep screen awake during playback")
+                },
+                supportingContent = {
+                    Text(
+                        if (state.keepAwakeOnlyDuringPlayback) {
+                            "NikTV may let the screen sleep while browsing; playback always stays awake."
+                        } else {
+                            "NikTV keeps the screen awake for as long as the app is open."
+                        }
+                    )
+                },
+                leadingContent = {
+                    Icon(Icons.Default.LightMode, null)
+                },
+                trailingContent = {
+                    Switch(
+                        checked = state.keepAwakeOnlyDuringPlayback,
+                        onCheckedChange = setKeepAwakeOnlyDuringPlayback,
+                        modifier = Modifier.remoteFocusFrame(
+                            RoundedCornerShape(16.dp)
+                        )
+                    )
+                },
+                colors = ListItemDefaults.colors(
+                    containerColor = Color.Transparent
+                )
+            )
         }
         SettingsSection("Profiles") {
             state.profiles.forEachIndexed { index, saved ->
@@ -4994,7 +5063,7 @@ private fun LiveTvPlaybackScreen(
     toggleFavorite: (MediaItem) -> Unit,
     loadMoreCatalog: () -> Unit,
     refreshPlaybackQueue: () -> Unit,
-    loadMorePlaybackQueue: () -> Unit
+    loadMorePlaybackQueue: () -> Boolean
 ) {
     val playing = state.nowPlaying ?: return
     val channels = playing.episodeQueue.ifEmpty { listOf(playing.media) }
@@ -5657,9 +5726,7 @@ private fun LiveTvPlaybackScreen(
                                         false
 
                                     loadMorePending =
-                                        true
-
-                                    loadMorePlaybackQueue()
+                                        loadMorePlaybackQueue()
                                 },
 
                                 /*

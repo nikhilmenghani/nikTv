@@ -370,7 +370,7 @@ fun ShowcasePlaybackScreen(
     loadMoreCatalog: () -> Unit,
     refreshPlaybackQueue: () -> Unit,
     loadMoreEpisodes: () -> Unit = {},
-    loadMorePlaybackQueue: () -> Unit = {}
+    loadMorePlaybackQueue: () -> Boolean = { false }
 ) {
     val playing = state.nowPlaying ?: return
     val type = playing.catalogType
@@ -555,9 +555,8 @@ fun ShowcasePlaybackScreen(
                 if (!playbackLoadingMore && !loadMorePending) {
                     loadMoreStartItemCount = queue.size
                     loadMoreObservedLoading = false
-                    loadMorePending = true
-
-                    loadMorePlaybackQueue()
+                    loadMorePending =
+                        loadMorePlaybackQueue()
                 }
             }
         )
@@ -725,9 +724,8 @@ fun ShowcasePlaybackScreen(
                         loadMoreFirstVisibleItemIndex = railState.firstVisibleItemIndex
                         loadMoreFirstVisibleItemScrollOffset = railState.firstVisibleItemScrollOffset
                         loadMoreObservedLoading = false
-                        loadMorePending = true
-
-                        loadMorePlaybackQueue()
+                        loadMorePending =
+                            loadMorePlaybackQueue()
                     }
                 }
             )

@@ -3,7 +3,6 @@ package com.nikhil.niktv.ui
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -91,25 +90,6 @@ internal fun VlcPlayerScreen(
     val player = remember(media.progressKey) { MediaPlayer(libVlc) }
     val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
     val activity = remember(context) { context.findActivity() }
-
-    /*
-     * VLC_KEEP_SCREEN_ON_V15
-     *
-     * PlayerScreen's existing keep-screen-on effect is below the early VLC
-     * return, so VLC sessions never receive FLAG_KEEP_SCREEN_ON. Mirror the
-     * Media3 behavior here so phones and tablets remain awake while the
-     * player screen is active.
-     */
-    DisposableEffect(activity) {
-        activity?.window?.addFlags(
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        )
-        onDispose {
-            activity?.window?.clearFlags(
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-            )
-        }
-    }
 
     val pipActivity = activity as? MainActivity
     val pipAvailable = remember(context) {

@@ -11,7 +11,6 @@ import android.view.ScaleGestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import androidx.activity.compose.BackHandler
@@ -325,21 +324,6 @@ fun PlayerScreen(
         onDispose {
             onProgress(media.progressKey, player.currentPosition, player.duration)
             player.release()
-        }
-    }
-    /*
-     * PLAYER_RESPECTS_GLOBAL_ORIENTATION_V12
-     *
-     * Keep the screen awake during playback, but let NikTvApp own orientation.
-     */
-    DisposableEffect(activity) {
-        activity?.window?.addFlags(
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        )
-        onDispose {
-            activity?.window?.clearFlags(
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-            )
         }
     }
     DisposableEffect(pipActivity) {

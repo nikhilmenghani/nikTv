@@ -55,6 +55,7 @@ class ProfileStore(private val context: Context) {
     private val playbackUrlsKey = stringPreferencesKey("playback_urls")
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
     private val playerControlsTimeoutKey = intPreferencesKey("player_controls_timeout_seconds")
+    private val keepAwakeOnlyDuringPlaybackKey = intPreferencesKey("keep_awake_only_during_playback")
     private val playbackEngineKey = stringPreferencesKey("playback_engine")
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
     private val pagedSearchesKey = stringPreferencesKey("paged_search_results")
@@ -97,6 +98,9 @@ class ProfileStore(private val context: Context) {
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
     val playerControlsTimeoutSeconds: Flow<Int> = context.dataStore.data.map { it[playerControlsTimeoutKey] ?: 3 }
+    val keepAwakeOnlyDuringPlayback: Flow<Boolean> = context.dataStore.data.map {
+        (it[keepAwakeOnlyDuringPlaybackKey] ?: 0) == 1
+    }
     val playbackEngine: Flow<PlaybackEngine> = context.dataStore.data.map { prefs ->
         prefs[playbackEngineKey]?.let { runCatching { PlaybackEngine.valueOf(it) }.getOrNull() }
             ?: PlaybackEngine.AUTO
@@ -235,6 +239,9 @@ class ProfileStore(private val context: Context) {
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
     suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = context.dataStore.edit {
         it[playerControlsTimeoutKey] = seconds.coerceIn(1, 30)
+    }
+    suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = context.dataStore.edit {
+        it[keepAwakeOnlyDuringPlaybackKey] = if (enabled) 1 else 0
     }
     suspend fun setPlaybackEngine(engine: PlaybackEngine) = context.dataStore.edit {
         it[playbackEngineKey] = engine.name
