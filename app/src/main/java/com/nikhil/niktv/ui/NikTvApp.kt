@@ -4711,6 +4711,54 @@ private fun ModernSettingsScreen(
                 }
             }
         }
+        SettingsSection("Video appearance profiles") {
+            val (appearanceProfiles, activeAppearance) = rememberVideoAppearanceProfiles()
+            var editingId by remember(activeAppearance.id) { mutableStateOf(activeAppearance.id) }
+            val editing = appearanceProfiles.firstOrNull { it.id == editingId } ?: activeAppearance
+            var editName by remember(editing.id, editing.name) { mutableStateOf(editing.name) }
+            var editWarmth by remember(editing.id, editing.warmth) { mutableFloatStateOf(editing.warmth) }
+            var editDimming by remember(editing.id, editing.dimming) { mutableFloatStateOf(editing.dimming) }
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Picture mode", style = MaterialTheme.typography.titleMedium)
+                Text("These video-only profiles do not alter the television's system picture settings.", color = Color.Gray)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    appearanceProfiles.forEach { profile ->
+                        FilterChip(
+                            selected = activeAppearance.id == profile.id,
+                            onClick = {
+                                VideoAppearancePreferences.setActive(context, profile.id)
+                                editingId = profile.id
+                            },
+                            label = { Text(profile.name) },
+                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("Edit ${editing.name}", style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(
+                    value = editName,
+                    onValueChange = { editName = it },
+                    label = { Text("Profile name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Warmth ${(editWarmth * 100).toInt()}%")
+                Slider(value = editWarmth, onValueChange = { editWarmth = it }, valueRange = 0f..1f)
+                Text("Dimming ${(editDimming * 100).toInt()}%")
+                Slider(value = editDimming, onValueChange = { editDimming = it }, valueRange = 0f..0.8f)
+                Button(
+                    onClick = {
+                        VideoAppearancePreferences.update(
+                            context,
+                            editing.copy(name = editName.trim().ifBlank { editing.name }, warmth = editWarmth, dimming = editDimming)
+                        )
+                    },
+                    modifier = Modifier.align(Alignment.End).remoteFocusFrame(CircleShape),
+                    shape = CircleShape
+                ) { Text("Save profile") }
+            }
+        }
         SettingsSection("Screen awake") {
             ListItem(
                 headlineContent = {

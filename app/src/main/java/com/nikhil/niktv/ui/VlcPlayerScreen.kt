@@ -18,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -77,6 +78,8 @@ internal fun VlcPlayerScreen(
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
+    var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
+    val activeAppearanceProfile = rememberVideoAppearanceProfiles().second
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenRequester = remember(media.progressKey) { FocusRequester() }
@@ -103,6 +106,16 @@ internal fun VlcPlayerScreen(
             delay(800)
             gestureFeedback = null
         }
+    }
+    LaunchedEffect(player, resizeMode) {
+        player.setVideoScale(
+            when (resizeMode) {
+                VideoResizeMode.FIT -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
+                VideoResizeMode.FILL -> MediaPlayer.ScaleType.SURFACE_FILL
+                VideoResizeMode.ZOOM -> MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
+                VideoResizeMode.STRETCH -> MediaPlayer.ScaleType.SURFACE_16_9
+            }
+        )
     }
 
     val pipActivity = activity as? MainActivity
@@ -334,6 +347,7 @@ internal fun VlcPlayerScreen(
                 )
             )
         }
+        VideoAppearanceOverlay(activeAppearanceProfile)
 
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             Box(
@@ -381,6 +395,11 @@ internal fun VlcPlayerScreen(
                             .focusProperties { left = backRequester; right = fullscreenRequester; down = playRequester }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
+                    PlayerVisualButtons(
+                        resizeMode = resizeMode,
+                        onResize = { resizeMode = resizeMode.next() },
+                        onControlsFocused = { controlsFocused = it }
+                    )
                     IconButton(
                         onClick = {
                             val entering = !focusMode
@@ -513,7 +532,18 @@ internal fun VlcPlayerScreen(
                         contentDescription = null
                     )
                     Text(if (isBrightness) "Brightness" else "Volume")
-                    LinearProgressIndicator(progress = { level }, modifier = Modifier.fillMaxWidth())
+                    Box(
+                        Modifier.height(120.dp).width(14.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.BottomCenter
+                    ) {
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .fillMaxHeight(level.coerceIn(0f, 1f))
+                                .background(MaterialTheme.colorScheme.primary)
+                        )
+                    }
                     Text("${(level * 100).toInt()}%")
                 }
             }

@@ -62,6 +62,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import com.nikhil.niktv.R
 import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.PlayingMedia
@@ -132,6 +133,8 @@ fun PlayerScreen(
         fullscreenOverride?.let { focusMode = it }
     }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
+    var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
+    val activeAppearanceProfile = rememberVideoAppearanceProfiles().second
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
 
@@ -716,9 +719,16 @@ fun PlayerScreen(
             },
             update = { playerView ->
                 if (playerView.player !== player) playerView.player = player
+                playerView.resizeMode = when (resizeMode) {
+                    VideoResizeMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    VideoResizeMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    VideoResizeMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    VideoResizeMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                }
                 playerView.videoSurfaceView?.apply {
-                    scaleX = videoScale
-                    scaleY = videoScale
+                    val modeScale = if (resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
+                    scaleX = videoScale * modeScale
+                    scaleY = videoScale * modeScale
                     translationX = videoOffset.x
                     translationY = videoOffset.y
                 }
@@ -731,6 +741,7 @@ fun PlayerScreen(
                     ) else Modifier)
             )
         }
+        VideoAppearanceOverlay(activeAppearanceProfile)
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             Box(
                 Modifier.fillMaxSize().then(
@@ -791,6 +802,11 @@ fun PlayerScreen(
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     }
+                    PlayerVisualButtons(
+                        resizeMode = resizeMode,
+                        onResize = { resizeMode = resizeMode.next() },
+                        onControlsFocused = { controlsFocused = it }
+                    )
                     IconButton(onClick = {
                         val enteringFullscreen = !focusMode
                         if (startFullscreen && !enteringFullscreen) {
