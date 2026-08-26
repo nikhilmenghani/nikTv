@@ -30,6 +30,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -4881,7 +4883,7 @@ private fun ModernSettingsScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Automatic picture mode", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Use a selected profile during a daily time window. A player override lasts only for that playback session.",
+                            "Build a full-day timeline. Each profile remains active until the next start time; the final entry continues through midnight.",
                             color = Color.Gray,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -4896,48 +4898,51 @@ private fun ModernSettingsScreen(
                     )
                 }
                 if (appearanceSchedule.enabled) {
-                    Text("Scheduled profile", fontWeight = FontWeight.SemiBold)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        appearanceProfiles.filterNot { it.id == "custom" }.forEach { profile ->
-                            FilterChip(
-                                selected = appearanceSchedule.profileId == profile.id,
-                                onClick = {
-                                    appearanceSchedule = appearanceSchedule.copy(profileId = profile.id)
+                    Text("Daily timeline", fontWeight = FontWeight.SemiBold)
+                    appearanceSchedule.entries.sortedBy { it.startMinutes }.forEachIndexed { index, entry ->
+                        key(entry.startMinutes, entry.profileId, index) {
+                            ScheduleTimelineRow(
+                                entry = entry,
+                                profiles = appearanceProfiles,
+                                canRemove = appearanceSchedule.entries.size > 1,
+                                onChange = { updated ->
+                                    val entries = appearanceSchedule.entries.toMutableList()
+                                    val originalIndex = entries.indexOf(entry).takeIf { it >= 0 } ?: index
+                                    if (entries.withIndex().any {
+                                            it.index != originalIndex &&
+                                                it.value.startMinutes == updated.startMinutes
+                                        }) return@ScheduleTimelineRow
+                                    entries[originalIndex] = updated
+                                    appearanceSchedule = appearanceSchedule.copy(entries = entries)
                                     VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
                                 },
-                                leadingIcon = {
-                                    Icon(videoAppearanceIcon(profile.id), null, Modifier.size(18.dp))
-                                },
-                                label = { Text(profile.name) },
-                                modifier = Modifier.remoteFocusFrame(CircleShape)
+                                onRemove = {
+                                    appearanceSchedule = appearanceSchedule.copy(
+                                        entries = appearanceSchedule.entries.filterNot { it == entry }
+                                    )
+                                    VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                                }
                             )
                         }
                     }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    Button(
+                        onClick = {
+                            val usedHours = appearanceSchedule.entries.map { it.startMinutes / 60 }.toSet()
+                            val startHour = (0..23).firstOrNull { it !in usedHours } ?: return@Button
+                            val defaultProfile = appearanceProfiles.firstOrNull { it.id == "standard" }
+                                ?: appearanceProfiles.first()
+                            appearanceSchedule = appearanceSchedule.copy(
+                                entries = appearanceSchedule.entries +
+                                    VideoAppearanceScheduleEntry(defaultProfile.id, startHour * 60)
+                            )
+                            VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                        },
+                        enabled = appearanceSchedule.entries.size < 24,
+                        modifier = Modifier.remoteFocusFrame(CircleShape)
                     ) {
-                        ScheduleHourControl(
-                            label = "Starts",
-                            minutes = appearanceSchedule.startMinutes,
-                            modifier = Modifier.weight(1f),
-                            onChange = { minutes ->
-                                appearanceSchedule = appearanceSchedule.copy(startMinutes = minutes)
-                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                            }
-                        )
-                        ScheduleHourControl(
-                            label = "Ends",
-                            minutes = appearanceSchedule.endMinutes,
-                            modifier = Modifier.weight(1f),
-                            onChange = { minutes ->
-                                appearanceSchedule = appearanceSchedule.copy(endMinutes = minutes)
-                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                            }
-                        )
+                        Icon(Icons.Default.Add, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Add time period")
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -6310,23 +6315,37 @@ private fun PlaybackEngineSettingsSection(
 }
 
 @Composable
-private fun ScheduleHourControl(
-    label: String,
-    minutes: Int,
-    modifier: Modifier = Modifier,
-    onChange: (Int) -> Unit
+private fun ScheduleTimelineRow(
+    entry: VideoAppearanceScheduleEntry,
+    profiles: List<VideoAppearanceProfile>,
+    canRemove: Boolean,
+    onChange: (VideoAppearanceScheduleEntry) -> Unit,
+    onRemove: () -> Unit
 ) {
-    val hour = (minutes / 60).coerceIn(0, 23)
+    val hour = (entry.startMinutes / 60).coerceIn(0, 23)
     val displayHour = when (val twelveHour = hour % 12) {
         0 -> 12
         else -> twelveHour
     }
     val period = if (hour < 12) "AM" else "PM"
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, color = Color.Gray, style = MaterialTheme.typography.labelMedium)
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    val profile = profiles.firstOrNull { it.id == entry.profileId } ?: profiles.first()
+    val profileIndex = profiles.indexOf(profile)
+    Surface(
+        Modifier.fillMaxWidth().focusGroup(),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF1B2130),
+        border = BorderStroke(1.dp, Color(0xFF30384B))
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("Starts", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
             IconButton(
-                onClick = { onChange((minutes - 60 + 1440) % 1440) },
+                onClick = {
+                    onChange(entry.copy(startMinutes = (entry.startMinutes - 60 + 1440) % 1440))
+                },
                 modifier = Modifier.remoteFocusFrame(CircleShape)
             ) { Icon(Icons.Default.Remove, "Earlier") }
             Text(
@@ -6336,9 +6355,39 @@ private fun ScheduleHourControl(
                 fontWeight = FontWeight.SemiBold
             )
             IconButton(
-                onClick = { onChange((minutes + 60) % 1440) },
+                onClick = {
+                    onChange(entry.copy(startMinutes = (entry.startMinutes + 60) % 1440))
+                },
                 modifier = Modifier.remoteFocusFrame(CircleShape)
             ) { Icon(Icons.Default.Add, "Later") }
+            Spacer(Modifier.width(12.dp))
+            Icon(videoAppearanceIcon(profile.id), null, Modifier.size(22.dp), tint = Color(0xFFFF6973))
+            IconButton(
+                onClick = {
+                    val previous = profiles[(profileIndex - 1 + profiles.size) % profiles.size]
+                    onChange(entry.copy(profileId = previous.id))
+                },
+                modifier = Modifier.remoteFocusFrame(CircleShape)
+            ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous profile") }
+            Text(
+                profile.name,
+                Modifier.widthIn(min = 120.dp),
+                fontWeight = FontWeight.SemiBold
+            )
+            IconButton(
+                onClick = {
+                    val next = profiles[(profileIndex + 1) % profiles.size]
+                    onChange(entry.copy(profileId = next.id))
+                },
+                modifier = Modifier.remoteFocusFrame(CircleShape)
+            ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next profile") }
+            Spacer(Modifier.weight(1f))
+            if (canRemove) {
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier.remoteFocusFrame(CircleShape)
+                ) { Icon(Icons.Default.DeleteOutline, "Remove time period") }
+            }
         }
     }
 }

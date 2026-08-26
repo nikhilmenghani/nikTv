@@ -43,17 +43,19 @@ internal data class VideoAppearanceProfile(
     val dimming: Float
 )
 
+internal data class VideoAppearanceScheduleEntry(
+    val profileId: String,
+    val startMinutes: Int
+)
+
 internal data class VideoAppearanceSchedule(
     val enabled: Boolean,
-    val profileId: String,
-    val startMinutes: Int,
-    val endMinutes: Int
+    val entries: List<VideoAppearanceScheduleEntry>
 ) {
-    fun activeAt(minutesOfDay: Int): Boolean = when {
-        !enabled -> false
-        startMinutes == endMinutes -> true
-        startMinutes < endMinutes -> minutesOfDay in startMinutes until endMinutes
-        else -> minutesOfDay >= startMinutes || minutesOfDay < endMinutes
+    fun profileAt(minutesOfDay: Int): String? {
+        if (!enabled || entries.isEmpty()) return null
+        val ordered = entries.sortedBy { it.startMinutes }
+        return (ordered.lastOrNull { it.startMinutes <= minutesOfDay } ?: ordered.last()).profileId
     }
 }
 
@@ -71,9 +73,7 @@ internal object VideoAppearancePreferences {
     private const val FILE = "video_appearance_profiles"
     private const val ACTIVE = "active"
     private const val SCHEDULE_ENABLED = "schedule_enabled"
-    private const val SCHEDULE_PROFILE = "schedule_profile"
-    private const val SCHEDULE_START = "schedule_start"
-    private const val SCHEDULE_END = "schedule_end"
+    private const val SCHEDULE_ENTRIES = "schedule_entries_v2"
     private val defaults = listOf(
         VideoAppearanceProfile("movie", "Movie", .08f, .03f),
         VideoAppearanceProfile("standard", "Standard", 0f, 0f),
@@ -95,18 +95,33 @@ internal object VideoAppearancePreferences {
     }
     fun activeId(context: Context) = prefs(context).getString(ACTIVE, "standard") ?: "standard"
     fun setActive(context: Context, id: String) { prefs(context).edit().putString(ACTIVE, id).apply() }
-    fun schedule(context: Context) = VideoAppearanceSchedule(
-        enabled = prefs(context).getBoolean(SCHEDULE_ENABLED, false),
-        profileId = prefs(context).getString(SCHEDULE_PROFILE, "night") ?: "night",
-        startMinutes = prefs(context).getInt(SCHEDULE_START, 20 * 60).coerceIn(0, 1439),
-        endMinutes = prefs(context).getInt(SCHEDULE_END, 6 * 60).coerceIn(0, 1439)
+    private val defaultScheduleEntries = listOf(
+        VideoAppearanceScheduleEntry("bright", 6 * 60),
+        VideoAppearanceScheduleEntry("natural", 12 * 60),
+        VideoAppearanceScheduleEntry("movie", 18 * 60),
+        VideoAppearanceScheduleEntry("night", 22 * 60)
     )
+    fun schedule(context: Context): VideoAppearanceSchedule {
+        val stored = prefs(context).getString(SCHEDULE_ENTRIES, null)
+        val entries = stored?.split(';')?.mapNotNull { encoded ->
+            val pieces = encoded.split(',', limit = 2)
+            val minutes = pieces.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 1439) ?: return@mapNotNull null
+            val profileId = pieces.getOrNull(1)?.takeIf { id -> id.isNotBlank() } ?: return@mapNotNull null
+            VideoAppearanceScheduleEntry(profileId, minutes)
+        }.orEmpty().ifEmpty { defaultScheduleEntries }
+        return VideoAppearanceSchedule(
+            enabled = prefs(context).getBoolean(SCHEDULE_ENABLED, false),
+            entries = entries.sortedBy { it.startMinutes }.distinctBy { it.startMinutes }
+        )
+    }
     fun setSchedule(context: Context, schedule: VideoAppearanceSchedule) {
+        val normalized = schedule.entries
+            .map { it.copy(startMinutes = it.startMinutes.coerceIn(0, 1439)) }
+            .sortedBy { it.startMinutes }
+            .distinctBy { it.startMinutes }
         prefs(context).edit()
             .putBoolean(SCHEDULE_ENABLED, schedule.enabled)
-            .putString(SCHEDULE_PROFILE, schedule.profileId)
-            .putInt(SCHEDULE_START, schedule.startMinutes.coerceIn(0, 1439))
-            .putInt(SCHEDULE_END, schedule.endMinutes.coerceIn(0, 1439))
+            .putString(SCHEDULE_ENTRIES, normalized.joinToString(";") { "${it.startMinutes},${it.profileId}" })
             .apply()
     }
     fun update(context: Context, profile: VideoAppearanceProfile) {
@@ -147,11 +162,8 @@ internal fun rememberVideoAppearanceProfiles(
         val now = Calendar.getInstance()
         now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
     }
-    val effectiveId = if (useSchedule && schedule.activeAt(nowMinutes)) {
-        schedule.profileId
-    } else {
-        VideoAppearancePreferences.activeId(context)
-    }
+    val effectiveId = (if (useSchedule) schedule.profileAt(nowMinutes) else null)
+        ?: VideoAppearancePreferences.activeId(context)
     val active = profiles.firstOrNull { it.id == effectiveId }
         ?: profiles.first { it.id == "standard" }
     return profiles to active
