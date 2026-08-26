@@ -56,6 +56,9 @@ internal fun VlcPlayerScreen(
     onPlayNext: () -> Unit,
     onPlayItem: (MediaItem) -> Unit,
     onProgress: (String, Long, Long) -> Unit,
+    queueHasMore: Boolean = false,
+    queueLoadingMore: Boolean = false,
+    onLoadMoreQueue: () -> Boolean = { false },
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
     controlsTimeoutSeconds: Int = 3,
@@ -73,6 +76,12 @@ internal fun VlcPlayerScreen(
     var buffering by remember(media.progressKey) { mutableStateOf(true) }
     var position by remember(media.progressKey) { mutableLongStateOf(initialResumePosition) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
+    var pendingInitialResumePosition by remember(media.progressKey) {
+        mutableLongStateOf(initialResumePosition.coerceAtLeast(0L))
+    }
+    var resumeSeekAttempts by remember(media.progressKey) {
+        mutableIntStateOf(0)
+    }
     var error by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
     ApplyMobileFullscreenOrientation(focusMode)
@@ -98,12 +107,21 @@ internal fun VlcPlayerScreen(
     var modeFeedback by remember { mutableStateOf<String?>(null) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
-    val hasPlaybackQueue = media.episodeQueue.distinctBy { it.id }.size > 1 && !media.directFullscreen
+    val playerQueueItems = remember(media.media.id, media.episodeQueue) {
+        val unique = media.episodeQueue.distinctBy { it.id }
+        if (unique.any { it.id == media.media.id }) unique
+        else listOf(media.media) + unique
+    }
+    val hasPlaybackQueue =
+        playerQueueItems.size > 1 || queueHasMore || queueLoadingMore
     LaunchedEffect(modeFeedback) {
         if (modeFeedback != null) {
             delay(1_800L)
             modeFeedback = null
         }
+    }
+    LaunchedEffect(focusMode) {
+        if (!focusMode) queueVisible = false
     }
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
@@ -260,9 +278,18 @@ internal fun VlcPlayerScreen(
         player.media = vlcMedia
         vlcMedia.release()
         player.play()
-        if (initialResumePosition > 0) player.time = initialResumePosition
+
+        // VLC_RESUME_AFTER_TIMELINE_READY_V2
+        // Applying player.time during Opening/Buffering can be discarded.
         onDispose {
-            val finalPosition = player.time.coerceAtLeast(0L)
+            val finalPosition =
+                (
+                    if (pendingInitialResumePosition > 0L) {
+                        pendingInitialResumePosition
+                    } else {
+                        player.time
+                    }
+                    ).coerceAtLeast(0L)
             val finalDuration = player.length.coerceAtLeast(0L)
             if (media.progressKey.isNotBlank()) onProgress(media.progressKey, finalPosition, finalDuration)
             player.stop()
@@ -274,14 +301,53 @@ internal fun VlcPlayerScreen(
 
     LaunchedEffect(player, media.progressKey) {
         while (true) {
-            position = player.time.coerceAtLeast(0L)
-            duration = player.length.coerceAtLeast(0L)
+            val knownDuration = player.length.coerceAtLeast(0L)
+            duration = knownDuration
+
             if (player.isPlaying) {
                 playing = true
                 buffering = false
             }
-            if (media.progressKey.isNotBlank()) onProgress(media.progressKey, position, duration)
-            delay(1_000)
+
+            val pendingResume = pendingInitialResumePosition
+
+            if (
+                pendingResume > 0L &&
+                player.isPlaying &&
+                knownDuration > 0L &&
+                media.catalogType != CatalogType.LIVE_TV
+            ) {
+                val target =
+                    pendingResume.coerceAtMost(
+                        (knownDuration - 1_000L).coerceAtLeast(0L)
+                    )
+                val actual = player.time.coerceAtLeast(0L)
+                val reached =
+                    resumeSeekAttempts > 0 &&
+                        kotlin.math.abs(actual - target) <= 2_500L
+
+                if (reached) {
+                    pendingInitialResumePosition = 0L
+                    position = actual
+                } else {
+                    player.time = target
+                    resumeSeekAttempts++
+                    position = target
+                }
+            } else if (pendingResume > 0L) {
+                position = pendingResume
+            } else {
+                position = player.time.coerceAtLeast(0L)
+            }
+
+            if (
+                media.progressKey.isNotBlank() &&
+                pendingInitialResumePosition == 0L
+            ) {
+                onProgress(media.progressKey, position, duration)
+            }
+
+            delay(500L)
         }
     }
 
@@ -421,8 +487,14 @@ internal fun VlcPlayerScreen(
                 Row(
                     Modifier.fillMaxWidth()
                         .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp && hasPlaybackQueue) {
-                                queueVisible = true; true
+                            if (
+                                focusMode &&
+                                event.type == KeyEventType.KeyDown &&
+                                event.key == ComposeKey.DirectionUp &&
+                                hasPlaybackQueue
+                            ) {
+                                queueVisible = true
+                                true
                             } else false
                         }
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
@@ -533,8 +605,14 @@ internal fun VlcPlayerScreen(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
                                 fullscreenRequester.requestFocus(); true
-                            } else if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionDown && hasPlaybackQueue) {
-                                queueVisible = true; true
+                            } else if (
+                                focusMode &&
+                                event.type == KeyEventType.KeyDown &&
+                                event.key == ComposeKey.DirectionDown &&
+                                hasPlaybackQueue
+                            ) {
+                                queueVisible = true
+                                true
                             } else false
                         },
                         verticalAlignment = Alignment.CenterVertically
@@ -586,11 +664,21 @@ internal fun VlcPlayerScreen(
                 }
             }
         }
-        if (queueVisible) PlayerQueueOverlay(
-            items = media.episodeQueue,
+        if (queueVisible && focusMode) PlayerQueueOverlay(
+            items = playerQueueItems,
             playingId = media.media.id,
-            onDismiss = { queueVisible = false; dpadInteraction++; showControls() },
-            onSelect = { queueVisible = false; onPlayItem(it) }
+            hasMore = queueHasMore,
+            loadingMore = queueLoadingMore,
+            onLoadMore = onLoadMoreQueue,
+            onDismiss = {
+                queueVisible = false
+                dpadInteraction++
+                showControls()
+            },
+            onSelect = {
+                queueVisible = false
+                onPlayItem(it)
+            }
         )
         if (pictureEditorVisible) PlayerPictureModeEditor(
             profiles = appearanceProfiles,

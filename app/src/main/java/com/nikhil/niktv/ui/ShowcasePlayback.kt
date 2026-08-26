@@ -638,6 +638,10 @@ fun ShowcasePlaybackScreen(
             onPlayPrevious = onPlayPrevious,
             onPlayNext = onPlayNext,
             onProgress = onProgress,
+            onPlayItem = play,
+            queueHasMore = playbackHasMore,
+            queueLoadingMore = playbackLoadingMore,
+            onLoadMoreQueue = loadMorePlaybackQueue,
             controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
             playbackEngine = state.playbackEngine,
             modifier = if (fullscreen) {
@@ -892,6 +896,17 @@ private fun YouTubeMobileShowcase(
             onPlayPrevious = onPlayPrevious,
             onPlayNext = onPlayNext,
             onProgress = onProgress,
+            onPlayItem = onPlay,
+            queueHasMore = hasMore,
+            queueLoadingMore = loadingMore || loadMorePending,
+            onLoadMoreQueue = {
+                if (!loadingMore && !loadMorePending && hasMore) {
+                    onLoadMore()
+                    true
+                } else {
+                    false
+                }
+            },
             controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
             playbackEngine = state.playbackEngine,
             modifier = if (fullscreen) {

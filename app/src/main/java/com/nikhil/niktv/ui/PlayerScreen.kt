@@ -99,6 +99,9 @@ fun PlayerScreen(
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
     onPlayItem: (NikMediaItem) -> Unit = {},
+    queueHasMore: Boolean = false,
+    queueLoadingMore: Boolean = false,
+    onLoadMoreQueue: () -> Boolean = { false },
     controlsTimeoutSeconds: Int = 3,
     playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
     modifier: Modifier = Modifier,
@@ -132,6 +135,9 @@ fun PlayerScreen(
             onPlayNext = onPlayNext,
             onPlayItem = onPlayItem,
             onProgress = onProgress,
+            queueHasMore = queueHasMore,
+            queueLoadingMore = queueLoadingMore,
+            onLoadMoreQueue = onLoadMoreQueue,
             modifier = modifier,
             embeddedMode = embeddedMode,
             controlsTimeoutSeconds = controlsTimeoutSeconds,
@@ -170,12 +176,21 @@ fun PlayerScreen(
     var modeFeedback by remember { mutableStateOf<String?>(null) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
-    val hasPlaybackQueue = media.episodeQueue.distinctBy { it.id }.size > 1 && !media.directFullscreen
+    val playerQueueItems = remember(media.media.id, media.episodeQueue) {
+        val unique = media.episodeQueue.distinctBy { it.id }
+        if (unique.any { it.id == media.media.id }) unique
+        else listOf(media.media) + unique
+    }
+    val hasPlaybackQueue =
+        playerQueueItems.size > 1 || queueHasMore || queueLoadingMore
     LaunchedEffect(modeFeedback) {
         if (modeFeedback != null) {
             delay(1_800L)
             modeFeedback = null
         }
+    }
+    LaunchedEffect(focusMode) {
+        if (!focusMode) queueVisible = false
     }
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
@@ -837,8 +852,14 @@ fun PlayerScreen(
                 Row(
                     Modifier.fillMaxWidth()
                         .onPreviewKeyEvent { event ->
-                            if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp && hasPlaybackQueue) {
-                                queueVisible = true; true
+                            if (
+                                focusMode &&
+                                event.type == ComposeKeyEventType.KeyDown &&
+                                event.key == ComposeKey.DirectionUp &&
+                                hasPlaybackQueue
+                            ) {
+                                queueVisible = true
+                                true
                             } else false
                         }
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
@@ -969,7 +990,12 @@ fun PlayerScreen(
                             if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
                                 runCatching { fullscreenFocusRequester.requestFocus() }
                                 true
-                            } else if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionDown && hasPlaybackQueue) {
+                            } else if (
+                                focusMode &&
+                                event.type == ComposeKeyEventType.KeyDown &&
+                                event.key == ComposeKey.DirectionDown &&
+                                hasPlaybackQueue
+                            ) {
                                 queueVisible = true
                                 true
                             } else false
@@ -1029,11 +1055,21 @@ fun PlayerScreen(
                 }
             }
         }
-        if (queueVisible) PlayerQueueOverlay(
-            items = media.episodeQueue,
+        if (queueVisible && focusMode) PlayerQueueOverlay(
+            items = playerQueueItems,
             playingId = media.media.id,
-            onDismiss = { queueVisible = false; dpadInteraction++; showControlsAndFocusPlayPause() },
-            onSelect = { queueVisible = false; onPlayItem(it) }
+            hasMore = queueHasMore,
+            loadingMore = queueLoadingMore,
+            onLoadMore = onLoadMoreQueue,
+            onDismiss = {
+                queueVisible = false
+                dpadInteraction++
+                showControlsAndFocusPlayPause()
+            },
+            onSelect = {
+                queueVisible = false
+                onPlayItem(it)
+            }
         )
         if (pictureEditorVisible) PlayerPictureModeEditor(
             profiles = appearanceProfiles,

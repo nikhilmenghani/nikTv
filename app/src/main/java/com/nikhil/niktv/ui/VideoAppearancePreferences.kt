@@ -56,6 +56,15 @@ import kotlinx.coroutines.delay
 import java.util.Calendar
 import kotlin.math.roundToInt
 import com.nikhil.niktv.model.MediaItem
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import coil3.compose.AsyncImagePainter
+import coil3.compose.SubcomposeAsyncImage
+import coil3.compose.SubcomposeAsyncImageContent
+import kotlinx.coroutines.launch
+import com.nikhil.niktv.data.artworkRequest
 
 internal enum class VideoResizeMode(val label: String) {
     FIT("Fit"), FILL("Fill"), ZOOM("Zoom"), STRETCH("Stretch");
@@ -325,58 +334,397 @@ internal fun PlayerModeFeedback(label: String) {
     }
 }
 
+
 @Composable
 internal fun PlayerQueueOverlay(
     items: List<MediaItem>,
     playingId: String,
+    hasMore: Boolean = false,
+    loadingMore: Boolean = false,
+    onLoadMore: () -> Boolean = { false },
     onDismiss: () -> Unit,
     onSelect: (MediaItem) -> Unit
 ) {
     BackHandler(onBack = onDismiss)
-    val currentRequester = remember { FocusRequester() }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
-    val currentIndex = uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
+    val requesters = remember { mutableMapOf<String, FocusRequester>() }
+    val loadMoreRequester = remember { FocusRequester() }
     val listState = rememberLazyListState()
-    LaunchedEffect(uniqueItems, playingId) {
-        listState.scrollToItem(currentIndex)
-        delay(120L)
-        runCatching { currentRequester.requestFocus() }
+
+    val currentIndex =
+        uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
+
+    var focusedIndex by remember(playingId) { mutableIntStateOf(currentIndex) }
+    var previousItemCount by remember { mutableIntStateOf(uniqueItems.size) }
+    var initialFocusApplied by remember(playingId) { mutableStateOf(false) }
+    var loadMoreRequested by remember { mutableStateOf(false) }
+    var observedLoading by remember { mutableStateOf(false) }
+
+    LaunchedEffect(loadingMore) {
+        if (loadMoreRequested) {
+            if (loadingMore) {
+                observedLoading = true
+            } else if (observedLoading) {
+                loadMoreRequested = false
+                observedLoading = false
+            }
+        }
     }
+
+    val showLoadMore = hasMore || loadingMore || loadMoreRequested
+
+    fun focusAt(index: Int) {
+        val maxIndex = if (showLoadMore) uniqueItems.size else uniqueItems.lastIndex
+        if (maxIndex < 0) return
+
+        val target = index.coerceIn(0, maxIndex)
+        focusedIndex = target
+
+        scope.launch {
+            runCatching { listState.animateScrollToItem(target) }
+            delay(35L)
+            runCatching {
+                if (target < uniqueItems.size) {
+                    requesters.getOrPut(uniqueItems[target].id) {
+                        FocusRequester()
+                    }.requestFocus()
+                } else {
+                    loadMoreRequester.requestFocus()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(playingId, uniqueItems.isNotEmpty()) {
+        if (!initialFocusApplied && uniqueItems.isNotEmpty()) {
+            initialFocusApplied = true
+            val target =
+                uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
+            listState.scrollToItem(target)
+            focusedIndex = target
+            delay(120L)
+            runCatching {
+                requesters.getOrPut(uniqueItems[target].id) {
+                    FocusRequester()
+                }.requestFocus()
+            }
+        }
+    }
+
+    LaunchedEffect(uniqueItems.size) {
+        val oldCount = previousItemCount
+        if (uniqueItems.size > oldCount && focusedIndex >= oldCount) {
+            loadMoreRequested = false
+            observedLoading = false
+            previousItemCount = uniqueItems.size
+            delay(40L)
+            focusAt(oldCount)
+        } else {
+            previousItemCount = uniqueItems.size
+        }
+    }
+
+    LaunchedEffect(showLoadMore, uniqueItems.size) {
+        if (
+            !showLoadMore &&
+            uniqueItems.isNotEmpty() &&
+            focusedIndex >= uniqueItems.size
+        ) {
+            delay(40L)
+            focusAt(uniqueItems.lastIndex)
+        }
+    }
+
     Box(
-        Modifier.fillMaxSize()
+        Modifier
+            .fillMaxSize()
             .focusGroup()
             .onPreviewKeyEvent { event ->
-                event.type == KeyEventType.KeyDown &&
-                    event.key in setOf(Key.DirectionLeft, Key.DirectionRight)
+                if (event.type != KeyEventType.KeyDown) {
+                    false
+                } else {
+                    when (event.key) {
+                        Key.DirectionLeft,
+                        Key.DirectionRight -> {
+                            onDismiss()
+                            true
+                        }
+
+                        Key.DirectionUp -> {
+                            focusAt((focusedIndex - 1).coerceAtLeast(0))
+                            true
+                        }
+
+                        Key.DirectionDown -> {
+                            val maxIndex =
+                                if (showLoadMore) uniqueItems.size
+                                else uniqueItems.lastIndex
+                            if (maxIndex >= 0) {
+                                focusAt((focusedIndex + 1).coerceAtMost(maxIndex))
+                            }
+                            true
+                        }
+
+                        else -> false
+                    }
+                }
             }
-            .background(Color.Black.copy(.72f)).padding(28.dp),
+            .background(Color.Black.copy(alpha = .76f))
+            .padding(horizontal = 28.dp, vertical = 22.dp),
         contentAlignment = Alignment.CenterEnd
     ) {
         Surface(
-            Modifier.fillMaxWidth(.46f).widthIn(min = 320.dp, max = 620.dp),
+            Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(.48f)
+                .widthIn(min = 360.dp, max = 680.dp),
             color = Color(0xF51A1A1A),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
         ) {
-            Column(Modifier.padding(20.dp)) {
-                Text("Choose what to play", style = MaterialTheme.typography.headlineSmall, color = Color.White)
-                Text("From this list", style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
+            Column(Modifier.fillMaxSize().padding(20.dp)) {
+                Text(
+                    "Choose what to play",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White
+                )
+                Text(
+                    "↑/↓ Browse  •  OK Play  •  ←/→ Close",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.LightGray
+                )
                 Spacer(Modifier.height(14.dp))
-                LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(uniqueItems, key = { it.id }) { item ->
-                        var focused by remember { mutableStateOf(false) }
+
+                LazyColumn(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(
+                        uniqueItems,
+                        key = { _, item -> "player-queue-${item.id}" }
+                    ) { index, item ->
+                        val requester =
+                            requesters.getOrPut(item.id) { FocusRequester() }
+                        var focused by remember(item.id) { mutableStateOf(false) }
                         val current = item.id == playingId
+                        val artwork = remember(item.id, item.title, item.logo) {
+                            artworkRequest(context, item)
+                        }
+
                         Surface(
-                            Modifier.fillMaxWidth()
-                                .then(if (current) Modifier.focusRequester(currentRequester) else Modifier)
-                                .onFocusChanged { focused = it.isFocused }
+                            Modifier
+                                .fillMaxWidth()
+                                .focusRequester(requester)
+                                .onFocusChanged {
+                                    focused = it.isFocused
+                                    if (it.isFocused) focusedIndex = index
+                                }
                                 .clickable { onSelect(item) }
                                 .focusable(),
-                            color = when { focused -> MaterialTheme.colorScheme.primary; current -> Color(0xFF383838); else -> Color.Transparent },
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                            color = when {
+                                focused -> Color(0xFFE50914)
+                                current -> Color(0xFF383838)
+                                else -> Color(0xFF242424)
+                            },
+                            shape =
+                                androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                         ) {
-                            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                if (current) Icon(Icons.Default.PlayArrow, null, tint = Color.White)
-                                Text(item.title, color = Color.White, maxLines = 2)
+                            Row(
+                                Modifier.padding(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    Modifier.width(104.dp).aspectRatio(1f),
+                                    shape =
+                                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                                    color = Color(0xFF111111)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (item.logo.isNullOrBlank()) {
+                                            Icon(
+                                                Icons.Default.Movie,
+                                                null,
+                                                tint = Color.LightGray
+                                            )
+                                        } else {
+                                            SubcomposeAsyncImage(
+                                                model = artwork,
+                                                contentDescription = item.title,
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            ) {
+                                                when (painter.state.value) {
+                                                    is AsyncImagePainter.State.Success ->
+                                                        SubcomposeAsyncImageContent()
+                                                    else -> Icon(
+                                                        Icons.Default.Movie,
+                                                        null,
+                                                        tint = Color.LightGray
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        if (current) {
+                                            Surface(
+                                                Modifier
+                                                    .align(Alignment.BottomStart)
+                                                    .padding(5.dp),
+                                                color =
+                                                    Color.Black.copy(alpha = .78f),
+                                                shape =
+                                                    androidx.compose.foundation.shape
+                                                        .RoundedCornerShape(5.dp)
+                                            ) {
+                                                Row(
+                                                    Modifier.padding(
+                                                        horizontal = 6.dp,
+                                                        vertical = 3.dp
+                                                    ),
+                                                    verticalAlignment =
+                                                        Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.PlayArrow,
+                                                        null,
+                                                        Modifier.size(14.dp),
+                                                        tint = Color.White
+                                                    )
+                                                    Text(
+                                                        "PLAYING",
+                                                        color = Color.White,
+                                                        style =
+                                                            MaterialTheme.typography
+                                                                .labelSmall
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Column(
+                                    Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        item.title,
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+
+                                    val episodeLabel = listOfNotNull(
+                                        item.seasonNumber?.let { "Season $it" },
+                                        item.episodeNumber?.let { "Episode $it" }
+                                    ).joinToString(" · ")
+
+                                    if (episodeLabel.isNotBlank()) {
+                                        Text(
+                                            episodeLabel,
+                                            color = Color.White.copy(alpha = .76f),
+                                            style =
+                                                MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+
+                                    item.description
+                                        ?.trim()
+                                        ?.takeIf {
+                                            it.isNotBlank() &&
+                                                !it.equals(
+                                                    item.title.trim(),
+                                                    ignoreCase = true
+                                                )
+                                        }
+                                        ?.let {
+                                            Text(
+                                                it,
+                                                color =
+                                                    Color.White.copy(alpha = .68f),
+                                                style =
+                                                    MaterialTheme.typography.bodySmall,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                }
+                            }
+                        }
+                    }
+
+                    if (showLoadMore) {
+                        item(key = "player-queue-load-more") {
+                            var focused by remember { mutableStateOf(false) }
+
+                            Surface(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(loadMoreRequester)
+                                    .onFocusChanged {
+                                        focused = it.isFocused
+                                        if (it.isFocused) {
+                                            focusedIndex = uniqueItems.size
+                                        }
+                                    }
+                                    .clickable(
+                                        enabled =
+                                            hasMore &&
+                                                !loadingMore &&
+                                                !loadMoreRequested
+                                    ) {
+                                        loadMoreRequested = onLoadMore()
+                                    }
+                                    .focusable(),
+                                color =
+                                    if (focused) Color(0xFFE50914)
+                                    else Color(0xFF303030),
+                                shape =
+                                    androidx.compose.foundation.shape
+                                        .RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    Modifier.padding(
+                                        horizontal = 16.dp,
+                                        vertical = 14.dp
+                                    ),
+                                    horizontalArrangement =
+                                        Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        if (loadingMore || loadMoreRequested) {
+                                            Icons.Default.Refresh
+                                        } else {
+                                            Icons.Default.Add
+                                        },
+                                        null,
+                                        tint = Color.White
+                                    )
+                                    Column {
+                                        Text(
+                                            if (loadingMore || loadMoreRequested) {
+                                                "Loading more…"
+                                            } else {
+                                                "Load more"
+                                            },
+                                            color = Color.White,
+                                            style =
+                                                MaterialTheme.typography.titleSmall
+                                        )
+                                        Text(
+                                            "Continue this playback list",
+                                            color = Color.White.copy(alpha = .70f),
+                                            style =
+                                                MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
