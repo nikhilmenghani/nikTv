@@ -49,6 +49,7 @@ import org.videolan.libvlc.util.VLCVideoLayout
 @Composable
 internal fun VlcPlayerScreen(
     media: PlayingMedia,
+    initialResumePosition: Long,
     onBack: () -> Unit,
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
@@ -59,7 +60,8 @@ internal fun VlcPlayerScreen(
     embeddedControlsDismissRequest: Int = 0,
     startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
-    onFullscreenChanged: ((Boolean) -> Unit)? = null
+    onFullscreenChanged: ((Boolean) -> Unit)? = null,
+    onSwitchPlayer: (Long) -> Unit
 ) {
     val context = LocalContext.current
     val playerConfiguration = LocalConfiguration.current
@@ -67,7 +69,7 @@ internal fun VlcPlayerScreen(
     val scope = rememberCoroutineScope()
     var playing by remember(media.progressKey) { mutableStateOf(true) }
     var buffering by remember(media.progressKey) { mutableStateOf(true) }
-    var position by remember(media.progressKey) { mutableLongStateOf(media.resumePositionMillis) }
+    var position by remember(media.progressKey) { mutableLongStateOf(initialResumePosition) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var error by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
@@ -95,6 +97,7 @@ internal fun VlcPlayerScreen(
     val backRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
+    val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeRequester = remember(media.progressKey) { FocusRequester() }
     val previousRequester = remember(media.progressKey) { FocusRequester() }
@@ -240,7 +243,7 @@ internal fun VlcPlayerScreen(
         player.media = vlcMedia
         vlcMedia.release()
         player.play()
-        if (media.resumePositionMillis > 0) player.time = media.resumePositionMillis
+        if (initialResumePosition > 0) player.time = initialResumePosition
         onDispose {
             val finalPosition = player.time.coerceAtLeast(0L)
             val finalDuration = player.length.coerceAtLeast(0L)
@@ -411,7 +414,7 @@ internal fun VlcPlayerScreen(
                         onClick = onBack,
                         modifier = Modifier.focusRequester(backRequester)
                             .focusProperties {
-                                right = if (pipAvailable) pipRequester else resizeRequester
+                                right = if (pipAvailable) pipRequester else playerSwitchRequester
                                 down = playRequester
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -432,9 +435,27 @@ internal fun VlcPlayerScreen(
                             pipActivity?.enterPlayerPictureInPicture()
                         },
                         modifier = Modifier.focusRequester(pipRequester)
-                            .focusProperties { left = backRequester; right = resizeRequester; down = playRequester }
+                            .focusProperties { left = backRequester; right = playerSwitchRequester; down = playRequester }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
+                    IconButton(
+                        onClick = {
+                            modeFeedback = "Player · Media3"
+                            scope.launch {
+                                delay(700L)
+                                onSwitchPlayer(player.time.coerceAtLeast(0L))
+                            }
+                        },
+                        modifier = Modifier.focusRequester(playerSwitchRequester)
+                            .focusProperties {
+                                left = if (pipAvailable) pipRequester else backRequester
+                                right = resizeRequester
+                                down = playRequester
+                            }
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
+                    ) {
+                        Icon(Icons.Default.SwapHoriz, "Switch player: VLC", tint = Color.White)
+                    }
                     PlayerVisualButtons(
                         resizeMode = resizeMode,
                         onResize = {
@@ -449,7 +470,7 @@ internal fun VlcPlayerScreen(
                         },
                         resizeRequester = resizeRequester,
                         pictureModeRequester = pictureModeRequester,
-                        leftRequester = if (pipAvailable) pipRequester else backRequester,
+                        leftRequester = playerSwitchRequester,
                         rightRequester = fullscreenRequester,
                         downRequester = playRequester,
                         onControlsFocused = { controlsFocused = it }

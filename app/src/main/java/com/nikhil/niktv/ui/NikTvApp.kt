@@ -4839,17 +4839,23 @@ private fun ModernSettingsScreen(
                 }
             }
         }
-        SettingsSection("Video appearance profiles") {
+        SettingsSection("Picture and video appearance") {
             val (appearanceProfiles, activeAppearance) = rememberVideoAppearanceProfiles()
             var appearanceSchedule by remember { mutableStateOf(VideoAppearancePreferences.schedule(context)) }
             var scheduleError by remember { mutableStateOf<String?>(null) }
             var editingId by remember(activeAppearance.id) { mutableStateOf(activeAppearance.id) }
             val editing = appearanceProfiles.firstOrNull { it.id == editingId } ?: activeAppearance
             var editName by remember(editing.id, editing.name) { mutableStateOf(editing.name) }
+            var editBrightness by remember(editing.id, editing.brightness) { mutableFloatStateOf(editing.brightness) }
             var editWarmth by remember(editing.id, editing.warmth) { mutableFloatStateOf(editing.warmth) }
+            var editCoolness by remember(editing.id, editing.coolness) { mutableFloatStateOf(editing.coolness) }
+            var editTint by remember(editing.id, editing.tint) { mutableFloatStateOf(editing.tint) }
             var editDimming by remember(editing.id, editing.dimming) { mutableFloatStateOf(editing.dimming) }
             val profileNameRequester = remember { FocusRequester() }
+            val brightnessRequester = remember { FocusRequester() }
             val warmthRequester = remember { FocusRequester() }
+            val coolnessRequester = remember { FocusRequester() }
+            val tintRequester = remember { FocusRequester() }
             val dimmingRequester = remember { FocusRequester() }
             val saveProfileRequester = remember { FocusRequester() }
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -4873,6 +4879,108 @@ private fun ModernSettingsScreen(
                             },
                             modifier = Modifier.remoteFocusFrame(CircleShape)
                         )
+                    }
+                }
+                Text("Edit selected profile", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Surface(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color(0xFF101522),
+                    border = BorderStroke(1.dp, Color(0xFF2A3244))
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Edit ${editing.name}", style = MaterialTheme.typography.titleMedium)
+                        OutlinedTextField(
+                            value = editName,
+                            onValueChange = { editName = it },
+                            label = { Text("Profile name") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(profileNameRequester)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                        brightnessRequester.requestFocus()
+                                        true
+                                    } else false
+                                }
+                        )
+                        AppearanceSliderRow(
+                            label = "Brightness lift",
+                            value = editBrightness,
+                            valueRange = 0f..0.4f,
+                            requester = brightnessRequester,
+                            upRequester = profileNameRequester,
+                            downRequester = warmthRequester,
+                            onValueChange = { editBrightness = it }
+                        )
+                        AppearanceSliderRow(
+                            label = "Warmth",
+                            value = editWarmth,
+                            valueRange = 0f..1f,
+                            requester = warmthRequester,
+                            upRequester = brightnessRequester,
+                            downRequester = coolnessRequester,
+                            onValueChange = { editWarmth = it }
+                        )
+                        AppearanceSliderRow(
+                            label = "Coolness",
+                            value = editCoolness,
+                            valueRange = 0f..1f,
+                            requester = coolnessRequester,
+                            upRequester = warmthRequester,
+                            downRequester = tintRequester,
+                            onValueChange = { editCoolness = it }
+                        )
+                        AppearanceSliderRow(
+                            label = "Color tint",
+                            value = editTint,
+                            valueRange = -1f..1f,
+                            requester = tintRequester,
+                            upRequester = coolnessRequester,
+                            downRequester = dimmingRequester,
+                            valueText = when {
+                                editTint > 0f -> "${(editTint * 100).toInt()}% magenta"
+                                editTint < 0f -> "${(-editTint * 100).toInt()}% green"
+                                else -> "Neutral"
+                            },
+                            onValueChange = { editTint = it }
+                        )
+                        AppearanceSliderRow(
+                            label = "Dimming",
+                            value = editDimming,
+                            valueRange = 0f..0.8f,
+                            requester = dimmingRequester,
+                            upRequester = tintRequester,
+                            downRequester = saveProfileRequester,
+                            onValueChange = { editDimming = it }
+                        )
+                        Button(
+                            onClick = {
+                                VideoAppearancePreferences.update(
+                                    context,
+                                    editing.copy(
+                                        name = editName.trim().ifBlank { editing.name },
+                                        brightness = editBrightness,
+                                        warmth = editWarmth,
+                                        coolness = editCoolness,
+                                        tint = editTint,
+                                        dimming = editDimming
+                                    )
+                                )
+                            },
+                            modifier = Modifier
+                                .align(Alignment.End)
+                                .focusRequester(saveProfileRequester)
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                                        dimmingRequester.requestFocus()
+                                        true
+                                    } else false
+                                }
+                                .remoteFocusFrame(CircleShape),
+                            shape = CircleShape
+                        ) { Text("Save profile") }
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -4899,7 +5007,7 @@ private fun ModernSettingsScreen(
                     )
                 }
                 if (appearanceSchedule.enabled) {
-                    Text("Fallback mode", fontWeight = FontWeight.SemiBold)
+                    Text("Default Picture Mode", fontWeight = FontWeight.SemiBold)
                     ScheduleProfileControl(
                         profileId = appearanceSchedule.fallbackProfileId,
                         profiles = appearanceProfiles,
@@ -4995,86 +5103,6 @@ private fun ModernSettingsScreen(
                         }
                     }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("Edit ${editing.name}", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = editName,
-                    onValueChange = { editName = it },
-                    label = { Text("Profile name") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(profileNameRequester)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                warmthRequester.requestFocus()
-                                true
-                            } else false
-                        }
-                )
-                Text("Warmth ${(editWarmth * 100).toInt()}%")
-                Slider(
-                    value = editWarmth,
-                    onValueChange = { editWarmth = it },
-                    valueRange = 0f..1f,
-                    modifier = Modifier
-                        .focusRequester(warmthRequester)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            when (event.key) {
-                                Key.DirectionUp -> {
-                                    profileNameRequester.requestFocus()
-                                    true
-                                }
-                                Key.DirectionDown -> {
-                                    dimmingRequester.requestFocus()
-                                    true
-                                }
-                                else -> false
-                            }
-                        }
-                )
-                Text("Dimming ${(editDimming * 100).toInt()}%")
-                Slider(
-                    value = editDimming,
-                    onValueChange = { editDimming = it },
-                    valueRange = 0f..0.8f,
-                    modifier = Modifier
-                        .focusRequester(dimmingRequester)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            when (event.key) {
-                                Key.DirectionUp -> {
-                                    warmthRequester.requestFocus()
-                                    true
-                                }
-                                Key.DirectionDown -> {
-                                    saveProfileRequester.requestFocus()
-                                    true
-                                }
-                                else -> false
-                            }
-                        }
-                )
-                Button(
-                    onClick = {
-                        VideoAppearancePreferences.update(
-                            context,
-                            editing.copy(name = editName.trim().ifBlank { editing.name }, warmth = editWarmth, dimming = editDimming)
-                        )
-                    },
-                    modifier = Modifier
-                        .align(Alignment.End)
-                        .focusRequester(saveProfileRequester)
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                dimmingRequester.requestFocus()
-                                true
-                            } else false
-                        }
-                        .remoteFocusFrame(CircleShape),
-                    shape = CircleShape
-                ) { Text("Save profile") }
             }
         }
         SettingsSection("Screen awake") {
@@ -6361,6 +6389,46 @@ private fun PlaybackEngineSettingsSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AppearanceSliderRow(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    requester: FocusRequester,
+    upRequester: FocusRequester,
+    downRequester: FocusRequester,
+    valueText: String = "${(value * 100).toInt()}%",
+    onValueChange: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, fontWeight = FontWeight.Medium)
+            Text(valueText, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            modifier = Modifier
+                .focusRequester(requester)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionUp -> {
+                            upRequester.requestFocus()
+                            true
+                        }
+                        Key.DirectionDown -> {
+                            downRequester.requestFocus()
+                            true
+                        }
+                        else -> false
+                    }
+                }
+        )
     }
 }
 

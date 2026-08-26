@@ -39,7 +39,10 @@ internal enum class VideoResizeMode(val label: String) {
 internal data class VideoAppearanceProfile(
     val id: String,
     val name: String,
+    val brightness: Float,
     val warmth: Float,
+    val coolness: Float,
+    val tint: Float,
     val dimming: Float
 )
 
@@ -88,13 +91,13 @@ internal object VideoAppearancePreferences {
     private const val SCHEDULE_FALLBACK = "schedule_fallback_v3"
     private const val SCHEDULE_ENTRIES = "schedule_entries_v3"
     private val defaults = listOf(
-        VideoAppearanceProfile("movie", "Movie", .08f, .03f),
-        VideoAppearanceProfile("standard", "Standard", 0f, 0f),
-        VideoAppearanceProfile("natural", "Natural", .03f, .01f),
-        VideoAppearanceProfile("bright", "Bright room", 0f, 0f),
-        VideoAppearanceProfile("bedroom", "Bedroom", .12f, .07f),
-        VideoAppearanceProfile("night", "Night light", .25f, .18f),
-        VideoAppearanceProfile("custom", "Custom", 0f, 0f)
+        VideoAppearanceProfile("movie", "Movie", .02f, .08f, 0f, 0f, .03f),
+        VideoAppearanceProfile("standard", "Standard", 0f, 0f, 0f, 0f, 0f),
+        VideoAppearanceProfile("natural", "Natural", .01f, .03f, 0f, -.02f, .01f),
+        VideoAppearanceProfile("bright", "Bright room", .12f, 0f, .02f, 0f, 0f),
+        VideoAppearanceProfile("bedroom", "Bedroom", 0f, .12f, 0f, 0f, .07f),
+        VideoAppearanceProfile("night", "Night light", 0f, .25f, 0f, 0f, .18f),
+        VideoAppearanceProfile("custom", "Custom", 0f, 0f, 0f, 0f, 0f)
     )
 
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -102,7 +105,10 @@ internal object VideoAppearancePreferences {
         val p = prefs(context)
         preset.copy(
             name = p.getString("${preset.id}_name", preset.name).orEmpty().ifBlank { preset.name },
+            brightness = p.getInt("${preset.id}_brightness", (preset.brightness * 100).roundToInt()) / 100f,
             warmth = p.getInt("${preset.id}_warmth", (preset.warmth * 100).roundToInt()) / 100f,
+            coolness = p.getInt("${preset.id}_coolness", (preset.coolness * 100).roundToInt()) / 100f,
+            tint = p.getInt("${preset.id}_tint", (preset.tint * 100).roundToInt()) / 100f,
             dimming = p.getInt("${preset.id}_dimming", (preset.dimming * 100).roundToInt()) / 100f
         )
     }
@@ -150,7 +156,10 @@ internal object VideoAppearancePreferences {
     fun update(context: Context, profile: VideoAppearanceProfile) {
         prefs(context).edit()
             .putString("${profile.id}_name", profile.name)
+            .putInt("${profile.id}_brightness", (profile.brightness.coerceIn(0f, .4f) * 100).roundToInt())
             .putInt("${profile.id}_warmth", (profile.warmth.coerceIn(0f, 1f) * 100).roundToInt())
+            .putInt("${profile.id}_coolness", (profile.coolness.coerceIn(0f, 1f) * 100).roundToInt())
+            .putInt("${profile.id}_tint", (profile.tint.coerceIn(-1f, 1f) * 100).roundToInt())
             .putInt("${profile.id}_dimming", (profile.dimming.coerceIn(0f, .8f) * 100).roundToInt())
             .apply()
     }
@@ -195,8 +204,20 @@ internal fun rememberVideoAppearanceProfiles(
 @Composable
 internal fun VideoAppearanceOverlay(profile: VideoAppearanceProfile) {
     Box(Modifier.fillMaxSize()) {
+        if (profile.brightness > 0f) Box(
+            Modifier.fillMaxSize().background(Color.White.copy(alpha = profile.brightness * .28f))
+        )
         if (profile.warmth > 0f) Box(
             Modifier.fillMaxSize().background(Color(0xFFFF8A3D).copy(alpha = profile.warmth * .34f))
+        )
+        if (profile.coolness > 0f) Box(
+            Modifier.fillMaxSize().background(Color(0xFF5C8DFF).copy(alpha = profile.coolness * .30f))
+        )
+        if (profile.tint != 0f) Box(
+            Modifier.fillMaxSize().background(
+                (if (profile.tint > 0f) Color(0xFFFF5CB8) else Color(0xFF55D68A))
+                    .copy(alpha = kotlin.math.abs(profile.tint) * .18f)
+            )
         )
         if (profile.dimming > 0f) Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = profile.dimming))

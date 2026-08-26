@@ -95,15 +95,21 @@ fun PlayerScreen(
     val playerConfiguration = LocalConfiguration.current
     val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
     val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
-    val effectiveEngine = when (playbackEngine) {
+    var sessionEngineOverride by remember { mutableStateOf<PlaybackEngine?>(null) }
+    var engineSwitchResumePosition by remember(media.progressKey) {
+        mutableLongStateOf(media.resumePositionMillis)
+    }
+    val configuredEngine = when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.EXOPLAYER
         PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
+    val effectiveEngine = sessionEngineOverride ?: configuredEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
+            initialResumePosition = engineSwitchResumePosition,
             onBack = onBack,
             onPlayPrevious = onPlayPrevious,
             onPlayNext = onPlayNext,
@@ -114,7 +120,11 @@ fun PlayerScreen(
             embeddedControlsDismissRequest = embeddedControlsDismissRequest,
             startFullscreen = startFullscreen,
             fullscreenOverride = fullscreenOverride,
-            onFullscreenChanged = onFullscreenChanged
+            onFullscreenChanged = onFullscreenChanged,
+            onSwitchPlayer = { position ->
+                engineSwitchResumePosition = position
+                sessionEngineOverride = PlaybackEngine.MEDIA3
+            }
         )
         return
     }
@@ -197,6 +207,7 @@ fun PlayerScreen(
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -227,7 +238,7 @@ fun PlayerScreen(
         }
         ExoPlayer.Builder(context, renderersFactory).build().apply {
             setMediaItem(MediaItem.fromUri(media.url))
-            if (media.resumePositionMillis > 0L) seekTo(media.resumePositionMillis)
+            if (engineSwitchResumePosition > 0L) seekTo(engineSwitchResumePosition)
             prepare()
             playWhenReady = true
             repeatMode = Player.REPEAT_MODE_OFF
@@ -803,7 +814,7 @@ fun PlayerScreen(
                                 right = if (pipAvailable) {
                                     pipFocusRequester
                                 } else {
-                                    resizeFocusRequester
+                                    playerSwitchFocusRequester
                                 }
                                 down = playPauseFocusRequester
                             }
@@ -832,11 +843,30 @@ fun PlayerScreen(
                             modifier = Modifier.focusRequester(pipFocusRequester)
                                 .focusProperties {
                                     left = backFocusRequester
-                                    right = resizeFocusRequester
+                                    right = playerSwitchFocusRequester
                                     down = playPauseFocusRequester
                                 }
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
+                    }
+                    IconButton(
+                        onClick = {
+                            modeFeedback = "Player · VLC"
+                            coroutineScope.launch {
+                                delay(700L)
+                                engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                                sessionEngineOverride = PlaybackEngine.VLC
+                            }
+                        },
+                        modifier = Modifier.focusRequester(playerSwitchFocusRequester)
+                            .focusProperties {
+                                left = if (pipAvailable) pipFocusRequester else backFocusRequester
+                                right = resizeFocusRequester
+                                down = playPauseFocusRequester
+                            }
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
+                    ) {
+                        Icon(Icons.Default.SwapHoriz, "Switch player: Media3", tint = Color.White)
                     }
                     PlayerVisualButtons(
                         resizeMode = resizeMode,
@@ -852,7 +882,7 @@ fun PlayerScreen(
                         },
                         resizeRequester = resizeFocusRequester,
                         pictureModeRequester = pictureModeFocusRequester,
-                        leftRequester = if (pipAvailable) pipFocusRequester else backFocusRequester,
+                        leftRequester = playerSwitchFocusRequester,
                         rightRequester = fullscreenFocusRequester,
                         downRequester = playPauseFocusRequester,
                         onControlsFocused = { controlsFocused = it }
