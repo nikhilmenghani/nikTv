@@ -88,24 +88,16 @@ object PlaybackUiPreferences {
         "columns|${profilePart(profileKey)}|${type.name}"
 
     fun defaultDesign(type: CatalogType): PlaybackDesign = when (type) {
-        CatalogType.LIVE_TV -> PlaybackDesign.SIDE_LIST
-        CatalogType.MOVIES -> PlaybackDesign.FULLSCREEN
-        CatalogType.SERIES, CatalogType.RADIO -> PlaybackDesign.FULLSCREEN
+        CatalogType.LIVE_TV,
+        CatalogType.MOVIES,
+        CatalogType.SERIES,
+        CatalogType.RADIO -> PlaybackDesign.FULLSCREEN
     }
 
     fun supportedDesigns(type: CatalogType): List<PlaybackDesign> = when (type) {
-        CatalogType.LIVE_TV -> listOf(
-            PlaybackDesign.SIDE_LIST,
-            PlaybackDesign.SHOWCASE,
-            PlaybackDesign.FULLSCREEN
-        )
-        CatalogType.MOVIES -> listOf(
-            PlaybackDesign.FULLSCREEN
-        )
-        CatalogType.SERIES -> listOf(
-            PlaybackDesign.SHOWCASE,
-            PlaybackDesign.FULLSCREEN
-        )
+        CatalogType.LIVE_TV,
+        CatalogType.MOVIES,
+        CatalogType.SERIES,
         CatalogType.RADIO -> listOf(PlaybackDesign.FULLSCREEN)
     }
 
@@ -188,39 +180,20 @@ fun rememberCatalogColumns(
     return value
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlaybackDesignSettingsSection(profileKey: String, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "Player layouts",
-            Modifier.padding(horizontal = 8.dp),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Surface(
-            Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF111827)
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                Text(
-                    "Live TV and Series can use alternate layouts. Movies always open directly in the fullscreen player.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                PlaybackDesignRow(
-                    profileKey, CatalogType.LIVE_TV, "Live TV",
-                    "Side list keeps the current Live TV experience."
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PlaybackDesignRow(
-                    profileKey, CatalogType.SERIES, "Series",
-                    "Keep fullscreen or use Showcase for episodes."
-                )
-            }
-        }
-    }
+fun PlaybackDesignSettingsSection(
+    profileKey: String,
+    modifier: Modifier = Modifier
+) {
+    /*
+     * PLAYBACK_LAYOUT_SELECTOR_RETIRED_V25
+     *
+     * Intentionally no UI. All content types use fullscreen PlayerScreen and
+     * expose their channel/movie/episode list inside the player.
+     *
+     * Keep this callable shim so Settings code needs no unrelated structural
+     * change in this focused playback-routing patch.
+     */
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -297,14 +297,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val clipboard = remember(appContext) {
         appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
-    val playbackProfileKey = state.session?.profile?.cacheKey().orEmpty()
-    val liveTvPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.LIVE_TV)
-    val seriesPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.SERIES)
-    val mobileUiDesign by rememberMobileUiDesign()
-    val useYouTubeMobilePlayback =
-        LocalConfiguration.current.smallestScreenWidthDp < 600 &&
-            mobileUiDesign.usesYouTubeOn(LocalConfiguration.current)
-
     LaunchedEffect(updateEnforcementEnabled) {
         if (updateEnforcementEnabled && pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
             discoveredUpdate = runCatching { AppUpdates.check() }.getOrNull()
@@ -327,106 +319,12 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
            Box(Modifier.fillMaxSize()) {
             when {
                 /*
-                 * MOVIES_ALWAYS_FULLSCREEN_V24
+                 * ALL_CONTENT_FULLSCREEN_PLAYER_V25
                  *
-                 * Movies have one playback surface: the standalone fullscreen
-                 * player. This branch intentionally precedes every generic or
-                 * Showcase route so Home, Favorites, Search, Recent, TMDB and
-                 * IPTV category launches all behave identically.
+                 * Home, Live TV, Movies and Series remain browse dashboards.
+                 * Playback itself has one owner: PlayerScreen. Channels,
+                 * movies and episodes are browsed from the in-player queue.
                  */
-                state.nowPlaying?.catalogType == CatalogType.MOVIES -> PlayerScreen(
-                    media = state.nowPlaying!!,
-                    onBack = vm::closePlayer,
-                    onRetry = vm::retryPlayback,
-                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
-                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
-                    onPlayPrevious = vm::playPreviousEpisode,
-                    onPlayNext = vm::playNextEpisode,
-                    onProgress = vm::savePlaybackProgress,
-                    onPlayItem = vm::openMedia,
-                    queueHasMore = state.playbackQueueHasMore,
-                    queueLoadingMore = state.playbackQueueLoadingMore,
-                    onLoadMoreQueue = vm::loadMorePlaybackQueue,
-                    controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
-                    playbackEngine = state.playbackEngine,
-                    startFullscreen = true
-                )
-
-                state.nowPlaying?.directFullscreen == true -> PlayerScreen(
-                    media = state.nowPlaying!!,
-                    onBack = vm::closePlayer,
-                    onRetry = vm::retryPlayback,
-                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
-                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
-                    onPlayPrevious = vm::playPreviousEpisode,
-                    onPlayNext = vm::playNextEpisode,
-                    onProgress = vm::savePlaybackProgress,
-                    onPlayItem = vm::openMedia,
-                    // DIRECT_FULLSCREEN_QUEUE_PAGINATION_V23
-                    // The standalone fullscreen player owns its own queue page.
-                    // Without these props PlayerScreen receives the default
-                    // hasMore=false/onLoadMore=false values, so its final
-                    // "Load more" card cannot paginate.
-                    queueHasMore = state.playbackQueueHasMore,
-                    queueLoadingMore = state.playbackQueueLoadingMore,
-                    onLoadMoreQueue = vm::loadMorePlaybackQueue,
-                    controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
-                    playbackEngine = state.playbackEngine,
-                    startFullscreen = true
-                )
-
-                state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
-                    liveTvPlaybackDesign == PlaybackDesign.SIDE_LIST -> LiveTvPlaybackScreen(
-                    state = state,
-                    play = vm::openMedia,
-                    onBack = vm::closePlayer,
-                    onRetry = vm::retryPlayback,
-                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
-                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
-                    onPlayPrevious = vm::playPreviousEpisode,
-                    onPlayNext = vm::playNextEpisode,
-                    onProgress = vm::savePlaybackProgress,
-                    toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
-                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue
-                )
-
-                state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
-                    liveTvPlaybackDesign == PlaybackDesign.SHOWCASE -> ShowcasePlaybackScreen(
-                    state = state,
-                    play = vm::openMedia,
-                    onBack = vm::closePlayer,
-                    onRetry = vm::retryPlayback,
-                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
-                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
-                    onPlayPrevious = vm::playPreviousEpisode,
-                    onPlayNext = vm::playNextEpisode,
-                    onProgress = vm::savePlaybackProgress,
-                    toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
-                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue
-                )
-
-                state.nowPlaying?.catalogType == CatalogType.SERIES &&
-                    (seriesPlaybackDesign == PlaybackDesign.SHOWCASE || useYouTubeMobilePlayback) -> ShowcasePlaybackScreen(
-                    state = state,
-                    play = vm::openMedia,
-                    onBack = vm::closePlayer,
-                    onRetry = vm::retryPlayback,
-                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
-                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
-                    onPlayPrevious = vm::playPreviousEpisode,
-                    onPlayNext = vm::playNextEpisode,
-                    onProgress = vm::savePlaybackProgress,
-                    toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
-                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue,
-                    loadMoreEpisodes = vm::loadMoreEpisodes
-                )
-
                 state.nowPlaying != null -> PlayerScreen(
                     media = state.nowPlaying!!,
                     onBack = vm::closePlayer,
@@ -437,10 +335,14 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
                     onPlayItem = vm::openMedia,
+                    queueHasMore = state.playbackQueueHasMore,
+                    queueLoadingMore = state.playbackQueueLoadingMore,
+                    onLoadMoreQueue = vm::loadMorePlaybackQueue,
                     controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
                     playbackEngine = state.playbackEngine,
                     startFullscreen = true
                 )
+
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.profileLoadProgress != null -> ProfileLoadingScreen(
                     profileName = state.savedProfile?.name,
