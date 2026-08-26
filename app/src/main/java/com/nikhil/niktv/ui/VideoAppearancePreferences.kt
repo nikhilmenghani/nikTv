@@ -6,8 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AspectRatio
-import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +17,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import kotlin.math.roundToInt
@@ -97,19 +99,59 @@ internal fun VideoAppearanceOverlay(profile: VideoAppearanceProfile) {
 internal fun PlayerVisualButtons(
     resizeMode: VideoResizeMode,
     onResize: () -> Unit,
+    resizeRequester: FocusRequester,
+    pictureModeRequester: FocusRequester,
+    leftRequester: FocusRequester,
+    rightRequester: FocusRequester,
+    downRequester: FocusRequester,
     onControlsFocused: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val (profiles, active) = rememberVideoAppearanceProfiles()
     IconButton(
         onClick = onResize,
-        modifier = Modifier.playerControlFocus { onControlsFocused(it) }
-    ) { Icon(Icons.Default.AspectRatio, "Resize: ${resizeMode.label}", tint = Color.White) }
+        modifier = Modifier.focusRequester(resizeRequester)
+            .focusProperties {
+                left = leftRequester
+                right = pictureModeRequester
+                down = downRequester
+            }
+            .playerControlFocus { onControlsFocused(it) }
+    ) {
+        Icon(
+            when (resizeMode) {
+                VideoResizeMode.FIT -> Icons.Default.FitScreen
+                VideoResizeMode.FILL -> Icons.Default.CropFree
+                VideoResizeMode.ZOOM -> Icons.Default.ZoomIn
+                VideoResizeMode.STRETCH -> Icons.Default.AspectRatio
+            },
+            "Resize: ${resizeMode.label}",
+            tint = Color.White
+        )
+    }
     IconButton(
         onClick = {
             val next = profiles[(profiles.indexOfFirst { it.id == active.id }.coerceAtLeast(0) + 1) % profiles.size]
             VideoAppearancePreferences.setActive(context, next.id)
         },
-        modifier = Modifier.playerControlFocus { onControlsFocused(it) }
-    ) { Icon(Icons.Default.Palette, "Picture mode: ${active.name}", tint = Color.White) }
+        modifier = Modifier.focusRequester(pictureModeRequester)
+            .focusProperties {
+                left = resizeRequester
+                right = rightRequester
+                down = downRequester
+            }
+            .playerControlFocus { onControlsFocused(it) }
+    ) {
+        Icon(
+            when (active.id) {
+                "movie" -> Icons.Default.Movie
+                "standard" -> Icons.Default.Tune
+                "natural" -> Icons.Default.Eco
+                "night" -> Icons.Default.Nightlight
+                else -> Icons.Default.Palette
+            },
+            "Picture mode: ${active.name}",
+            tint = Color.White
+        )
+    }
 }

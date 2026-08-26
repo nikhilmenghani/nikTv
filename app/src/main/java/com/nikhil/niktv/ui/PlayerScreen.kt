@@ -186,6 +186,8 @@ fun PlayerScreen(
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rewindFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -434,10 +436,7 @@ fun PlayerScreen(
                 isPlaying &&
                 playbackError == null &&
                 !startupTimedOut &&
-                (
-                    !embeddedMode ||
-                        !controlsFocused
-                    )
+                !controlsFocused
 
         if (canAutoHide) {
             delay(
@@ -767,7 +766,7 @@ fun PlayerScreen(
                                 right = if (pipAvailable) {
                                     pipFocusRequester
                                 } else {
-                                    fullscreenFocusRequester
+                                    resizeFocusRequester
                                 }
                                 down = playPauseFocusRequester
                             }
@@ -796,7 +795,7 @@ fun PlayerScreen(
                             modifier = Modifier.focusRequester(pipFocusRequester)
                                 .focusProperties {
                                     left = backFocusRequester
-                                    right = fullscreenFocusRequester
+                                    right = resizeFocusRequester
                                     down = playPauseFocusRequester
                                 }
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -805,6 +804,11 @@ fun PlayerScreen(
                     PlayerVisualButtons(
                         resizeMode = resizeMode,
                         onResize = { resizeMode = resizeMode.next() },
+                        resizeRequester = resizeFocusRequester,
+                        pictureModeRequester = pictureModeFocusRequester,
+                        leftRequester = if (pipAvailable) pipFocusRequester else backFocusRequester,
+                        rightRequester = fullscreenFocusRequester,
+                        downRequester = playPauseFocusRequester,
                         onControlsFocused = { controlsFocused = it }
                     )
                     IconButton(onClick = {
@@ -820,11 +824,7 @@ fun PlayerScreen(
                         }
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
                         .focusProperties {
-                            left = if (pipAvailable) {
-                                pipFocusRequester
-                            } else {
-                                backFocusRequester
-                            }
+                            left = pictureModeFocusRequester
                             down = playPauseFocusRequester
                         }
                         .playerControlFocus(CircleShape) { controlsFocused = it }) {
