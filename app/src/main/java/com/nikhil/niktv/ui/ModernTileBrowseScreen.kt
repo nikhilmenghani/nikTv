@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -65,12 +66,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -93,6 +100,7 @@ import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.TmdbHomeSection
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun ModernTileBrowseScreen(
@@ -924,6 +932,46 @@ private fun ModernCompactMediaCard(
     }
 }
 
+/*
+ * GRID_COLUMN_FOCUS_V27
+ *
+ * LazyGrid geometry-based focus search can change columns after scrolling
+ * because only a window of rows is composed. On TV, vertical navigation is
+ * therefore index-based: Up/Down target the same logical column in the
+ * previous/next row. Horizontal navigation remains Compose-native.
+ */
+private fun Modifier.modernGridVerticalFocus(
+    enabled: Boolean,
+    index: Int,
+    columns: Int,
+    itemCount: Int,
+    moveFocus: (Int) -> Unit
+): Modifier {
+    if (!enabled) return this
+
+    return onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) {
+            return@onPreviewKeyEvent false
+        }
+
+        val targetIndex =
+            when (event.key) {
+                Key.DirectionDown -> index + columns
+                Key.DirectionUp -> index - columns
+                else -> return@onPreviewKeyEvent false
+            }
+
+        if (targetIndex !in 0 until itemCount) {
+            // Keep edge behavior native so the header / Load More controls
+            // remain reachable when there is no same-column poster.
+            return@onPreviewKeyEvent false
+        }
+
+        moveFocus(targetIndex)
+        true
+    }
+}
+
 @Composable
 private fun ModernTmdbCollection(
     state: NikTvState,
@@ -944,12 +992,17 @@ private fun ModernTmdbCollection(
             GridItemSpan = {
         GridItemSpan(maxLineSpan)
     }
-    val count =
+    val focusIds =
         if (section.series) {
-            state.modernTmdbSeries.size
+            state.modernTmdbSeries.map {
+                it.tmdb.asMediaItem().id
+            }
         } else {
-            state.modernTmdbMovies.size
+            state.modernTmdbMovies.map {
+                it.tmdb.asMediaItem().id
+            }
         }
+    val count = focusIds.size
 
     /*
      * PLAYBACK_RETURN_FOCUS_V22
@@ -966,16 +1019,40 @@ private fun ModernTmdbCollection(
         FocusRequester()
     }
     val returnFocusId = state.playbackReturnFocusId
-    val returnIndex =
-        if (section.series) {
-            state.modernTmdbSeries.indexOfFirst {
-                it.tmdb.asMediaItem().id == returnFocusId
-            }
-        } else {
-            state.modernTmdbMovies.indexOfFirst {
-                it.tmdb.asMediaItem().id == returnFocusId
+    val returnIndex = focusIds.indexOf(returnFocusId)
+    val itemFocusRequesters =
+        remember(section) {
+            mutableMapOf<String, FocusRequester>()
+        }
+    if (returnFocusId != null) {
+        itemFocusRequesters[returnFocusId] =
+            returnFocusRequester
+    }
+    val focusScope = rememberCoroutineScope()
+    val moveFocusToIndex: (Int) -> Unit = { targetIndex ->
+        focusIds.getOrNull(targetIndex)?.let { targetId ->
+            val targetRequester =
+                itemFocusRequesters.getOrPut(targetId) {
+                    FocusRequester()
+                }
+            focusScope.launch {
+                // Header is lazy-grid item zero; posters begin at item one.
+                val targetGridIndex = targetIndex + 1
+                val alreadyVisible =
+                    gridState.layoutInfo.visibleItemsInfo.any {
+                        it.index == targetGridIndex
+                    }
+                if (!alreadyVisible) {
+                    gridState.scrollToItem(targetGridIndex)
+                    // Let the newly visible lazy item attach its requester.
+                    delay(80L)
+                }
+                runCatching {
+                    targetRequester.requestFocus()
+                }
             }
         }
+    }
 
     LaunchedEffect(
         returnFocusId,
@@ -1023,12 +1100,12 @@ private fun ModernTmdbCollection(
         }
 
         if (section.series) {
-            gridItems(
+            gridItemsIndexed(
                 items = state.modernTmdbSeries,
-                key = {
-                    "modern-tmdb-series-${it.tmdb.id}"
+                key = { _, entry ->
+                    "modern-tmdb-series-${entry.tmdb.id}"
                 }
-            ) { entry ->
+            ) { index, entry ->
                 val media =
                     entry.tmdb.asMediaItem().let { tmdbMedia ->
                         if (!tmdbMedia.logo.isNullOrBlank()) {
@@ -1043,13 +1120,20 @@ private fun ModernTmdbCollection(
                 ModernCollectionPoster(
                     item = media,
                     modifier =
-                        if (
-                            isTv &&
-                            media.id == returnFocusId
-                        ) {
-                            Modifier.focusRequester(
-                                returnFocusRequester
-                            )
+                        if (isTv) {
+                            Modifier
+                                .focusRequester(
+                                    itemFocusRequesters.getOrPut(media.id) {
+                                        FocusRequester()
+                                    }
+                                )
+                                .modernGridVerticalFocus(
+                                    enabled = true,
+                                    index = index,
+                                    columns = columns,
+                                    itemCount = count,
+                                    moveFocus = moveFocusToIndex
+                                )
                         } else {
                             Modifier
                         },
@@ -1078,12 +1162,12 @@ private fun ModernTmdbCollection(
                 )
             }
         } else {
-            gridItems(
+            gridItemsIndexed(
                 items = state.modernTmdbMovies,
-                key = {
-                    "modern-tmdb-movie-${it.tmdb.id}"
+                key = { _, entry ->
+                    "modern-tmdb-movie-${entry.tmdb.id}"
                 }
-            ) { entry ->
+            ) { index, entry ->
                 val media =
                     entry.tmdb.asMediaItem().let { tmdbMedia ->
                         if (!tmdbMedia.logo.isNullOrBlank()) {
@@ -1098,13 +1182,20 @@ private fun ModernTmdbCollection(
                 ModernCollectionPoster(
                     item = media,
                     modifier =
-                        if (
-                            isTv &&
-                            media.id == returnFocusId
-                        ) {
-                            Modifier.focusRequester(
-                                returnFocusRequester
-                            )
+                        if (isTv) {
+                            Modifier
+                                .focusRequester(
+                                    itemFocusRequesters.getOrPut(media.id) {
+                                        FocusRequester()
+                                    }
+                                )
+                                .modernGridVerticalFocus(
+                                    enabled = true,
+                                    index = index,
+                                    columns = columns,
+                                    itemCount = count,
+                                    moveFocus = moveFocusToIndex
+                                )
                         } else {
                             Modifier
                         },
@@ -1211,6 +1302,7 @@ private fun ModernIptvCollection(
         } else {
             FavoriteKind.SERIES
         }
+    val focusIds = state.items.map { it.id }
 
     val gridState = rememberLazyGridState()
     val returnFocusRequester = remember(
@@ -1220,10 +1312,39 @@ private fun ModernIptvCollection(
         FocusRequester()
     }
     val returnFocusId = state.playbackReturnFocusId
-    val returnIndex =
-        state.items.indexOfFirst {
-            it.id == returnFocusId
+    val returnIndex = focusIds.indexOf(returnFocusId)
+    val itemFocusRequesters =
+        remember(category.id) {
+            mutableMapOf<String, FocusRequester>()
         }
+    if (returnFocusId != null) {
+        itemFocusRequesters[returnFocusId] =
+            returnFocusRequester
+    }
+    val focusScope = rememberCoroutineScope()
+    val moveFocusToIndex: (Int) -> Unit = { targetIndex ->
+        focusIds.getOrNull(targetIndex)?.let { targetId ->
+            val targetRequester =
+                itemFocusRequesters.getOrPut(targetId) {
+                    FocusRequester()
+                }
+            focusScope.launch {
+                // Header is lazy-grid item zero; posters begin at item one.
+                val targetGridIndex = targetIndex + 1
+                val alreadyVisible =
+                    gridState.layoutInfo.visibleItemsInfo.any {
+                        it.index == targetGridIndex
+                    }
+                if (!alreadyVisible) {
+                    gridState.scrollToItem(targetGridIndex)
+                    delay(80L)
+                }
+                runCatching {
+                    targetRequester.requestFocus()
+                }
+            }
+        }
+    }
 
     LaunchedEffect(
         returnFocusId,
@@ -1265,22 +1386,29 @@ private fun ModernIptvCollection(
             )
         }
 
-        gridItems(
+        gridItemsIndexed(
             items = state.items,
-            key = {
-                "modern-iptv-${category.type.name}-${it.id}"
+            key = { _, media ->
+                "modern-iptv-${category.type.name}-${media.id}"
             }
-        ) { media ->
+        ) { index, media ->
             ModernCollectionPoster(
                 item = media,
                 modifier =
-                    if (
-                        isTv &&
-                        media.id == returnFocusId
-                    ) {
-                        Modifier.focusRequester(
-                            returnFocusRequester
-                        )
+                    if (isTv) {
+                        Modifier
+                            .focusRequester(
+                                itemFocusRequesters.getOrPut(media.id) {
+                                    FocusRequester()
+                                }
+                            )
+                            .modernGridVerticalFocus(
+                                enabled = true,
+                                index = index,
+                                columns = columns,
+                                itemCount = focusIds.size,
+                                moveFocus = moveFocusToIndex
+                            )
                     } else {
                         Modifier
                     },
