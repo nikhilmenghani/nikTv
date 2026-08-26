@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -890,7 +891,15 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     }
 
     if (profiles.isNotEmpty() && !editorOpen) {
+        // PROFILE_CHOOSER_POLISH_V18
+        //
+        // Keep NikTV red as an accent instead of turning the entire focused
+        // tile red. TV focus uses motion + a light ring + a restrained red
+        // glow, which reads more like a premium media UI and less like an
+        // error/alert state.
         val configuration = LocalConfiguration.current
+        val chooserContext = LocalContext.current
+        val isTv = chooserContext.isTvLikeDevice(configuration)
 
         val compactLandscape =
             configuration.orientation == Configuration.ORIENTATION_LANDSCAPE &&
@@ -898,10 +907,42 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
 
         val scrollState = rememberScrollState()
 
+        val preferredProfileKey =
+            remember(saved, profiles) {
+                saved?.cacheKey()
+                    ?.takeIf { savedKey ->
+                        profiles.any { it.cacheKey() == savedKey }
+                    }
+                    ?: profiles.firstOrNull()?.cacheKey()
+            }
+
+        val preferredRequester =
+            remember(preferredProfileKey) {
+                FocusRequester()
+            }
+
+        LaunchedEffect(isTv, preferredProfileKey) {
+            if (isTv && preferredProfileKey != null) {
+                withFrameNanos { }
+                delay(80L)
+                runCatching {
+                    preferredRequester.requestFocus()
+                }
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF090909))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color(0xFF111318),
+                            Color(0xFF090A0C),
+                            Color(0xFF060606)
+                        )
+                    )
+                )
                 .safeDrawingPadding()
                 .then(
                     if (compactLandscape) {
@@ -932,7 +973,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
 
             Spacer(
                 Modifier.height(
-                    if (compactLandscape) 4.dp else 24.dp
+                    if (compactLandscape) 4.dp else 20.dp
                 )
             )
 
@@ -944,12 +985,12 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     MaterialTheme.typography.displaySmall
                 },
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color(0xFFF5F5F7)
             )
 
             Text(
                 "Choose an IPTV profile",
-                color = Color.LightGray,
+                color = Color(0xFF9B9FA8),
                 style = if (compactLandscape) {
                     MaterialTheme.typography.bodySmall
                 } else {
@@ -961,7 +1002,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                 modifier = Modifier
                     .widthIn(max = 900.dp)
                     .padding(
-                        top = if (compactLandscape) 10.dp else 32.dp
+                        top = if (compactLandscape) 10.dp else 30.dp
                     ),
                 horizontalArrangement = Arrangement.spacedBy(
                     if (compactLandscape) 12.dp else 24.dp,
@@ -972,6 +1013,10 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                 )
             ) {
                 profiles.forEach { profile ->
+                    val profileKey = profile.cacheKey()
+                    val lastUsed =
+                        saved?.cacheKey() == profileKey
+
                     ProfileChooserTile(
                         title = profile.name,
                         subtitle = profile.portalType.displayName(),
@@ -980,34 +1025,47 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                         } else {
                             Icons.Default.Key
                         },
-                        compact = compactLandscape
+                        compact = compactLandscape,
+                        selected = lastUsed,
+                        modifier =
+                            if (
+                                isTv &&
+                                profileKey == preferredProfileKey
+                            ) {
+                                Modifier.focusRequester(
+                                    preferredRequester
+                                )
+                            } else {
+                                Modifier
+                            }
                     ) {
                         selectProfile(profile)
                     }
                 }
 
                 ProfileChooserTile(
-                    "Settings",
-                    "Playback, display & orientation",
-                    Icons.Default.Settings,
-                    compactLandscape
+                    title = "Settings",
+                    subtitle = "Playback, display & orientation",
+                    icon = Icons.Default.Settings,
+                    compact = compactLandscape
                 ) {
-                    profiles.firstOrNull()?.let(openSettings)
+                    (saved ?: profiles.firstOrNull())
+                        ?.let(openSettings)
                 }
 
                 ProfileChooserTile(
-                    "Add profile",
-                    "New connection",
-                    Icons.Default.Add,
-                    compactLandscape,
-                    addProfile
+                    title = "Add profile",
+                    subtitle = "New connection",
+                    icon = Icons.Default.Add,
+                    compact = compactLandscape,
+                    onClick = addProfile
                 )
 
                 ProfileChooserTile(
-                    "Import backup",
-                    "Restore NikTV setup",
-                    Icons.Default.FileDownload,
-                    compactLandscape
+                    title = "Import backup",
+                    subtitle = "Restore NikTV setup",
+                    icon = Icons.Default.FileDownload,
+                    compact = compactLandscape
                 ) {
                     importLauncher.launch(
                         arrayOf(
@@ -1018,10 +1076,24 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     )
                 }
             }
+
+            if (isTv) {
+                Spacer(
+                    Modifier.height(
+                        if (compactLandscape) 8.dp else 20.dp
+                    )
+                )
+                Text(
+                    "D-pad to move  •  OK to select",
+                    color = Color(0xFF70757E),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
         }
 
         return
     }
+
     val context = LocalContext.current
     val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
     val stalkerDefaults = remember(generatedIdentity) { PortalProfile(
@@ -1128,75 +1200,217 @@ private fun ProfileChooserTile(
     subtitle: String,
     icon: ImageVector,
     compact: Boolean = false,
+    selected: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
 
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(durationMillis = 170),
+        label = "profileChooserTileFocus"
+    )
+
     val tileWidth = if (compact) 128.dp else 156.dp
-    val imageSize = if (compact) 92.dp else 124.dp
-    val iconSize = if (compact) 42.dp else 56.dp
-    val spacing = if (compact) 4.dp else 8.dp
+    val tileHeight = if (compact) 148.dp else 190.dp
+    val iconPlateSize = if (compact) 58.dp else 74.dp
+    val iconSize = if (compact) 30.dp else 38.dp
+    val outerPadding = if (compact) 10.dp else 14.dp
+    val shape =
+        RoundedCornerShape(
+            if (compact) 14.dp else 18.dp
+        )
+
+    val scale =
+        1f + (0.045f * focusProgress)
+
+    val iconScale =
+        1f + (0.08f * focusProgress)
+
+    val backgroundColor =
+        lerp(
+            Color(0xFF15171B),
+            Color(0xFF22252B),
+            focusProgress
+        )
+
+    val borderColor =
+        lerp(
+            Color(0xFF30343B),
+            Color(0xFFF2F3F5),
+            focusProgress
+        )
+
+    val iconBackground =
+        lerp(
+            Color(0xFF24272D),
+            Color(0xFF35191D),
+            focusProgress
+        )
+
+    val iconColor =
+        lerp(
+            Color(0xFFB8BCC4),
+            Color.White,
+            focusProgress
+        )
+
+    val titleColor =
+        lerp(
+            Color(0xFFD4D7DC),
+            Color.White,
+            focusProgress
+        )
+
+    val subtitleColor =
+        lerp(
+            Color(0xFF858B94),
+            Color(0xFFBFC3CA),
+            focusProgress
+        )
 
     Column(
-        Modifier
+        modifier
             .width(tileWidth)
-            .onFocusChanged { focused = it.isFocused }
+            .height(tileHeight)
+            .zIndex(focusProgress)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .shadow(
+                elevation = (14f * focusProgress).dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color(0x66000000),
+                spotColor = Color(0x55E50914)
+            )
+            .clip(shape)
+            .background(backgroundColor)
+            .border(
+                width = (1f + focusProgress).dp,
+                color = borderColor,
+                shape = shape
+            )
+            .semantics {
+                this.selected = selected
+                role = Role.Button
+            }
+            .onFocusChanged {
+                focused = it.isFocused
+            }
             .clickable(onClick = onClick)
-            .padding(if (compact) 4.dp else 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(spacing)
+            .padding(outerPadding),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            Modifier
-                .size(imageSize)
-                .then(
-                    if (focused) {
-                        Modifier.shadow(
-                            18.dp,
-                            RoundedCornerShape(10.dp),
-                            ambientColor = Color(0xFFE50914),
-                            spotColor = Color(0xFFE50914)
-                        )
-                    } else {
-                        Modifier
-                    }
-                )
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color(0xFF1F2937))
-                .border(
-                    if (focused) 4.dp else 2.dp,
-                    if (focused) Color(0xFFE50914)
-                    else Color(0xFF374151),
-                    RoundedCornerShape(10.dp)
-                ),
+            Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                icon,
-                title,
-                Modifier.size(iconSize),
-                tint = if (focused) Color.White else Color.LightGray
-            )
+            Box(
+                Modifier
+                    .size(iconPlateSize)
+                    .graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                    }
+                    .clip(
+                        RoundedCornerShape(
+                            if (compact) 14.dp else 18.dp
+                        )
+                    )
+                    .background(iconBackground),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    title,
+                    Modifier.size(iconSize),
+                    tint = iconColor
+                )
+            }
+
+            if (selected) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(
+                            if (compact) 22.dp else 24.dp
+                        ),
+                    shape = CircleShape,
+                    color = Color(0xFFE50914),
+                    shadowElevation = 3.dp
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "Last used profile",
+                            modifier = Modifier.size(
+                                if (compact) 14.dp else 15.dp
+                            ),
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
         }
+
+        Spacer(
+            Modifier.height(
+                if (compact) 7.dp else 10.dp
+            )
+        )
 
         Text(
             title,
-            color = if (focused) Color.White else Color.LightGray,
+            color = titleColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = if (compact) {
                 MaterialTheme.typography.titleSmall
             } else {
                 MaterialTheme.typography.titleMedium
-            }
+            },
+            fontWeight =
+                if (focused || selected) {
+                    FontWeight.SemiBold
+                } else {
+                    FontWeight.Medium
+                }
+        )
+
+        Spacer(
+            Modifier.height(
+                if (compact) 2.dp else 4.dp
+            )
         )
 
         Text(
             subtitle,
-            color = Color.Gray,
-            maxLines = 1,
+            color = subtitleColor,
+            maxLines = if (compact) 1 else 2,
             overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.labelSmall
+            style = MaterialTheme.typography.labelSmall,
+            textAlign =
+                androidx.compose.ui.text.style.TextAlign.Center
+        )
+
+        Spacer(Modifier.weight(1f))
+
+        Box(
+            Modifier
+                .width(
+                    if (compact) 32.dp else 42.dp
+                )
+                .height(3.dp)
+                .graphicsLayer {
+                    alpha = focusProgress
+                }
+                .clip(CircleShape)
+                .background(Color(0xFFE50914))
         )
     }
 }
