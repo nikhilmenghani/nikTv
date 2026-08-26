@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -61,12 +62,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -89,6 +93,7 @@ import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.TmdbHomeSection
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun ModernTileBrowseScreen(
@@ -949,8 +954,53 @@ private fun ModernTmdbCollection(
             state.modernTmdbMovies.size
         }
 
+    /*
+     * PLAYBACK_RETURN_FOCUS_V22
+     *
+     * Direct-fullscreen playback replaces this composition. When Back closes
+     * the player, rebuild the collection at the poster that launched playback
+     * instead of returning to the header/top-left item.
+     */
+    val gridState = rememberLazyGridState()
+    val returnFocusRequester = remember(
+        section,
+        state.playbackReturnFocusId
+    ) {
+        FocusRequester()
+    }
+    val returnFocusId = state.playbackReturnFocusId
+    val returnIndex =
+        if (section.series) {
+            state.modernTmdbSeries.indexOfFirst {
+                it.tmdb.asMediaItem().id == returnFocusId
+            }
+        } else {
+            state.modernTmdbMovies.indexOfFirst {
+                it.tmdb.asMediaItem().id == returnFocusId
+            }
+        }
+
+    LaunchedEffect(
+        returnFocusId,
+        returnIndex,
+        section,
+        isTv
+    ) {
+        if (returnFocusId != null && returnIndex >= 0) {
+            // Header is lazy-grid item zero; posters begin at item one.
+            gridState.scrollToItem(returnIndex + 1)
+            if (isTv) {
+                delay(120L)
+                runCatching {
+                    returnFocusRequester.requestFocus()
+                }
+            }
+        }
+    }
+
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
+        state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 18.dp,
@@ -995,6 +1045,17 @@ private fun ModernTmdbCollection(
 
                 ModernCollectionPoster(
                     item = media,
+                    modifier =
+                        if (
+                            isTv &&
+                            media.id == returnFocusId
+                        ) {
+                            Modifier.focusRequester(
+                                returnFocusRequester
+                            )
+                        } else {
+                            Modifier
+                        },
                     subtitle = buildList {
                         entry.tmdb.firstAirYear?.let {
                             add(it.toString())
@@ -1039,6 +1100,17 @@ private fun ModernTmdbCollection(
 
                 ModernCollectionPoster(
                     item = media,
+                    modifier =
+                        if (
+                            isTv &&
+                            media.id == returnFocusId
+                        ) {
+                            Modifier.focusRequester(
+                                returnFocusRequester
+                            )
+                        } else {
+                            Modifier
+                        },
                     subtitle = buildList {
                         entry.tmdb.releaseYear?.let {
                             add(it.toString())
@@ -1143,8 +1215,40 @@ private fun ModernIptvCollection(
             FavoriteKind.SERIES
         }
 
+    val gridState = rememberLazyGridState()
+    val returnFocusRequester = remember(
+        category.id,
+        state.playbackReturnFocusId
+    ) {
+        FocusRequester()
+    }
+    val returnFocusId = state.playbackReturnFocusId
+    val returnIndex =
+        state.items.indexOfFirst {
+            it.id == returnFocusId
+        }
+
+    LaunchedEffect(
+        returnFocusId,
+        returnIndex,
+        category.id,
+        isTv
+    ) {
+        if (returnFocusId != null && returnIndex >= 0) {
+            // Header is lazy-grid item zero; posters begin at item one.
+            gridState.scrollToItem(returnIndex + 1)
+            if (isTv) {
+                delay(120L)
+                runCatching {
+                    returnFocusRequester.requestFocus()
+                }
+            }
+        }
+    }
+
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
+        state = gridState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 18.dp,
@@ -1172,6 +1276,17 @@ private fun ModernIptvCollection(
         ) { media ->
             ModernCollectionPoster(
                 item = media,
+                modifier =
+                    if (
+                        isTv &&
+                        media.id == returnFocusId
+                    ) {
+                        Modifier.focusRequester(
+                            returnFocusRequester
+                        )
+                    } else {
+                        Modifier
+                    },
                 subtitle = media.description.orEmpty(),
                 onClick = {
                     openItem(media)
@@ -1275,6 +1390,7 @@ private fun ModernCollectionPoster(
     item: MediaItem,
     subtitle: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     isFavorite: Boolean = false,
     onFavorite: (() -> Unit)? = null,
     isTv: Boolean
@@ -1301,7 +1417,7 @@ private fun ModernCollectionPoster(
     ) {
         Surface(
             onClick = onClick,
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .onFocusChanged {
                     focused = it.isFocused

@@ -281,6 +281,7 @@ internal fun VlcPlayerScreen(
         when {
             queueVisible -> queueVisible = false
             pictureEditorVisible -> pictureEditorVisible = false
+            startFullscreen -> onBack()
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -291,7 +292,6 @@ internal fun VlcPlayerScreen(
                     runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
             }
-            startFullscreen -> onBack()
             focusMode -> {
                 focusMode = false
                 onFullscreenChanged?.invoke(false)

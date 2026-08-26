@@ -1506,6 +1506,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 modernTmdbPage = 0,
                 modernTmdbHasMore = true,
                 modernTmdbError = null,
+                playbackReturnFocusId = null,
                 selectedType =
                     if (section.series) CatalogType.SERIES
                     else CatalogType.MOVIES,
@@ -1532,6 +1533,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 modernTmdbPage = 0,
                 modernTmdbHasMore = false,
                 modernTmdbError = null,
+                playbackReturnFocusId = null,
                 selectedType = category.type,
                 selectedCategory = category,
                 selectedSeries = null,
@@ -2054,6 +2056,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         _state.update { current ->
             current.copy(
+                playbackReturnFocusId =
+                    if (returnToMatchSelection) {
+                        resolved.id
+                    } else {
+                        movie.asMediaItem().id
+                    },
                 trendingMovies = current.trendingMovies.resolveMovie(movie.id, resolved),
                 thrillerMovies = current.thrillerMovies.resolveMovie(movie.id, resolved),
                 modernTmdbMovies = current.modernTmdbMovies.resolveMovie(movie.id, resolved),
@@ -2880,7 +2888,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     authorizationRetryCount = authorizationRetryCount,
                     directFullscreen = directFullscreen
                 ),
-                playbackReturnFocusId = item.id,
+                playbackReturnFocusId =
+                    if (
+                        forceFreshUrl ||
+                        paginationSnapshot.nowPlaying != null
+                    ) {
+                        paginationSnapshot.playbackReturnFocusId
+                            ?: item.id
+                    } else {
+                        item.id
+                    },
                 playbackQueueScope = newPlaybackScope,
                 playbackQueuePage = initialPlaybackPage,
                 playbackQueueHasMore = initialPlaybackHasMore,

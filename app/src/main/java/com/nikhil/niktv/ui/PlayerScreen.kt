@@ -621,6 +621,7 @@ fun PlayerScreen(
         when {
             queueVisible -> queueVisible = false
             pictureEditorVisible -> pictureEditorVisible = false
+            startFullscreen -> onBack()
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -631,7 +632,6 @@ fun PlayerScreen(
                     runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
             }
-            startFullscreen -> onBack()
             focusMode -> {
                 focusMode = false
                 onFullscreenChanged?.invoke(false)
