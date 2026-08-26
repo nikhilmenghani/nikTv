@@ -36,14 +36,26 @@ internal data class VideoAppearanceProfile(
     val dimming: Float
 )
 
+internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
+    "movie" -> Icons.Default.Movie
+    "standard" -> Icons.Default.Tune
+    "natural" -> Icons.Default.Eco
+    "bright" -> Icons.Default.LightMode
+    "bedroom" -> Icons.Default.Bed
+    "night" -> Icons.Default.Nightlight
+    else -> Icons.Default.Palette
+}
+
 internal object VideoAppearancePreferences {
     private const val FILE = "video_appearance_profiles"
     private const val ACTIVE = "active"
     private val defaults = listOf(
-        VideoAppearanceProfile("movie", "Movie", .07f, .02f),
+        VideoAppearanceProfile("movie", "Movie", .08f, .03f),
         VideoAppearanceProfile("standard", "Standard", 0f, 0f),
         VideoAppearanceProfile("natural", "Natural", .03f, .01f),
-        VideoAppearanceProfile("night", "Night light", .24f, .16f),
+        VideoAppearanceProfile("bright", "Bright room", 0f, 0f),
+        VideoAppearanceProfile("bedroom", "Bedroom", .12f, .07f),
+        VideoAppearanceProfile("night", "Night light", .25f, .18f),
         VideoAppearanceProfile("custom", "Custom", 0f, 0f)
     )
 
@@ -143,13 +155,7 @@ internal fun PlayerVisualButtons(
             .playerControlFocus { onControlsFocused(it) }
     ) {
         Icon(
-            when (active.id) {
-                "movie" -> Icons.Default.Movie
-                "standard" -> Icons.Default.Tune
-                "natural" -> Icons.Default.Eco
-                "night" -> Icons.Default.Nightlight
-                else -> Icons.Default.Palette
-            },
+            videoAppearanceIcon(active.id),
             "Picture mode: ${active.name}",
             tint = Color.White
         )

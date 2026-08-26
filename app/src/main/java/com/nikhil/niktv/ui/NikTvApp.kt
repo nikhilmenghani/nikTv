@@ -4844,6 +4844,10 @@ private fun ModernSettingsScreen(
             var editName by remember(editing.id, editing.name) { mutableStateOf(editing.name) }
             var editWarmth by remember(editing.id, editing.warmth) { mutableFloatStateOf(editing.warmth) }
             var editDimming by remember(editing.id, editing.dimming) { mutableFloatStateOf(editing.dimming) }
+            val profileNameRequester = remember { FocusRequester() }
+            val warmthRequester = remember { FocusRequester() }
+            val dimmingRequester = remember { FocusRequester() }
+            val saveProfileRequester = remember { FocusRequester() }
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Picture mode", style = MaterialTheme.typography.titleMedium)
                 Text("These video-only profiles do not alter the television's system picture settings.", color = Color.Gray)
@@ -4856,6 +4860,13 @@ private fun ModernSettingsScreen(
                                 editingId = profile.id
                             },
                             label = { Text(profile.name) },
+                            leadingIcon = {
+                                Icon(
+                                    videoAppearanceIcon(profile.id),
+                                    null,
+                                    Modifier.size(18.dp)
+                                )
+                            },
                             modifier = Modifier.remoteFocusFrame(CircleShape)
                         )
                     }
@@ -4867,12 +4878,60 @@ private fun ModernSettingsScreen(
                     onValueChange = { editName = it },
                     label = { Text("Profile name") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(profileNameRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                warmthRequester.requestFocus()
+                                true
+                            } else false
+                        }
                 )
                 Text("Warmth ${(editWarmth * 100).toInt()}%")
-                Slider(value = editWarmth, onValueChange = { editWarmth = it }, valueRange = 0f..1f)
+                Slider(
+                    value = editWarmth,
+                    onValueChange = { editWarmth = it },
+                    valueRange = 0f..1f,
+                    modifier = Modifier
+                        .focusRequester(warmthRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (event.key) {
+                                Key.DirectionUp -> {
+                                    profileNameRequester.requestFocus()
+                                    true
+                                }
+                                Key.DirectionDown -> {
+                                    dimmingRequester.requestFocus()
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                )
                 Text("Dimming ${(editDimming * 100).toInt()}%")
-                Slider(value = editDimming, onValueChange = { editDimming = it }, valueRange = 0f..0.8f)
+                Slider(
+                    value = editDimming,
+                    onValueChange = { editDimming = it },
+                    valueRange = 0f..0.8f,
+                    modifier = Modifier
+                        .focusRequester(dimmingRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (event.key) {
+                                Key.DirectionUp -> {
+                                    warmthRequester.requestFocus()
+                                    true
+                                }
+                                Key.DirectionDown -> {
+                                    saveProfileRequester.requestFocus()
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                )
                 Button(
                     onClick = {
                         VideoAppearancePreferences.update(
@@ -4880,7 +4939,16 @@ private fun ModernSettingsScreen(
                             editing.copy(name = editName.trim().ifBlank { editing.name }, warmth = editWarmth, dimming = editDimming)
                         )
                     },
-                    modifier = Modifier.align(Alignment.End).remoteFocusFrame(CircleShape),
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .focusRequester(saveProfileRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                                dimmingRequester.requestFocus()
+                                true
+                            } else false
+                        }
+                        .remoteFocusFrame(CircleShape),
                     shape = CircleShape
                 ) { Text("Save profile") }
             }
