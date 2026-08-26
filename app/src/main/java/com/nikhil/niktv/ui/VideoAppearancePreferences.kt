@@ -193,11 +193,11 @@ internal object VideoAppearancePreferences {
     fun update(context: Context, profile: VideoAppearanceProfile) {
         prefs(context).edit()
             .putString("${profile.id}_name", profile.name)
-            .putInt("${profile.id}_brightness", (profile.brightness.coerceIn(0f, .4f) * 100).roundToInt())
+            .putInt("${profile.id}_brightness", (profile.brightness.coerceIn(0f, 1f) * 100).roundToInt())
             .putInt("${profile.id}_warmth", (profile.warmth.coerceIn(0f, 1f) * 100).roundToInt())
             .putInt("${profile.id}_coolness", (profile.coolness.coerceIn(0f, 1f) * 100).roundToInt())
             .putInt("${profile.id}_tint", (profile.tint.coerceIn(-1f, 1f) * 100).roundToInt())
-            .putInt("${profile.id}_dimming", (profile.dimming.coerceIn(0f, .8f) * 100).roundToInt())
+            .putInt("${profile.id}_dimming", (profile.dimming.coerceIn(0f, 1f) * 100).roundToInt())
             .apply()
     }
     fun sharedPreferences(context: Context): SharedPreferences = prefs(context)
@@ -825,11 +825,11 @@ internal fun PlayerPictureModeEditor(
                         ) { Text(profile.name, Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, style = MaterialTheme.typography.labelMedium) }
                     }
                 }
-                PlayerEditorSlider("Brightness", brightness, 0f..0.3f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
-                PlayerEditorSlider("Warmth", warmth, 0f..0.4f, warmthRequester, brightnessRequester, coolnessRequester) { warmth = it }
-                PlayerEditorSlider("Coolness", coolness, 0f..0.4f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
-                PlayerEditorSlider("Color tint", tint, -0.25f..0.25f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
-                PlayerEditorSlider("Dimming", dimming, 0f..0.4f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
+                PlayerEditorSlider("Brightness", brightness, 0f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
+                PlayerEditorSlider("Warmth", warmth, 0f..1f, warmthRequester, brightnessRequester, coolnessRequester) { warmth = it }
+                PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
+                PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
+                PlayerEditorSlider("Dimming", dimming, 0f..1f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     androidx.compose.material3.TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(cancelRequester).focusProperties { up = dimmingRequester; right = saveRequester }.playerControlFocus { }) { Text("Cancel") }
                     androidx.compose.material3.Button(onClick = {
@@ -877,30 +877,42 @@ private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatin
                     else -> false
                 }
             }
-            .focusable()
-            .then(
-                if (focused) Modifier
-                    .background(
-                        Color(0xFF451014),
-                        androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
-                    )
-                    .border(
-                        3.dp,
-                        Color(0xFFFF3340),
-                        androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
-                    )
-                    .padding(horizontal = 6.dp)
-                else Modifier
-            ),
+            .focusable(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, Modifier.fillMaxWidth(.28f), color = Color.White)
-        Slider(
-            value = value,
-            onValueChange = onValue,
-            valueRange = range,
-            modifier = Modifier.weight(1f).focusProperties { canFocus = false }
-        )
+        Box(
+            Modifier
+                .weight(1f)
+                .height(34.dp)
+                .then(
+                    if (focused) {
+                        Modifier
+                            .background(
+                                Color(0xFF351518),
+                                androidx.compose.foundation.shape.RoundedCornerShape(17.dp)
+                            )
+                            .border(
+                                2.dp,
+                                Color(0xFFFF3340),
+                                androidx.compose.foundation.shape.RoundedCornerShape(17.dp)
+                            )
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Slider(
+                value = value,
+                onValueChange = onValue,
+                valueRange = range,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusProperties { canFocus = false }
+            )
+        }
         Text("${(value * 100).roundToInt()}%", Modifier.fillMaxWidth(.10f), color = Color.LightGray)
     }
 }
