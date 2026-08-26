@@ -80,7 +80,17 @@ internal fun VlcPlayerScreen(
     var inPictureInPicture by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
-    val activeAppearanceProfile = rememberVideoAppearanceProfiles().second
+    val (appearanceProfiles, scheduledAppearanceProfile) = rememberVideoAppearanceProfiles(useSchedule = true)
+    var appearanceOverrideId by remember { mutableStateOf<String?>(null) }
+    val activeAppearanceProfile = appearanceProfiles.firstOrNull { it.id == appearanceOverrideId }
+        ?: scheduledAppearanceProfile
+    var modeFeedback by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(modeFeedback) {
+        if (modeFeedback != null) {
+            delay(1_800L)
+            modeFeedback = null
+        }
+    }
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenRequester = remember(media.progressKey) { FocusRequester() }
@@ -427,7 +437,16 @@ internal fun VlcPlayerScreen(
                     ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     PlayerVisualButtons(
                         resizeMode = resizeMode,
-                        onResize = { resizeMode = resizeMode.next() },
+                        onResize = {
+                            resizeMode = resizeMode.next()
+                            modeFeedback = "Video fit · ${resizeMode.label}"
+                        },
+                        profiles = appearanceProfiles,
+                        activeProfile = activeAppearanceProfile,
+                        onPictureMode = { next ->
+                            appearanceOverrideId = next.id
+                            modeFeedback = "Picture mode · ${next.name}"
+                        },
                         resizeRequester = resizeRequester,
                         pictureModeRequester = pictureModeRequester,
                         leftRequester = if (pipAvailable) pipRequester else backRequester,
@@ -578,5 +597,6 @@ internal fun VlcPlayerScreen(
                 }
             }
         }
+        modeFeedback?.let { PlayerModeFeedback(it) }
     }
 }

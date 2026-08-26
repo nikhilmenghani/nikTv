@@ -4839,6 +4839,7 @@ private fun ModernSettingsScreen(
         }
         SettingsSection("Video appearance profiles") {
             val (appearanceProfiles, activeAppearance) = rememberVideoAppearanceProfiles()
+            var appearanceSchedule by remember { mutableStateOf(VideoAppearancePreferences.schedule(context)) }
             var editingId by remember(activeAppearance.id) { mutableStateOf(activeAppearance.id) }
             val editing = appearanceProfiles.firstOrNull { it.id == editingId } ?: activeAppearance
             var editName by remember(editing.id, editing.name) { mutableStateOf(editing.name) }
@@ -4868,6 +4869,74 @@ private fun ModernSettingsScreen(
                                 )
                             },
                             modifier = Modifier.remoteFocusFrame(CircleShape)
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Automatic picture mode", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Use a selected profile during a daily time window. A player override lasts only for that playback session.",
+                            color = Color.Gray,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Switch(
+                        checked = appearanceSchedule.enabled,
+                        onCheckedChange = { enabled ->
+                            appearanceSchedule = appearanceSchedule.copy(enabled = enabled)
+                            VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                        },
+                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                    )
+                }
+                if (appearanceSchedule.enabled) {
+                    Text("Scheduled profile", fontWeight = FontWeight.SemiBold)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        appearanceProfiles.filterNot { it.id == "custom" }.forEach { profile ->
+                            FilterChip(
+                                selected = appearanceSchedule.profileId == profile.id,
+                                onClick = {
+                                    appearanceSchedule = appearanceSchedule.copy(profileId = profile.id)
+                                    VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                                },
+                                leadingIcon = {
+                                    Icon(videoAppearanceIcon(profile.id), null, Modifier.size(18.dp))
+                                },
+                                label = { Text(profile.name) },
+                                modifier = Modifier.remoteFocusFrame(CircleShape)
+                            )
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        ScheduleHourControl(
+                            label = "Starts",
+                            minutes = appearanceSchedule.startMinutes,
+                            modifier = Modifier.weight(1f),
+                            onChange = { minutes ->
+                                appearanceSchedule = appearanceSchedule.copy(startMinutes = minutes)
+                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                            }
+                        )
+                        ScheduleHourControl(
+                            label = "Ends",
+                            minutes = appearanceSchedule.endMinutes,
+                            modifier = Modifier.weight(1f),
+                            onChange = { minutes ->
+                                appearanceSchedule = appearanceSchedule.copy(endMinutes = minutes)
+                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                            }
                         )
                     }
                 }
@@ -6236,6 +6305,40 @@ private fun PlaybackEngineSettingsSection(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ScheduleHourControl(
+    label: String,
+    minutes: Int,
+    modifier: Modifier = Modifier,
+    onChange: (Int) -> Unit
+) {
+    val hour = (minutes / 60).coerceIn(0, 23)
+    val displayHour = when (val twelveHour = hour % 12) {
+        0 -> 12
+        else -> twelveHour
+    }
+    val period = if (hour < 12) "AM" else "PM"
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, color = Color.Gray, style = MaterialTheme.typography.labelMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = { onChange((minutes - 60 + 1440) % 1440) },
+                modifier = Modifier.remoteFocusFrame(CircleShape)
+            ) { Icon(Icons.Default.Remove, "Earlier") }
+            Text(
+                "$displayHour:00 $period",
+                Modifier.widthIn(min = 92.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                fontWeight = FontWeight.SemiBold
+            )
+            IconButton(
+                onClick = { onChange((minutes + 60) % 1440) },
+                modifier = Modifier.remoteFocusFrame(CircleShape)
+            ) { Icon(Icons.Default.Add, "Later") }
         }
     }
 }

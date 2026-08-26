@@ -134,7 +134,17 @@ fun PlayerScreen(
     }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
-    val activeAppearanceProfile = rememberVideoAppearanceProfiles().second
+    val (appearanceProfiles, scheduledAppearanceProfile) = rememberVideoAppearanceProfiles(useSchedule = true)
+    var appearanceOverrideId by remember { mutableStateOf<String?>(null) }
+    val activeAppearanceProfile = appearanceProfiles.firstOrNull { it.id == appearanceOverrideId }
+        ?: scheduledAppearanceProfile
+    var modeFeedback by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(modeFeedback) {
+        if (modeFeedback != null) {
+            delay(1_800L)
+            modeFeedback = null
+        }
+    }
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var dpadInteraction by remember(media.progressKey) { mutableIntStateOf(0) }
@@ -830,7 +840,16 @@ fun PlayerScreen(
                     }
                     PlayerVisualButtons(
                         resizeMode = resizeMode,
-                        onResize = { resizeMode = resizeMode.next() },
+                        onResize = {
+                            resizeMode = resizeMode.next()
+                            modeFeedback = "Video fit · ${resizeMode.label}"
+                        },
+                        profiles = appearanceProfiles,
+                        activeProfile = activeAppearanceProfile,
+                        onPictureMode = { next ->
+                            appearanceOverrideId = next.id
+                            modeFeedback = "Picture mode · ${next.name}"
+                        },
                         resizeRequester = resizeFocusRequester,
                         pictureModeRequester = pictureModeFocusRequester,
                         leftRequester = if (pipAvailable) pipFocusRequester else backFocusRequester,
@@ -1032,6 +1051,7 @@ fun PlayerScreen(
             }
         }
         val countdown = remainingSeconds
+        modeFeedback?.let { PlayerModeFeedback(it) }
         if (countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter)

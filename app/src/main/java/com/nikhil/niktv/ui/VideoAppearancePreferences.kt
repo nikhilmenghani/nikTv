@@ -5,11 +5,14 @@ import android.content.SharedPreferences
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -17,11 +20,15 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import java.util.Calendar
 import kotlin.math.roundToInt
 
 internal enum class VideoResizeMode(val label: String) {
@@ -36,6 +43,20 @@ internal data class VideoAppearanceProfile(
     val dimming: Float
 )
 
+internal data class VideoAppearanceSchedule(
+    val enabled: Boolean,
+    val profileId: String,
+    val startMinutes: Int,
+    val endMinutes: Int
+) {
+    fun activeAt(minutesOfDay: Int): Boolean = when {
+        !enabled -> false
+        startMinutes == endMinutes -> true
+        startMinutes < endMinutes -> minutesOfDay in startMinutes until endMinutes
+        else -> minutesOfDay >= startMinutes || minutesOfDay < endMinutes
+    }
+}
+
 internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
     "movie" -> Icons.Default.Movie
     "standard" -> Icons.Default.Tune
@@ -49,6 +70,10 @@ internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
 internal object VideoAppearancePreferences {
     private const val FILE = "video_appearance_profiles"
     private const val ACTIVE = "active"
+    private const val SCHEDULE_ENABLED = "schedule_enabled"
+    private const val SCHEDULE_PROFILE = "schedule_profile"
+    private const val SCHEDULE_START = "schedule_start"
+    private const val SCHEDULE_END = "schedule_end"
     private val defaults = listOf(
         VideoAppearanceProfile("movie", "Movie", .08f, .03f),
         VideoAppearanceProfile("standard", "Standard", 0f, 0f),
@@ -70,6 +95,20 @@ internal object VideoAppearancePreferences {
     }
     fun activeId(context: Context) = prefs(context).getString(ACTIVE, "standard") ?: "standard"
     fun setActive(context: Context, id: String) { prefs(context).edit().putString(ACTIVE, id).apply() }
+    fun schedule(context: Context) = VideoAppearanceSchedule(
+        enabled = prefs(context).getBoolean(SCHEDULE_ENABLED, false),
+        profileId = prefs(context).getString(SCHEDULE_PROFILE, "night") ?: "night",
+        startMinutes = prefs(context).getInt(SCHEDULE_START, 20 * 60).coerceIn(0, 1439),
+        endMinutes = prefs(context).getInt(SCHEDULE_END, 6 * 60).coerceIn(0, 1439)
+    )
+    fun setSchedule(context: Context, schedule: VideoAppearanceSchedule) {
+        prefs(context).edit()
+            .putBoolean(SCHEDULE_ENABLED, schedule.enabled)
+            .putString(SCHEDULE_PROFILE, schedule.profileId)
+            .putInt(SCHEDULE_START, schedule.startMinutes.coerceIn(0, 1439))
+            .putInt(SCHEDULE_END, schedule.endMinutes.coerceIn(0, 1439))
+            .apply()
+    }
     fun update(context: Context, profile: VideoAppearanceProfile) {
         prefs(context).edit()
             .putString("${profile.id}_name", profile.name)
@@ -81,7 +120,9 @@ internal object VideoAppearancePreferences {
 }
 
 @Composable
-internal fun rememberVideoAppearanceProfiles(): Pair<List<VideoAppearanceProfile>, VideoAppearanceProfile> {
+internal fun rememberVideoAppearanceProfiles(
+    useSchedule: Boolean = false
+): Pair<List<VideoAppearanceProfile>, VideoAppearanceProfile> {
     val context = LocalContext.current
     var revision by remember { mutableIntStateOf(0) }
     DisposableEffect(context) {
@@ -90,7 +131,28 @@ internal fun rememberVideoAppearanceProfiles(): Pair<List<VideoAppearanceProfile
         onDispose { VideoAppearancePreferences.sharedPreferences(context).unregisterOnSharedPreferenceChangeListener(listener) }
     }
     val profiles = remember(context, revision) { VideoAppearancePreferences.profiles(context) }
-    val active = profiles.firstOrNull { it.id == VideoAppearancePreferences.activeId(context) }
+    var clockTick by remember { mutableIntStateOf(0) }
+    if (useSchedule) {
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            while (true) {
+                delay(30_000L)
+                clockTick++
+            }
+        }
+    }
+    val schedule = remember(context, revision, clockTick, useSchedule) {
+        VideoAppearancePreferences.schedule(context)
+    }
+    val nowMinutes = remember(clockTick) {
+        val now = Calendar.getInstance()
+        now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+    }
+    val effectiveId = if (useSchedule && schedule.activeAt(nowMinutes)) {
+        schedule.profileId
+    } else {
+        VideoAppearancePreferences.activeId(context)
+    }
+    val active = profiles.firstOrNull { it.id == effectiveId }
         ?: profiles.first { it.id == "standard" }
     return profiles to active
 }
@@ -111,6 +173,9 @@ internal fun VideoAppearanceOverlay(profile: VideoAppearanceProfile) {
 internal fun PlayerVisualButtons(
     resizeMode: VideoResizeMode,
     onResize: () -> Unit,
+    profiles: List<VideoAppearanceProfile>,
+    activeProfile: VideoAppearanceProfile,
+    onPictureMode: (VideoAppearanceProfile) -> Unit,
     resizeRequester: FocusRequester,
     pictureModeRequester: FocusRequester,
     leftRequester: FocusRequester,
@@ -118,8 +183,6 @@ internal fun PlayerVisualButtons(
     downRequester: FocusRequester,
     onControlsFocused: (Boolean) -> Unit
 ) {
-    val context = LocalContext.current
-    val (profiles, active) = rememberVideoAppearanceProfiles()
     IconButton(
         onClick = onResize,
         modifier = Modifier.focusRequester(resizeRequester)
@@ -143,8 +206,8 @@ internal fun PlayerVisualButtons(
     }
     IconButton(
         onClick = {
-            val next = profiles[(profiles.indexOfFirst { it.id == active.id }.coerceAtLeast(0) + 1) % profiles.size]
-            VideoAppearancePreferences.setActive(context, next.id)
+            val next = profiles[(profiles.indexOfFirst { it.id == activeProfile.id }.coerceAtLeast(0) + 1) % profiles.size]
+            onPictureMode(next)
         },
         modifier = Modifier.focusRequester(pictureModeRequester)
             .focusProperties {
@@ -155,9 +218,29 @@ internal fun PlayerVisualButtons(
             .playerControlFocus { onControlsFocused(it) }
     ) {
         Icon(
-            videoAppearanceIcon(active.id),
-            "Picture mode: ${active.name}",
+            videoAppearanceIcon(activeProfile.id),
+            "Picture mode: ${activeProfile.name}",
             tint = Color.White
         )
+    }
+}
+
+@Composable
+internal fun PlayerModeFeedback(label: String) {
+    Box(
+        Modifier.fillMaxSize().padding(top = 82.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            color = Color.Black.copy(alpha = .78f),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
+        ) {
+            Text(
+                label,
+                Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
     }
 }
