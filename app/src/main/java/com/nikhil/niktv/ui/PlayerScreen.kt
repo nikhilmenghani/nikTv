@@ -267,6 +267,7 @@ fun PlayerScreen(
     val forwardFocusRequester = remember(media.progressKey) { FocusRequester() }
     val nextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val progressFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
 
     LaunchedEffect(restorePlayerSwitchFocus, effectiveEngine) {
         if (restorePlayerSwitchFocus) {
@@ -541,7 +542,7 @@ fun PlayerScreen(
              * show the controls again.
              */
             if (!embeddedMode) {
-                playerViewRef?.requestFocus()
+                runCatching { videoSurfaceFocusRequester.requestFocus() }
             }
         }
     }
@@ -585,6 +586,37 @@ fun PlayerScreen(
             runCatching { playPauseFocusRequester.requestFocus() }
         }
     }
+
+    /*
+     * FULLSCREEN_COMPOSE_VIDEO_FOCUS_V19
+     *
+     * Standalone/fullscreen playback must not leave Android PlayerView as the
+     * resting D-pad focus target. Some TV devices draw a focused-view treatment
+     * over PlayerView, which makes the video look selected/dim.
+     *
+     * Hidden controls therefore park focus on a transparent Compose target.
+     * Embedded Showcase playback keeps its native PlayerView focus bridge.
+     */
+    LaunchedEffect(
+        controlsVisible,
+        queueVisible,
+        pictureEditorVisible,
+        embeddedMode,
+        inPictureInPicture,
+        media.progressKey
+    ) {
+        if (
+            !embeddedMode &&
+            !controlsVisible &&
+            !queueVisible &&
+            !pictureEditorVisible &&
+            !inPictureInPicture
+        ) {
+            delay(40L)
+            runCatching { videoSurfaceFocusRequester.requestFocus() }
+        }
+    }
+
     BackHandler {
         when {
             queueVisible -> queueVisible = false
@@ -594,8 +626,10 @@ fun PlayerScreen(
                 controlsFocused = false
                 if (embeddedMode && playerViewRef != null) {
                     suppressNextEmbeddedPlayerFocusHandoff = true
+                    playerViewRef?.requestFocus()
+                } else {
+                    runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
-                playerViewRef?.requestFocus()
             }
             startFullscreen -> onBack()
             focusMode -> {
@@ -627,12 +661,14 @@ fun PlayerScreen(
                     playerViewRef = this
                     this.player = player
                     useController = false
-                    isFocusable = true
-                    isFocusableInTouchMode = true
+                    // Embedded Showcase needs native View focus as its
+                    // rail-to-player bridge. Standalone/fullscreen keeps focus
+                    // in Compose so the video surface never looks selected.
+                    isFocusable = embeddedMode
+                    isFocusableInTouchMode = embeddedMode
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         defaultFocusHighlightEnabled = false
                     }
-                    if (!embeddedMode) requestFocus()
                     setOnFocusChangeListener { _, hasFocus ->
                         if (hasFocus && embeddedMode) {
                             if (suppressNextEmbeddedPlayerFocusHandoff) {
@@ -857,6 +893,40 @@ fun PlayerScreen(
                     ) else Modifier)
             )
         }
+        if (
+            !embeddedMode &&
+            !controlsVisible &&
+            !queueVisible &&
+            !pictureEditorVisible &&
+            !inPictureInPicture
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .focusRequester(videoSurfaceFocusRequester)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != ComposeKeyEventType.KeyDown) {
+                            false
+                        } else {
+                            when (event.key) {
+                                ComposeKey.DirectionCenter,
+                                ComposeKey.Enter,
+                                ComposeKey.DirectionLeft,
+                                ComposeKey.DirectionRight,
+                                ComposeKey.DirectionUp,
+                                ComposeKey.DirectionDown -> {
+                                    dpadInteraction++
+                                    showControlsAndFocusPlayPause()
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                    }
+                    .focusable()
+            )
+        }
+
         VideoAppearanceOverlay(activeAppearanceProfile)
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             Box(
@@ -971,7 +1041,11 @@ fun PlayerScreen(
                             onFullscreenChanged?.invoke(enteringFullscreen)
                             controlsVisible = !enteringFullscreen
                             controlsFocused = false
-                            playerViewRef?.requestFocus()
+                            if (enteringFullscreen) {
+                                runCatching { videoSurfaceFocusRequester.requestFocus() }
+                            } else {
+                                showControlsAndFocusPlayPause()
+                            }
                         }
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
                         .focusProperties {

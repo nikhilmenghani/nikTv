@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -139,6 +140,7 @@ internal fun VlcPlayerScreen(
     val forwardRequester = remember(media.progressKey) { FocusRequester() }
     val nextRequester = remember(media.progressKey) { FocusRequester() }
     val progressRequester = remember(media.progressKey) { FocusRequester() }
+    val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
 
     LaunchedEffect(focusPlayerSwitchOnEnter) {
         if (focusPlayerSwitchOnEnter) {
@@ -231,7 +233,9 @@ internal fun VlcPlayerScreen(
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
             controlsFocused = false
-            if (!embeddedMode) videoView?.requestFocus()
+            if (!embeddedMode) {
+                runCatching { videoSurfaceFocusRequester.requestFocus() }
+            }
         }
     }
     LaunchedEffect(controlsVisible, embeddedMode, media.progressKey) {
@@ -246,6 +250,33 @@ internal fun VlcPlayerScreen(
         }
     }
 
+    /*
+     * FULLSCREEN_COMPOSE_VIDEO_FOCUS_V19
+     *
+     * Standalone/fullscreen VLC playback parks hidden-controls focus in
+     * Compose. The native VLCVideoLayout remains focusable only for the
+     * embedded Showcase rail-to-player bridge.
+     */
+    LaunchedEffect(
+        controlsVisible,
+        queueVisible,
+        pictureEditorVisible,
+        embeddedMode,
+        inPictureInPicture,
+        media.progressKey
+    ) {
+        if (
+            !embeddedMode &&
+            !controlsVisible &&
+            !queueVisible &&
+            !pictureEditorVisible &&
+            !inPictureInPicture
+        ) {
+            delay(40L)
+            runCatching { videoSurfaceFocusRequester.requestFocus() }
+        }
+    }
+
     BackHandler {
         when {
             queueVisible -> queueVisible = false
@@ -255,8 +286,10 @@ internal fun VlcPlayerScreen(
                 controlsFocused = false
                 if (embeddedMode && videoView != null) {
                     suppressNextEmbeddedPlayerFocusHandoff = true
+                    videoView?.requestFocus()
+                } else {
+                    runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
-                videoView?.requestFocus()
             }
             startFullscreen -> onBack()
             focusMode -> {
@@ -398,8 +431,10 @@ internal fun VlcPlayerScreen(
                     var brightnessGesture = false
                     var adjustingLevel = false
                     videoView = layout
-                    layout.isFocusable = true
-                    layout.isFocusableInTouchMode = true
+                    // Native VLC focus is only the embedded Showcase
+                    // D-pad bridge. Standalone/fullscreen focus stays in Compose.
+                    layout.isFocusable = embeddedMode
+                    layout.isFocusableInTouchMode = embeddedMode
                     layout.setOnFocusChangeListener { _, hasFocus ->
                         if (hasFocus && embeddedMode) {
                             if (suppressNextEmbeddedPlayerFocusHandoff) {
@@ -490,7 +525,6 @@ internal fun VlcPlayerScreen(
                     // TextureView avoids rotated SurfaceView buffer-size
                     // rejection on Fire TV/tablet-style landscape devices.
                     player.attachViews(layout, null, false, true)
-                    if (!embeddedMode) layout.requestFocus()
                     }
                 },
                 modifier = Modifier.fillMaxSize().then(
@@ -501,6 +535,40 @@ internal fun VlcPlayerScreen(
                 )
             )
         }
+        if (
+            !embeddedMode &&
+            !controlsVisible &&
+            !queueVisible &&
+            !pictureEditorVisible &&
+            !inPictureInPicture
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .focusRequester(videoSurfaceFocusRequester)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) {
+                            false
+                        } else {
+                            when (event.key) {
+                                ComposeKey.DirectionCenter,
+                                ComposeKey.Enter,
+                                ComposeKey.DirectionLeft,
+                                ComposeKey.DirectionRight,
+                                ComposeKey.DirectionUp,
+                                ComposeKey.DirectionDown -> {
+                                    dpadInteraction++
+                                    showControls()
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                    }
+                    .focusable()
+            )
+        }
+
         VideoAppearanceOverlay(activeAppearanceProfile)
 
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
@@ -597,7 +665,11 @@ internal fun VlcPlayerScreen(
                                 onFullscreenChanged?.invoke(entering)
                                 controlsVisible = !entering
                                 controlsFocused = false
-                                videoView?.requestFocus()
+                                if (entering) {
+                                    runCatching { videoSurfaceFocusRequester.requestFocus() }
+                                } else {
+                                    showControls()
+                                }
                             }
                         },
                         modifier = Modifier.focusRequester(fullscreenRequester)
