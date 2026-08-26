@@ -387,7 +387,10 @@ fun ShowcasePlaybackScreen(
     val playbackLoadingMore =
         state.playbackQueueLoadingMore
 
-    var fullscreen by remember { mutableStateOf(false) }
+    // Playback is the primary surface. The category/episode queue is available
+    // from the fullscreen player overlay, so do not keep a second browse rail
+    // competing for DPAD focus underneath the player.
+    var fullscreen by remember { mutableStateOf(true) }
     var previewItem by remember { mutableStateOf(playing.media) }
 
     /*

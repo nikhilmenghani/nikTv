@@ -18,13 +18,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -270,6 +271,7 @@ internal fun PlayerVisualButtons(
     onEditPictureMode: () -> Unit,
     resizeRequester: FocusRequester,
     pictureModeRequester: FocusRequester,
+    pictureSettingsRequester: FocusRequester,
     leftRequester: FocusRequester,
     rightRequester: FocusRequester,
     downRequester: FocusRequester,
@@ -297,20 +299,35 @@ internal fun PlayerVisualButtons(
         )
     }
     IconButton(
-        onClick = onEditPictureMode,
+        onClick = {
+            val current = profiles.indexOfFirst { it.id == activeProfile.id }.coerceAtLeast(0)
+            onPictureMode(profiles[(current + 1) % profiles.size])
+        },
         modifier = Modifier.focusRequester(pictureModeRequester)
             .focusProperties {
                 left = resizeRequester
-                right = rightRequester
+                right = pictureSettingsRequester
                 down = downRequester
             }
             .playerControlFocus { onControlsFocused(it) }
     ) {
         Icon(
             videoAppearanceIcon(activeProfile.id),
-            "Picture mode: ${activeProfile.name}. Open editor",
+            "Picture mode: ${activeProfile.name}. Select next mode",
             tint = Color.White
         )
+    }
+    IconButton(
+        onClick = onEditPictureMode,
+        modifier = Modifier.focusRequester(pictureSettingsRequester)
+            .focusProperties {
+                left = pictureModeRequester
+                right = rightRequester
+                down = downRequester
+            }
+            .playerControlFocus { onControlsFocused(it) }
+    ) {
+        Icon(Icons.Default.Settings, "Edit picture mode settings", tint = Color.White)
     }
 }
 
@@ -447,18 +464,22 @@ internal fun PlayerQueueOverlay(
                     false
                 } else {
                     when (event.key) {
-                        Key.DirectionLeft,
-                        Key.DirectionRight -> {
-                            onDismiss()
+                        Key.DirectionUp -> {
+                            if (focusedIndex == currentIndex) {
+                                onDismiss()
+                            } else {
+                                focusAt((focusedIndex - 1).coerceAtLeast(0))
+                            }
                             true
                         }
 
-                        Key.DirectionUp -> {
+                        Key.DirectionLeft -> {
                             focusAt((focusedIndex - 1).coerceAtLeast(0))
                             true
                         }
 
-                        Key.DirectionDown -> {
+                        Key.DirectionDown,
+                        Key.DirectionRight -> {
                             val maxIndex =
                                 if (showLoadMore) uniqueItems.size
                                 else uniqueItems.lastIndex
@@ -474,13 +495,12 @@ internal fun PlayerQueueOverlay(
             }
             .background(Color.Black.copy(alpha = .76f))
             .padding(horizontal = 28.dp, vertical = 22.dp),
-        contentAlignment = Alignment.CenterEnd
+        contentAlignment = Alignment.BottomCenter
     ) {
         Surface(
             Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(.48f)
-                .widthIn(min = 360.dp, max = 680.dp),
+                .fillMaxWidth()
+                .heightIn(min = 250.dp, max = 340.dp),
             color = Color(0xF51A1A1A),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
         ) {
@@ -491,16 +511,17 @@ internal fun PlayerQueueOverlay(
                     color = Color.White
                 )
                 Text(
-                    "↑/↓ Browse  •  OK Play  •  ←/→ Close",
+                    "↑/↓ or ←/→ Browse  •  Up on playing title closes  •  OK Play",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.LightGray
                 )
                 Spacer(Modifier.height(14.dp))
 
-                LazyColumn(
+                LazyRow(
                     Modifier.weight(1f).fillMaxWidth(),
                     state = listState,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     itemsIndexed(
                         uniqueItems,
@@ -516,7 +537,8 @@ internal fun PlayerQueueOverlay(
 
                         Surface(
                             Modifier
-                                .fillMaxWidth()
+                                .width(280.dp)
+                                .fillMaxHeight()
                                 .focusRequester(requester)
                                 .onFocusChanged {
                                     focused = it.isFocused
@@ -532,13 +554,12 @@ internal fun PlayerQueueOverlay(
                             shape =
                                 androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                         ) {
-                            Row(
+                            Column(
                                 Modifier.padding(8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Surface(
-                                    Modifier.width(104.dp).aspectRatio(1f),
+                                    Modifier.fillMaxWidth().weight(1f),
                                     shape =
                                         androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                                     color = Color(0xFF111111)
@@ -608,7 +629,7 @@ internal fun PlayerQueueOverlay(
                                 }
 
                                 Column(
-                                    Modifier.weight(1f),
+                                    Modifier.fillMaxWidth(),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Text(
@@ -664,7 +685,8 @@ internal fun PlayerQueueOverlay(
 
                             Surface(
                                 Modifier
-                                    .fillMaxWidth()
+                                    .width(240.dp)
+                                    .fillMaxHeight()
                                     .focusRequester(loadMoreRequester)
                                     .onFocusChanged {
                                         focused = it.isFocused
@@ -697,15 +719,19 @@ internal fun PlayerQueueOverlay(
                                         Arrangement.spacedBy(10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        if (loadingMore || loadMoreRequested) {
-                                            Icons.Default.Refresh
-                                        } else {
-                                            Icons.Default.Add
-                                        },
-                                        null,
-                                        tint = Color.White
-                                    )
+                                    if (loadingMore || loadMoreRequested) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            color = Color.White,
+                                            strokeWidth = 3.dp
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Default.Add,
+                                            null,
+                                            tint = Color.White
+                                        )
+                                    }
                                     Column {
                                         Text(
                                             if (loadingMore || loadMoreRequested) {
@@ -749,12 +775,26 @@ internal fun PlayerPictureModeEditor(
     var coolness by remember(selected.id) { mutableFloatStateOf(selected.coolness) }
     var tint by remember(selected.id) { mutableFloatStateOf(selected.tint) }
     var dimming by remember(selected.id) { mutableFloatStateOf(selected.dimming) }
+    val profileRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    val brightnessRequester = remember { FocusRequester() }
+    val warmthRequester = remember { FocusRequester() }
+    val coolnessRequester = remember { FocusRequester() }
+    val tintRequester = remember { FocusRequester() }
+    val dimmingRequester = remember { FocusRequester() }
+    val cancelRequester = remember { FocusRequester() }
+    val saveRequester = remember { FocusRequester() }
     LaunchedEffect(selected, brightness, warmth, coolness, tint, dimming) {
         onPreview(selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
     }
+    LaunchedEffect(selected.id) {
+        delay(100L)
+        runCatching {
+            profileRequesters.getOrPut(selected.id) { FocusRequester() }.requestFocus()
+        }
+    }
     BackHandler(onBack = onDismiss)
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(.18f)).padding(end = 24.dp, bottom = 20.dp),
+        Modifier.fillMaxSize().focusGroup().background(Color.Black.copy(.18f)).padding(end = 24.dp, bottom = 20.dp),
         contentAlignment = Alignment.BottomEnd
     ) {
         Surface(Modifier.fillMaxWidth(.50f).widthIn(min = 360.dp, max = 660.dp), color = Color(0xF5181818), shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
@@ -764,7 +804,9 @@ internal fun PlayerPictureModeEditor(
                 androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(profiles, key = { it.id }) { profile ->
                         Surface(
-                            Modifier.clickable {
+                            Modifier.focusRequester(profileRequesters.getOrPut(profile.id) { FocusRequester() })
+                                .focusProperties { down = brightnessRequester }
+                                .clickable {
                                 selected = profile; onSelected(profile.id)
                             }.focusable(),
                             color = if (profile.id == selected.id) MaterialTheme.colorScheme.primary else Color(0xFF333333),
@@ -772,17 +814,17 @@ internal fun PlayerPictureModeEditor(
                         ) { Text(profile.name, Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, style = MaterialTheme.typography.labelMedium) }
                     }
                 }
-                PlayerEditorSlider("Brightness", brightness, 0f..0.3f) { brightness = it }
-                PlayerEditorSlider("Warmth", warmth, 0f..0.4f) { warmth = it }
-                PlayerEditorSlider("Coolness", coolness, 0f..0.4f) { coolness = it }
-                PlayerEditorSlider("Color tint", tint, -0.25f..0.25f) { tint = it }
-                PlayerEditorSlider("Dimming", dimming, 0f..0.4f) { dimming = it }
+                PlayerEditorSlider("Brightness", brightness, 0f..0.3f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
+                PlayerEditorSlider("Warmth", warmth, 0f..0.4f, warmthRequester, brightnessRequester, coolnessRequester) { warmth = it }
+                PlayerEditorSlider("Coolness", coolness, 0f..0.4f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
+                PlayerEditorSlider("Color tint", tint, -0.25f..0.25f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
+                PlayerEditorSlider("Dimming", dimming, 0f..0.4f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+                    androidx.compose.material3.TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(cancelRequester).focusProperties { up = dimmingRequester; right = saveRequester }) { Text("Cancel") }
                     androidx.compose.material3.Button(onClick = {
                         VideoAppearancePreferences.update(context, selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
                         onSelected(selected.id); onDismiss()
-                    }) { Text(if (selected.id == "custom") "Save custom mode" else "Save changes") }
+                    }, modifier = Modifier.focusRequester(saveRequester).focusProperties { up = dimmingRequester; left = cancelRequester }) { Text(if (selected.id == "custom") "Save custom mode" else "Save changes") }
                 }
             }
         }
@@ -790,10 +832,10 @@ internal fun PlayerPictureModeEditor(
 }
 
 @Composable
-private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValue: (Float) -> Unit) {
+private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, requester: FocusRequester, upRequester: FocusRequester, downRequester: FocusRequester, onValue: (Float) -> Unit) {
     Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.fillMaxWidth(.28f), color = Color.White)
-        Slider(value = value, onValueChange = onValue, valueRange = range, modifier = Modifier.weight(1f))
+        Slider(value = value, onValueChange = onValue, valueRange = range, modifier = Modifier.weight(1f).focusRequester(requester).focusProperties { up = upRequester; down = downRequester })
         Text("${(value * 100).roundToInt()}%", Modifier.fillMaxWidth(.10f), color = Color.LightGray)
     }
 }

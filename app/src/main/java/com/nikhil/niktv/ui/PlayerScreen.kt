@@ -253,6 +253,7 @@ fun PlayerScreen(
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rewindFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -856,8 +857,11 @@ fun PlayerScreen(
                                 focusMode &&
                                 event.type == ComposeKeyEventType.KeyDown &&
                                 event.key == ComposeKey.DirectionUp &&
-                                hasPlaybackQueue
+                                hasPlaybackQueue &&
+                                !pictureEditorVisible &&
+                                !queueVisible
                             ) {
+                                pictureEditorVisible = false
                                 queueVisible = true
                                 true
                             } else false
@@ -946,9 +950,10 @@ fun PlayerScreen(
                             appearanceOverrideId = next.id
                             modeFeedback = "Picture mode · ${next.name}"
                         },
-                        onEditPictureMode = { pictureEditorVisible = true },
+                        onEditPictureMode = { queueVisible = false; pictureEditorVisible = true },
                         resizeRequester = resizeFocusRequester,
                         pictureModeRequester = pictureModeFocusRequester,
+                        pictureSettingsRequester = pictureSettingsFocusRequester,
                         leftRequester = playerSwitchFocusRequester,
                         rightRequester = fullscreenFocusRequester,
                         downRequester = playPauseFocusRequester,
@@ -967,7 +972,7 @@ fun PlayerScreen(
                         }
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
                         .focusProperties {
-                            left = pictureModeFocusRequester
+                            left = pictureSettingsFocusRequester
                             down = playPauseFocusRequester
                         }
                         .playerControlFocus(CircleShape) { controlsFocused = it }) {
@@ -994,7 +999,9 @@ fun PlayerScreen(
                                 focusMode &&
                                 event.type == ComposeKeyEventType.KeyDown &&
                                 event.key == ComposeKey.DirectionDown &&
-                                hasPlaybackQueue
+                                hasPlaybackQueue &&
+                                !pictureEditorVisible &&
+                                !queueVisible
                             ) {
                                 queueVisible = true
                                 true
@@ -1055,7 +1062,7 @@ fun PlayerScreen(
                 }
             }
         }
-        if (queueVisible && focusMode) PlayerQueueOverlay(
+        if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
             playingId = media.media.id,
             hasMore = queueHasMore,

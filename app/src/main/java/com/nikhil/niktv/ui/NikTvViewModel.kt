@@ -964,7 +964,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = _state.value
         val playing = snapshot.nowPlaying ?: return false
         val session = snapshot.session ?: return false
-        val scope = snapshot.playbackQueueScope ?: return false
+        val queueCategoryId = playing.media.portalCategoryId?.takeIf { it.isNotBlank() }
+            ?: playing.episodeQueue.firstNotNullOfOrNull { it.portalCategoryId?.takeIf(String::isNotBlank) }
+        val scopedMedia = if (playing.media.portalCategoryId.isNullOrBlank() && queueCategoryId != null) {
+            playing.media.copy(portalCategoryId = queueCategoryId)
+        } else playing.media
+        val scope = snapshot.playbackQueueScope ?: playbackQueueScope(
+            session = session,
+            item = scopedMedia,
+            type = playing.catalogType,
+            series = playing.series,
+            selectedSeriesSeason = snapshot.selectedSeriesSeason
+        ) ?: return false
 
         if (
             snapshot.playbackQueueLoadingMore ||
@@ -982,6 +993,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     current
                 } else {
                     current.copy(
+                        playbackQueueScope = scope,
                         playbackQueueLoadingMore = true
                     )
                 }
@@ -1136,9 +1148,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val categoryId =
-                playing.media.portalCategoryId
-                    ?.takeIf { it.isNotBlank() }
+            val categoryId = queueCategoryId
 
             if (categoryId == null) {
                 _state.update {
@@ -1252,8 +1262,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             active != null &&
                                 active.catalogType ==
                                     playing.catalogType &&
-                                active.media.portalCategoryId ==
-                                    categoryId
+                                (
+                                    active.media.portalCategoryId == categoryId ||
+                                        active.episodeQueue.any { it.portalCategoryId == categoryId }
+                                    )
 
                         if (!activeMatches) {
                             current.copy(
@@ -2774,10 +2786,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
          */
         val paginationSnapshot = _state.value
 
+        val playbackScopeItem = if (item.portalCategoryId.isNullOrBlank()) {
+            playbackQueue.firstOrNull { !it.portalCategoryId.isNullOrBlank() } ?: item
+        } else item
         val newPlaybackScope =
             playbackQueueScope(
                 session = session,
-                item = item,
+                item = playbackScopeItem,
                 type = type,
                 series = series,
                 selectedSeriesSeason =

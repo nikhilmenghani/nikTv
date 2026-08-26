@@ -130,6 +130,7 @@ internal fun VlcPlayerScreen(
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeRequester = remember(media.progressKey) { FocusRequester() }
+    val pictureSettingsRequester = remember(media.progressKey) { FocusRequester() }
     val previousRequester = remember(media.progressKey) { FocusRequester() }
     val rewindRequester = remember(media.progressKey) { FocusRequester() }
     val playRequester = remember(media.progressKey) { FocusRequester() }
@@ -462,6 +463,11 @@ internal fun VlcPlayerScreen(
                             else -> { showControls(); true }
                         }
                     }
+                    // Fullscreen transitions can recreate this AndroidView while
+                    // retaining the same LibVLC MediaPlayer. LibVLC rejects a
+                    // second view attachment, so release the previous surface
+                    // before binding the replacement layout.
+                    runCatching { player.detachViews() }
                     player.attachViews(layout, null, false, false)
                     if (!embeddedMode) layout.requestFocus()
                     }
@@ -491,7 +497,9 @@ internal fun VlcPlayerScreen(
                                 focusMode &&
                                 event.type == KeyEventType.KeyDown &&
                                 event.key == ComposeKey.DirectionUp &&
-                                hasPlaybackQueue
+                                hasPlaybackQueue &&
+                                !pictureEditorVisible &&
+                                !queueVisible
                             ) {
                                 queueVisible = true
                                 true
@@ -564,9 +572,10 @@ internal fun VlcPlayerScreen(
                             appearanceOverrideId = next.id
                             modeFeedback = "Picture mode · ${next.name}"
                         },
-                        onEditPictureMode = { pictureEditorVisible = true },
+                        onEditPictureMode = { queueVisible = false; pictureEditorVisible = true },
                         resizeRequester = resizeRequester,
                         pictureModeRequester = pictureModeRequester,
+                        pictureSettingsRequester = pictureSettingsRequester,
                         leftRequester = playerSwitchRequester,
                         rightRequester = fullscreenRequester,
                         downRequester = playRequester,
@@ -585,7 +594,7 @@ internal fun VlcPlayerScreen(
                         },
                         modifier = Modifier.focusRequester(fullscreenRequester)
                             .focusProperties {
-                                left = pictureModeRequester
+                                left = pictureSettingsRequester
                                 down = playRequester
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -609,7 +618,9 @@ internal fun VlcPlayerScreen(
                                 focusMode &&
                                 event.type == KeyEventType.KeyDown &&
                                 event.key == ComposeKey.DirectionDown &&
-                                hasPlaybackQueue
+                                hasPlaybackQueue &&
+                                !pictureEditorVisible &&
+                                !queueVisible
                             ) {
                                 queueVisible = true
                                 true
@@ -664,7 +675,7 @@ internal fun VlcPlayerScreen(
                 }
             }
         }
-        if (queueVisible && focusMode) PlayerQueueOverlay(
+        if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
             playingId = media.media.id,
             hasMore = queueHasMore,
