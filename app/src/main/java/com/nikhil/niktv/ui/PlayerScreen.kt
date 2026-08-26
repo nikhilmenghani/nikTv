@@ -137,6 +137,7 @@ fun PlayerScreen(
     val activeAppearanceProfile = rememberVideoAppearanceProfiles().second
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
+    var dpadInteraction by remember(media.progressKey) { mutableIntStateOf(0) }
 
     /*
      * EMBEDDED_BROWSE_DISMISSES_CONTROLS_V10
@@ -425,7 +426,7 @@ fun PlayerScreen(
      */
     LaunchedEffect(
         controlsVisible,
-        controlsFocused,
+        dpadInteraction,
         isPlaying,
         controlsTimeoutSeconds,
         media.progressKey,
@@ -435,8 +436,7 @@ fun PlayerScreen(
             controlsVisible &&
                 isPlaying &&
                 playbackError == null &&
-                !startupTimedOut &&
-                !controlsFocused
+                !startupTimedOut
 
         if (canAutoHide) {
             delay(
@@ -517,6 +517,24 @@ fun PlayerScreen(
     Box(
         modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (
+                    event.type == ComposeKeyEventType.KeyDown &&
+                    event.key in setOf(
+                        ComposeKey.DirectionUp,
+                        ComposeKey.DirectionDown,
+                        ComposeKey.DirectionLeft,
+                        ComposeKey.DirectionRight,
+                        ComposeKey.DirectionCenter,
+                        ComposeKey.Enter,
+                        ComposeKey.NumPadEnter
+                    )
+                ) {
+                    dpadInteraction++
+                    controlsVisible = true
+                }
+                false
+            }
             .background(Color.Black)
             .then(if (focusMode || inPictureInPicture) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
             .clipToBounds()
@@ -595,6 +613,15 @@ fun PlayerScreen(
                     })
                     setOnKeyListener { _, keyCode, keyEvent ->
                         if (keyEvent.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        if (
+                            keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                            keyCode == KeyEvent.KEYCODE_ENTER ||
+                            keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                        ) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER,
                             KeyEvent.KEYCODE_ENTER,

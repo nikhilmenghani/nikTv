@@ -74,6 +74,7 @@ internal fun VlcPlayerScreen(
     ApplyMobileFullscreenOrientation(focusMode)
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
+    var dpadInteraction by remember(media.progressKey) { mutableIntStateOf(0) }
     var videoView by remember(media.progressKey) { mutableStateOf<View?>(null) }
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
@@ -167,8 +168,8 @@ internal fun VlcPlayerScreen(
             controlsFocused = false
         }
     }
-    LaunchedEffect(controlsVisible, controlsFocused, playing, controlsTimeoutSeconds, media.progressKey) {
-        if (controlsVisible && playing && error == null && !controlsFocused) {
+    LaunchedEffect(controlsVisible, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey) {
+        if (controlsVisible && playing && error == null) {
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
             controlsFocused = false
@@ -256,6 +257,24 @@ internal fun VlcPlayerScreen(
 
     Box(
         modifier.fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (
+                    event.type == KeyEventType.KeyDown &&
+                    event.key in setOf(
+                        ComposeKey.DirectionUp,
+                        ComposeKey.DirectionDown,
+                        ComposeKey.DirectionLeft,
+                        ComposeKey.DirectionRight,
+                        ComposeKey.DirectionCenter,
+                        ComposeKey.Enter,
+                        ComposeKey.NumPadEnter
+                    )
+                ) {
+                    dpadInteraction++
+                    controlsVisible = true
+                }
+                false
+            }
             .background(Color.Black)
             .then(
                 if (focusMode || inPictureInPicture) Modifier
@@ -320,6 +339,15 @@ internal fun VlcPlayerScreen(
                     }
                     layout.setOnKeyListener { _, keyCode, event ->
                         if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        if (
+                            keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                            keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                            keyCode == KeyEvent.KEYCODE_ENTER ||
+                            keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+                        ) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_DPAD_LEFT,
