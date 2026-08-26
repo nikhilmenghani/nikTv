@@ -79,6 +79,12 @@ internal fun VlcPlayerScreen(
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var dpadInteraction by remember(media.progressKey) { mutableIntStateOf(0) }
+    var suppressNextEmbeddedPlayerFocusHandoff by remember(media.progressKey) {
+        mutableStateOf(false)
+    }
+    val embeddedPlayerFocusHandoffArmed by rememberUpdatedState(
+        embeddedMode && embeddedControlsDismissRequest > 0
+    )
     var videoView by remember(media.progressKey) { mutableStateOf<View?>(null) }
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
@@ -149,7 +155,7 @@ internal fun VlcPlayerScreen(
 
     fun showControls() {
         controlsVisible = true
-        if (!embeddedMode) scope.launch {
+        scope.launch {
             delay(80)
             runCatching { playRequester.requestFocus() }
         }
@@ -187,8 +193,8 @@ internal fun VlcPlayerScreen(
             controlsFocused = false
         }
     }
-    LaunchedEffect(controlsVisible, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible) {
-        if (controlsVisible && playing && error == null && !queueVisible && !pictureEditorVisible) {
+    LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible) {
+        if (controlsVisible && !controlsFocused && playing && error == null && !queueVisible && !pictureEditorVisible) {
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
             controlsFocused = false
@@ -209,6 +215,9 @@ internal fun VlcPlayerScreen(
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
+                if (embeddedMode && videoView != null) {
+                    suppressNextEmbeddedPlayerFocusHandoff = true
+                }
                 videoView?.requestFocus()
             }
             startFullscreen -> onBack()
@@ -305,6 +314,29 @@ internal fun VlcPlayerScreen(
                     videoView = layout
                     layout.isFocusable = true
                     layout.isFocusableInTouchMode = true
+                    layout.setOnFocusChangeListener { _, hasFocus ->
+                        if (hasFocus && embeddedMode) {
+                            if (suppressNextEmbeddedPlayerFocusHandoff) {
+                                suppressNextEmbeddedPlayerFocusHandoff = false
+                            } else {
+                                controlsVisible = true
+
+                                /*
+                                 * Bridge deliberate D-pad entry from the
+                                 * Showcase rail into Compose controls. The
+                                 * existing browse-dismiss counter arms this
+                                 * only after the rail has owned focus, avoiding
+                                 * startup focus theft.
+                                 */
+                                if (
+                                    embeddedPlayerFocusHandoffArmed &&
+                                    !layout.isInTouchMode
+                                ) {
+                                    showControls()
+                                }
+                            }
+                        }
+                    }
                     layout.setOnTouchListener { _, event ->
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
@@ -365,7 +397,7 @@ internal fun VlcPlayerScreen(
                         }
                     }
                     player.attachViews(layout, null, false, false)
-                    layout.requestFocus()
+                    if (!embeddedMode) layout.requestFocus()
                     }
                 },
                 modifier = Modifier.fillMaxSize().then(

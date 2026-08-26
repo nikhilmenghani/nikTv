@@ -180,6 +180,12 @@ fun PlayerScreen(
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var dpadInteraction by remember(media.progressKey) { mutableIntStateOf(0) }
+    var suppressNextEmbeddedPlayerFocusHandoff by remember(media.progressKey) {
+        mutableStateOf(false)
+    }
+    val embeddedPlayerFocusHandoffArmed by rememberUpdatedState(
+        embeddedMode && embeddedControlsDismissRequest > 0
+    )
 
     /*
      * EMBEDDED_BROWSE_DISMISSES_CONTROLS_V10
@@ -469,6 +475,7 @@ fun PlayerScreen(
      */
     LaunchedEffect(
         controlsVisible,
+        controlsFocused,
         dpadInteraction,
         isPlaying,
         controlsTimeoutSeconds,
@@ -479,6 +486,7 @@ fun PlayerScreen(
     ) {
         val canAutoHide =
             controlsVisible &&
+                !controlsFocused &&
                 isPlaying &&
                 playbackError == null &&
                 !startupTimedOut
@@ -552,6 +560,9 @@ fun PlayerScreen(
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
+                if (embeddedMode && playerViewRef != null) {
+                    suppressNextEmbeddedPlayerFocusHandoff = true
+                }
                 playerViewRef?.requestFocus()
             }
             startFullscreen -> onBack()
@@ -591,7 +602,33 @@ fun PlayerScreen(
                     }
                     if (!embeddedMode) requestFocus()
                     setOnFocusChangeListener { _, hasFocus ->
-                        if (hasFocus && embeddedMode) controlsVisible = true
+                        if (hasFocus && embeddedMode) {
+                            if (suppressNextEmbeddedPlayerFocusHandoff) {
+                                suppressNextEmbeddedPlayerFocusHandoff = false
+                            } else {
+                                controlsVisible = true
+
+                                /*
+                                 * The Showcase rail intentionally dismisses the
+                                 * embedded overlay whenever browsing owns focus.
+                                 * Once that has happened, a non-touch focus entry
+                                 * into PlayerView is a deliberate D-pad move into
+                                 * the player, so bridge native View focus back to
+                                 * Compose by focusing Play/Pause.
+                                 *
+                                 * Keeping the handoff armed by the existing
+                                 * dismiss counter avoids recreating the old
+                                 * startup focus-steal that embedded mode was
+                                 * designed to prevent.
+                                 */
+                                if (
+                                    embeddedPlayerFocusHandoffArmed &&
+                                    !playerView.isInTouchMode
+                                ) {
+                                    showControlsAndFocusPlayPause()
+                                }
+                            }
+                        }
                     }
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     var lastFocus = Offset.Zero
