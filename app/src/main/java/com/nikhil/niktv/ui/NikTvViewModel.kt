@@ -2478,12 +2478,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             activePlayback.catalogType ==
                 snapshot.nowPlaying?.catalogType
         ) {
-            play(
-                item = item,
-                type = activePlayback.catalogType,
-                series = activePlayback.series,
-                episodes = activeQueue
-            )
+            task {
+                playInternal(
+                    item = item,
+                    type = activePlayback.catalogType,
+                    series = activePlayback.series,
+                    episodes = activeQueue,
+                    directFullscreen = activePlayback.directFullscreen
+                )
+            }
             return
         }
 
@@ -2758,9 +2761,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 store.savePlaybackUrls(updated)
             }
         }
-        val playbackQueue = if (directFullscreen) {
-            listOf(item)
-        } else when (type) {
+        val playbackQueue =
+            if (directFullscreen && episodes.isEmpty()) {
+                listOf(item)
+            } else when (type) {
             CatalogType.SERIES -> episodes.sortedWith(
                 compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
             )
@@ -3028,7 +3032,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     item = next,
                     type = playing.catalogType,
                     series = playing.series,
-                    episodes = queue
+                    episodes = queue,
+                    directFullscreen = playing.directFullscreen
                 )
             }.onFailure { error ->
                 _state.update {
@@ -3070,7 +3075,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     item = previous,
                     type = playing.catalogType,
                     series = playing.series,
-                    episodes = queue
+                    episodes = queue,
+                    directFullscreen = playing.directFullscreen
                 )
             }.onFailure { error ->
                 _state.update {

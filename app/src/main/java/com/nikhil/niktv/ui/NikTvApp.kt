@@ -337,6 +337,14 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
                     onPlayItem = vm::openMedia,
+                    // DIRECT_FULLSCREEN_QUEUE_PAGINATION_V23
+                    // The standalone fullscreen player owns its own queue page.
+                    // Without these props PlayerScreen receives the default
+                    // hasMore=false/onLoadMore=false values, so its final
+                    // "Load more" card cannot paginate.
+                    queueHasMore = state.playbackQueueHasMore,
+                    queueLoadingMore = state.playbackQueueLoadingMore,
+                    onLoadMoreQueue = vm::loadMorePlaybackQueue,
                     controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
                     playbackEngine = state.playbackEngine,
                     startFullscreen = true
