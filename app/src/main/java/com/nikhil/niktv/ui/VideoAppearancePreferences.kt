@@ -795,34 +795,75 @@ internal fun PlayerPictureModeEditor(
         Modifier.fillMaxSize().focusGroup().padding(end = 24.dp, bottom = 20.dp),
         contentAlignment = Alignment.BottomEnd
     ) {
-        Surface(Modifier.fillMaxWidth(.50f).widthIn(min = 360.dp, max = 660.dp), color = Color(0xF5181818), shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
-            Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Picture mode · ${selected.name}", style = MaterialTheme.typography.titleLarge, color = Color.White)
-                Text("Adjust while watching the video.", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+        // PROFILE_SCREEN_VISUAL_LANGUAGE_V20
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(.50f)
+                .widthIn(min = 360.dp, max = 660.dp),
+            color = Color(0xF2111317),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                Color(0xFF30343B)
+            ),
+            shadowElevation = 14.dp
+        ) {
+            Column(
+                Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    "Picture mode · ${selected.name}",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color(0xFFF5F5F7)
+                )
+                Text(
+                    "Adjust while watching the video.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF9B9FA8)
+                )
                 androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(profiles, key = { it.id }) { profile ->
                         var focused by remember(profile.id) { mutableStateOf(false) }
                         Surface(
-                            Modifier.focusRequester(profileRequesters.getOrPut(profile.id) { FocusRequester() })
+                            Modifier
+                                .focusRequester(
+                                    profileRequesters.getOrPut(profile.id) {
+                                        FocusRequester()
+                                    }
+                                )
                                 .focusProperties { down = brightnessRequester }
                                 .onFocusChanged { focused = it.isFocused }
                                 .then(
-                                    if (focused) Modifier.border(
-                                        3.dp,
-                                        Color(0xFFFF3340),
-                                        androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
-                                    ) else Modifier
+                                    if (focused) {
+                                        Modifier.border(
+                                            2.dp,
+                                            Color(0xFFF2F3F5),
+                                            androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
                                 )
                                 .clickable {
-                                selected = profile; onSelected(profile.id)
-                            }.focusable(),
+                                    selected = profile
+                                    onSelected(profile.id)
+                                }
+                                .focusable(),
                             color = when {
-                                focused -> Color(0xFF65151B)
-                                profile.id == selected.id -> MaterialTheme.colorScheme.primary
-                                else -> Color(0xFF333333)
+                                focused -> Color(0xFF22252B)
+                                profile.id == selected.id -> Color(0xFF35191D)
+                                else -> Color(0xFF1B1D22)
                             },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
-                        ) { Text(profile.name, Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, style = MaterialTheme.typography.labelMedium) }
+                        ) {
+                            Text(
+                                profile.name,
+                                Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                                color = Color(0xFFF5F5F7),
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
                     }
                 }
                 PlayerEditorSlider("Brightness", brightness, 0f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
@@ -843,12 +884,24 @@ internal fun PlayerPictureModeEditor(
 }
 
 @Composable
-private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, requester: FocusRequester, upRequester: FocusRequester, downRequester: FocusRequester, onValue: (Float) -> Unit) {
+private fun PlayerEditorSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    requester: FocusRequester,
+    upRequester: FocusRequester,
+    downRequester: FocusRequester,
+    onValue: (Float) -> Unit
+) {
     var focused by remember { mutableStateOf(false) }
+    val focusShape =
+        androidx.compose.foundation.shape.RoundedCornerShape(999.dp)
+    val percentage = (value * 100).roundToInt()
+
     Row(
         Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(44.dp)
             .focusRequester(requester)
             .focusProperties {
                 up = upRequester
@@ -856,7 +909,9 @@ private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatin
             }
             .onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (event.type != KeyEventType.KeyDown) {
+                    return@onPreviewKeyEvent false
+                }
                 when (event.key) {
                     Key.DirectionUp -> {
                         runCatching { upRequester.requestFocus() }
@@ -867,41 +922,62 @@ private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatin
                         true
                     }
                     Key.DirectionLeft -> {
-                        onValue((value - .01f).coerceIn(range.start, range.endInclusive))
+                        onValue(
+                            (value - .01f).coerceIn(
+                                range.start,
+                                range.endInclusive
+                            )
+                        )
                         true
                     }
                     Key.DirectionRight -> {
-                        onValue((value + .01f).coerceIn(range.start, range.endInclusive))
+                        onValue(
+                            (value + .01f).coerceIn(
+                                range.start,
+                                range.endInclusive
+                            )
+                        )
                         true
                     }
                     else -> false
                 }
             }
             .focusable(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(label, Modifier.fillMaxWidth(.28f), color = Color.White)
+        Text(
+            text = label,
+            modifier = Modifier.width(94.dp),
+            color =
+                if (focused) Color(0xFFF5F5F7)
+                else Color(0xFFD4D7DC),
+            style = MaterialTheme.typography.bodyMedium
+        )
+
+        /*
+         * SLIDER_FOCUS_GEOMETRY_V20
+         *
+         * The focus ring and slider now share the same centered capsule.
+         * There is no outer horizontal inset, so the ring follows the actual
+         * control geometry rather than floating wider than the progress bar.
+         */
         Box(
-            Modifier
+            modifier = Modifier
                 .weight(1f)
-                .height(34.dp)
-                .then(
-                    if (focused) {
-                        Modifier
-                            .background(
-                                Color(0xFF351518),
-                                androidx.compose.foundation.shape.RoundedCornerShape(17.dp)
-                            )
-                            .border(
-                                2.dp,
-                                Color(0xFFFF3340),
-                                androidx.compose.foundation.shape.RoundedCornerShape(17.dp)
-                            )
-                    } else {
-                        Modifier
-                    }
+                .height(32.dp)
+                .background(
+                    if (focused) Color(0xFF22252B)
+                    else Color(0xFF15171B),
+                    focusShape
                 )
-                .padding(horizontal = 6.dp),
+                .border(
+                    width = if (focused) 2.dp else 1.dp,
+                    color =
+                        if (focused) Color(0xFFF2F3F5)
+                        else Color(0xFF30343B),
+                    shape = focusShape
+                ),
             contentAlignment = Alignment.Center
         ) {
             Slider(
@@ -913,6 +989,16 @@ private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatin
                     .focusProperties { canFocus = false }
             )
         }
-        Text("${(value * 100).roundToInt()}%", Modifier.fillMaxWidth(.10f), color = Color.LightGray)
+
+        Text(
+            text = "$percentage%",
+            modifier = Modifier.width(58.dp),
+            color =
+                if (focused) Color(0xFFF5F5F7)
+                else Color(0xFF9B9FA8),
+            style = MaterialTheme.typography.labelMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            maxLines = 1
+        )
     }
 }
