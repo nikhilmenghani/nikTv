@@ -89,7 +89,7 @@ object PlaybackUiPreferences {
 
     fun defaultDesign(type: CatalogType): PlaybackDesign = when (type) {
         CatalogType.LIVE_TV -> PlaybackDesign.SIDE_LIST
-        CatalogType.MOVIES -> PlaybackDesign.SHOWCASE
+        CatalogType.MOVIES -> PlaybackDesign.FULLSCREEN
         CatalogType.SERIES, CatalogType.RADIO -> PlaybackDesign.FULLSCREEN
     }
 
@@ -99,7 +99,10 @@ object PlaybackUiPreferences {
             PlaybackDesign.SHOWCASE,
             PlaybackDesign.FULLSCREEN
         )
-        CatalogType.MOVIES, CatalogType.SERIES -> listOf(
+        CatalogType.MOVIES -> listOf(
+            PlaybackDesign.FULLSCREEN
+        )
+        CatalogType.SERIES -> listOf(
             PlaybackDesign.SHOWCASE,
             PlaybackDesign.FULLSCREEN
         )
@@ -202,18 +205,13 @@ fun PlaybackDesignSettingsSection(profileKey: String, modifier: Modifier = Modif
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 Text(
-                    "Choose each content type independently. New layouts can be added later without changing the portal or playback engine.",
+                    "Live TV and Series can use alternate layouts. Movies always open directly in the fullscreen player.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 PlaybackDesignRow(
                     profileKey, CatalogType.LIVE_TV, "Live TV",
                     "Side list keeps the current Live TV experience."
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                PlaybackDesignRow(
-                    profileKey, CatalogType.MOVIES, "Movies",
-                    "Showcase uses player-left, details-right and a poster rail."
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 PlaybackDesignRow(

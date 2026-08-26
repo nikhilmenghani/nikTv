@@ -299,7 +299,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     }
     val playbackProfileKey = state.session?.profile?.cacheKey().orEmpty()
     val liveTvPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.LIVE_TV)
-    val moviePlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.MOVIES)
     val seriesPlaybackDesign by rememberPlaybackDesign(playbackProfileKey, CatalogType.SERIES)
     val mobileUiDesign by rememberMobileUiDesign()
     val useYouTubeMobilePlayback =
@@ -327,6 +326,32 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
           } else {
            Box(Modifier.fillMaxSize()) {
             when {
+                /*
+                 * MOVIES_ALWAYS_FULLSCREEN_V24
+                 *
+                 * Movies have one playback surface: the standalone fullscreen
+                 * player. This branch intentionally precedes every generic or
+                 * Showcase route so Home, Favorites, Search, Recent, TMDB and
+                 * IPTV category launches all behave identically.
+                 */
+                state.nowPlaying?.catalogType == CatalogType.MOVIES -> PlayerScreen(
+                    media = state.nowPlaying!!,
+                    onBack = vm::closePlayer,
+                    onRetry = vm::retryPlayback,
+                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
+                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
+                    onPlayPrevious = vm::playPreviousEpisode,
+                    onPlayNext = vm::playNextEpisode,
+                    onProgress = vm::savePlaybackProgress,
+                    onPlayItem = vm::openMedia,
+                    queueHasMore = state.playbackQueueHasMore,
+                    queueLoadingMore = state.playbackQueueLoadingMore,
+                    onLoadMoreQueue = vm::loadMorePlaybackQueue,
+                    controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+                    playbackEngine = state.playbackEngine,
+                    startFullscreen = true
+                )
+
                 state.nowPlaying?.directFullscreen == true -> PlayerScreen(
                     media = state.nowPlaying!!,
                     onBack = vm::closePlayer,
@@ -369,23 +394,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 
                 state.nowPlaying?.catalogType == CatalogType.LIVE_TV &&
                     liveTvPlaybackDesign == PlaybackDesign.SHOWCASE -> ShowcasePlaybackScreen(
-                    state = state,
-                    play = vm::openMedia,
-                    onBack = vm::closePlayer,
-                    onRetry = vm::retryPlayback,
-                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
-                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
-                    onPlayPrevious = vm::playPreviousEpisode,
-                    onPlayNext = vm::playNextEpisode,
-                    onProgress = vm::savePlaybackProgress,
-                    toggleFavorite = vm::toggleFavorite,
-                    loadMoreCatalog = vm::loadMoreCatalog,
-                    refreshPlaybackQueue = vm::refreshPlaybackQueue,
-                    loadMorePlaybackQueue = vm::loadMorePlaybackQueue
-                )
-
-                state.nowPlaying?.catalogType == CatalogType.MOVIES &&
-                    (moviePlaybackDesign == PlaybackDesign.SHOWCASE || useYouTubeMobilePlayback) -> ShowcasePlaybackScreen(
                     state = state,
                     play = vm::openMedia,
                     onBack = vm::closePlayer,
