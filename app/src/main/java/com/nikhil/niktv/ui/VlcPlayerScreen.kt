@@ -278,23 +278,8 @@ internal fun VlcPlayerScreen(
 
     Box(
         modifier.fillMaxSize()
-            .onPreviewKeyEvent { event ->
-                if (
-                    event.type == KeyEventType.KeyDown &&
-                    event.key in setOf(
-                        ComposeKey.DirectionUp,
-                        ComposeKey.DirectionDown,
-                        ComposeKey.DirectionLeft,
-                        ComposeKey.DirectionRight,
-                        ComposeKey.DirectionCenter,
-                        ComposeKey.Enter,
-                        ComposeKey.NumPadEnter
-                    )
-                ) {
-                    dpadInteraction++
-                    controlsVisible = true
-                }
-                false
+            .playerActivityObserver {
+                dpadInteraction++
             }
             .background(Color.Black)
             .then(
@@ -323,6 +308,7 @@ internal fun VlcPlayerScreen(
                     layout.setOnTouchListener { _, event ->
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
+                                dpadInteraction++
                                 gestureStartY = event.y
                                 brightnessGesture = event.x < layout.width / 2f
                                 adjustingLevel = false
@@ -360,15 +346,7 @@ internal fun VlcPlayerScreen(
                     }
                     layout.setOnKeyListener { _, keyCode, event ->
                         if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                        if (
-                            keyCode == KeyEvent.KEYCODE_DPAD_UP ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                            keyCode == KeyEvent.KEYCODE_ENTER ||
-                            keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
-                        ) dpadInteraction++
+                        if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_DPAD_LEFT,

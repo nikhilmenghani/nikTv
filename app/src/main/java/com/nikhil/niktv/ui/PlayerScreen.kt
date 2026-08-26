@@ -41,6 +41,8 @@ import androidx.compose.ui.input.key.KeyEventType as ComposeKeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -71,6 +73,19 @@ import com.nikhil.niktv.model.MediaItem as NikMediaItem
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+internal fun Modifier.playerActivityObserver(onActivity: () -> Unit): Modifier =
+    onPreviewKeyEvent { event ->
+        if (event.type == ComposeKeyEventType.KeyDown && event.key != ComposeKey.Back) onActivity()
+        false
+    }.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.any { it.pressed && !it.previousPressed }) onActivity()
+            }
+        }
+    }
 
 @UnstableApi
 @Composable
@@ -551,23 +566,8 @@ fun PlayerScreen(
     Box(
         modifier
             .fillMaxSize()
-            .onPreviewKeyEvent { event ->
-                if (
-                    event.type == ComposeKeyEventType.KeyDown &&
-                    event.key in setOf(
-                        ComposeKey.DirectionUp,
-                        ComposeKey.DirectionDown,
-                        ComposeKey.DirectionLeft,
-                        ComposeKey.DirectionRight,
-                        ComposeKey.DirectionCenter,
-                        ComposeKey.Enter,
-                        ComposeKey.NumPadEnter
-                    )
-                ) {
-                    dpadInteraction++
-                    controlsVisible = true
-                }
-                false
+            .playerActivityObserver {
+                dpadInteraction++
             }
             .background(Color.Black)
             .then(if (focusMode || inPictureInPicture) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
@@ -647,15 +647,7 @@ fun PlayerScreen(
                     })
                     setOnKeyListener { _, keyCode, keyEvent ->
                         if (keyEvent.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-                        if (
-                            keyCode == KeyEvent.KEYCODE_DPAD_UP ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
-                            keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                            keyCode == KeyEvent.KEYCODE_ENTER ||
-                            keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
-                        ) dpadInteraction++
+                        if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER,
                             KeyEvent.KEYCODE_ENTER,
@@ -710,6 +702,7 @@ fun PlayerScreen(
                         var panned = false
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
+                                dpadInteraction++
                                 lastTouch = Offset(event.x, event.y)
                                 gestureStartY = event.y
                                 brightnessGesture = event.x < playerView.width / 2f

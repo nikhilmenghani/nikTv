@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
@@ -332,9 +334,22 @@ internal fun PlayerQueueOverlay(
 ) {
     BackHandler(onBack = onDismiss)
     val currentRequester = remember { FocusRequester() }
-    LaunchedEffect(items, playingId) { delay(100L); runCatching { currentRequester.requestFocus() } }
+    val uniqueItems = remember(items) { items.distinctBy { it.id } }
+    val currentIndex = uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
+    val listState = rememberLazyListState()
+    LaunchedEffect(uniqueItems, playingId) {
+        listState.scrollToItem(currentIndex)
+        delay(120L)
+        runCatching { currentRequester.requestFocus() }
+    }
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(.72f)).padding(28.dp),
+        Modifier.fillMaxSize()
+            .focusGroup()
+            .onPreviewKeyEvent { event ->
+                event.type == KeyEventType.KeyDown &&
+                    event.key in setOf(Key.DirectionLeft, Key.DirectionRight)
+            }
+            .background(Color.Black.copy(.72f)).padding(28.dp),
         contentAlignment = Alignment.CenterEnd
     ) {
         Surface(
@@ -346,8 +361,8 @@ internal fun PlayerQueueOverlay(
                 Text("Choose what to play", style = MaterialTheme.typography.headlineSmall, color = Color.White)
                 Text("From this list", style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
                 Spacer(Modifier.height(14.dp))
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(items.distinctBy { it.id }, key = { it.id }) { item ->
+                LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(uniqueItems, key = { it.id }) { item ->
                         var focused by remember { mutableStateOf(false) }
                         val current = item.id == playingId
                         Surface(
@@ -390,20 +405,23 @@ internal fun PlayerPictureModeEditor(
         onPreview(selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
     }
     BackHandler(onBack = onDismiss)
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(.78f)).padding(30.dp), contentAlignment = Alignment.Center) {
-        Surface(Modifier.fillMaxWidth(.72f).widthIn(max = 760.dp), color = Color(0xFA181818), shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {
-            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Picture mode · ${selected.name}", style = MaterialTheme.typography.headlineSmall, color = Color.White)
-                Text("Select a mode, then tune it while the video remains visible behind this panel.", color = Color.LightGray)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    profiles.forEach { profile ->
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(.18f)).padding(end = 24.dp, bottom = 20.dp),
+        contentAlignment = Alignment.BottomEnd
+    ) {
+        Surface(Modifier.fillMaxWidth(.50f).widthIn(min = 360.dp, max = 660.dp), color = Color(0xF5181818), shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
+            Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Picture mode · ${selected.name}", style = MaterialTheme.typography.titleLarge, color = Color.White)
+                Text("Adjust while watching the video.", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(profiles, key = { it.id }) { profile ->
                         Surface(
                             Modifier.clickable {
                                 selected = profile; onSelected(profile.id)
                             }.focusable(),
                             color = if (profile.id == selected.id) MaterialTheme.colorScheme.primary else Color(0xFF333333),
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
-                        ) { Text(profile.name, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color.White) }
+                        ) { Text(profile.name, Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, style = MaterialTheme.typography.labelMedium) }
                     }
                 }
                 PlayerEditorSlider("Brightness", brightness, 0f..0.3f) { brightness = it }
@@ -425,7 +443,7 @@ internal fun PlayerPictureModeEditor(
 
 @Composable
 private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValue: (Float) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.fillMaxWidth(.28f), color = Color.White)
         Slider(value = value, onValueChange = onValue, valueRange = range, modifier = Modifier.weight(1f))
         Text("${(value * 100).roundToInt()}%", Modifier.fillMaxWidth(.10f), color = Color.LightGray)
