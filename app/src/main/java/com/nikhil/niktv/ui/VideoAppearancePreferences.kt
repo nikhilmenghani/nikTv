@@ -822,18 +822,89 @@ internal fun PlayerPictureModeEditor(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFF9B9FA8)
                 )
-                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(profiles, key = { it.id }) { profile ->
-                        var focused by remember(profile.id) { mutableStateOf(false) }
-                        Surface(
-                            Modifier
-                                .focusRequester(
-                                    profileRequesters.getOrPut(profile.id) {
+                /*
+                 * PICTURE_EDITOR_FOCUS_TRAP_V21
+                 *
+                 * The editor is a modal focus island. Every D-pad direction
+                 * from the profile row resolves to another editor target (or
+                 * the same edge chip) so focus cannot fall through to player
+                 * controls composed underneath this overlay.
+                 */
+                androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    itemsIndexed(
+                        items = profiles,
+                        key = { _, profile -> profile.id }
+                    ) { index, profile ->
+                        var focused by remember(profile.id) {
+                            mutableStateOf(false)
+                        }
+                        val profileRequester =
+                            profileRequesters.getOrPut(profile.id) {
+                                FocusRequester()
+                            }
+                        val leftRequester =
+                            profiles.getOrNull(index - 1)
+                                ?.let { previous ->
+                                    profileRequesters.getOrPut(previous.id) {
                                         FocusRequester()
                                     }
-                                )
-                                .focusProperties { down = brightnessRequester }
-                                .onFocusChanged { focused = it.isFocused }
+                                }
+                                ?: profileRequester
+                        val rightRequester =
+                            profiles.getOrNull(index + 1)
+                                ?.let { next ->
+                                    profileRequesters.getOrPut(next.id) {
+                                        FocusRequester()
+                                    }
+                                }
+                                ?: profileRequester
+
+                        Surface(
+                            Modifier
+                                .focusRequester(profileRequester)
+                                .focusProperties {
+                                    up = profileRequester
+                                    down = brightnessRequester
+                                    left = leftRequester
+                                    right = rightRequester
+                                }
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) {
+                                        return@onPreviewKeyEvent false
+                                    }
+                                    when (event.key) {
+                                        Key.DirectionUp -> {
+                                            runCatching {
+                                                profileRequester.requestFocus()
+                                            }
+                                            true
+                                        }
+                                        Key.DirectionDown -> {
+                                            runCatching {
+                                                brightnessRequester.requestFocus()
+                                            }
+                                            true
+                                        }
+                                        Key.DirectionLeft -> {
+                                            runCatching {
+                                                leftRequester.requestFocus()
+                                            }
+                                            true
+                                        }
+                                        Key.DirectionRight -> {
+                                            runCatching {
+                                                rightRequester.requestFocus()
+                                            }
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                                .onFocusChanged {
+                                    focused = it.isFocused
+                                }
                                 .then(
                                     if (focused) {
                                         Modifier.border(
@@ -859,7 +930,10 @@ internal fun PlayerPictureModeEditor(
                         ) {
                             Text(
                                 profile.name,
-                                Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                                Modifier.padding(
+                                    horizontal = 11.dp,
+                                    vertical = 7.dp
+                                ),
                                 color = Color(0xFFF5F5F7),
                                 style = MaterialTheme.typography.labelMedium
                             )
@@ -871,12 +945,112 @@ internal fun PlayerPictureModeEditor(
                 PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
                 PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
                 PlayerEditorSlider("Dimming", dimming, 0f..1f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    androidx.compose.material3.TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(cancelRequester).focusProperties { up = dimmingRequester; right = saveRequester }.playerControlFocus { }) { Text("Cancel") }
-                    androidx.compose.material3.Button(onClick = {
-                        VideoAppearancePreferences.update(context, selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
-                        onSelected(selected.id); onDismiss()
-                    }, modifier = Modifier.focusRequester(saveRequester).focusProperties { up = dimmingRequester; left = cancelRequester }.playerControlFocus { }) { Text(if (selected.id == "custom") "Save custom mode" else "Save changes") }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    androidx.compose.material3.TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .focusRequester(cancelRequester)
+                            .focusProperties {
+                                up = dimmingRequester
+                                down = cancelRequester
+                                left = cancelRequester
+                                right = saveRequester
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) {
+                                    return@onPreviewKeyEvent false
+                                }
+                                when (event.key) {
+                                    Key.DirectionUp -> {
+                                        runCatching {
+                                            dimmingRequester.requestFocus()
+                                        }
+                                        true
+                                    }
+                                    Key.DirectionDown,
+                                    Key.DirectionLeft -> {
+                                        runCatching {
+                                            cancelRequester.requestFocus()
+                                        }
+                                        true
+                                    }
+                                    Key.DirectionRight -> {
+                                        runCatching {
+                                            saveRequester.requestFocus()
+                                        }
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            }
+                            .playerControlFocus { }
+                    ) {
+                        Text("Cancel")
+                    }
+
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            VideoAppearancePreferences.update(
+                                context,
+                                selected.copy(
+                                    brightness = brightness,
+                                    warmth = warmth,
+                                    coolness = coolness,
+                                    tint = tint,
+                                    dimming = dimming
+                                )
+                            )
+                            onSelected(selected.id)
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .focusRequester(saveRequester)
+                            .focusProperties {
+                                up = dimmingRequester
+                                down = saveRequester
+                                left = cancelRequester
+                                right = saveRequester
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) {
+                                    return@onPreviewKeyEvent false
+                                }
+                                when (event.key) {
+                                    Key.DirectionUp -> {
+                                        runCatching {
+                                            dimmingRequester.requestFocus()
+                                        }
+                                        true
+                                    }
+                                    Key.DirectionDown,
+                                    Key.DirectionRight -> {
+                                        runCatching {
+                                            saveRequester.requestFocus()
+                                        }
+                                        true
+                                    }
+                                    Key.DirectionLeft -> {
+                                        runCatching {
+                                            cancelRequester.requestFocus()
+                                        }
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            }
+                            .playerControlFocus { }
+                    ) {
+                        Text(
+                            if (selected.id == "custom") {
+                                "Save custom mode"
+                            } else {
+                                "Save changes"
+                            }
+                        )
+                    }
                 }
             }
         }
