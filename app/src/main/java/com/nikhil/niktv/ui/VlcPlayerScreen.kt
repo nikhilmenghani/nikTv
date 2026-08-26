@@ -39,6 +39,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.PlayingMedia
+import com.nikhil.niktv.model.MediaItem
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.LibVLC
@@ -53,6 +54,7 @@ internal fun VlcPlayerScreen(
     onBack: () -> Unit,
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
+    onPlayItem: (MediaItem) -> Unit,
     onProgress: (String, Long, Long) -> Unit,
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
@@ -84,9 +86,13 @@ internal fun VlcPlayerScreen(
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
     val (appearanceProfiles, scheduledAppearanceProfile) = rememberVideoAppearanceProfiles(useSchedule = true)
     var appearanceOverrideId by remember { mutableStateOf<String?>(null) }
-    val activeAppearanceProfile = appearanceProfiles.firstOrNull { it.id == appearanceOverrideId }
+    var appearancePreview by remember { mutableStateOf<VideoAppearanceProfile?>(null) }
+    val activeAppearanceProfile = appearancePreview ?: appearanceProfiles.firstOrNull { it.id == appearanceOverrideId }
         ?: scheduledAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
+    var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var pictureEditorVisible by remember { mutableStateOf(false) }
+    val hasPlaybackQueue = media.episodeQueue.distinctBy { it.id }.size > 1 && !media.directFullscreen
     LaunchedEffect(modeFeedback) {
         if (modeFeedback != null) {
             delay(1_800L)
@@ -181,8 +187,8 @@ internal fun VlcPlayerScreen(
             controlsFocused = false
         }
     }
-    LaunchedEffect(controlsVisible, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey) {
-        if (controlsVisible && playing && error == null) {
+    LaunchedEffect(controlsVisible, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible) {
+        if (controlsVisible && playing && error == null && !queueVisible && !pictureEditorVisible) {
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
             controlsFocused = false
@@ -198,6 +204,8 @@ internal fun VlcPlayerScreen(
 
     BackHandler {
         when {
+            queueVisible -> queueVisible = false
+            pictureEditorVisible -> pictureEditorVisible = false
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -402,6 +410,11 @@ internal fun VlcPlayerScreen(
             ) {
                 Row(
                     Modifier.fillMaxWidth()
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp && hasPlaybackQueue) {
+                                queueVisible = true; true
+                            } else false
+                        }
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
                         .padding(
@@ -427,6 +440,7 @@ internal fun VlcPlayerScreen(
                             maxLines = 1
                         )
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                        Text("VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                     if (pipAvailable) IconButton(
                         onClick = {
@@ -468,6 +482,7 @@ internal fun VlcPlayerScreen(
                             appearanceOverrideId = next.id
                             modeFeedback = "Picture mode · ${next.name}"
                         },
+                        onEditPictureMode = { pictureEditorVisible = true },
                         resizeRequester = resizeRequester,
                         pictureModeRequester = pictureModeRequester,
                         leftRequester = playerSwitchRequester,
@@ -508,6 +523,8 @@ internal fun VlcPlayerScreen(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
                                 fullscreenRequester.requestFocus(); true
+                            } else if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionDown && hasPlaybackQueue) {
+                                queueVisible = true; true
                             } else false
                         },
                         verticalAlignment = Alignment.CenterVertically
@@ -559,6 +576,19 @@ internal fun VlcPlayerScreen(
                 }
             }
         }
+        if (queueVisible) PlayerQueueOverlay(
+            items = media.episodeQueue,
+            playingId = media.media.id,
+            onDismiss = { queueVisible = false; dpadInteraction++; showControls() },
+            onSelect = { queueVisible = false; onPlayItem(it) }
+        )
+        if (pictureEditorVisible) PlayerPictureModeEditor(
+            profiles = appearanceProfiles,
+            selectedId = activeAppearanceProfile.id,
+            onDismiss = { pictureEditorVisible = false; appearancePreview = null; dpadInteraction++; showControls() },
+            onPreview = { appearancePreview = it },
+            onSelected = { appearanceOverrideId = it }
+        )
 
         if (buffering && error == null) Column(
             Modifier.align(Alignment.Center),

@@ -3,20 +3,37 @@ package com.nikhil.niktv.ui
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -24,12 +41,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.util.Calendar
 import kotlin.math.roundToInt
+import com.nikhil.niktv.model.MediaItem
 
 internal enum class VideoResizeMode(val label: String) {
     FIT("Fit"), FILL("Fill"), ZOOM("Zoom"), STRETCH("Stretch");
@@ -232,6 +256,7 @@ internal fun PlayerVisualButtons(
     profiles: List<VideoAppearanceProfile>,
     activeProfile: VideoAppearanceProfile,
     onPictureMode: (VideoAppearanceProfile) -> Unit,
+    onEditPictureMode: () -> Unit,
     resizeRequester: FocusRequester,
     pictureModeRequester: FocusRequester,
     leftRequester: FocusRequester,
@@ -261,10 +286,7 @@ internal fun PlayerVisualButtons(
         )
     }
     IconButton(
-        onClick = {
-            val next = profiles[(profiles.indexOfFirst { it.id == activeProfile.id }.coerceAtLeast(0) + 1) % profiles.size]
-            onPictureMode(next)
-        },
+        onClick = onEditPictureMode,
         modifier = Modifier.focusRequester(pictureModeRequester)
             .focusProperties {
                 left = resizeRequester
@@ -275,7 +297,7 @@ internal fun PlayerVisualButtons(
     ) {
         Icon(
             videoAppearanceIcon(activeProfile.id),
-            "Picture mode: ${activeProfile.name}",
+            "Picture mode: ${activeProfile.name}. Open editor",
             tint = Color.White
         )
     }
@@ -298,5 +320,114 @@ internal fun PlayerModeFeedback(label: String) {
                 style = MaterialTheme.typography.titleMedium
             )
         }
+    }
+}
+
+@Composable
+internal fun PlayerQueueOverlay(
+    items: List<MediaItem>,
+    playingId: String,
+    onDismiss: () -> Unit,
+    onSelect: (MediaItem) -> Unit
+) {
+    BackHandler(onBack = onDismiss)
+    val currentRequester = remember { FocusRequester() }
+    LaunchedEffect(items, playingId) { delay(100L); runCatching { currentRequester.requestFocus() } }
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(.72f)).padding(28.dp),
+        contentAlignment = Alignment.CenterEnd
+    ) {
+        Surface(
+            Modifier.fillMaxWidth(.46f).widthIn(min = 320.dp, max = 620.dp),
+            color = Color(0xF51A1A1A),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Text("Choose what to play", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+                Text("From this list", style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
+                Spacer(Modifier.height(14.dp))
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(items.distinctBy { it.id }, key = { it.id }) { item ->
+                        var focused by remember { mutableStateOf(false) }
+                        val current = item.id == playingId
+                        Surface(
+                            Modifier.fillMaxWidth()
+                                .then(if (current) Modifier.focusRequester(currentRequester) else Modifier)
+                                .onFocusChanged { focused = it.isFocused }
+                                .clickable { onSelect(item) }
+                                .focusable(),
+                            color = when { focused -> MaterialTheme.colorScheme.primary; current -> Color(0xFF383838); else -> Color.Transparent },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                        ) {
+                            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                if (current) Icon(Icons.Default.PlayArrow, null, tint = Color.White)
+                                Text(item.title, color = Color.White, maxLines = 2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PlayerPictureModeEditor(
+    profiles: List<VideoAppearanceProfile>,
+    selectedId: String,
+    onDismiss: () -> Unit,
+    onPreview: (VideoAppearanceProfile) -> Unit,
+    onSelected: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var selected by remember(selectedId) { mutableStateOf(profiles.firstOrNull { it.id == selectedId } ?: profiles.first()) }
+    var brightness by remember(selected.id) { mutableFloatStateOf(selected.brightness) }
+    var warmth by remember(selected.id) { mutableFloatStateOf(selected.warmth) }
+    var coolness by remember(selected.id) { mutableFloatStateOf(selected.coolness) }
+    var tint by remember(selected.id) { mutableFloatStateOf(selected.tint) }
+    var dimming by remember(selected.id) { mutableFloatStateOf(selected.dimming) }
+    LaunchedEffect(selected, brightness, warmth, coolness, tint, dimming) {
+        onPreview(selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
+    }
+    BackHandler(onBack = onDismiss)
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(.78f)).padding(30.dp), contentAlignment = Alignment.Center) {
+        Surface(Modifier.fillMaxWidth(.72f).widthIn(max = 760.dp), color = Color(0xFA181818), shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {
+            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Picture mode · ${selected.name}", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+                Text("Select a mode, then tune it while the video remains visible behind this panel.", color = Color.LightGray)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    profiles.forEach { profile ->
+                        Surface(
+                            Modifier.clickable {
+                                selected = profile; onSelected(profile.id)
+                            }.focusable(),
+                            color = if (profile.id == selected.id) MaterialTheme.colorScheme.primary else Color(0xFF333333),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+                        ) { Text(profile.name, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), color = Color.White) }
+                    }
+                }
+                PlayerEditorSlider("Brightness", brightness, 0f..0.3f) { brightness = it }
+                PlayerEditorSlider("Warmth", warmth, 0f..0.4f) { warmth = it }
+                PlayerEditorSlider("Coolness", coolness, 0f..0.4f) { coolness = it }
+                PlayerEditorSlider("Color tint", tint, -0.25f..0.25f) { tint = it }
+                PlayerEditorSlider("Dimming", dimming, 0f..0.4f) { dimming = it }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+                    androidx.compose.material3.Button(onClick = {
+                        VideoAppearancePreferences.update(context, selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
+                        onSelected(selected.id); onDismiss()
+                    }) { Text(if (selected.id == "custom") "Save custom mode" else "Save changes") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValue: (Float) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.fillMaxWidth(.28f), color = Color.White)
+        Slider(value = value, onValueChange = onValue, valueRange = range, modifier = Modifier.weight(1f))
+        Text("${(value * 100).roundToInt()}%", Modifier.fillMaxWidth(.10f), color = Color.LightGray)
     }
 }

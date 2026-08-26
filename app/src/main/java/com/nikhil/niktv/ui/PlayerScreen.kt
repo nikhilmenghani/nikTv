@@ -67,6 +67,7 @@ import com.nikhil.niktv.R
 import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.PlayingMedia
 import com.nikhil.niktv.model.PlaybackEngine
+import com.nikhil.niktv.model.MediaItem as NikMediaItem
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -82,6 +83,7 @@ fun PlayerScreen(
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
+    onPlayItem: (NikMediaItem) -> Unit = {},
     controlsTimeoutSeconds: Int = 3,
     playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
     modifier: Modifier = Modifier,
@@ -113,6 +115,7 @@ fun PlayerScreen(
             onBack = onBack,
             onPlayPrevious = onPlayPrevious,
             onPlayNext = onPlayNext,
+            onPlayItem = onPlayItem,
             onProgress = onProgress,
             modifier = modifier,
             embeddedMode = embeddedMode,
@@ -146,9 +149,13 @@ fun PlayerScreen(
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
     val (appearanceProfiles, scheduledAppearanceProfile) = rememberVideoAppearanceProfiles(useSchedule = true)
     var appearanceOverrideId by remember { mutableStateOf<String?>(null) }
-    val activeAppearanceProfile = appearanceProfiles.firstOrNull { it.id == appearanceOverrideId }
+    var appearancePreview by remember { mutableStateOf<VideoAppearanceProfile?>(null) }
+    val activeAppearanceProfile = appearancePreview ?: appearanceProfiles.firstOrNull { it.id == appearanceOverrideId }
         ?: scheduledAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
+    var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var pictureEditorVisible by remember { mutableStateOf(false) }
+    val hasPlaybackQueue = media.episodeQueue.distinctBy { it.id }.size > 1 && !media.directFullscreen
     LaunchedEffect(modeFeedback) {
         if (modeFeedback != null) {
             delay(1_800L)
@@ -451,13 +458,17 @@ fun PlayerScreen(
         isPlaying,
         controlsTimeoutSeconds,
         media.progressKey,
-        embeddedMode
+        embeddedMode,
+        queueVisible,
+        pictureEditorVisible
     ) {
         val canAutoHide =
             controlsVisible &&
                 isPlaying &&
                 playbackError == null &&
                 !startupTimedOut
+                && !queueVisible
+                && !pictureEditorVisible
 
         if (canAutoHide) {
             delay(
@@ -521,6 +532,8 @@ fun PlayerScreen(
     }
     BackHandler {
         when {
+            queueVisible -> queueVisible = false
+            pictureEditorVisible -> pictureEditorVisible = false
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -682,17 +695,11 @@ fun PlayerScreen(
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_UP -> {
-                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV && media.previousEpisode != null && !advancing) {
-                                    advancing = true
-                                    onPlayPrevious()
-                                } else controlsVisible = true
+                                showControlsAndFocusPlayPause()
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV && media.nextEpisode != null && !advancing) {
-                                    advancing = true
-                                    onPlayNext()
-                                } else controlsVisible = true
+                                showControlsAndFocusPlayPause()
                                 true
                             }
                             else -> false
@@ -799,6 +806,11 @@ fun PlayerScreen(
             ) {
                 Row(
                     Modifier.fillMaxWidth()
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp && hasPlaybackQueue) {
+                                queueVisible = true; true
+                            } else false
+                        }
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
                         .padding(
@@ -831,6 +843,7 @@ fun PlayerScreen(
                         videoDetails.takeIf { it.isNotBlank() }?.let {
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
+                        Text("${if (effectiveEngine == PlaybackEngine.EXOPLAYER) "ExoPlayer" else "Media3"} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                     // PLAYER_GLOBAL_ORIENTATION_NO_ROTATE_V12
                     if (pipAvailable) {
@@ -872,6 +885,8 @@ fun PlayerScreen(
                         resizeMode = resizeMode,
                         onResize = {
                             resizeMode = resizeMode.next()
+                            videoScale = 1f
+                            videoOffset = Offset.Zero
                             modeFeedback = "Video fit · ${resizeMode.label}"
                         },
                         profiles = appearanceProfiles,
@@ -880,6 +895,7 @@ fun PlayerScreen(
                             appearanceOverrideId = next.id
                             modeFeedback = "Picture mode · ${next.name}"
                         },
+                        onEditPictureMode = { pictureEditorVisible = true },
                         resizeRequester = resizeFocusRequester,
                         pictureModeRequester = pictureModeFocusRequester,
                         leftRequester = playerSwitchFocusRequester,
@@ -922,6 +938,9 @@ fun PlayerScreen(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
                                 runCatching { fullscreenFocusRequester.requestFocus() }
+                                true
+                            } else if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionDown && hasPlaybackQueue) {
+                                queueVisible = true
                                 true
                             } else false
                         },
@@ -980,6 +999,19 @@ fun PlayerScreen(
                 }
             }
         }
+        if (queueVisible) PlayerQueueOverlay(
+            items = media.episodeQueue,
+            playingId = media.media.id,
+            onDismiss = { queueVisible = false; dpadInteraction++; showControlsAndFocusPlayPause() },
+            onSelect = { queueVisible = false; onPlayItem(it) }
+        )
+        if (pictureEditorVisible) PlayerPictureModeEditor(
+            profiles = appearanceProfiles,
+            selectedId = activeAppearanceProfile.id,
+            onDismiss = { pictureEditorVisible = false; appearancePreview = null; dpadInteraction++; showControlsAndFocusPlayPause() },
+            onPreview = { appearancePreview = it },
+            onSelected = { appearanceOverrideId = it }
+        )
         if (
             (
                 playbackState == Player.STATE_BUFFERING ||
