@@ -12,7 +12,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -746,8 +745,7 @@ private fun ModernDestinationTile(
             }
             .onFocusChanged {
                 focused = it.isFocused
-            }
-            .focusable(),
+            },
         shape = RoundedCornerShape(16.dp),
         color = Color.Transparent,
         border = BorderStroke(
@@ -879,8 +877,7 @@ private fun ModernCompactMediaCard(
             .width(148.dp)
             .onFocusChanged {
                 focused = it.isFocused
-            }
-            .focusable(),
+            },
         shape = RoundedCornerShape(12.dp),
         color = Color(0xFF151515),
         border = BorderStroke(
@@ -1415,14 +1412,20 @@ private fun ModernCollectionPoster(
             },
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
+        /*
+         * SINGLE_ACTIVATION_SURFACE_V26
+         *
+         * Surface(onClick) already owns click and focus semantics. Adding a
+         * second explicit focus node here can consume the first remote
+         * activation before the click callback is dispatched.
+         */
         Surface(
             onClick = onClick,
             modifier = modifier
                 .fillMaxWidth()
                 .onFocusChanged {
                     focused = it.isFocused
-                }
-                .focusable(),
+                },
             shape = RoundedCornerShape(11.dp),
             color = Color(0xFF202020),
             border = BorderStroke(
