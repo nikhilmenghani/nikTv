@@ -45,19 +45,31 @@ internal data class VideoAppearanceProfile(
 
 internal data class VideoAppearanceScheduleEntry(
     val profileId: String,
-    val startMinutes: Int
+    val startMinutes: Int,
+    val endMinutes: Int
 )
 
 internal data class VideoAppearanceSchedule(
     val enabled: Boolean,
+    val fallbackProfileId: String,
     val entries: List<VideoAppearanceScheduleEntry>
 ) {
     fun profileAt(minutesOfDay: Int): String? {
-        if (!enabled || entries.isEmpty()) return null
-        val ordered = entries.sortedBy { it.startMinutes }
-        return (ordered.lastOrNull { it.startMinutes <= minutesOfDay } ?: ordered.last()).profileId
+        if (!enabled) return null
+        return entries.firstOrNull { it.contains(minutesOfDay) }?.profileId ?: fallbackProfileId
     }
 }
+
+private fun VideoAppearanceScheduleEntry.contains(minutesOfDay: Int): Boolean = when {
+    startMinutes == endMinutes -> false
+    startMinutes < endMinutes -> minutesOfDay in startMinutes until endMinutes
+    else -> minutesOfDay >= startMinutes || minutesOfDay < endMinutes
+}
+
+internal fun schedulesOverlap(
+    first: VideoAppearanceScheduleEntry,
+    second: VideoAppearanceScheduleEntry
+): Boolean = (0 until 1440).any { first.contains(it) && second.contains(it) }
 
 internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
     "movie" -> Icons.Default.Movie
@@ -73,7 +85,8 @@ internal object VideoAppearancePreferences {
     private const val FILE = "video_appearance_profiles"
     private const val ACTIVE = "active"
     private const val SCHEDULE_ENABLED = "schedule_enabled"
-    private const val SCHEDULE_ENTRIES = "schedule_entries_v2"
+    private const val SCHEDULE_FALLBACK = "schedule_fallback_v3"
+    private const val SCHEDULE_ENTRIES = "schedule_entries_v3"
     private val defaults = listOf(
         VideoAppearanceProfile("movie", "Movie", .08f, .03f),
         VideoAppearanceProfile("standard", "Standard", 0f, 0f),
@@ -96,32 +109,42 @@ internal object VideoAppearancePreferences {
     fun activeId(context: Context) = prefs(context).getString(ACTIVE, "standard") ?: "standard"
     fun setActive(context: Context, id: String) { prefs(context).edit().putString(ACTIVE, id).apply() }
     private val defaultScheduleEntries = listOf(
-        VideoAppearanceScheduleEntry("bright", 6 * 60),
-        VideoAppearanceScheduleEntry("natural", 12 * 60),
-        VideoAppearanceScheduleEntry("movie", 18 * 60),
-        VideoAppearanceScheduleEntry("night", 22 * 60)
+        VideoAppearanceScheduleEntry("bright", 6 * 60, 9 * 60),
+        VideoAppearanceScheduleEntry("movie", 18 * 60, 22 * 60),
+        VideoAppearanceScheduleEntry("night", 22 * 60, 6 * 60)
+    )
+    fun defaultSchedule(enabled: Boolean = false) = VideoAppearanceSchedule(
+        enabled = enabled,
+        fallbackProfileId = "standard",
+        entries = defaultScheduleEntries
     )
     fun schedule(context: Context): VideoAppearanceSchedule {
         val stored = prefs(context).getString(SCHEDULE_ENTRIES, null)
         val entries = stored?.split(';')?.mapNotNull { encoded ->
-            val pieces = encoded.split(',', limit = 2)
+            val pieces = encoded.split(',', limit = 3)
             val minutes = pieces.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 1439) ?: return@mapNotNull null
-            val profileId = pieces.getOrNull(1)?.takeIf { id -> id.isNotBlank() } ?: return@mapNotNull null
-            VideoAppearanceScheduleEntry(profileId, minutes)
+            val endMinutes = pieces.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 1439) ?: return@mapNotNull null
+            val profileId = pieces.getOrNull(2)?.takeIf { id -> id.isNotBlank() } ?: return@mapNotNull null
+            VideoAppearanceScheduleEntry(profileId, minutes, endMinutes)
         }.orEmpty().ifEmpty { defaultScheduleEntries }
         return VideoAppearanceSchedule(
             enabled = prefs(context).getBoolean(SCHEDULE_ENABLED, false),
-            entries = entries.sortedBy { it.startMinutes }.distinctBy { it.startMinutes }
+            fallbackProfileId = prefs(context).getString(SCHEDULE_FALLBACK, "standard") ?: "standard",
+            entries = entries
         )
     }
     fun setSchedule(context: Context, schedule: VideoAppearanceSchedule) {
         val normalized = schedule.entries
-            .map { it.copy(startMinutes = it.startMinutes.coerceIn(0, 1439)) }
-            .sortedBy { it.startMinutes }
-            .distinctBy { it.startMinutes }
+            .map {
+                it.copy(
+                    startMinutes = it.startMinutes.coerceIn(0, 1439),
+                    endMinutes = it.endMinutes.coerceIn(0, 1439)
+                )
+            }
         prefs(context).edit()
             .putBoolean(SCHEDULE_ENABLED, schedule.enabled)
-            .putString(SCHEDULE_ENTRIES, normalized.joinToString(";") { "${it.startMinutes},${it.profileId}" })
+            .putString(SCHEDULE_FALLBACK, schedule.fallbackProfileId)
+            .putString(SCHEDULE_ENTRIES, normalized.joinToString(";") { "${it.startMinutes},${it.endMinutes},${it.profileId}" })
             .apply()
     }
     fun update(context: Context, profile: VideoAppearanceProfile) {

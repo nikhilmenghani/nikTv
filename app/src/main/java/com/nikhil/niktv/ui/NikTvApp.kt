@@ -4842,6 +4842,7 @@ private fun ModernSettingsScreen(
         SettingsSection("Video appearance profiles") {
             val (appearanceProfiles, activeAppearance) = rememberVideoAppearanceProfiles()
             var appearanceSchedule by remember { mutableStateOf(VideoAppearancePreferences.schedule(context)) }
+            var scheduleError by remember { mutableStateOf<String?>(null) }
             var editingId by remember(activeAppearance.id) { mutableStateOf(activeAppearance.id) }
             val editing = appearanceProfiles.firstOrNull { it.id == editingId } ?: activeAppearance
             var editName by remember(editing.id, editing.name) { mutableStateOf(editing.name) }
@@ -4883,7 +4884,7 @@ private fun ModernSettingsScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Automatic picture mode", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Build a full-day timeline. Each profile remains active until the next start time; the final entry continues through midnight.",
+                            "Scheduled windows override the fallback profile. Windows cannot overlap, and uncovered time uses the fallback.",
                             color = Color.Gray,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -4898,25 +4899,45 @@ private fun ModernSettingsScreen(
                     )
                 }
                 if (appearanceSchedule.enabled) {
-                    Text("Daily timeline", fontWeight = FontWeight.SemiBold)
-                    appearanceSchedule.entries.sortedBy { it.startMinutes }.forEachIndexed { index, entry ->
-                        key(entry.startMinutes, entry.profileId, index) {
+                    Text("Fallback mode", fontWeight = FontWeight.SemiBold)
+                    ScheduleProfileControl(
+                        profileId = appearanceSchedule.fallbackProfileId,
+                        profiles = appearanceProfiles,
+                        onChange = { profileId ->
+                            appearanceSchedule = appearanceSchedule.copy(fallbackProfileId = profileId)
+                            VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                        }
+                    )
+                    Text("Scheduled windows", fontWeight = FontWeight.SemiBold)
+                    scheduleError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    appearanceSchedule.entries.forEachIndexed { index, entry ->
+                        key(entry.startMinutes, entry.endMinutes, entry.profileId, index) {
                             ScheduleTimelineRow(
                                 entry = entry,
                                 profiles = appearanceProfiles,
-                                canRemove = appearanceSchedule.entries.size > 1,
+                                canRemove = true,
                                 onChange = { updated ->
                                     val entries = appearanceSchedule.entries.toMutableList()
                                     val originalIndex = entries.indexOf(entry).takeIf { it >= 0 } ?: index
-                                    if (entries.withIndex().any {
-                                            it.index != originalIndex &&
-                                                it.value.startMinutes == updated.startMinutes
-                                        }) return@ScheduleTimelineRow
+                                    if (updated.startMinutes == updated.endMinutes) {
+                                        scheduleError = "Start and end times must be different."
+                                        return@ScheduleTimelineRow
+                                    }
+                                    if (entries.withIndex().any { other ->
+                                            other.index != originalIndex && schedulesOverlap(updated, other.value)
+                                        }) {
+                                        scheduleError = "That time overlaps another scheduled window."
+                                        return@ScheduleTimelineRow
+                                    }
                                     entries[originalIndex] = updated
+                                    scheduleError = null
                                     appearanceSchedule = appearanceSchedule.copy(entries = entries)
                                     VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
                                 },
                                 onRemove = {
+                                    scheduleError = null
                                     appearanceSchedule = appearanceSchedule.copy(
                                         entries = appearanceSchedule.entries.filterNot { it == entry }
                                     )
@@ -4925,24 +4946,53 @@ private fun ModernSettingsScreen(
                             )
                         }
                     }
-                    Button(
-                        onClick = {
-                            val usedHours = appearanceSchedule.entries.map { it.startMinutes / 60 }.toSet()
-                            val startHour = (0..23).firstOrNull { it !in usedHours } ?: return@Button
-                            val defaultProfile = appearanceProfiles.firstOrNull { it.id == "standard" }
-                                ?: appearanceProfiles.first()
-                            appearanceSchedule = appearanceSchedule.copy(
-                                entries = appearanceSchedule.entries +
-                                    VideoAppearanceScheduleEntry(defaultProfile.id, startHour * 60)
-                            )
-                            VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                        },
-                        enabled = appearanceSchedule.entries.size < 24,
-                        modifier = Modifier.remoteFocusFrame(CircleShape)
-                    ) {
-                        Icon(Icons.Default.Add, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Add time period")
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = {
+                                val last = appearanceSchedule.entries.lastOrNull()
+                                val preferredStart = ((last?.startMinutes ?: -60) + 60 + 1440) % 1440
+                                val candidate = (0 until 96).asSequence()
+                                    .map { offset -> (preferredStart + offset * 15) % 1440 }
+                                    .map { start ->
+                                        VideoAppearanceScheduleEntry(
+                                            profileId = appearanceSchedule.fallbackProfileId,
+                                            startMinutes = start,
+                                            endMinutes = (start + 60) % 1440
+                                        )
+                                    }
+                                    .firstOrNull { proposed ->
+                                        appearanceSchedule.entries.none { schedulesOverlap(proposed, it) }
+                                    }
+                                if (candidate == null) {
+                                    scheduleError = "There is no free one-hour window to add."
+                                    return@Button
+                                }
+                                scheduleError = null
+                                appearanceSchedule = appearanceSchedule.copy(
+                                    entries = appearanceSchedule.entries + candidate
+                                )
+                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                            },
+                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                        ) {
+                            Icon(Icons.Default.Add, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Add time period")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                appearanceSchedule = VideoAppearancePreferences.defaultSchedule(
+                                    enabled = appearanceSchedule.enabled
+                                )
+                                scheduleError = null
+                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
+                            },
+                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                        ) {
+                            Icon(Icons.Default.RestartAlt, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Reset to defaults")
+                        }
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -6322,74 +6372,106 @@ private fun ScheduleTimelineRow(
     onChange: (VideoAppearanceScheduleEntry) -> Unit,
     onRemove: () -> Unit
 ) {
-    val hour = (entry.startMinutes / 60).coerceIn(0, 23)
-    val displayHour = when (val twelveHour = hour % 12) {
-        0 -> 12
-        else -> twelveHour
-    }
-    val period = if (hour < 12) "AM" else "PM"
-    val profile = profiles.firstOrNull { it.id == entry.profileId } ?: profiles.first()
-    val profileIndex = profiles.indexOf(profile)
     Surface(
         Modifier.fillMaxWidth().focusGroup(),
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFF1B2130),
         border = BorderStroke(1.dp, Color(0xFF30384B))
     ) {
-        Row(
+        Column(
             Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text("Starts", color = Color.Gray, style = MaterialTheme.typography.labelMedium)
-            IconButton(
-                onClick = {
-                    onChange(entry.copy(startMinutes = (entry.startMinutes - 60 + 1440) % 1440))
-                },
-                modifier = Modifier.remoteFocusFrame(CircleShape)
-            ) { Icon(Icons.Default.Remove, "Earlier") }
-            Text(
-                "$displayHour:00 $period",
-                Modifier.widthIn(min = 92.dp),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                fontWeight = FontWeight.SemiBold
-            )
-            IconButton(
-                onClick = {
-                    onChange(entry.copy(startMinutes = (entry.startMinutes + 60) % 1440))
-                },
-                modifier = Modifier.remoteFocusFrame(CircleShape)
-            ) { Icon(Icons.Default.Add, "Later") }
-            Spacer(Modifier.width(12.dp))
-            Icon(videoAppearanceIcon(profile.id), null, Modifier.size(22.dp), tint = Color(0xFFFF6973))
-            IconButton(
-                onClick = {
-                    val previous = profiles[(profileIndex - 1 + profiles.size) % profiles.size]
-                    onChange(entry.copy(profileId = previous.id))
-                },
-                modifier = Modifier.remoteFocusFrame(CircleShape)
-            ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous profile") }
-            Text(
-                profile.name,
-                Modifier.widthIn(min = 120.dp),
-                fontWeight = FontWeight.SemiBold
-            )
-            IconButton(
-                onClick = {
-                    val next = profiles[(profileIndex + 1) % profiles.size]
-                    onChange(entry.copy(profileId = next.id))
-                },
-                modifier = Modifier.remoteFocusFrame(CircleShape)
-            ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next profile") }
-            Spacer(Modifier.weight(1f))
-            if (canRemove) {
-                IconButton(
-                    onClick = onRemove,
-                    modifier = Modifier.remoteFocusFrame(CircleShape)
-                ) { Icon(Icons.Default.DeleteOutline, "Remove time period") }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ScheduleTimeControl(
+                    label = "Start",
+                    minutes = entry.startMinutes,
+                    modifier = Modifier.weight(1f),
+                    onChange = { onChange(entry.copy(startMinutes = it)) }
+                )
+                ScheduleTimeControl(
+                    label = "End",
+                    minutes = entry.endMinutes,
+                    modifier = Modifier.weight(1f),
+                    onChange = { onChange(entry.copy(endMinutes = it)) }
+                )
+                ScheduleProfileControl(
+                    profileId = entry.profileId,
+                    profiles = profiles,
+                    modifier = Modifier.weight(1.2f),
+                    onChange = { onChange(entry.copy(profileId = it)) }
+                )
+                if (canRemove) {
+                    IconButton(
+                        onClick = onRemove,
+                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                    ) { Icon(Icons.Default.DeleteOutline, "Remove time period") }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun ScheduleTimeControl(
+    label: String,
+    minutes: Int,
+    modifier: Modifier = Modifier,
+    onChange: (Int) -> Unit
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Color.Gray, style = MaterialTheme.typography.labelMedium)
+        IconButton(
+            onClick = { onChange((minutes - 15 + 1440) % 1440) },
+            modifier = Modifier.remoteFocusFrame(CircleShape)
+        ) { Icon(Icons.Default.Remove, "$label 15 minutes earlier") }
+        Text(
+            formatScheduleTime(minutes),
+            Modifier.widthIn(min = 92.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            fontWeight = FontWeight.SemiBold
+        )
+        IconButton(
+            onClick = { onChange((minutes + 15) % 1440) },
+            modifier = Modifier.remoteFocusFrame(CircleShape)
+        ) { Icon(Icons.Default.Add, "$label 15 minutes later") }
+    }
+}
+
+@Composable
+private fun ScheduleProfileControl(
+    profileId: String,
+    profiles: List<VideoAppearanceProfile>,
+    modifier: Modifier = Modifier,
+    onChange: (String) -> Unit
+) {
+    val profile = profiles.firstOrNull { it.id == profileId } ?: profiles.first()
+    val profileIndex = profiles.indexOf(profile)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Icon(videoAppearanceIcon(profile.id), null, Modifier.size(22.dp), tint = Color(0xFFFF6973))
+        IconButton(
+            onClick = { onChange(profiles[(profileIndex - 1 + profiles.size) % profiles.size].id) },
+            modifier = Modifier.remoteFocusFrame(CircleShape)
+        ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous profile") }
+        Text(profile.name, Modifier.widthIn(min = 112.dp), fontWeight = FontWeight.SemiBold)
+        IconButton(
+            onClick = { onChange(profiles[(profileIndex + 1) % profiles.size].id) },
+            modifier = Modifier.remoteFocusFrame(CircleShape)
+        ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next profile") }
+    }
+}
+
+private fun formatScheduleTime(minutes: Int): String {
+    val normalized = (minutes % 1440 + 1440) % 1440
+    val hour = normalized / 60
+    val minute = normalized % 60
+    val displayHour = (hour % 12).takeIf { it != 0 } ?: 12
+    val period = if (hour < 12) "AM" else "PM"
+    return "$displayHour:${minute.toString().padStart(2, '0')} $period"
 }
 
 @Composable
