@@ -346,7 +346,7 @@ internal fun VlcPlayerScreen(
                     resumeSeekAttempts > 0 &&
                         kotlin.math.abs(actual - target) <= 2_500L
 
-                if (reached) {
+                if (reached || resumeSeekAttempts >= 3) {
                     pendingInitialResumePosition = 0L
                     position = actual
                 } else {
@@ -487,7 +487,9 @@ internal fun VlcPlayerScreen(
                     // second view attachment, so release the previous surface
                     // before binding the replacement layout.
                     runCatching { player.detachViews() }
-                    player.attachViews(layout, null, false, false)
+                    // TextureView avoids rotated SurfaceView buffer-size
+                    // rejection on Fire TV/tablet-style landscape devices.
+                    player.attachViews(layout, null, false, true)
                     if (!embeddedMode) layout.requestFocus()
                     }
                 },

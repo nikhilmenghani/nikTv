@@ -1180,13 +1180,28 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         type = playing.catalogType
                     )
 
+            val existingPlaybackIds =
+                playing.episodeQueue
+                    .ifEmpty { listOf(playing.media) }
+                    .mapTo(mutableSetOf()) { it.id }
+
             runCatching {
                 withTimeout(45_000L) {
-                    portal.catalogPage(
-                        session,
-                        category,
-                        snapshot.playbackQueuePage + 1
-                    )
+                    var requestedPage = snapshot.playbackQueuePage + 1
+                    var result = portal.catalogPage(session, category, requestedPage)
+                    var duplicatePagesSkipped = 0
+
+                    while (
+                        result.hasMore &&
+                        result.items.none { it.id !in existingPlaybackIds } &&
+                        duplicatePagesSkipped < 3
+                    ) {
+                        duplicatePagesSkipped++
+                        requestedPage = (result.page + 1).coerceAtLeast(requestedPage + 1)
+                        result = portal.catalogPage(session, category, requestedPage)
+                    }
+
+                    result
                 }
             }.onSuccess { result ->
                 val oldQueue =

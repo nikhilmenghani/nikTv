@@ -3,6 +3,7 @@ package com.nikhil.niktv.ui
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -791,7 +792,7 @@ internal fun PlayerPictureModeEditor(
     }
     BackHandler(onBack = onDismiss)
     Box(
-        Modifier.fillMaxSize().focusGroup().background(Color.Black.copy(.18f)).padding(end = 24.dp, bottom = 20.dp),
+        Modifier.fillMaxSize().focusGroup().padding(end = 24.dp, bottom = 20.dp),
         contentAlignment = Alignment.BottomEnd
     ) {
         Surface(Modifier.fillMaxWidth(.50f).widthIn(min = 360.dp, max = 660.dp), color = Color(0xF5181818), shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)) {
@@ -800,13 +801,26 @@ internal fun PlayerPictureModeEditor(
                 Text("Adjust while watching the video.", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
                 androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(profiles, key = { it.id }) { profile ->
+                        var focused by remember(profile.id) { mutableStateOf(false) }
                         Surface(
                             Modifier.focusRequester(profileRequesters.getOrPut(profile.id) { FocusRequester() })
                                 .focusProperties { down = brightnessRequester }
+                                .onFocusChanged { focused = it.isFocused }
+                                .then(
+                                    if (focused) Modifier.border(
+                                        3.dp,
+                                        Color(0xFFFF3340),
+                                        androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+                                    ) else Modifier
+                                )
                                 .clickable {
                                 selected = profile; onSelected(profile.id)
                             }.focusable(),
-                            color = if (profile.id == selected.id) MaterialTheme.colorScheme.primary else Color(0xFF333333),
+                            color = when {
+                                focused -> Color(0xFF65151B)
+                                profile.id == selected.id -> MaterialTheme.colorScheme.primary
+                                else -> Color(0xFF333333)
+                            },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
                         ) { Text(profile.name, Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, style = MaterialTheme.typography.labelMedium) }
                     }
@@ -817,11 +831,11 @@ internal fun PlayerPictureModeEditor(
                 PlayerEditorSlider("Color tint", tint, -0.25f..0.25f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
                 PlayerEditorSlider("Dimming", dimming, 0f..0.4f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    androidx.compose.material3.TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(cancelRequester).focusProperties { up = dimmingRequester; right = saveRequester }) { Text("Cancel") }
+                    androidx.compose.material3.TextButton(onClick = onDismiss, modifier = Modifier.focusRequester(cancelRequester).focusProperties { up = dimmingRequester; right = saveRequester }.playerControlFocus { }) { Text("Cancel") }
                     androidx.compose.material3.Button(onClick = {
                         VideoAppearancePreferences.update(context, selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
                         onSelected(selected.id); onDismiss()
-                    }, modifier = Modifier.focusRequester(saveRequester).focusProperties { up = dimmingRequester; left = cancelRequester }) { Text(if (selected.id == "custom") "Save custom mode" else "Save changes") }
+                    }, modifier = Modifier.focusRequester(saveRequester).focusProperties { up = dimmingRequester; left = cancelRequester }.playerControlFocus { }) { Text(if (selected.id == "custom") "Save custom mode" else "Save changes") }
                 }
             }
         }
@@ -830,6 +844,7 @@ internal fun PlayerPictureModeEditor(
 
 @Composable
 private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, requester: FocusRequester, upRequester: FocusRequester, downRequester: FocusRequester, onValue: (Float) -> Unit) {
+    var focused by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -839,6 +854,7 @@ private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatin
                 up = upRequester
                 down = downRequester
             }
+            .onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
@@ -861,7 +877,21 @@ private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatin
                     else -> false
                 }
             }
-            .focusable(),
+            .focusable()
+            .then(
+                if (focused) Modifier
+                    .background(
+                        Color(0xFF451014),
+                        androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                    )
+                    .border(
+                        3.dp,
+                        Color(0xFFFF3340),
+                        androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                    )
+                    .padding(horizontal = 6.dp)
+                else Modifier
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, Modifier.fillMaxWidth(.28f), color = Color.White)
