@@ -119,6 +119,9 @@ fun PlayerScreen(
     var engineSwitchResumePosition by remember(media.progressKey) {
         mutableLongStateOf(media.resumePositionMillis)
     }
+    var restorePlayerSwitchFocus by remember(media.progressKey) {
+        mutableStateOf(false)
+    }
     val configuredEngine = when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
@@ -147,8 +150,11 @@ fun PlayerScreen(
             onFullscreenChanged = onFullscreenChanged,
             onSwitchPlayer = { position ->
                 engineSwitchResumePosition = position
+                restorePlayerSwitchFocus = true
                 sessionEngineOverride = PlaybackEngine.MEDIA3
-            }
+            },
+            focusPlayerSwitchOnEnter = restorePlayerSwitchFocus,
+            onPlayerSwitchFocusRestored = { restorePlayerSwitchFocus = false }
         )
         return
     }
@@ -261,6 +267,15 @@ fun PlayerScreen(
     val forwardFocusRequester = remember(media.progressKey) { FocusRequester() }
     val nextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val progressFocusRequester = remember(media.progressKey) { FocusRequester() }
+
+    LaunchedEffect(restorePlayerSwitchFocus, effectiveEngine) {
+        if (restorePlayerSwitchFocus) {
+            controlsVisible = true
+            delay(120L)
+            runCatching { playerSwitchFocusRequester.requestFocus() }
+            restorePlayerSwitchFocus = false
+        }
+    }
     val errorBackFocusRequester = remember(media.progressKey) { FocusRequester() }
     val errorRetryFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -546,6 +561,7 @@ fun PlayerScreen(
         if (
             !embeddedMode &&
             controlsVisible &&
+            !restorePlayerSwitchFocus &&
             playbackError == null &&
             !startupTimedOut
         ) {
@@ -852,20 +868,6 @@ fun PlayerScreen(
             ) {
                 Row(
                     Modifier.fillMaxWidth()
-                        .onPreviewKeyEvent { event ->
-                            if (
-                                focusMode &&
-                                event.type == ComposeKeyEventType.KeyDown &&
-                                event.key == ComposeKey.DirectionUp &&
-                                hasPlaybackQueue &&
-                                !pictureEditorVisible &&
-                                !queueVisible
-                            ) {
-                                pictureEditorVisible = false
-                                queueVisible = true
-                                true
-                            } else false
-                        }
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
                         .padding(
@@ -923,6 +925,7 @@ fun PlayerScreen(
                             coroutineScope.launch {
                                 delay(700L)
                                 engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                                restorePlayerSwitchFocus = true
                                 sessionEngineOverride = PlaybackEngine.VLC
                             }
                         },

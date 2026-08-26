@@ -66,7 +66,9 @@ internal fun VlcPlayerScreen(
     startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null,
-    onSwitchPlayer: (Long) -> Unit
+    onSwitchPlayer: (Long) -> Unit,
+    focusPlayerSwitchOnEnter: Boolean = false,
+    onPlayerSwitchFocusRestored: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val playerConfiguration = LocalConfiguration.current
@@ -138,6 +140,15 @@ internal fun VlcPlayerScreen(
     val nextRequester = remember(media.progressKey) { FocusRequester() }
     val progressRequester = remember(media.progressKey) { FocusRequester() }
 
+    LaunchedEffect(focusPlayerSwitchOnEnter) {
+        if (focusPlayerSwitchOnEnter) {
+            controlsVisible = true
+            delay(120L)
+            runCatching { playerSwitchRequester.requestFocus() }
+            onPlayerSwitchFocusRestored()
+        }
+    }
+
     val libVlc = remember(media.progressKey) {
         LibVLC(context, arrayListOf("--network-caching=1500", "--clock-jitter=0"))
     }
@@ -154,7 +165,10 @@ internal fun VlcPlayerScreen(
             gestureFeedback = null
         }
     }
-    LaunchedEffect(player, resizeMode) {
+    // Reapply the selected scale after the VLC surface is attached. Applying
+    // BEST_FIT before attach can be lost, leaving the new fullscreen surface
+    // at VLC's crop-prone default while Media3 still renders correctly.
+    LaunchedEffect(player, resizeMode, videoView) {
         player.setVideoScale(
             when (resizeMode) {
                 VideoResizeMode.FIT -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
@@ -221,7 +235,12 @@ internal fun VlcPlayerScreen(
         }
     }
     LaunchedEffect(controlsVisible, embeddedMode, media.progressKey) {
-        if (controlsVisible && !embeddedMode && error == null) {
+        if (
+            controlsVisible &&
+            !embeddedMode &&
+            !focusPlayerSwitchOnEnter &&
+            error == null
+        ) {
             delay(80)
             runCatching { playRequester.requestFocus() }
         }
@@ -492,19 +511,6 @@ internal fun VlcPlayerScreen(
             ) {
                 Row(
                     Modifier.fillMaxWidth()
-                        .onPreviewKeyEvent { event ->
-                            if (
-                                focusMode &&
-                                event.type == KeyEventType.KeyDown &&
-                                event.key == ComposeKey.DirectionUp &&
-                                hasPlaybackQueue &&
-                                !pictureEditorVisible &&
-                                !queueVisible
-                            ) {
-                                queueVisible = true
-                                true
-                            } else false
-                        }
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
                         .padding(

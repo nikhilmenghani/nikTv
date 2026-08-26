@@ -986,10 +986,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _state.update { current ->
-                if (
-                    current.playbackQueueScope != scope ||
-                    current.nowPlaying == null
-                ) {
+                if (current.nowPlaying == null) {
                     current
                 } else {
                     current.copy(
@@ -1161,34 +1158,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val category =
-                snapshot.rawCategoriesByType[
-                    playing.catalogType
-                ]
+                snapshot.selectedCategory
+                    ?.takeIf {
+                        it.id == categoryId &&
+                            it.type == playing.catalogType
+                    }
+                    ?: snapshot.rawCategoriesByType[
+                        playing.catalogType
+                    ]
                     .orEmpty()
                     .firstOrNull {
                         it.id == categoryId
                     }
-                    ?: runCatching {
-                        withTimeout(20_000L) {
-                            portal.categories(
-                                session,
-                                playing.catalogType
-                            ).firstOrNull {
-                                it.id == categoryId
-                            }
-                        }
-                    }.getOrNull()
-
-            if (category == null) {
-                _state.update {
-                    it.copy(
-                        playbackQueueLoadingMore = false,
-                        error =
-                            "Could not identify the playback category"
+                    // catalogPage only needs the authoritative IPTV category
+                    // id and media type. Avoid a second categories request when
+                    // playback came from Home/search and no browse category is
+                    // currently selected.
+                    ?: Category(
+                        id = categoryId,
+                        title = "Playback queue",
+                        type = playing.catalogType
                     )
-                }
-                return@launch
-            }
 
             runCatching {
                 withTimeout(45_000L) {

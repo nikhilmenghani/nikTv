@@ -112,7 +112,7 @@ internal fun schedulesOverlap(
 
 internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
     "movie" -> Icons.Default.Movie
-    "standard" -> Icons.Default.Tune
+    "standard" -> Icons.Default.Tv
     "natural" -> Icons.Default.Eco
     "bright" -> Icons.Default.LightMode
     "bedroom" -> Icons.Default.Bed
@@ -465,11 +465,7 @@ internal fun PlayerQueueOverlay(
                 } else {
                     when (event.key) {
                         Key.DirectionUp -> {
-                            if (focusedIndex == currentIndex) {
-                                onDismiss()
-                            } else {
-                                focusAt((focusedIndex - 1).coerceAtLeast(0))
-                            }
+                            onDismiss()
                             true
                         }
 
@@ -478,7 +474,6 @@ internal fun PlayerQueueOverlay(
                             true
                         }
 
-                        Key.DirectionDown,
                         Key.DirectionRight -> {
                             val maxIndex =
                                 if (showLoadMore) uniqueItems.size
@@ -488,6 +483,8 @@ internal fun PlayerQueueOverlay(
                             }
                             true
                         }
+
+                        Key.DirectionDown -> true
 
                         else -> false
                     }
@@ -511,7 +508,7 @@ internal fun PlayerQueueOverlay(
                     color = Color.White
                 )
                 Text(
-                    "↑/↓ or ←/→ Browse  •  Up on playing title closes  •  OK Play",
+                    "←/→ Browse  •  ↑ Close  •  OK Play",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.LightGray
                 )
@@ -833,9 +830,47 @@ internal fun PlayerPictureModeEditor(
 
 @Composable
 private fun PlayerEditorSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, requester: FocusRequester, upRequester: FocusRequester, downRequester: FocusRequester, onValue: (Float) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .focusRequester(requester)
+            .focusProperties {
+                up = upRequester
+                down = downRequester
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionUp -> {
+                        runCatching { upRequester.requestFocus() }
+                        true
+                    }
+                    Key.DirectionDown -> {
+                        runCatching { downRequester.requestFocus() }
+                        true
+                    }
+                    Key.DirectionLeft -> {
+                        onValue((value - .01f).coerceIn(range.start, range.endInclusive))
+                        true
+                    }
+                    Key.DirectionRight -> {
+                        onValue((value + .01f).coerceIn(range.start, range.endInclusive))
+                        true
+                    }
+                    else -> false
+                }
+            }
+            .focusable(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Text(label, Modifier.fillMaxWidth(.28f), color = Color.White)
-        Slider(value = value, onValueChange = onValue, valueRange = range, modifier = Modifier.weight(1f).focusRequester(requester).focusProperties { up = upRequester; down = downRequester })
+        Slider(
+            value = value,
+            onValueChange = onValue,
+            valueRange = range,
+            modifier = Modifier.weight(1f).focusProperties { canFocus = false }
+        )
         Text("${(value * 100).roundToInt()}%", Modifier.fillMaxWidth(.10f), color = Color.LightGray)
     }
 }
