@@ -7230,7 +7230,7 @@ private fun CategoryManagerDialog(
         Surface(
             modifier = categoryPanelModifier,
             shape = if (categoryIsTv) RoundedCornerShape(18.dp) else RoundedCornerShape(0.dp),
-            color = Color.Black,
+            color = Color(0xFF090B10),
             tonalElevation = if (categoryIsTv) 6.dp else 0.dp
         ) {
             Column(
@@ -7239,9 +7239,26 @@ private fun CategoryManagerDialog(
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF2B1014),
+                        border = BorderStroke(1.dp, Color(0x66E50914))
+                    ) {
+                        Icon(
+                            Icons.Default.Tune,
+                            null,
+                            Modifier.padding(12.dp).size(24.dp),
+                            tint = Color(0xFFFF3340)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("${type.title} Categories", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text("Choose up to 10 categories for ${type.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "Choose up to 10 · press → at the end of any row to save",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Button(
                         onClick = {
@@ -7252,7 +7269,10 @@ private fun CategoryManagerDialog(
                             .height(48.dp)
                             .focusRequester(applyRequester)
                             .focusProperties {
-                                left = FocusRequester.Cancel
+                                left = focusedCategoryId
+                                    ?.let(categoryRequesters::get)
+                                    ?: firstCategoryRequester
+                                    ?: searchRequester
                                 right = closeRequester
                                 down = firstCategoryRequester ?: searchRequester
                             }
@@ -7264,7 +7284,11 @@ private fun CategoryManagerDialog(
                             ),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
-                    ) { Text("Apply & Close", color = Color.White, fontWeight = FontWeight.Bold) }
+                    ) {
+                        Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("Apply & Close", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                     Spacer(Modifier.width(8.dp))
                     IconButton(
                         onClick = close,
@@ -7355,11 +7379,14 @@ private fun CategoryManagerDialog(
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(44.dp)
+                                    .height(52.dp)
                                     .focusRequester(rowRequester)
                                     .focusProperties {
                                         if (index < categoryColumns) up = applyRequester
                                         if (index >= filteredRaw.size - categoryColumns) down = searchRequester
+                                        if ((index + 1) % categoryColumns == 0 || index == filteredRaw.lastIndex) {
+                                            right = applyRequester
+                                        }
                                     }
                                     .onFocusChanged {
                                         if (it.isFocused) {
@@ -7390,16 +7417,28 @@ private fun CategoryManagerDialog(
                                         if (selected) Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = Color.White)
                                     }
                                     Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = if (selectionLimitReached) "${category.title} · limit reached" else category.title,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).then(
-                                            if (rowFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            text = category.title,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.fillMaxWidth().then(
+                                                if (rowFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
+                                            )
                                         )
-                                    )
+                                        Text(
+                                            when {
+                                                selected -> "Included · ${currentEnabledSet.indexOf(category.id) + 1} of ${currentEnabledSet.size}"
+                                                selectionLimitReached -> "Selection limit reached"
+                                                else -> "Not included"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (selected) Color(0xFFFF8A91) else Color(0xFF8D929B),
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
                             }
                         }

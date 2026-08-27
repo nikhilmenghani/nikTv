@@ -1747,6 +1747,7 @@ private fun ModernIptvCollection(
                 onFavorite = {
                     toggleFavorite(media)
                 },
+                compactLandscape = category.type == CatalogType.LIVE_TV,
                 isTv = isTv
             )
         }
@@ -1842,6 +1843,7 @@ private fun ModernCollectionPoster(
     modifier: Modifier = Modifier,
     isFavorite: Boolean = false,
     onFavorite: (() -> Unit)? = null,
+    compactLandscape: Boolean = false,
     isTv: Boolean
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -1940,7 +1942,7 @@ private fun ModernCollectionPoster(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .aspectRatio(2f / 3f)
+                    .aspectRatio(if (compactLandscape) 4f / 3f else 2f / 3f)
                     .background(Color(0xFF222222))
             ) {
                 ModernPosterImage(
