@@ -707,7 +707,9 @@ fun PlayerScreen(
                     var adjustingLevel = false
                     var gestureConsumed = false
                     var tapCandidate = false
+                    var queueSwipeCandidate = false
                     val tapSlop = 14f * resources.displayMetrics.density
+                    val queueSwipeThreshold = 72f * resources.displayMetrics.density
                     fun applyVideoTransform() {
                         videoSurfaceView?.apply {
                             scaleX = videoScale
@@ -814,6 +816,11 @@ fun PlayerScreen(
                                 adjustingLevel = false
                                 gestureConsumed = false
                                 tapCandidate = true
+                                queueSwipeCandidate =
+                                    focusMode &&
+                                        hasPlaybackQueue &&
+                                        !pictureEditorVisible &&
+                                        event.y >= playerView.height * 0.72f
                                 gestureStartValue = if (brightnessGesture) {
                                     val windowValue = activity?.window?.attributes?.screenBrightness ?: -1f
                                     if (windowValue >= 0f) windowValue else {
@@ -828,7 +835,21 @@ fun PlayerScreen(
                             MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
                                 val movement = Offset(event.x, event.y) - lastTouch
                                 if (movement.getDistance() > tapSlop) tapCandidate = false
-                                if (videoScale > 1f) {
+                                val queueSwipeDistance = gestureStartY - event.y
+                                if (
+                                    queueSwipeCandidate &&
+                                    queueSwipeDistance > queueSwipeThreshold
+                                ) {
+                                    queueVisible = true
+                                    controlsVisible = false
+                                    controlsFocused = false
+                                    gestureConsumed = true
+                                    queueSwipeCandidate = false
+                                } else if (queueSwipeCandidate) {
+                                    // The bottom-edge swipe belongs to the queue sheet,
+                                    // not brightness/volume adjustment.
+                                    Unit
+                                } else if (videoScale > 1f) {
                                     val current = Offset(event.x, event.y)
                                     val delta = current - lastTouch
                                     if (delta.getDistance() > 1f) {
@@ -856,6 +877,7 @@ fun PlayerScreen(
                                     controlsVisible = !controlsVisible
                                     gestureConsumed = true
                                 }
+                                queueSwipeCandidate = false
                             }
                         }
                         // Claim the gesture at ACTION_DOWN. The old Media3 controller

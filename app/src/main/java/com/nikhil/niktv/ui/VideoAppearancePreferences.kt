@@ -47,11 +47,14 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -488,6 +491,28 @@ internal fun PlayerQueueOverlay(
                         Key.DirectionDown -> true
 
                         else -> false
+                    }
+                }
+            }
+            .pointerInput(onDismiss) {
+                awaitPointerEventScope {
+                    var start = Offset.Zero
+                    var tracking = false
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull() ?: continue
+                        if (change.pressed && !change.previousPressed) {
+                            start = change.position
+                            tracking = true
+                        } else if (!change.pressed && change.previousPressed && tracking) {
+                            val delta = change.position - start
+                            val swipeDown = delta.y > 64.dp.toPx() &&
+                                kotlin.math.abs(delta.y) > kotlin.math.abs(delta.x)
+                            val outsideTap = delta.getDistance() < 12.dp.toPx() &&
+                                start.y < size.height - 380.dp.toPx()
+                            if (swipeDown || outsideTap) onDismiss()
+                            tracking = false
+                        }
                     }
                 }
             }

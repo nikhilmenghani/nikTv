@@ -430,6 +430,9 @@ internal fun VlcPlayerScreen(
                     var gestureStartValue = 0f
                     var brightnessGesture = false
                     var adjustingLevel = false
+                    var queueSwipeCandidate = false
+                    var queueSwipeTriggered = false
+                    val queueSwipeThreshold = 72f * layout.resources.displayMetrics.density
                     videoView = layout
                     // Native VLC focus is only the embedded Showcase
                     // D-pad bridge. Standalone/fullscreen focus stays in Compose.
@@ -465,6 +468,12 @@ internal fun VlcPlayerScreen(
                                 gestureStartY = event.y
                                 brightnessGesture = event.x < layout.width / 2f
                                 adjustingLevel = false
+                                queueSwipeTriggered = false
+                                queueSwipeCandidate =
+                                    focusMode &&
+                                        hasPlaybackQueue &&
+                                        !pictureEditorVisible &&
+                                        event.y >= layout.height * 0.72f
                                 gestureStartValue = if (brightnessGesture) {
                                     val configured = activity?.window?.attributes?.screenBrightness ?: -1f
                                     if (configured >= 0f) configured else {
@@ -477,7 +486,19 @@ internal fun VlcPlayerScreen(
                             }
                             MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1) {
                                 val deltaY = gestureStartY - event.y
-                                if (adjustingLevel || kotlin.math.abs(deltaY) > 24f * layout.resources.displayMetrics.density) {
+                                if (
+                                    queueSwipeCandidate &&
+                                    deltaY > queueSwipeThreshold
+                                ) {
+                                    queueVisible = true
+                                    controlsVisible = false
+                                    controlsFocused = false
+                                    queueSwipeTriggered = true
+                                    queueSwipeCandidate = false
+                                } else if (
+                                    !queueSwipeCandidate &&
+                                    (adjustingLevel || kotlin.math.abs(deltaY) > 24f * layout.resources.displayMetrics.density)
+                                ) {
                                     adjustingLevel = true
                                     val level = (gestureStartValue + deltaY / layout.height.coerceAtLeast(1)).coerceIn(0f, 1f)
                                     if (brightnessGesture) {
@@ -491,8 +512,12 @@ internal fun VlcPlayerScreen(
                                     gestureFeedback = brightnessGesture to level
                                 }
                             }
-                            MotionEvent.ACTION_UP -> if (!adjustingLevel) {
-                                controlsVisible = !controlsVisible
+                            MotionEvent.ACTION_UP -> {
+                                if (!adjustingLevel && !queueSwipeTriggered) {
+                                    controlsVisible = !controlsVisible
+                                }
+                                queueSwipeCandidate = false
+                                queueSwipeTriggered = false
                             }
                         }
                         true
