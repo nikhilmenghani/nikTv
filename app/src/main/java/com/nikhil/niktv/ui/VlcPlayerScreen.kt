@@ -82,9 +82,6 @@ internal fun VlcPlayerScreen(
     var pendingInitialResumePosition by remember(media.progressKey) {
         mutableLongStateOf(initialResumePosition.coerceAtLeast(0L))
     }
-    var resumeSeekAttempts by remember(media.progressKey) {
-        mutableIntStateOf(0)
-    }
     var error by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
     ApplyMobileFullscreenOrientation(focusMode)
@@ -381,18 +378,12 @@ internal fun VlcPlayerScreen(
                         (knownDuration - 1_000L).coerceAtLeast(0L)
                     )
                 val actual = player.time.coerceAtLeast(0L)
-                val reached =
-                    resumeSeekAttempts > 0 &&
-                        kotlin.math.abs(actual - target) <= 2_500L
-
-                if (reached || resumeSeekAttempts >= 3) {
-                    pendingInitialResumePosition = 0L
-                    position = actual
-                } else {
-                    player.time = target
-                    resumeSeekAttempts++
-                    position = target
-                }
+                // Seek exactly once after VLC reaches Playing. Retrying this seek
+                // every polling tick makes keyframe-based VOD streams replay the
+                // same opening segment several times before playback can advance.
+                player.time = target
+                pendingInitialResumePosition = 0L
+                position = target
             } else if (pendingResume > 0L) {
                 position = pendingResume
             } else {

@@ -162,25 +162,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.keepAwakeOnlyDuringPlayback.collect { enabled ->
             _state.update { it.copy(keepAwakeOnlyDuringPlayback = enabled) }
         } }
-        viewModelScope.launch { store.modernUiEnabled.collect { enabled ->
-            _state.update { current ->
-                if (current.modernUiEnabled == enabled) current
-                else current.copy(
-                    modernUiEnabled = enabled,
-                    modernTmdbSection = null,
-                    modernIptvCategory = null,
-                    modernSectionOriginHome = false,
-                    modernTmdbMovies = emptyList(),
-                    modernTmdbSeries = emptyList(),
-                    modernTmdbLoading = false,
-                    modernTmdbPage = 0,
-                    modernTmdbHasMore = false,
-                    modernTmdbError = null,
-                    seriesOpenedFromModernSection = false,
-                    feedRefreshing = if (enabled) false else current.feedRefreshing
-                )
-            }
-        } }
         viewModelScope.launch { store.playbackEngine.collect { engine -> _state.update { it.copy(playbackEngine = engine) } } }
         viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
         viewModelScope.launch { store.rememberedSeriesSeasons.collect { rememberedSeriesSeasons = it } }

@@ -402,10 +402,10 @@ private fun ModernDestinationHub(
         }
 
     val liveCategories =
-        if (dashboardSurface == DashboardSurface.HOME) {
+        if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.LIVE_TV)) {
             state.modernVisibleIptvCategories(
                 CatalogType.LIVE_TV,
-                requireExplicitSelection = true
+                requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
             )
         } else {
             emptyList()
@@ -589,7 +589,17 @@ private fun ModernDestinationHub(
                             }
                         }
 
-                        DashboardSurface.LIVE_TV -> Unit
+                        DashboardSurface.LIVE_TV -> {
+                            item("configure-iptv") {
+                                AssistChip(
+                                    onClick = { configureIptv(CatalogType.LIVE_TV) },
+                                    label = { Text("IPTV categories") },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Tune, null, Modifier.size(17.dp))
+                                    }
+                                )
+                            }
+                        }
                     }
 
                     item("reset") {

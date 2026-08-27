@@ -1675,10 +1675,8 @@ private fun ModernBrowseScreen(
     }
     val selectedTmdbSections = state.tmdbSectionsBySurface[dashboardSurface].orEmpty()
 
-    if (
-        state.modernUiEnabled &&
-        (home || state.selectedType == CatalogType.MOVIES || state.selectedType == CatalogType.SERIES)
-    ) {
+    // Tile-first sections are the sole browse interface for every destination.
+    run {
         ModernTileBrowseScreen(
             state = state,
             dashboardSurface = dashboardSurface,
@@ -5157,36 +5155,6 @@ private fun ModernSettingsScreen(
             settingsConfiguration.smallestScreenWidthDp < 600 &&
                 orientationMode != UiOrientationMode.LANDSCAPE
 
-        SettingsSection("Interface") {
-            ListItem(
-                headlineContent = { Text("Modern tile-first browsing") },
-                supportingContent = {
-                    Text(
-                        if (state.modernUiEnabled) {
-                            "Home, Movies, and Series show lightweight destination tiles. Media loads only after you open a destination."
-                        } else {
-                            "Use NikTV's existing dashboard, media rails, and Browse layout behavior."
-                        }
-                    )
-                },
-                leadingContent = {
-                    Icon(Icons.Default.DashboardCustomize, null)
-                },
-                trailingContent = {
-                    Switch(
-                        checked = state.modernUiEnabled,
-                        onCheckedChange = setModernUiEnabled,
-                        modifier = Modifier.remoteFocusFrame(
-                            RoundedCornerShape(16.dp)
-                        )
-                    )
-                },
-                colors = ListItemDefaults.colors(
-                    containerColor = Color.Transparent
-                )
-            )
-        }
-
         if (showMobileAppearance) SettingsSection("Mobile appearance") {
             val mobileDesign by rememberMobileUiDesign()
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -5596,35 +5564,6 @@ private fun ModernSettingsScreen(
             }
         }
         OrientationSettingsSection(Modifier.focusGroup())
-
-        SettingsSection("Browse layout") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    "Choose how Live TV, Movies, and Series are presented.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf(
-                        BrowseLayout.SECTIONS to "Sections",
-                        BrowseLayout.GRID to "Grid",
-                        BrowseLayout.LIST to "List"
-                    ).forEachIndexed { index, (layout, label) ->
-                        val shape = uniformSegmentShape(index, 3)
-                        SegmentedButton(
-                            selected = state.browseLayout == layout,
-                            onClick = { setBrowseLayout(layout) },
-                            modifier = Modifier.remoteFocusFrame(shape),
-                            shape = shape
-                        ) { Text(label) }
-                    }
-                }
-                Text(
-                    "Sections loads a limited set of categories as Home-style horizontal rows. Grid and List load one selected category at a time.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
 
         PlaybackDesignSettingsSection(profile.cacheKey(), Modifier.focusGroup())
 
