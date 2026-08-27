@@ -64,10 +64,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -100,7 +103,9 @@ import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.TmdbHomeSection
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 internal fun ModernTileBrowseScreen(
@@ -1003,6 +1008,9 @@ private fun ModernTmdbCollection(
             }
         }
     val count = focusIds.size
+    var focusedPosterIndex by remember(section) {
+        mutableIntStateOf(-1)
+    }
 
     /*
      * PLAYBACK_RETURN_FOCUS_V22
@@ -1044,11 +1052,25 @@ private fun ModernTmdbCollection(
                     }
                 if (!alreadyVisible) {
                     gridState.scrollToItem(targetGridIndex)
-                    // Let the newly visible lazy item attach its requester.
-                    delay(80L)
+                    withTimeoutOrNull(1_000L) {
+                        snapshotFlow {
+                            gridState.layoutInfo.visibleItemsInfo.any {
+                                it.index == targetGridIndex
+                            }
+                        }.first { it }
+                    }
                 }
-                runCatching {
-                    targetRequester.requestFocus()
+                withFrameNanos { }
+                // visibleItemsInfo updates before the focus target's modifier
+                // is fully attached on some Fire TV/Compose combinations.
+                delay(120L)
+                repeat(3) { attempt ->
+                    if (runCatching {
+                            targetRequester.requestFocus()
+                        }.getOrDefault(false)) {
+                        return@launch
+                    }
+                    delay(40L * (attempt + 1))
                 }
             }
         }
@@ -1075,7 +1097,15 @@ private fun ModernTmdbCollection(
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = gridState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .modernGridVerticalFocus(
+                enabled = focusedPosterIndex >= 0,
+                index = focusedPosterIndex,
+                columns = columns,
+                itemCount = count,
+                moveFocus = moveFocusToIndex
+            ),
         contentPadding = PaddingValues(
             start = 18.dp,
             end = 18.dp,
@@ -1119,24 +1149,22 @@ private fun ModernTmdbCollection(
 
                 ModernCollectionPoster(
                     item = media,
-                    modifier =
-                        if (isTv) {
-                            Modifier
-                                .focusRequester(
-                                    itemFocusRequesters.getOrPut(media.id) {
-                                        FocusRequester()
-                                    }
-                                )
-                                .modernGridVerticalFocus(
-                                    enabled = true,
-                                    index = index,
-                                    columns = columns,
-                                    itemCount = count,
-                                    moveFocus = moveFocusToIndex
-                                )
-                        } else {
-                            Modifier
-                        },
+                    modifier = Modifier
+                        .onFocusChanged {
+                            if (it.isFocused) focusedPosterIndex = index
+                        }
+                        .focusRequester(
+                            itemFocusRequesters.getOrPut(media.id) {
+                                FocusRequester()
+                            }
+                        )
+                        .modernGridVerticalFocus(
+                            enabled = true,
+                            index = index,
+                            columns = columns,
+                            itemCount = count,
+                            moveFocus = moveFocusToIndex
+                        ),
                     subtitle = buildList {
                         entry.tmdb.firstAirYear?.let {
                             add(it.toString())
@@ -1181,24 +1209,22 @@ private fun ModernTmdbCollection(
 
                 ModernCollectionPoster(
                     item = media,
-                    modifier =
-                        if (isTv) {
-                            Modifier
-                                .focusRequester(
-                                    itemFocusRequesters.getOrPut(media.id) {
-                                        FocusRequester()
-                                    }
-                                )
-                                .modernGridVerticalFocus(
-                                    enabled = true,
-                                    index = index,
-                                    columns = columns,
-                                    itemCount = count,
-                                    moveFocus = moveFocusToIndex
-                                )
-                        } else {
-                            Modifier
-                        },
+                    modifier = Modifier
+                        .onFocusChanged {
+                            if (it.isFocused) focusedPosterIndex = index
+                        }
+                        .focusRequester(
+                            itemFocusRequesters.getOrPut(media.id) {
+                                FocusRequester()
+                            }
+                        )
+                        .modernGridVerticalFocus(
+                            enabled = true,
+                            index = index,
+                            columns = columns,
+                            itemCount = count,
+                            moveFocus = moveFocusToIndex
+                        ),
                     subtitle = buildList {
                         entry.tmdb.releaseYear?.let {
                             add(it.toString())
@@ -1303,6 +1329,9 @@ private fun ModernIptvCollection(
             FavoriteKind.SERIES
         }
     val focusIds = state.items.map { it.id }
+    var focusedPosterIndex by remember(category.id) {
+        mutableIntStateOf(-1)
+    }
 
     val gridState = rememberLazyGridState()
     val returnFocusRequester = remember(
@@ -1337,10 +1366,23 @@ private fun ModernIptvCollection(
                     }
                 if (!alreadyVisible) {
                     gridState.scrollToItem(targetGridIndex)
-                    delay(80L)
+                    withTimeoutOrNull(1_000L) {
+                        snapshotFlow {
+                            gridState.layoutInfo.visibleItemsInfo.any {
+                                it.index == targetGridIndex
+                            }
+                        }.first { it }
+                    }
                 }
-                runCatching {
-                    targetRequester.requestFocus()
+                withFrameNanos { }
+                delay(120L)
+                repeat(3) { attempt ->
+                    if (runCatching {
+                            targetRequester.requestFocus()
+                        }.getOrDefault(false)) {
+                        return@launch
+                    }
+                    delay(40L * (attempt + 1))
                 }
             }
         }
@@ -1367,7 +1409,15 @@ private fun ModernIptvCollection(
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = gridState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .modernGridVerticalFocus(
+                enabled = focusedPosterIndex >= 0,
+                index = focusedPosterIndex,
+                columns = columns,
+                itemCount = focusIds.size,
+                moveFocus = moveFocusToIndex
+            ),
         contentPadding = PaddingValues(
             start = 18.dp,
             end = 18.dp,
@@ -1394,24 +1444,22 @@ private fun ModernIptvCollection(
         ) { index, media ->
             ModernCollectionPoster(
                 item = media,
-                modifier =
-                    if (isTv) {
-                        Modifier
-                            .focusRequester(
-                                itemFocusRequesters.getOrPut(media.id) {
-                                    FocusRequester()
-                                }
-                            )
-                            .modernGridVerticalFocus(
-                                enabled = true,
-                                index = index,
-                                columns = columns,
-                                itemCount = focusIds.size,
-                                moveFocus = moveFocusToIndex
-                            )
-                    } else {
-                        Modifier
-                    },
+                modifier = Modifier
+                    .onFocusChanged {
+                        if (it.isFocused) focusedPosterIndex = index
+                    }
+                    .focusRequester(
+                        itemFocusRequesters.getOrPut(media.id) {
+                            FocusRequester()
+                        }
+                    )
+                    .modernGridVerticalFocus(
+                        enabled = true,
+                        index = index,
+                        columns = columns,
+                        itemCount = focusIds.size,
+                        moveFocus = moveFocusToIndex
+                    ),
                 subtitle = media.description.orEmpty(),
                 onClick = {
                     openItem(media)
