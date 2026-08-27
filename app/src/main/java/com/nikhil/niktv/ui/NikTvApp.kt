@@ -14,6 +14,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.*
@@ -197,7 +199,8 @@ private fun Modifier.remoteFocusFrame(
 @Composable
 private fun Modifier.remoteCombinedClickable(
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)?
+    onLongClick: (() -> Unit)?,
+    interactionSource: MutableInteractionSource? = null
 ): Modifier {
     val scope = rememberCoroutineScope()
     var keyIsDown by remember { mutableStateOf(false) }
@@ -232,7 +235,21 @@ private fun Modifier.remoteCombinedClickable(
                 else -> false
             }
         }
-        .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        .then(
+            if (interactionSource != null) {
+                Modifier.combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current,
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                )
+            } else {
+                Modifier.combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                )
+            }
+        )
 }
 private fun String.withoutConfigurationQuotes(): String = trim().let { value ->
     if (value.length >= 2 && ((value.first() == '"' && value.last() == '"') ||
@@ -1791,11 +1808,14 @@ private fun ModernBrowseScreen(
      *
      * Four Fire TV columns leave too little room for real-world station names.
      * Three is the TV maximum; the selector still supports 1-3 columns.
+     *
+     * ADAPTIVE_LIVE_TV_DENSITY_V34
+     *
+     * Touch devices prioritize readable station identity over raw density:
+     * phones stay one-column and tablets stay at a two-column maximum.
      */
     val maxLiveTvColumns = when {
         isTv -> 3
-        configuration.screenWidthDp >= 1200 -> 4
-        configuration.screenWidthDp >= 900 -> 3
         configuration.screenWidthDp >= 600 -> 2
         else -> 1
     }
@@ -4024,11 +4044,23 @@ private fun ModernPosterCard(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isTvLikeDevice(configuration)
+    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val touchPressed = !isTv && pressed
 
+    /*
+     * ADAPTIVE_POSTER_TOUCH_V34
+     *
+     * TV retains the strong 8 percent D-pad lift. Touch devices get a smaller
+     * transient press lift: 3.5 percent on tablets, 2.5 percent on phones.
+     */
     val posterScale by androidx.compose.animation.core.animateFloatAsState(
         targetValue =
             if (isTv) {
                 if (focused) 1.08f else 1f
+            } else if (touchPressed) {
+                if (isTablet) 1.035f else 1.025f
             } else if (focused) {
                 focusedScale
             } else {
@@ -4064,19 +4096,24 @@ private fun ModernPosterCard(
                 onClick = onClick,
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
                     { menuOpen = true }
-                } else onLongClick
+                } else onLongClick,
+                interactionSource = interactionSource
             ),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio)
                 .then(
-                    if (focused) {
+                    if (focused || touchPressed) {
                         Modifier.shadow(
-                            20.dp,
+                            if (isTv) 20.dp else if (isTablet) 10.dp else 6.dp,
                             posterShape,
                             clip = false,
-                            ambientColor = Color(0x88000000),
-                            spotColor = Color(0x66E50914)
+                            ambientColor =
+                                if (isTv) Color(0x88000000)
+                                else Color(0x55000000),
+                            spotColor =
+                                if (isTv) Color(0x66E50914)
+                                else Color(0x22E50914)
                         )
                     } else {
                         Modifier
@@ -4085,8 +4122,16 @@ private fun ModernPosterCard(
                 .clip(posterShape)
                 .background(Color(0xFF242424))
                 .border(
-                    if (focused) 3.dp else 1.dp,
-                    if (focused) Color.White else Color(0xFF30343B),
+                    when {
+                        isTv && focused -> 3.dp
+                        !isTv && focused -> 2.dp
+                        else -> 1.dp
+                    },
+                    when {
+                        focused -> Color.White
+                        touchPressed -> Color(0xFF555A63)
+                        else -> Color(0xFF30343B)
+                    },
                     posterShape
                 ), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) {
@@ -4172,26 +4217,48 @@ private fun ModernMediaListCard(
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv = context.isTvLikeDevice(configuration)
+    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
         animationSpec = tween(durationMillis = 170),
         label = "mediaListProfileFocus"
     )
+    val pressProgress by animateFloatAsState(
+        targetValue = if (!isTv && pressed) 1f else 0f,
+        animationSpec = tween(durationMillis = 110),
+        label = "mediaListTouchPress"
+    )
+    val visualProgress =
+        if (isTv) focusProgress
+        else maxOf(focusProgress, pressProgress)
+    val active = focused || pressed
     val scale =
         1f + (
-            (if (channelStyle) 0.075f else 0.08f) *
-                focusProgress
-            )
+            when {
+                isTv && channelStyle -> 0.075f
+                isTv -> 0.08f
+                isTablet -> 0.035f
+                else -> 0.025f
+            } * visualProgress
+        )
     val shape = RoundedCornerShape(16.dp)
     val backgroundColor = lerp(
         Color(0xFF15171B),
-        Color(0xFF2C3038),
-        focusProgress
+        if (isTv) Color(0xFF2C3038) else Color(0xFF20242B),
+        visualProgress
     )
     val borderColor = lerp(
         Color(0xFF30343B),
-        Color(0xFFF2F3F5),
-        focusProgress
+        when {
+            isTv -> Color(0xFFF2F3F5)
+            focused -> Color(0xFFBFC3CA)
+            else -> Color(0xFF555A63)
+        },
+        visualProgress
     )
     val channelPalette = remember(item.id, item.title) {
         val palettes = listOf(
@@ -4215,32 +4282,48 @@ private fun ModernMediaListCard(
                 horizontal = if (compact) 4.dp else 10.dp,
                 vertical = if (channelStyle) 4.dp else 0.dp
             )
-            .zIndex(focusProgress)
+            .zIndex(visualProgress)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
             .shadow(
-                elevation = (20f * focusProgress).dp,
+                elevation =
+                    (
+                        when {
+                            isTv -> 20f
+                            isTablet -> 10f
+                            else -> 6f
+                        } * visualProgress
+                    ).dp,
                 shape = shape,
                 clip = false,
-                ambientColor = Color(0x88000000),
-                spotColor = Color(0x66E50914)
+                ambientColor =
+                    if (isTv) Color(0x88000000)
+                    else Color(0x55000000),
+                spotColor =
+                    if (isTv) Color(0x66E50914)
+                    else Color(0x22E50914)
             )
             .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(
                 onClick = onClick,
-                onLongClick = { menuOpen = true }
+                onLongClick = { menuOpen = true },
+                interactionSource = interactionSource
             ),
         shape = shape,
         color = backgroundColor,
         border = when {
-            isCurrentlyPlaying && !focused ->
+            isCurrentlyPlaying && !(isTv && focused) ->
                 BorderStroke(2.dp, Color(0xFFE50914))
 
             else ->
                 BorderStroke(
-                    if (focused) 3.dp else 1.dp,
+                    when {
+                        isTv && focused -> 3.dp
+                        !isTv && focused -> 2.dp
+                        else -> 1.dp
+                    },
                     borderColor
                 )
         }
@@ -4265,7 +4348,7 @@ private fun ModernMediaListCard(
                 else 12.dp
             )
         ) {
-            if (isCurrentlyPlaying || (channelStyle && focused)) {
+            if (isCurrentlyPlaying || (channelStyle && isTv && focused)) {
                 Box(
                     Modifier
                         .width(if (channelStyle) 4.dp else 3.dp)
@@ -4388,7 +4471,7 @@ private fun ModernMediaListCard(
                             Modifier
                         },
                     color =
-                        if (focused) Color.White
+                        if (active) Color.White
                         else Color(0xFFE1E3E7),
                     style =
                         if (channelStyle) {
@@ -4399,7 +4482,7 @@ private fun ModernMediaListCard(
                             MaterialTheme.typography.titleMedium
                         },
                     fontWeight =
-                        if (focused || isCurrentlyPlaying) {
+                        if (active || isCurrentlyPlaying) {
                             FontWeight.SemiBold
                         } else {
                             FontWeight.Medium
@@ -4417,7 +4500,7 @@ private fun ModernMediaListCard(
                         Text(
                             text = text,
                             color =
-                                if (focused) {
+                                if (active) {
                                     Color(0xFFC4C8D0)
                                 } else {
                                     Color(0xFF9298A2)
@@ -4439,7 +4522,7 @@ private fun ModernMediaListCard(
                     Icons.Default.PlayArrow,
                     contentDescription = null,
                     modifier = Modifier.size(24.dp),
-                    tint = if (focused) Color.White else Color.Gray
+                    tint = if (active) Color.White else Color.Gray
                 )
             }
         }

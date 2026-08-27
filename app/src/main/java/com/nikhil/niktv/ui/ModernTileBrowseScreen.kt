@@ -12,6 +12,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -370,7 +372,13 @@ private fun ModernDestinationHub(
      * Fire TV focus must remain obvious at couch distance. Content tiles use
      * a larger profile-inspired lift, a fixed white focus ring and enough
      * spacing that scaled cards never visually collide with their neighbors.
+     *
+     * ADAPTIVE_TOUCH_TILES_V34
+     *
+     * Tablet and phone share the same visual language, but touch uses a
+     * restrained press lift instead of the persistent TV focus treatment.
      */
+    val isTablet = !isTv && configuration.screenWidthDp >= 600
     val destinationColumns = when {
         isTv -> 3
         configuration.screenWidthDp >= 1200 -> 4
@@ -423,16 +431,29 @@ private fun ModernDestinationHub(
         columns = GridCells.Fixed(destinationColumns),
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(
-            start = if (isTv) 32.dp else 18.dp,
-            end = if (isTv) 32.dp else 18.dp,
-            top = if (isTv) 28.dp else 20.dp,
+            start =
+                if (isTv) 32.dp
+                else if (isTablet) 24.dp
+                else 14.dp,
+            end =
+                if (isTv) 32.dp
+                else if (isTablet) 24.dp
+                else 14.dp,
+            top =
+                if (isTv) 28.dp
+                else if (isTablet) 22.dp
+                else 16.dp,
             bottom = 72.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isTv) 28.dp else 14.dp
+            if (isTv) 28.dp
+            else if (isTablet) 20.dp
+            else 12.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
-            if (isTv) 28.dp else 14.dp
+            if (isTv) 28.dp
+            else if (isTablet) 20.dp
+            else 12.dp
         )
     ) {
         item("hub-header", span = fullSpan) {
@@ -760,18 +781,49 @@ private fun ModernDestinationTile(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
         animationSpec = tween(durationMillis = 170),
         label = "modernDestinationProfileFocus"
     )
-    val scale = 1f + (0.09f * focusProgress)
-    val iconScale = 1f + (0.12f * focusProgress)
+    val pressProgress by animateFloatAsState(
+        targetValue = if (!isTv && pressed) 1f else 0f,
+        animationSpec = tween(durationMillis = 110),
+        label = "modernDestinationTouchPress"
+    )
+    val visualProgress =
+        if (isTv) focusProgress
+        else maxOf(focusProgress, pressProgress)
+    val active = focused || pressed
+    val scale =
+        1f + (
+            when {
+                isTv -> 0.09f
+                isTablet -> 0.035f
+                else -> 0.025f
+            } * visualProgress
+        )
+    val iconScale =
+        1f + (
+            when {
+                isTv -> 0.12f
+                isTablet -> 0.06f
+                else -> 0.04f
+            } * visualProgress
+        )
     val shape = RoundedCornerShape(if (isTv) 18.dp else 16.dp)
     val borderColor = lerp(
         Color(0xFF35383F),
-        Color(0xFFF2F3F5),
-        focusProgress
+        when {
+            isTv -> Color(0xFFF2F3F5)
+            focused -> Color(0xFFBFC3CA)
+            else -> Color(0xFF555A63)
+        },
+        visualProgress
     )
     val palette = remember(seed) {
         destinationPalette(seed)
@@ -779,19 +831,31 @@ private fun ModernDestinationTile(
 
     Surface(
         onClick = onClick,
+        interactionSource = interactionSource,
         modifier = Modifier
             .fillMaxWidth()
-            .zIndex(focusProgress)
+            .zIndex(visualProgress)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
             .shadow(
-                elevation = (22f * focusProgress).dp,
+                elevation =
+                    (
+                        when {
+                            isTv -> 22f
+                            isTablet -> 10f
+                            else -> 6f
+                        } * visualProgress
+                    ).dp,
                 shape = shape,
                 clip = false,
-                ambientColor = Color(0x88000000),
-                spotColor = Color(0x77E50914)
+                ambientColor =
+                    if (isTv) Color(0x88000000)
+                    else Color(0x55000000),
+                spotColor =
+                    if (isTv) Color(0x77E50914)
+                    else Color(0x33E50914)
             )
             .onFocusChanged {
                 focused = it.isFocused
@@ -799,7 +863,11 @@ private fun ModernDestinationTile(
         shape = shape,
         color = Color.Transparent,
         border = BorderStroke(
-            if (focused) 3.dp else 1.dp,
+            when {
+                isTv && focused -> 3.dp
+                !isTv && focused -> 2.dp
+                else -> 1.dp
+            },
             borderColor
         )
     ) {
@@ -851,7 +919,7 @@ private fun ModernDestinationTile(
                         title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight =
-                            if (focused) FontWeight.Black
+                            if (active) FontWeight.Black
                             else FontWeight.Bold,
                         color = Color.White,
                         maxLines = 2,
@@ -861,7 +929,7 @@ private fun ModernDestinationTile(
                         subtitle,
                         style = MaterialTheme.typography.labelMedium,
                         color =
-                            if (focused) {
+                            if (active) {
                                 Color(0xFFD5D7DC)
                             } else {
                                 Color.White.copy(alpha = 0.72f)
@@ -872,7 +940,7 @@ private fun ModernDestinationTile(
                 }
             }
 
-            if (focused) {
+            if (isTv && focused) {
                 Box(
                     Modifier
                         .align(Alignment.BottomStart)
@@ -940,39 +1008,80 @@ private fun ModernCompactMediaCard(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isModernTileTv(configuration)
+    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
         animationSpec = tween(durationMillis = 170),
         label = "modernCompactProfileFocus"
     )
-    val scale = 1f + (0.08f * focusProgress)
+    val pressProgress by animateFloatAsState(
+        targetValue = if (!isTv && pressed) 1f else 0f,
+        animationSpec = tween(durationMillis = 110),
+        label = "modernCompactTouchPress"
+    )
+    val visualProgress =
+        if (isTv) focusProgress
+        else maxOf(focusProgress, pressProgress)
+    val active = focused || pressed
+    val scale =
+        1f + (
+            when {
+                isTv -> 0.08f
+                isTablet -> 0.035f
+                else -> 0.025f
+            } * visualProgress
+        )
     val shape = RoundedCornerShape(14.dp)
     val backgroundColor = lerp(
         Color(0xFF15171B),
-        Color(0xFF22252B),
-        focusProgress
+        if (isTv) Color(0xFF22252B) else Color(0xFF20242B),
+        visualProgress
     )
     val borderColor = lerp(
         Color(0xFF30343B),
-        Color(0xFFF2F3F5),
-        focusProgress
+        when {
+            isTv -> Color(0xFFF2F3F5)
+            focused -> Color(0xFFBFC3CA)
+            else -> Color(0xFF555A63)
+        },
+        visualProgress
     )
 
     Surface(
         onClick = onClick,
+        interactionSource = interactionSource,
         modifier = Modifier
-            .width(if (isTv) 158.dp else 148.dp)
-            .zIndex(focusProgress)
+            .width(
+                when {
+                    isTv -> 158.dp
+                    isTablet -> 168.dp
+                    else -> 148.dp
+                }
+            )
+            .zIndex(visualProgress)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
             .shadow(
-                elevation = (18f * focusProgress).dp,
+                elevation =
+                    (
+                        when {
+                            isTv -> 18f
+                            isTablet -> 9f
+                            else -> 5f
+                        } * visualProgress
+                    ).dp,
                 shape = shape,
                 clip = false,
-                ambientColor = Color(0x88000000),
-                spotColor = Color(0x66E50914)
+                ambientColor =
+                    if (isTv) Color(0x88000000)
+                    else Color(0x55000000),
+                spotColor =
+                    if (isTv) Color(0x66E50914)
+                    else Color(0x22E50914)
             )
             .onFocusChanged {
                 focused = it.isFocused
@@ -980,7 +1089,11 @@ private fun ModernCompactMediaCard(
         shape = shape,
         color = backgroundColor,
         border = BorderStroke(
-            if (focused) 3.dp else 1.dp,
+            when {
+                isTv && focused -> 3.dp
+                !isTv && focused -> 2.dp
+                else -> 1.dp
+            },
             borderColor
         )
     ) {
@@ -1006,7 +1119,7 @@ private fun ModernCompactMediaCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     fontWeight =
-                        if (focused) FontWeight.SemiBold
+                        if (active) FontWeight.SemiBold
                         else FontWeight.Medium,
                     color = if (focused) Color.White else Color(0xFFD4D7DC)
                 )
@@ -1015,7 +1128,7 @@ private fun ModernCompactMediaCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color =
-                        if (focused) Color(0xFFBFC3CA)
+                        if (active) Color(0xFFBFC3CA)
                         else Color(0xFF858B94),
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -1665,23 +1778,47 @@ private fun ModernCollectionPoster(
 ) {
     var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
         animationSpec = tween(durationMillis = 170),
         label = "modernPosterProfileFocus"
     )
-    val scale = 1f + (0.085f * focusProgress)
+    val pressProgress by animateFloatAsState(
+        targetValue = if (!isTv && pressed) 1f else 0f,
+        animationSpec = tween(durationMillis = 110),
+        label = "modernPosterTouchPress"
+    )
+    val visualProgress =
+        if (isTv) focusProgress
+        else maxOf(focusProgress, pressProgress)
+    val active = focused || pressed
+    val scale =
+        1f + (
+            when {
+                isTv -> 0.085f
+                isTablet -> 0.035f
+                else -> 0.025f
+            } * visualProgress
+        )
     val shape = RoundedCornerShape(11.dp)
     val borderColor = lerp(
         Color(0xFF30343B),
-        Color(0xFFF2F3F5),
-        focusProgress
+        when {
+            isTv -> Color(0xFFF2F3F5)
+            focused -> Color(0xFFBFC3CA)
+            else -> Color(0xFF555A63)
+        },
+        visualProgress
     )
 
     Column(
         Modifier
             .fillMaxWidth()
-            .zIndex(focusProgress)
+            .zIndex(visualProgress)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -1697,14 +1834,26 @@ private fun ModernCollectionPoster(
          */
         Surface(
             onClick = onClick,
+            interactionSource = interactionSource,
             modifier = modifier
                 .fillMaxWidth()
                 .shadow(
-                    elevation = (20f * focusProgress).dp,
+                    elevation =
+                        (
+                            when {
+                                isTv -> 20f
+                                isTablet -> 10f
+                                else -> 6f
+                            } * visualProgress
+                        ).dp,
                     shape = shape,
                     clip = false,
-                    ambientColor = Color(0x88000000),
-                    spotColor = Color(0x66E50914)
+                    ambientColor =
+                        if (isTv) Color(0x88000000)
+                        else Color(0x55000000),
+                    spotColor =
+                        if (isTv) Color(0x66E50914)
+                        else Color(0x22E50914)
                 )
                 .onFocusChanged {
                     focused = it.isFocused
@@ -1712,7 +1861,11 @@ private fun ModernCollectionPoster(
             shape = shape,
             color = Color(0xFF202020),
             border = BorderStroke(
-                if (focused) 3.dp else 1.dp,
+                when {
+                    isTv && focused -> 3.dp
+                    !isTv && focused -> 2.dp
+                    else -> 1.dp
+                },
                 borderColor
             )
         ) {
@@ -1728,7 +1881,7 @@ private fun ModernCollectionPoster(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                if (focused) {
+                if (isTv && focused) {
                     Box(
                         Modifier
                             .align(Alignment.BottomStart)
@@ -1751,7 +1904,7 @@ private fun ModernCollectionPoster(
                 Text(
                     item.title,
                     color =
-                        if (focused) Color.White
+                        if (active) Color.White
                         else Color(0xFFD4D7DC),
                     fontWeight =
                         if (focused) FontWeight.SemiBold
@@ -1764,7 +1917,7 @@ private fun ModernCollectionPoster(
                     Text(
                         subtitle,
                         color =
-                            if (focused) Color(0xFFBFC3CA)
+                            if (active) Color(0xFFBFC3CA)
                             else Color(0xFF858B94),
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 2,
