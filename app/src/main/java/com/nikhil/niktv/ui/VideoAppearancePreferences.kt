@@ -1057,6 +1057,7 @@ internal fun PlayerPictureModeEditor(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun PlayerEditorSlider(
     label: String,
@@ -1068,7 +1069,9 @@ private fun PlayerEditorSlider(
     onValue: (Float) -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val focusShape =
+    val trackShape =
+        androidx.compose.foundation.shape.RoundedCornerShape(999.dp)
+    val thumbShape =
         androidx.compose.foundation.shape.RoundedCornerShape(999.dp)
     val percentage = (value * 100).roundToInt()
 
@@ -1130,27 +1133,27 @@ private fun PlayerEditorSlider(
         )
 
         /*
-         * SLIDER_FOCUS_GEOMETRY_V20
+         * SLIDER_THUMB_FOCUS_V28
          *
-         * The focus ring and slider now share the same centered capsule.
-         * There is no outer horizontal inset, so the ring follows the actual
-         * control geometry rather than floating wider than the progress bar.
+         * Keep the full slider track visually neutral. D-pad focus is shown
+         * only on the current-value marker: a narrow vertical thumb receives
+         * the white focus outline instead of outlining the whole progress bar.
+         *
+         * The Row remains the actual focus/D-pad owner; Slider itself stays
+         * non-focusable so the editor focus trap/navigation is unchanged.
          */
         Box(
             modifier = Modifier
                 .weight(1f)
                 .height(32.dp)
                 .background(
-                    if (focused) Color(0xFF22252B)
-                    else Color(0xFF15171B),
-                    focusShape
+                    Color(0xFF15171B),
+                    trackShape
                 )
                 .border(
-                    width = if (focused) 2.dp else 1.dp,
-                    color =
-                        if (focused) Color(0xFFF2F3F5)
-                        else Color(0xFF30343B),
-                    shape = focusShape
+                    width = 1.dp,
+                    color = Color(0xFF30343B),
+                    shape = trackShape
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -1160,7 +1163,36 @@ private fun PlayerEditorSlider(
                 valueRange = range,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusProperties { canFocus = false }
+                    .focusProperties { canFocus = false },
+                thumb = {
+                    Box(
+                        Modifier
+                            .width(
+                                if (focused) 10.dp
+                                else 6.dp
+                            )
+                            .height(26.dp)
+                            .background(
+                                if (focused) {
+                                    Color(0xFF22252B)
+                                } else {
+                                    Color(0xFFB9BDC5)
+                                },
+                                thumbShape
+                            )
+                            .then(
+                                if (focused) {
+                                    Modifier.border(
+                                        2.dp,
+                                        Color(0xFFF2F3F5),
+                                        thumbShape
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
+                    )
+                }
             )
         }
 
