@@ -157,7 +157,8 @@ internal fun schedulesOverlap(
 ): Boolean = (0 until 1440).any { first.contains(it) && second.contains(it) }
 
 internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
-    "default" -> Icons.Default.FilterNone
+    // DEFAULT_UNFILTERED_ICON_V37
+    "default" -> Icons.Default.FilterAltOff
     "movie" -> Icons.Default.Movie
     "standard" -> Icons.Default.Tv
     "natural" -> Icons.Default.Eco
