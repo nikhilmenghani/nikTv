@@ -497,45 +497,15 @@ fun ShowcasePlaybackScreen(
     val compact =
         configuration.screenWidthDp < 900 ||
             configuration.screenHeightDp < 520
-    val mobileUiDesign by rememberMobileUiDesign()
-    val youtubeMobile =
-        configuration.smallestScreenWidthDp < 600 &&
-            mobileUiDesign.usesYouTubeOn(configuration)
-
-    if (youtubeMobile) {
-        YouTubeMobileShowcase(
-            state = state,
-            playingItem = playing.media,
-            type = type,
-            items = queue,
-            fullscreen = fullscreen,
-            onFullscreenChanged = { fullscreen = it },
-            onBack = onBack,
-            onRetry = onRetry,
-            onRetryAlternateDecoder = onRetryAlternateDecoder,
-            onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
-            onPlayPrevious = onPlayPrevious,
-            onPlayNext = onPlayNext,
-            onProgress = onProgress,
-            onPlay = { item ->
-                if (item.id == playing.media.id) fullscreen = true else play(item)
-            },
-            onToggleFavorite = { toggleFavorite(playing.media) },
-            onRefresh = refreshPlaybackQueue,
-            hasMore = playbackHasMore,
-            loadingMore = playbackLoadingMore,
-            loadMorePending = loadMorePending,
-            onLoadMore = {
-                if (!playbackLoadingMore && !loadMorePending) {
-                    loadMoreStartItemCount = queue.size
-                    loadMoreObservedLoading = false
-                    loadMorePending =
-                        loadMorePlaybackQueue()
-                }
-            }
-        )
-        return
-    }
+    /*
+     * MOBILE_FULLSCREEN_PLAYER_PARITY_V35
+     *
+     * Phones no longer use the YouTube-style embedded/miniplayer playback
+     * surface. They enter the same fullscreen PlayerScreen path as larger
+     * devices, with the in-player swipe-up queue as the only playback rail.
+     */
+    val mobileFullscreenOnly =
+        configuration.smallestScreenWidthDp < 600
 
     /*
      * SHOWCASE_TV_DETAILS_SPACE_V13
@@ -603,9 +573,14 @@ fun ShowcasePlaybackScreen(
 
         PlayerScreen(
             media = playing,
-            onBack = if (fullscreen) {
-                { fullscreen = false }
-            } else onBack,
+            onBack =
+                if (mobileFullscreenOnly) {
+                    onBack
+                } else if (fullscreen) {
+                    { fullscreen = false }
+                } else {
+                    onBack
+                },
             onRetry = onRetry,
             onRetryAlternateDecoder = onRetryAlternateDecoder,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
@@ -618,7 +593,7 @@ fun ShowcasePlaybackScreen(
             onLoadMoreQueue = loadMorePlaybackQueue,
             controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
             playbackEngine = state.playbackEngine,
-            modifier = if (fullscreen) {
+            modifier = if (mobileFullscreenOnly || fullscreen) {
                 Modifier.fillMaxSize()
             } else {
                 Modifier
@@ -627,14 +602,21 @@ fun ShowcasePlaybackScreen(
                     .height(mainHeight)
                     .padding(start = 6.dp, end = 5.dp, top = 5.dp, bottom = 5.dp)
             },
-            embeddedMode = !fullscreen,
+            embeddedMode = !mobileFullscreenOnly && !fullscreen,
             embeddedControlsDismissRequest =
                 embeddedControlsDismissRequest,
-            fullscreenOverride = fullscreen,
-            onFullscreenChanged = { fullscreen = it }
+            startFullscreen = mobileFullscreenOnly,
+            fullscreenOverride =
+                if (mobileFullscreenOnly) true else fullscreen,
+            onFullscreenChanged =
+                if (mobileFullscreenOnly) {
+                    null
+                } else {
+                    { value -> fullscreen = value }
+                }
         )
 
-        if (!fullscreen) {
+        if (!mobileFullscreenOnly && !fullscreen) {
             ShowcaseHeader(
                 type = type,
                 categoryTitle = showcaseCategoryTitle(state, type),

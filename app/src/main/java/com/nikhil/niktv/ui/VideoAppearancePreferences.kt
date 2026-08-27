@@ -56,6 +56,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.util.Calendar
@@ -375,6 +376,43 @@ internal fun PlayerQueueOverlay(
     BackHandler(onBack = onDismiss)
 
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    /*
+     * MOBILE_PLAYER_QUEUE_DENSITY_V35
+     *
+     * The playback queue is shared across TV, tablet and phone. Phones use
+     * the same horizontal rail and gesture, but with a shorter sheet, narrower
+     * cards, tighter spacing and touch-oriented visual treatment.
+     */
+    val mobileQueueRail =
+        configuration.smallestScreenWidthDp < 600
+    val queueSheetMinHeight =
+        if (mobileQueueRail) 176.dp else 250.dp
+    val queueSheetMaxHeight =
+        if (mobileQueueRail) 230.dp else 340.dp
+    val queueOuterHorizontalPadding =
+        if (mobileQueueRail) 8.dp else 28.dp
+    val queueOuterVerticalPadding =
+        if (mobileQueueRail) 8.dp else 22.dp
+    val queueDismissBoundary =
+        if (mobileQueueRail) {
+            queueSheetMaxHeight + queueOuterVerticalPadding
+        } else {
+            380.dp
+        }
+    val queueSheetPadding =
+        if (mobileQueueRail) 12.dp else 20.dp
+    val queueSheetCornerRadius =
+        if (mobileQueueRail) 18.dp else 24.dp
+    val queueHeaderSpacer =
+        if (mobileQueueRail) 8.dp else 14.dp
+    val queueRailSpacing =
+        if (mobileQueueRail) 8.dp else 12.dp
+    val queueCardWidth =
+        if (mobileQueueRail) 176.dp else 280.dp
+    val queueLoadMoreWidth =
+        if (mobileQueueRail) 180.dp else 240.dp
+
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
@@ -520,7 +558,7 @@ internal fun PlayerQueueOverlay(
                             val swipeDown = delta.y > 64.dp.toPx() &&
                                 kotlin.math.abs(delta.y) > kotlin.math.abs(delta.x)
                             val outsideTap = delta.getDistance() < 12.dp.toPx() &&
-                                start.y < size.height - 380.dp.toPx()
+                                start.y < size.height - queueDismissBoundary.toPx()
                             if (swipeDown || outsideTap) onDismiss()
                             tracking = false
                         }
@@ -528,36 +566,64 @@ internal fun PlayerQueueOverlay(
                 }
             }
             .background(Color.Black.copy(alpha = .76f * renderedReveal))
-            .padding(horizontal = 28.dp, vertical = 22.dp),
+            .padding(
+                horizontal = queueOuterHorizontalPadding,
+                vertical = queueOuterVerticalPadding
+            ),
         contentAlignment = Alignment.BottomCenter
     ) {
         Surface(
             Modifier
                 .fillMaxWidth()
-                .heightIn(min = 250.dp, max = 340.dp)
+                .heightIn(
+                    min = queueSheetMinHeight,
+                    max = queueSheetMaxHeight
+                )
                 .graphicsLayer {
                     translationY = size.height * (1f - renderedReveal)
                 },
             color = Color(0xF51A1A1A),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
+            shape =
+                androidx.compose.foundation.shape.RoundedCornerShape(
+                    queueSheetCornerRadius
+                )
         ) {
-            Column(Modifier.fillMaxSize().padding(20.dp)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(queueSheetPadding)
+            ) {
                 Text(
                     "Choose what to play",
-                    style = MaterialTheme.typography.headlineSmall,
+                    style =
+                        if (mobileQueueRail) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.headlineSmall
+                        },
                     color = Color.White
                 )
                 Text(
-                    "←/→ Browse  •  ↑ Close  •  OK Play",
-                    style = MaterialTheme.typography.bodySmall,
+                    if (mobileQueueRail) {
+                        "Swipe down to close  •  Tap to play"
+                    } else {
+                        "←/→ Browse  •  ↑ Close  •  OK Play"
+                    },
+                    style =
+                        if (mobileQueueRail) {
+                            MaterialTheme.typography.labelSmall
+                        } else {
+                            MaterialTheme.typography.bodySmall
+                        },
                     color = Color.LightGray
                 )
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(queueHeaderSpacer))
 
                 LazyRow(
                     Modifier.weight(1f).fillMaxWidth(),
                     state = listState,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement =
+                        Arrangement.spacedBy(queueRailSpacing),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     itemsIndexed(
@@ -574,7 +640,7 @@ internal fun PlayerQueueOverlay(
 
                         Surface(
                             Modifier
-                                .width(280.dp)
+                                .width(queueCardWidth)
                                 .fillMaxHeight()
                                 .focusRequester(requester)
                                 .onFocusChanged {
@@ -584,7 +650,8 @@ internal fun PlayerQueueOverlay(
                                 .clickable { onSelect(item) }
                                 .focusable(),
                             color = when {
-                                focused -> Color(0xFFE50914)
+                                focused && !mobileQueueRail ->
+                                    Color(0xFFE50914)
                                 current -> Color(0xFF383838)
                                 else -> Color(0xFF242424)
                             },
@@ -722,7 +789,7 @@ internal fun PlayerQueueOverlay(
 
                             Surface(
                                 Modifier
-                                    .width(240.dp)
+                                    .width(queueLoadMoreWidth)
                                     .fillMaxHeight()
                                     .focusRequester(loadMoreRequester)
                                     .onFocusChanged {
@@ -741,8 +808,11 @@ internal fun PlayerQueueOverlay(
                                     }
                                     .focusable(),
                                 color =
-                                    if (focused) Color(0xFFE50914)
-                                    else Color(0xFF303030),
+                                    if (focused && !mobileQueueRail) {
+                                        Color(0xFFE50914)
+                                    } else {
+                                        Color(0xFF303030)
+                                    },
                                 shape =
                                     androidx.compose.foundation.shape
                                         .RoundedCornerShape(12.dp)
