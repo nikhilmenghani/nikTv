@@ -102,6 +102,7 @@ data class NikTvState(
     val browseCachesByType: Map<CatalogType, BrowseCatalogCache> = emptyMap(),
     val searchOpen: Boolean = false,
     val searchType: SearchContentType = SearchContentType.SERIES,
+    val searchScopeLocked: Boolean = false,
     val searchQuery: String = "",
     val searchResults: List<MediaItem> = emptyList(),
     val searchServerLoading: Boolean = false,
@@ -252,6 +253,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 session = session,
                 savedProfile = session.profile,
                 profileEditorOpen = false,
+                searchOpen = false,
+                searchScopeLocked = false,
+                searchQuery = "",
+                searchResults = emptyList(),
+                searchCategories = emptyList(),
+                searchCategoryId = "*",
+                searchUsedServer = false,
+                searchServerLoading = false,
+                searchPage = 0,
+                searchHasMore = false,
                 trendingMovies = emptyList(),
                 trendingMoviesLoading = false,
                 trendingMoviesError = null,
@@ -1472,8 +1483,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setPlaybackEngine(engine: PlaybackEngine) = viewModelScope.launch {
-        store.setPlaybackEngine(engine)
+    fun setPlaybackEngine(engine: PlaybackEngine) {
+        // Reflect in-player changes immediately so the label, next cycle step,
+        // and Settings selection cannot lag behind the newly created engine.
+        _state.update { it.copy(playbackEngine = engine) }
+        viewModelScope.launch { store.setPlaybackEngine(engine) }
     }
 
     fun setSeriesStartSeason(value: SeriesStartSeason) = viewModelScope.launch {
@@ -2695,14 +2709,35 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
     fun openSearch() {
-        _state.update { it.copy(searchOpen = true, settingsOpen = false, favoritesOpen = false) }
-        loadSearchCategories(_state.value.searchType)
+        val snapshot = _state.value
+        val tabType = if (snapshot.homeOpen) null else when (snapshot.selectedType) {
+            CatalogType.LIVE_TV -> SearchContentType.LIVE_TV
+            CatalogType.MOVIES -> SearchContentType.MOVIES
+            CatalogType.SERIES -> SearchContentType.SERIES
+            CatalogType.RADIO -> SearchContentType.LIVE_TV
+        }
+        val effectiveType = tabType ?: snapshot.searchType
+        _state.update {
+            it.copy(
+                searchOpen = true,
+                settingsOpen = false,
+                favoritesOpen = false,
+                searchType = effectiveType,
+                searchScopeLocked = tabType != null,
+                searchResults = if (it.searchType == effectiveType) it.searchResults else emptyList(),
+                searchUsedServer = if (it.searchType == effectiveType) it.searchUsedServer else false,
+                searchPage = if (it.searchType == effectiveType) it.searchPage else 0,
+                searchHasMore = if (it.searchType == effectiveType) it.searchHasMore else false,
+                searchCategoryId = if (it.searchType == effectiveType) it.searchCategoryId else "*"
+            )
+        }
+        loadSearchCategories(effectiveType)
     }
     fun closeSearch() = _state.update { it.copy(searchOpen = false, searchServerLoading = false) }
     fun setSearchType(type: SearchContentType) = _state.update {
-        it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false, searchPage = 0,
+        if (it.searchScopeLocked) it else it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false, searchPage = 0,
             searchHasMore = false, searchCategoryId = "*", searchCategories = emptyList())
-    }.also { loadSearchCategories(type) }
+    }.also { if (!_state.value.searchScopeLocked) loadSearchCategories(type) }
     fun setSearchCategory(categoryId: String) = _state.update {
         it.copy(searchCategoryId = categoryId, searchResults = emptyList(), searchUsedServer = false, searchPage = 0, searchHasMore = false)
     }
@@ -2803,7 +2838,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             query = query,
             type = type,
             categoryId = categoryId,
-            categoryTitle = categoryTitle
+            categoryTitle = categoryTitle,
+            profileKey = snapshot.session?.profile?.cacheKey().orEmpty()
         ))
     }
     fun useRecentSearch(search: RecentSearch) {

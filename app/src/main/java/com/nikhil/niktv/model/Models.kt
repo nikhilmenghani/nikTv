@@ -40,8 +40,9 @@ data class RecentSearch(
     val type: SearchContentType,
     val searchedAtMillis: Long = System.currentTimeMillis(),
     val categoryId: String = "*",
-    val categoryTitle: String = "All categories"
-) { val key: String get() = "${type.name}:$categoryId:${query.normalizedSearchQuery()}" }
+    val categoryTitle: String = "All categories",
+    val profileKey: String = ""
+) { val key: String get() = "$profileKey:${type.name}:$categoryId:${query.normalizedSearchQuery()}" }
 
 private val searchWhitespace = Regex("\\s+")
 

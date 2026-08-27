@@ -357,6 +357,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onLoadMoreQueue = vm::loadMorePlaybackQueue,
                     controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
                     playbackEngine = state.playbackEngine,
+                    onPlaybackEngineChanged = vm::setPlaybackEngine,
                     startFullscreen = true
                 )
 
@@ -4711,17 +4712,47 @@ private fun ModernSearchScreen(
         keyboard?.show()
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909)).padding(horizontal = 16.dp)) {
-        ModernScreenTopBar("Search", close)
+        ModernScreenTopBar(
+            buildString {
+                append(if (state.searchScopeLocked) "Search ${state.searchType.title}" else "Search")
+                state.session?.profile?.name?.takeIf(String::isNotBlank)?.let { append(" · $it") }
+            },
+            close
+        )
         Spacer(Modifier.height(8.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            visibleSearchTypes.forEachIndexed { index, type ->
-                val shape = uniformSegmentShape(index, visibleSearchTypes.size)
-                SegmentedButton(
-                    selected = state.searchType == type,
-                    onClick = { setType(type) },
-                    shape = shape,
-                    modifier = Modifier.remoteFocusFrame(shape)
-                ) { Text(type.title, maxLines = 1) }
+        if (state.searchScopeLocked) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFF171B2A),
+                border = BorderStroke(1.dp, Color(0x55E50914))
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.FilterAlt, null, tint = Color(0xFFFF3340))
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("Searching this tab", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Results are limited to ${state.searchType.title} from ${state.session?.profile?.name ?: "this profile"}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+        } else {
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                visibleSearchTypes.forEachIndexed { index, type ->
+                    val shape = uniformSegmentShape(index, visibleSearchTypes.size)
+                    SegmentedButton(
+                        selected = state.searchType == type,
+                        onClick = { setType(type) },
+                        shape = shape,
+                        modifier = Modifier.remoteFocusFrame(shape)
+                    ) { Text(type.title, maxLines = 1) }
+                }
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4800,7 +4831,10 @@ private fun ModernSearchScreen(
         if (state.recentSearches.isNotEmpty() && state.searchResults.isEmpty()) {
             Text("Recent searches", Modifier.padding(top = 16.dp, bottom = 6.dp), style = MaterialTheme.typography.titleMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                state.recentSearches.filter { it.type in visibleSearchTypes }.forEach { recent ->
+                val activeProfileKey = state.session?.profile?.cacheKey()
+                state.recentSearches.filter {
+                    it.type in visibleSearchTypes && it.profileKey == activeProfileKey
+                }.forEach { recent ->
                     val recentShape = RoundedCornerShape(10.dp)
                     InputChip(
                         selected = false,

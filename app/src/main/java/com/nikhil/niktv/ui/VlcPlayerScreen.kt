@@ -41,6 +41,7 @@ import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.PlayingMedia
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.PlaybackEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.LibVLC
@@ -68,6 +69,7 @@ internal fun VlcPlayerScreen(
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null,
     onSwitchPlayer: (Long) -> Unit,
+    configuredEngine: PlaybackEngine,
     focusPlayerSwitchOnEnter: Boolean = false,
     onPlayerSwitchFocusRestored: () -> Unit = {}
 ) {
@@ -639,7 +641,7 @@ internal fun VlcPlayerScreen(
                             maxLines = 1
                         )
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
-                        Text("VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        Text("Player: VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                     if (pipAvailable) IconButton(
                         onClick = {
@@ -653,7 +655,7 @@ internal fun VlcPlayerScreen(
                     ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     IconButton(
                         onClick = {
-                            modeFeedback = "Player · Media3"
+                            modeFeedback = "Player · ${configuredEngine.nextPlayerChoice().playerChoiceLabel()}"
                             scope.launch {
                                 delay(700L)
                                 onSwitchPlayer(player.time.coerceAtLeast(0L))
@@ -667,7 +669,7 @@ internal fun VlcPlayerScreen(
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) {
-                        Icon(Icons.Default.SwapHoriz, "Switch player: VLC", tint = Color.White)
+                        Icon(Icons.Default.SmartDisplay, "Switch player. Current: ${configuredEngine.playerChoiceLabel()}", tint = Color.White)
                     }
                     PlayerVisualButtons(
                         resizeMode = resizeMode,
@@ -681,7 +683,11 @@ internal fun VlcPlayerScreen(
                             VideoAppearancePreferences.setActive(context, next.id)
                             modeFeedback = "Picture mode · ${next.name}"
                         },
-                        onEditPictureMode = { queueVisible = false; pictureEditorVisible = true },
+                        onEditPictureMode = {
+                            queueVisible = false
+                            pictureEditorVisible = !pictureEditorVisible
+                            if (!pictureEditorVisible) appearancePreview = null
+                        },
                         resizeRequester = resizeRequester,
                         pictureModeRequester = pictureModeRequester,
                         pictureSettingsRequester = pictureSettingsRequester,

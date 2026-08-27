@@ -87,6 +87,36 @@ internal fun Modifier.playerActivityObserver(onActivity: () -> Unit): Modifier =
         }
     }
 
+internal fun PlaybackEngine.nextPlayerChoice(): PlaybackEngine = when (this) {
+    PlaybackEngine.AUTO -> PlaybackEngine.MEDIA3
+    PlaybackEngine.MEDIA3 -> PlaybackEngine.VLC
+    PlaybackEngine.VLC -> PlaybackEngine.EXOPLAYER
+    PlaybackEngine.EXOPLAYER -> PlaybackEngine.AUTO
+}
+
+internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
+    PlaybackEngine.AUTO -> "Auto"
+    PlaybackEngine.MEDIA3 -> "Media3"
+    PlaybackEngine.VLC -> "VLC"
+    PlaybackEngine.EXOPLAYER -> "ExoPlayer"
+}
+
+private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
+    PlaybackEngine.VLC -> "VLC"
+    PlaybackEngine.EXOPLAYER -> "ExoPlayer"
+    else -> "Media3"
+}
+
+private fun PlaybackEngine.resolvePlayerEngine(
+    context: Context,
+    playbackScope: String
+): PlaybackEngine = when (this) {
+    PlaybackEngine.AUTO ->
+        if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
+        else PlaybackEngine.MEDIA3
+    else -> this
+}
+
 @UnstableApi
 @Composable
 fun PlayerScreen(
@@ -104,6 +134,7 @@ fun PlayerScreen(
     onLoadMoreQueue: () -> Boolean = { false },
     controlsTimeoutSeconds: Int = 3,
     playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
+    onPlaybackEngineChanged: (PlaybackEngine) -> Unit = {},
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
     embeddedControlsDismissRequest: Int = 0,
@@ -149,10 +180,13 @@ fun PlayerScreen(
             fullscreenOverride = fullscreenOverride,
             onFullscreenChanged = onFullscreenChanged,
             onSwitchPlayer = { position ->
+                val nextEngine = playbackEngine.nextPlayerChoice()
                 engineSwitchResumePosition = position
                 restorePlayerSwitchFocus = true
-                sessionEngineOverride = PlaybackEngine.MEDIA3
+                onPlaybackEngineChanged(nextEngine)
+                sessionEngineOverride = nextEngine.resolvePlayerEngine(context, playbackScope)
             },
+            configuredEngine = playbackEngine,
             focusPlayerSwitchOnEnter = restorePlayerSwitchFocus,
             onPlayerSwitchFocusRestored = { restorePlayerSwitchFocus = false }
         )
@@ -1009,7 +1043,7 @@ fun PlayerScreen(
                         videoDetails.takeIf { it.isNotBlank() }?.let {
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
-                        Text("${if (effectiveEngine == PlaybackEngine.EXOPLAYER) "ExoPlayer" else "Media3"} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        Text("Player: ${effectiveEngine.playerEngineLabel()} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                     // PLAYER_GLOBAL_ORIENTATION_NO_ROTATE_V12
                     if (pipAvailable) {
@@ -1030,12 +1064,14 @@ fun PlayerScreen(
                     }
                     IconButton(
                         onClick = {
-                            modeFeedback = "Player · VLC"
+                            val nextEngine = playbackEngine.nextPlayerChoice()
+                            modeFeedback = "Player · ${nextEngine.playerChoiceLabel()}"
                             coroutineScope.launch {
                                 delay(700L)
                                 engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
                                 restorePlayerSwitchFocus = true
-                                sessionEngineOverride = PlaybackEngine.VLC
+                                onPlaybackEngineChanged(nextEngine)
+                                sessionEngineOverride = nextEngine.resolvePlayerEngine(context, playbackScope)
                             }
                         },
                         modifier = Modifier.focusRequester(playerSwitchFocusRequester)
@@ -1046,7 +1082,7 @@ fun PlayerScreen(
                             }
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) {
-                        Icon(Icons.Default.SwapHoriz, "Switch player: Media3", tint = Color.White)
+                        Icon(Icons.Default.SmartDisplay, "Switch player. Current: ${playbackEngine.playerChoiceLabel()}", tint = Color.White)
                     }
                     PlayerVisualButtons(
                         resizeMode = resizeMode,
@@ -1062,7 +1098,11 @@ fun PlayerScreen(
                             VideoAppearancePreferences.setActive(context, next.id)
                             modeFeedback = "Picture mode · ${next.name}"
                         },
-                        onEditPictureMode = { queueVisible = false; pictureEditorVisible = true },
+                        onEditPictureMode = {
+                            queueVisible = false
+                            pictureEditorVisible = !pictureEditorVisible
+                            if (!pictureEditorVisible) appearancePreview = null
+                        },
                         resizeRequester = resizeFocusRequester,
                         pictureModeRequester = pictureModeFocusRequester,
                         pictureSettingsRequester = pictureSettingsFocusRequester,

@@ -40,6 +40,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
@@ -158,7 +159,7 @@ internal fun schedulesOverlap(
 
 internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
     // DEFAULT_UNFILTERED_ICON_V37
-    "default" -> Icons.Default.FilterAltOff
+    "default" -> Icons.Default.BrightnessMedium
     "movie" -> Icons.Default.Movie
     "standard" -> Icons.Default.Tv
     "natural" -> Icons.Default.Eco
@@ -468,7 +469,7 @@ internal fun PlayerVisualButtons(
             }
             .playerControlFocus { onControlsFocused(it) }
     ) {
-        Icon(Icons.Default.Settings, "Edit picture mode settings", tint = Color.White)
+        Icon(Icons.Default.Tune, "Edit picture mode settings", tint = Color.White)
     }
 }
 
@@ -585,18 +586,24 @@ internal fun PlayerQueueOverlay(
         val target = index.coerceIn(0, maxIndex)
         focusedIndex = target
 
+        val requester = if (target < uniqueItems.size) {
+            requesters.getOrPut(uniqueItems[target].id) { FocusRequester() }
+        } else {
+            loadMoreRequester
+        }
+        val alreadyVisible = listState.layoutInfo.visibleItemsInfo.any {
+            it.index == target
+        }
+        if (alreadyVisible && runCatching { requester.requestFocus() }.getOrDefault(false)) {
+            return
+        }
         scope.launch {
-            runCatching { listState.animateScrollToItem(target) }
-            delay(35L)
-            runCatching {
-                if (target < uniqueItems.size) {
-                    requesters.getOrPut(uniqueItems[target].id) {
-                        FocusRequester()
-                    }.requestFocus()
-                } else {
-                    loadMoreRequester.requestFocus()
-                }
-            }
+            // Avoid waiting for a full animated scroll before moving focus.
+            // Adjacent visible cards focus synchronously; an off-screen edge
+            // card is composed with one direct scroll and focused next frame.
+            listState.scrollToItem(target)
+            withFrameNanos { }
+            runCatching { requester.requestFocus() }
         }
     }
 

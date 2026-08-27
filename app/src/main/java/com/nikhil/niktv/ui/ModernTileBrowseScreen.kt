@@ -12,6 +12,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -196,6 +199,7 @@ internal fun ModernTileBrowseScreen(
                         openRecent = openRecent,
                         openTmdbSection = openTmdbSection,
                         openIptvCategory = openIptvCategory,
+                        openSearch = openSearch,
                         configureTmdb = configureTmdb,
                         configureIptv = configureIptv,
                         resetSurface = resetSurface,
@@ -359,6 +363,7 @@ private fun ModernDestinationHub(
     openRecent: (RecentItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
+    openSearch: () -> Unit,
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
     resetSurface: () -> Unit,
@@ -490,6 +495,20 @@ private fun ModernDestinationHub(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 2.dp)
                 ) {
+                    item("search-this-tab") {
+                        AssistChip(
+                            onClick = openSearch,
+                            label = {
+                                Text(
+                                    if (dashboardSurface == DashboardSurface.HOME) "Search"
+                                    else "Search ${screenTitle}"
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.Search, null, Modifier.size(17.dp))
+                            }
+                        )
+                    }
                     item("configure-tmdb") {
                         AssistChip(
                             onClick = configureTmdb,
@@ -635,7 +654,11 @@ private fun ModernDestinationHub(
                     )
                 }
                 item("continue-row", span = fullSpan) {
-                    ModernContinueRow(recents, openRecent)
+                    ModernContinueRow(
+                        recents = recents,
+                        returnFocusId = state.playbackReturnFocusId,
+                        open = openRecent
+                    )
                 }
             }
         }
@@ -1030,17 +1053,56 @@ private fun destinationPalette(
 @Composable
 private fun ModernContinueRow(
     recents: List<RecentItem>,
+    returnFocusId: String?,
     open: (RecentItem) -> Unit
 ) {
+    val listState = rememberLazyListState()
+    val requesters = remember { mutableMapOf<String, FocusRequester>() }
+    val focusIds = remember(recents) {
+        recents.map { recent ->
+            if (recent.kind == FavoriteKind.SERIES) {
+                recent.lastPlayed?.id ?: recent.media.id
+            } else {
+                recent.media.id
+            }
+        }
+    }
+    val returnIndex = focusIds.indexOf(returnFocusId)
+
+    LaunchedEffect(returnFocusId, returnIndex) {
+        if (returnFocusId != null && returnIndex >= 0) {
+            listState.scrollToItem(returnIndex)
+            withFrameNanos { }
+            // Navigation and lazy content establish their initial focus in
+            // separate frames. Reassert briefly so a later nav request cannot
+            // steal focus from the tile that launched playback.
+            repeat(6) { attempt ->
+                runCatching {
+                    requesters.getOrPut(returnFocusId) { FocusRequester() }
+                        .requestFocus()
+                }
+                delay(70L + 25L * attempt)
+            }
+        }
+    }
+
     LazyRow(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(vertical = 4.dp)
+        // Focus scales TV cards beyond their layout bounds. Horizontal inset
+        // keeps the first and last cards from being clipped by the viewport.
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
     ) {
         items(
             items = recents,
             key = { "modern-recent-${it.key}" }
         ) { recent ->
+            val focusId = if (recent.kind == FavoriteKind.SERIES) {
+                recent.lastPlayed?.id ?: recent.media.id
+            } else {
+                recent.media.id
+            }
             ModernCompactMediaCard(
                 item = recent.media,
                 subtitle =
@@ -1049,7 +1111,10 @@ private fun ModernContinueRow(
                     } else {
                         "Movie"
                     },
-                onClick = { open(recent) }
+                onClick = { open(recent) },
+                modifier = Modifier.focusRequester(
+                    requesters.getOrPut(focusId) { FocusRequester() }
+                )
             )
         }
     }
@@ -1059,7 +1124,8 @@ private fun ModernContinueRow(
 private fun ModernCompactMediaCard(
     item: MediaItem,
     subtitle: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1107,9 +1173,7 @@ private fun ModernCompactMediaCard(
     )
 
     Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        modifier = Modifier
+        modifier = modifier
             .width(
                 when {
                     isTv -> 158.dp
@@ -1142,7 +1206,13 @@ private fun ModernCompactMediaCard(
             )
             .onFocusChanged {
                 focused = it.isFocused
-            },
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+            .focusable(),
         shape = shape,
         color = backgroundColor,
         border = BorderStroke(
@@ -1347,13 +1417,9 @@ private fun ModernTmdbCollection(
             // on the navigation rail when fullscreen playback closes.
             withFrameNanos { }
             delay(120L)
-            repeat(5) { attempt ->
-                if (runCatching {
-                        returnFocusRequester.requestFocus()
-                    }.getOrDefault(false)) {
-                    return@LaunchedEffect
-                }
-                delay(50L * (attempt + 1))
+            repeat(6) { attempt ->
+                runCatching { returnFocusRequester.requestFocus() }
+                delay(70L + 25L * attempt)
             }
         }
     }
@@ -1667,13 +1733,9 @@ private fun ModernIptvCollection(
             gridState.scrollToItem(returnIndex + 1)
             withFrameNanos { }
             delay(120L)
-            repeat(5) { attempt ->
-                if (runCatching {
-                        returnFocusRequester.requestFocus()
-                    }.getOrDefault(false)) {
-                    return@LaunchedEffect
-                }
-                delay(50L * (attempt + 1))
+            repeat(6) { attempt ->
+                runCatching { returnFocusRequester.requestFocus() }
+                delay(70L + 25L * attempt)
             }
         }
     }
