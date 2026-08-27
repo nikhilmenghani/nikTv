@@ -73,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -84,6 +85,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -91,6 +93,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.TrendingMovie
 import com.nikhil.niktv.data.TrendingSeries
@@ -360,8 +363,15 @@ private fun ModernDestinationHub(
     modifier: Modifier = Modifier
 ) {
     val configuration = LocalConfiguration.current
+    /*
+     * PROFILE_TILE_VISUAL_LANGUAGE_V32
+     *
+     * TV gets fewer, better-spaced destination cards so the profile-style
+     * scale lift has room to breathe and long TMDB/IPTV labels remain legible.
+     */
     val destinationColumns = when {
-        isTv || configuration.screenWidthDp >= 1200 -> 4
+        isTv -> 3
+        configuration.screenWidthDp >= 1200 -> 4
         configuration.screenWidthDp >= 720 -> 3
         else -> 2
     }
@@ -411,13 +421,17 @@ private fun ModernDestinationHub(
         columns = GridCells.Fixed(destinationColumns),
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(
-            start = 18.dp,
-            end = 18.dp,
-            top = 20.dp,
+            start = if (isTv) 28.dp else 18.dp,
+            end = if (isTv) 28.dp else 18.dp,
+            top = if (isTv) 24.dp else 20.dp,
             bottom = 72.dp
         ),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(
+            if (isTv) 22.dp else 14.dp
+        ),
+        horizontalArrangement = Arrangement.spacedBy(
+            if (isTv) 22.dp else 14.dp
+        )
     ) {
         item("hub-header", span = fullSpan) {
             Column(
@@ -744,13 +758,18 @@ private fun ModernDestinationTile(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue =
-            if (isTv) 1f
-            else if (focused) 1.035f
-            else 1f,
-        animationSpec = tween(130),
-        label = "modernDestinationScale"
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(durationMillis = 170),
+        label = "modernDestinationProfileFocus"
+    )
+    val scale = 1f + (0.045f * focusProgress)
+    val iconScale = 1f + (0.08f * focusProgress)
+    val shape = RoundedCornerShape(if (isTv) 18.dp else 16.dp)
+    val borderColor = lerp(
+        Color(0xFF35383F),
+        Color(0xFFF2F3F5),
+        focusProgress
     )
     val palette = remember(seed) {
         destinationPalette(seed)
@@ -760,28 +779,32 @@ private fun ModernDestinationTile(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
+            .zIndex(focusProgress)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
+            .shadow(
+                elevation = (14f * focusProgress).dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color(0x66000000),
+                spotColor = Color(0x55E50914)
+            )
             .onFocusChanged {
                 focused = it.isFocused
             },
-        shape = RoundedCornerShape(16.dp),
+        shape = shape,
         color = Color.Transparent,
         border = BorderStroke(
-            if (focused) 3.dp else 1.dp,
-            if (focused) {
-                Color(0xFFFF3340)
-            } else {
-                Color(0xFF353535)
-            }
+            (1f + focusProgress).dp,
+            borderColor
         )
     ) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f)
+                .aspectRatio(if (isTv) 1.72f else 16f / 9f)
                 .background(
                     Brush.linearGradient(
                         listOf(
@@ -790,7 +813,7 @@ private fun ModernDestinationTile(
                         )
                     )
                 )
-                .padding(15.dp)
+                .padding(if (isTv) 18.dp else 15.dp)
         ) {
             Row(
                 modifier = Modifier
@@ -799,28 +822,35 @@ private fun ModernDestinationTile(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    modifier = Modifier.size(42.dp),
-                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .size(if (isTv) 46.dp else 42.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        },
+                    shape = RoundedCornerShape(if (isTv) 14.dp else 12.dp),
                     color = Color.Black.copy(alpha = 0.30f)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             icon,
                             null,
-                            Modifier.size(23.dp),
+                            Modifier.size(if (isTv) 25.dp else 23.dp),
                             tint = Color.White
                         )
                     }
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(if (isTv) 14.dp else 12.dp))
                 Column(
                     Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         title,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Black,
+                        fontWeight =
+                            if (focused) FontWeight.Black
+                            else FontWeight.Bold,
                         color = Color.White,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
@@ -828,7 +858,12 @@ private fun ModernDestinationTile(
                     Text(
                         subtitle,
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.72f),
+                        color =
+                            if (focused) {
+                                Color(0xFFD5D7DC)
+                            } else {
+                                Color.White.copy(alpha = 0.72f)
+                            },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -891,23 +926,50 @@ private fun ModernCompactMediaCard(
 ) {
     var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv = context.isModernTileTv(configuration)
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(durationMillis = 170),
+        label = "modernCompactProfileFocus"
+    )
+    val scale = 1f + (0.045f * focusProgress)
+    val shape = RoundedCornerShape(14.dp)
+    val backgroundColor = lerp(
+        Color(0xFF15171B),
+        Color(0xFF22252B),
+        focusProgress
+    )
+    val borderColor = lerp(
+        Color(0xFF30343B),
+        Color(0xFFF2F3F5),
+        focusProgress
+    )
 
     Surface(
         onClick = onClick,
         modifier = Modifier
-            .width(148.dp)
+            .width(if (isTv) 158.dp else 148.dp)
+            .zIndex(focusProgress)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .shadow(
+                elevation = (12f * focusProgress).dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color(0x66000000),
+                spotColor = Color(0x55E50914)
+            )
             .onFocusChanged {
                 focused = it.isFocused
             },
-        shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF151515),
+        shape = shape,
+        color = backgroundColor,
         border = BorderStroke(
-            if (focused) 3.dp else 1.dp,
-            if (focused) {
-                Color(0xFFFF3340)
-            } else {
-                Color(0xFF303030)
-            }
+            (1f + focusProgress).dp,
+            borderColor
         )
     ) {
         Column {
@@ -924,20 +986,25 @@ private fun ModernCompactMediaCard(
                 )
             }
             Column(
-                Modifier.padding(9.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                Modifier.padding(if (isTv) 10.dp else 9.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 Text(
                     item.title,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.Bold
+                    fontWeight =
+                        if (focused) FontWeight.SemiBold
+                        else FontWeight.Medium,
+                    color = if (focused) Color.White else Color(0xFFD4D7DC)
                 )
                 Text(
                     subtitle,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = Color.Gray,
+                    color =
+                        if (focused) Color(0xFFBFC3CA)
+                        else Color(0xFF858B94),
                     style = MaterialTheme.typography.labelSmall
                 )
             }
@@ -1115,13 +1182,17 @@ private fun ModernTmdbCollection(
                 moveFocus = moveFocusToIndex
             ),
         contentPadding = PaddingValues(
-            start = 18.dp,
-            end = 18.dp,
+            start = if (isTv) 24.dp else 18.dp,
+            end = if (isTv) 24.dp else 18.dp,
             top = 16.dp,
             bottom = 54.dp
         ),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(
+            if (isTv) 22.dp else 16.dp
+        ),
+        horizontalArrangement = Arrangement.spacedBy(
+            if (isTv) 16.dp else 12.dp
+        )
     ) {
         item("collection-header", span = fullSpan) {
             ModernCollectionHeader(
@@ -1427,13 +1498,17 @@ private fun ModernIptvCollection(
                 moveFocus = moveFocusToIndex
             ),
         contentPadding = PaddingValues(
-            start = 18.dp,
-            end = 18.dp,
+            start = if (isTv) 24.dp else 18.dp,
+            end = if (isTv) 24.dp else 18.dp,
             top = 16.dp,
             bottom = 54.dp
         ),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(
+            if (isTv) 22.dp else 16.dp
+        ),
+        horizontalArrangement = Arrangement.spacedBy(
+            if (isTv) 16.dp else 12.dp
+        )
     ) {
         item("collection-header", span = fullSpan) {
             ModernCollectionHeader(
@@ -1578,18 +1653,23 @@ private fun ModernCollectionPoster(
 ) {
     var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val scale by animateFloatAsState(
-        targetValue =
-            if (isTv) 1f
-            else if (focused) 1.035f
-            else 1f,
-        animationSpec = tween(120),
-        label = "modernPosterScale"
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(durationMillis = 170),
+        label = "modernPosterProfileFocus"
+    )
+    val scale = 1f + (0.045f * focusProgress)
+    val shape = RoundedCornerShape(11.dp)
+    val borderColor = lerp(
+        Color(0xFF30343B),
+        Color(0xFFF2F3F5),
+        focusProgress
     )
 
     Column(
         Modifier
             .fillMaxWidth()
+            .zIndex(focusProgress)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -1607,18 +1687,21 @@ private fun ModernCollectionPoster(
             onClick = onClick,
             modifier = modifier
                 .fillMaxWidth()
+                .shadow(
+                    elevation = (14f * focusProgress).dp,
+                    shape = shape,
+                    clip = false,
+                    ambientColor = Color(0x66000000),
+                    spotColor = Color(0x55E50914)
+                )
                 .onFocusChanged {
                     focused = it.isFocused
                 },
-            shape = RoundedCornerShape(11.dp),
+            shape = shape,
             color = Color(0xFF202020),
             border = BorderStroke(
-                if (focused) 3.dp else 1.dp,
-                if (focused) {
-                    Color(0xFFFF3340)
-                } else {
-                    Color(0xFF303030)
-                }
+                (1f + focusProgress).dp,
+                borderColor
             )
         ) {
             Box(
@@ -1645,8 +1728,12 @@ private fun ModernCollectionPoster(
             ) {
                 Text(
                     item.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
+                    color =
+                        if (focused) Color.White
+                        else Color(0xFFD4D7DC),
+                    fontWeight =
+                        if (focused) FontWeight.SemiBold
+                        else FontWeight.Medium,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -1654,7 +1741,9 @@ private fun ModernCollectionPoster(
                 if (subtitle.isNotBlank()) {
                     Text(
                         subtitle,
-                        color = Color(0xFF9E9E9E),
+                        color =
+                            if (focused) Color(0xFFBFC3CA)
+                            else Color(0xFF858B94),
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis

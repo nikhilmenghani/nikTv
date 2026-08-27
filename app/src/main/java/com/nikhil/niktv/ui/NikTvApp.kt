@@ -1787,7 +1787,8 @@ private fun ModernBrowseScreen(
     }
 
     val maxLiveTvColumns = when {
-        isTv || configuration.screenWidthDp >= 1200 -> 4
+        isTv -> 4
+        configuration.screenWidthDp >= 1200 -> 4
         configuration.screenWidthDp >= 900 -> 3
         configuration.screenWidthDp >= 600 -> 2
         else -> 1
@@ -2931,7 +2932,20 @@ private fun liveChannelSupportingText(
     item: MediaItem
 ): String? {
     item.liveProgramme?.let { programme ->
-        return liveProgrammeSummary(programme)
+        val cleanProgramme =
+            if (
+                programme.title.trim().equals(
+                    item.title.trim(),
+                    ignoreCase = true
+                )
+            ) {
+                programme.copy(title = "")
+            } else {
+                programme
+            }
+
+        return liveProgrammeSummary(cleanProgramme)
+            .takeIf { it.isNotBlank() }
     }
 
     val description = item.description
@@ -3005,8 +3019,8 @@ private fun ModernGrid(
     state: LazyGridState = rememberLazyGridState(),
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(16.dp),
-    verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(12.dp),
-    horizontalArrangement: Arrangement.Horizontal = Arrangement.spacedBy(10.dp),
+    verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(16.dp),
+    horizontalArrangement: Arrangement.Horizontal = Arrangement.spacedBy(16.dp),
     content: LazyGridScope.() -> Unit
 ) {
     LazyVerticalGrid(
@@ -3068,7 +3082,8 @@ private fun LiveTvChannelCard(
         isFavorite = isFavorite,
         toggleFavorite = onToggleFavorite,
         supportingText = liveChannelSupportingText(item),
-        compact = true
+        compact = true,
+        channelStyle = true
     )
 }
 
@@ -4007,7 +4022,7 @@ private fun ModernPosterCard(
     val posterScale by androidx.compose.animation.core.animateFloatAsState(
         targetValue =
             if (isTv) {
-                1f
+                if (focused) 1.045f else 1f
             } else if (focused) {
                 focusedScale
             } else {
@@ -4015,11 +4030,12 @@ private fun ModernPosterCard(
             },
         animationSpec =
             androidx.compose.animation.core.tween(
-                durationMillis = 140
+                durationMillis = 170
             ),
         label = "catalogPosterScale"
     )
     val artworkModel = remember(item.id, item.title, item.logo) { artworkRequest(context, item) }
+    val posterShape = RoundedCornerShape(10.dp)
     val fraction = if (progress != null && progress.durationMillis > 0L)
         (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
     Box(modifier) {
@@ -4047,9 +4063,26 @@ private fun ModernPosterCard(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio)
-                .then(if (focused) Modifier.shadow(18.dp, RoundedCornerShape(8.dp), ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914)) else Modifier)
-                .clip(RoundedCornerShape(8.dp)).background(Color(0xFF242424))
-                .border(if (focused) 4.dp else 0.dp, Color(0xFFFF2633), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                .then(
+                    if (focused) {
+                        Modifier.shadow(
+                            14.dp,
+                            posterShape,
+                            clip = false,
+                            ambientColor = Color(0x66000000),
+                            spotColor = Color(0x55E50914)
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .clip(posterShape)
+                .background(Color(0xFF242424))
+                .border(
+                    if (focused) 2.dp else 1.dp,
+                    if (focused) Color(0xFFF2F3F5) else Color(0xFF30343B),
+                    posterShape
+                ), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) {
                     ModernArtworkFallback(
                         title = item.title,
@@ -4127,55 +4160,103 @@ private fun ModernMediaListCard(
     toggleFavorite: () -> Unit,
     supportingText: String? = item.description,
     compact: Boolean = false,
-    isCurrentlyPlaying: Boolean = false
+    isCurrentlyPlaying: Boolean = false,
+    channelStyle: Boolean = false
 ) {
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val isTv = context.isTvLikeDevice(configuration)
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(durationMillis = 170),
+        label = "mediaListProfileFocus"
+    )
+    val scale =
+        1f + (
+            (if (channelStyle) 0.035f else 0.045f) *
+                focusProgress
+            )
+    val shape = RoundedCornerShape(14.dp)
+    val backgroundColor = lerp(
+        Color(0xFF15171B),
+        Color(0xFF22252B),
+        focusProgress
+    )
+    val borderColor = lerp(
+        Color(0xFF30343B),
+        Color(0xFFF2F3F5),
+        focusProgress
+    )
+    val channelPalette = remember(item.id, item.title) {
+        val palettes = listOf(
+            Color(0xFF172336) to Color(0xFF35151A),
+            Color(0xFF1A2830) to Color(0xFF12171C),
+            Color(0xFF2B2030) to Color(0xFF151218),
+            Color(0xFF1B2B28) to Color(0xFF101718),
+            Color(0xFF302419) to Color(0xFF17120F),
+            Color(0xFF22242B) to Color(0xFF32151A)
+        )
+        palettes[
+            ((item.id + item.title).hashCode() and Int.MAX_VALUE) %
+                palettes.size
+        ]
+    }
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = if (compact) 2.dp else 10.dp)
-            .onFocusChanged { focused = it.isFocused }
-            .then(
-                if (focused) {
-                    Modifier.shadow(
-                        16.dp,
-                        RoundedCornerShape(12.dp),
-                        ambientColor = Color(0xFFE50914),
-                        spotColor = Color(0xFFE50914)
-                    )
-                } else {
-                    Modifier
-                }
+            .padding(
+                horizontal = if (compact) 4.dp else 10.dp,
+                vertical = if (channelStyle) 4.dp else 0.dp
             )
+            .zIndex(focusProgress)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .shadow(
+                elevation = (12f * focusProgress).dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color(0x66000000),
+                spotColor = Color(0x55E50914)
+            )
+            .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(
                 onClick = onClick,
                 onLongClick = { menuOpen = true }
             ),
-        shape = RoundedCornerShape(12.dp),
-        color = when {
-            focused -> Color(0xFF292929)
-            isCurrentlyPlaying -> Color(0xFF211719)
-            else -> Color(0xFF171717)
-        },
+        shape = shape,
+        color = backgroundColor,
         border = when {
-            focused -> BorderStroke(4.dp, Color(0xFFFF2633))
-            isCurrentlyPlaying -> BorderStroke(2.dp, Color(0xFFE50914))
-            else -> null
+            isCurrentlyPlaying && !focused ->
+                BorderStroke(2.dp, Color(0xFFE50914))
+
+            else ->
+                BorderStroke(
+                    (1f + focusProgress).dp,
+                    borderColor
+                )
         }
     ) {
         Row(
-            modifier = Modifier.padding(
-                horizontal = if (compact) 6.dp else 8.dp,
-                vertical = if (compact) 7.dp else 8.dp
-            ),
+            modifier = Modifier
+                .then(
+                    if (channelStyle) {
+                        Modifier.heightIn(min = 76.dp)
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(
+                    horizontal = if (compact) 8.dp else 10.dp,
+                    vertical = if (compact) 8.dp else 9.dp
+                ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(
-                if (compact) 8.dp else 12.dp
+                if (channelStyle) 10.dp
+                else if (compact) 8.dp
+                else 12.dp
             )
         ) {
             if (isCurrentlyPlaying) {
@@ -4190,39 +4271,90 @@ private fun ModernMediaListCard(
 
             Box(
                 modifier = Modifier
-                    .width(if (compact) 72.dp else 132.dp)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF242424)),
+                    .then(
+                        if (channelStyle) {
+                            Modifier
+                                .width(68.dp)
+                                .height(52.dp)
+                        } else {
+                            Modifier
+                                .width(if (compact) 72.dp else 132.dp)
+                                .aspectRatio(16f / 9f)
+                        }
+                    )
+                    .clip(RoundedCornerShape(10.dp))
+                    .then(
+                        if (channelStyle) {
+                            Modifier.background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        channelPalette.first,
+                                        channelPalette.second
+                                    )
+                                )
+                            )
+                        } else {
+                            Modifier.background(Color(0xFF242424))
+                        }
+                    )
+                    .border(
+                        1.dp,
+                        Color(0xFF343840),
+                        RoundedCornerShape(10.dp)
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 if (item.logo.isNullOrBlank()) {
                     Icon(
-                        Icons.Default.SmartDisplay,
+                        if (channelStyle) {
+                            Icons.Default.LiveTv
+                        } else {
+                            Icons.Default.SmartDisplay
+                        },
                         contentDescription = null,
                         modifier = Modifier.size(
-                            if (compact) 30.dp else 42.dp
+                            if (channelStyle) 27.dp
+                            else if (compact) 30.dp
+                            else 42.dp
                         ),
-                        tint = Color.LightGray
+                        tint = Color(0xFFD9DDE5)
                     )
                 } else {
                     SubcomposeAsyncImage(
                         model = artworkRequest(context, item),
                         contentDescription = item.title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
+                        modifier =
+                            if (channelStyle) {
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(7.dp)
+                            } else {
+                                Modifier.fillMaxSize()
+                            },
+                        contentScale =
+                            if (channelStyle) {
+                                ContentScale.Fit
+                            } else {
+                                ContentScale.Crop
+                            }
                     ) {
                         when (painter.state.value) {
                             is coil3.compose.AsyncImagePainter.State.Success ->
                                 SubcomposeAsyncImageContent()
 
                             else -> Icon(
-                                Icons.Default.SmartDisplay,
+                                if (channelStyle) {
+                                    Icons.Default.LiveTv
+                                } else {
+                                    Icons.Default.SmartDisplay
+                                },
                                 contentDescription = null,
                                 modifier = Modifier.size(
-                                    if (compact) 30.dp else 42.dp
+                                    if (channelStyle) 27.dp
+                                    else if (compact) 30.dp
+                                    else 42.dp
                                 ),
-                                tint = Color.LightGray
+                                tint = Color(0xFFD9DDE5)
                             )
                         }
                     }
@@ -4231,22 +4363,41 @@ private fun ModernMediaListCard(
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+                verticalArrangement = Arrangement.spacedBy(
+                    if (channelStyle) 5.dp else 3.dp
+                )
             ) {
                 Text(
                     text = item.title,
-                    color = Color.White,
-                    style = if (compact) {
-                        MaterialTheme.typography.titleSmall
-                    } else {
-                        MaterialTheme.typography.titleMedium
-                    },
-                    fontWeight = if (focused || isCurrentlyPlaying) {
-                        FontWeight.SemiBold
-                    } else {
-                        FontWeight.Normal
-                    },
-                    maxLines = if (compact) 2 else 1,
+                    modifier =
+                        if (channelStyle && focused) {
+                            Modifier.basicMarquee(
+                                iterations = Int.MAX_VALUE
+                            )
+                        } else {
+                            Modifier
+                        },
+                    color =
+                        if (focused) Color.White
+                        else Color(0xFFE1E3E7),
+                    style =
+                        if (channelStyle) {
+                            MaterialTheme.typography.labelLarge
+                        } else if (compact) {
+                            MaterialTheme.typography.titleSmall
+                        } else {
+                            MaterialTheme.typography.titleMedium
+                        },
+                    fontWeight =
+                        if (focused || isCurrentlyPlaying) {
+                            FontWeight.SemiBold
+                        } else {
+                            FontWeight.Medium
+                        },
+                    maxLines =
+                        if (channelStyle) 1
+                        else if (compact) 2
+                        else 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
@@ -4255,13 +4406,19 @@ private fun ModernMediaListCard(
                     ?.let { text ->
                         Text(
                             text = text,
-                            color = if (focused) {
-                                Color(0xFFD5D5D5)
-                            } else {
-                                Color(0xFFAAAAAA)
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
+                            color =
+                                if (focused) {
+                                    Color(0xFFC4C8D0)
+                                } else {
+                                    Color(0xFF9298A2)
+                                },
+                            style =
+                                if (channelStyle) {
+                                    MaterialTheme.typography.labelSmall
+                                } else {
+                                    MaterialTheme.typography.bodySmall
+                                },
+                            maxLines = if (channelStyle) 1 else 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
