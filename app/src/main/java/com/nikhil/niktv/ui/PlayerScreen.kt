@@ -181,6 +181,8 @@ fun PlayerScreen(
         ?: scheduledAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
+    var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
@@ -196,7 +198,11 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(focusMode) {
-        if (!focusMode) queueVisible = false
+        if (!focusMode) {
+            queueVisible = false
+            queueRevealProgress = 0f
+            queueRevealDragging = false
+        }
     }
     var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
@@ -707,9 +713,8 @@ fun PlayerScreen(
                     var adjustingLevel = false
                     var gestureConsumed = false
                     var tapCandidate = false
-                    var queueSwipeCandidate = false
+                    var queueGestureOwned = false
                     val tapSlop = 14f * resources.displayMetrics.density
-                    val queueSwipeThreshold = 72f * resources.displayMetrics.density
                     fun applyVideoTransform() {
                         videoSurfaceView?.apply {
                             scaleX = videoScale
@@ -816,7 +821,7 @@ fun PlayerScreen(
                                 adjustingLevel = false
                                 gestureConsumed = false
                                 tapCandidate = true
-                                queueSwipeCandidate =
+                                queueGestureOwned =
                                     focusMode &&
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
@@ -836,16 +841,18 @@ fun PlayerScreen(
                                 val movement = Offset(event.x, event.y) - lastTouch
                                 if (movement.getDistance() > tapSlop) tapCandidate = false
                                 val queueSwipeDistance = gestureStartY - event.y
-                                if (
-                                    queueSwipeCandidate &&
-                                    queueSwipeDistance > queueSwipeThreshold
-                                ) {
-                                    queueVisible = true
-                                    controlsVisible = false
-                                    controlsFocused = false
-                                    gestureConsumed = true
-                                    queueSwipeCandidate = false
-                                } else if (queueSwipeCandidate) {
+                                if (queueGestureOwned) {
+                                    val progress =
+                                        (queueSwipeDistance / (playerView.height * 0.32f))
+                                            .coerceIn(0f, 1f)
+                                    if (progress > 0f) {
+                                        queueVisible = true
+                                        queueRevealDragging = true
+                                        queueRevealProgress = progress
+                                        controlsVisible = false
+                                        controlsFocused = false
+                                        gestureConsumed = true
+                                    }
                                     // The bottom-edge swipe belongs to the queue sheet,
                                     // not brightness/volume adjustment.
                                     Unit
@@ -873,11 +880,21 @@ fun PlayerScreen(
                                 }
                             }
                             MotionEvent.ACTION_UP -> {
+                                if (queueGestureOwned) {
+                                    queueRevealDragging = false
+                                    if (queueRevealProgress >= 0.18f) {
+                                        queueRevealProgress = 1f
+                                        queueVisible = true
+                                    } else {
+                                        queueRevealProgress = 0f
+                                        queueVisible = false
+                                    }
+                                    queueGestureOwned = false
+                                }
                                 if (tapCandidate && !gestureConsumed && !adjustingLevel && !scaleDetector.isInProgress) {
                                     controlsVisible = !controlsVisible
                                     gestureConsumed = true
                                 }
-                                queueSwipeCandidate = false
                             }
                         }
                         // Claim the gesture at ACTION_DOWN. The old Media3 controller
@@ -1103,6 +1120,8 @@ fun PlayerScreen(
                                 !queueVisible
                             ) {
                                 queueVisible = true
+                                queueRevealProgress = 1f
+                                queueRevealDragging = false
                                 true
                             } else false
                         },
@@ -1167,8 +1186,12 @@ fun PlayerScreen(
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,
             onLoadMore = onLoadMoreQueue,
+            revealProgress = queueRevealProgress,
+            revealDragging = queueRevealDragging,
             onDismiss = {
                 queueVisible = false
+                queueRevealProgress = 0f
+                queueRevealDragging = false
                 dpadInteraction++
                 showControlsAndFocusPlayPause()
             },

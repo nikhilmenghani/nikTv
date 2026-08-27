@@ -381,16 +381,24 @@ private fun ModernDestinationHub(
             }
         }
 
-    val movieCategories = state.modernVisibleIptvCategories(
-        CatalogType.MOVIES,
-        requireExplicitSelection =
-            dashboardSurface == DashboardSurface.HOME
-    )
-    val seriesCategories = state.modernVisibleIptvCategories(
-        CatalogType.SERIES,
-        requireExplicitSelection =
-            dashboardSurface == DashboardSurface.HOME
-    )
+    val movieCategories =
+        if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.MOVIES)) {
+            state.modernVisibleIptvCategories(
+                CatalogType.MOVIES,
+                requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
+            )
+        } else {
+            emptyList()
+        }
+    val seriesCategories =
+        if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.SERIES)) {
+            state.modernVisibleIptvCategories(
+                CatalogType.SERIES,
+                requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
+            )
+        } else {
+            emptyList()
+        }
 
     val screenTitle = when (dashboardSurface) {
         DashboardSurface.HOME -> "Explore"

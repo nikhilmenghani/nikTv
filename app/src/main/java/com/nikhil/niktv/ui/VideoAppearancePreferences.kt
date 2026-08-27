@@ -63,6 +63,10 @@ import kotlin.math.roundToInt
 import com.nikhil.niktv.model.MediaItem
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import coil3.compose.AsyncImagePainter
@@ -363,6 +367,8 @@ internal fun PlayerQueueOverlay(
     hasMore: Boolean = false,
     loadingMore: Boolean = false,
     onLoadMore: () -> Boolean = { false },
+    revealProgress: Float = 1f,
+    revealDragging: Boolean = false,
     onDismiss: () -> Unit,
     onSelect: (MediaItem) -> Unit
 ) {
@@ -383,6 +389,11 @@ internal fun PlayerQueueOverlay(
     var initialFocusApplied by remember(playingId) { mutableStateOf(false) }
     var loadMoreRequested by remember { mutableStateOf(false) }
     var observedLoading by remember { mutableStateOf(false) }
+    val renderedReveal by animateFloatAsState(
+        targetValue = revealProgress.coerceIn(0f, 1f),
+        animationSpec = if (revealDragging) snap() else tween(220),
+        label = "playerQueueReveal"
+    )
 
     LaunchedEffect(loadingMore) {
         if (loadMoreRequested) {
@@ -516,14 +527,17 @@ internal fun PlayerQueueOverlay(
                     }
                 }
             }
-            .background(Color.Black.copy(alpha = .76f))
+            .background(Color.Black.copy(alpha = .76f * renderedReveal))
             .padding(horizontal = 28.dp, vertical = 22.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
         Surface(
             Modifier
                 .fillMaxWidth()
-                .heightIn(min = 250.dp, max = 340.dp),
+                .heightIn(min = 250.dp, max = 340.dp)
+                .graphicsLayer {
+                    translationY = size.height * (1f - renderedReveal)
+                },
             color = Color(0xF51A1A1A),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
         ) {

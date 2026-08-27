@@ -109,6 +109,8 @@ internal fun VlcPlayerScreen(
         ?: scheduledAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
+    var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
@@ -124,7 +126,11 @@ internal fun VlcPlayerScreen(
         }
     }
     LaunchedEffect(focusMode) {
-        if (!focusMode) queueVisible = false
+        if (!focusMode) {
+            queueVisible = false
+            queueRevealProgress = 0f
+            queueRevealDragging = false
+        }
     }
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
@@ -430,9 +436,8 @@ internal fun VlcPlayerScreen(
                     var gestureStartValue = 0f
                     var brightnessGesture = false
                     var adjustingLevel = false
-                    var queueSwipeCandidate = false
+                    var queueGestureOwned = false
                     var queueSwipeTriggered = false
-                    val queueSwipeThreshold = 72f * layout.resources.displayMetrics.density
                     videoView = layout
                     // Native VLC focus is only the embedded Showcase
                     // D-pad bridge. Standalone/fullscreen focus stays in Compose.
@@ -469,7 +474,7 @@ internal fun VlcPlayerScreen(
                                 brightnessGesture = event.x < layout.width / 2f
                                 adjustingLevel = false
                                 queueSwipeTriggered = false
-                                queueSwipeCandidate =
+                                queueGestureOwned =
                                     focusMode &&
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
@@ -486,17 +491,19 @@ internal fun VlcPlayerScreen(
                             }
                             MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1) {
                                 val deltaY = gestureStartY - event.y
-                                if (
-                                    queueSwipeCandidate &&
-                                    deltaY > queueSwipeThreshold
-                                ) {
-                                    queueVisible = true
-                                    controlsVisible = false
-                                    controlsFocused = false
-                                    queueSwipeTriggered = true
-                                    queueSwipeCandidate = false
+                                if (queueGestureOwned) {
+                                    val progress =
+                                        (deltaY / (layout.height * 0.32f))
+                                            .coerceIn(0f, 1f)
+                                    if (progress > 0f) {
+                                        queueVisible = true
+                                        queueRevealDragging = true
+                                        queueRevealProgress = progress
+                                        controlsVisible = false
+                                        controlsFocused = false
+                                        queueSwipeTriggered = true
+                                    }
                                 } else if (
-                                    !queueSwipeCandidate &&
                                     (adjustingLevel || kotlin.math.abs(deltaY) > 24f * layout.resources.displayMetrics.density)
                                 ) {
                                     adjustingLevel = true
@@ -513,10 +520,20 @@ internal fun VlcPlayerScreen(
                                 }
                             }
                             MotionEvent.ACTION_UP -> {
+                                if (queueGestureOwned) {
+                                    queueRevealDragging = false
+                                    if (queueRevealProgress >= 0.18f) {
+                                        queueRevealProgress = 1f
+                                        queueVisible = true
+                                    } else {
+                                        queueRevealProgress = 0f
+                                        queueVisible = false
+                                    }
+                                    queueGestureOwned = false
+                                }
                                 if (!adjustingLevel && !queueSwipeTriggered) {
                                     controlsVisible = !controlsVisible
                                 }
-                                queueSwipeCandidate = false
                                 queueSwipeTriggered = false
                             }
                         }
@@ -728,6 +745,8 @@ internal fun VlcPlayerScreen(
                                 !queueVisible
                             ) {
                                 queueVisible = true
+                                queueRevealProgress = 1f
+                                queueRevealDragging = false
                                 true
                             } else false
                         },
@@ -786,8 +805,12 @@ internal fun VlcPlayerScreen(
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,
             onLoadMore = onLoadMoreQueue,
+            revealProgress = queueRevealProgress,
+            revealDragging = queueRevealDragging,
             onDismiss = {
                 queueVisible = false
+                queueRevealProgress = 0f
+                queueRevealDragging = false
                 dpadInteraction++
                 showControls()
             },
