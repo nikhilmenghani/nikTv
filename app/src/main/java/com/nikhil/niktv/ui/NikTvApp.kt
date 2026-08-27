@@ -5224,11 +5224,25 @@ private fun ModernSettingsScreen(
             }
         }
         SettingsSection("Picture and video appearance") {
-            val (appearanceProfiles, activeAppearance) = rememberVideoAppearanceProfiles()
-            var appearanceSchedule by remember { mutableStateOf(VideoAppearancePreferences.schedule(context)) }
+            val (appearanceProfiles, activeAppearance) =
+                rememberVideoAppearanceProfiles()
+            val editableAppearanceProfiles =
+                appearanceProfiles.filterNot { it.id == "default" }
+            var appearanceSchedule by remember {
+                mutableStateOf(VideoAppearancePreferences.schedule(context))
+            }
             var scheduleError by remember { mutableStateOf<String?>(null) }
-            var editingId by remember(activeAppearance.id) { mutableStateOf(activeAppearance.id) }
-            val editing = appearanceProfiles.firstOrNull { it.id == editingId } ?: activeAppearance
+            var editingId by remember(activeAppearance.id) {
+                mutableStateOf(
+                    editableAppearanceProfiles
+                        .firstOrNull { it.id == activeAppearance.id }
+                        ?.id
+                        ?: editableAppearanceProfiles.first().id
+                )
+            }
+            val editing =
+                editableAppearanceProfiles.firstOrNull { it.id == editingId }
+                    ?: editableAppearanceProfiles.first()
             var editName by remember(editing.id, editing.name) { mutableStateOf(editing.name) }
             var editBrightness by remember(editing.id, editing.brightness) { mutableFloatStateOf(editing.brightness) }
             var editWarmth by remember(editing.id, editing.warmth) { mutableFloatStateOf(editing.warmth) }
@@ -5243,14 +5257,16 @@ private fun ModernSettingsScreen(
             val dimmingRequester = remember { FocusRequester() }
             val saveProfileRequester = remember { FocusRequester() }
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Picture mode", style = MaterialTheme.typography.titleMedium)
-                Text("These video-only profiles do not alter the television's system picture settings.", color = Color.Gray)
+                Text("Picture mode profiles", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Choose the active picture mode in the player. Edit filter profiles and scheduled windows here; Default is an immutable unfiltered reference.",
+                    color = Color.Gray
+                )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    appearanceProfiles.forEach { profile ->
+                    editableAppearanceProfiles.forEach { profile ->
                         FilterChip(
-                            selected = activeAppearance.id == profile.id,
+                            selected = editingId == profile.id,
                             onClick = {
-                                VideoAppearancePreferences.setActive(context, profile.id)
                                 editingId = profile.id
                             },
                             label = { Text(profile.name) },
@@ -5391,16 +5407,12 @@ private fun ModernSettingsScreen(
                     )
                 }
                 if (appearanceSchedule.enabled) {
-                    Text("Default Picture Mode", fontWeight = FontWeight.SemiBold)
-                    ScheduleProfileControl(
-                        profileId = appearanceSchedule.fallbackProfileId,
-                        profiles = appearanceProfiles,
-                        onChange = { profileId ->
-                            appearanceSchedule = appearanceSchedule.copy(fallbackProfileId = profileId)
-                            VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                        }
-                    )
                     Text("Scheduled windows", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Only explicit windows override the player choice. Outside a scheduled window, your most recent player selection remains active.",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     scheduleError?.let {
                         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     }
@@ -5447,7 +5459,7 @@ private fun ModernSettingsScreen(
                                     .map { offset -> (preferredStart + offset * 15) % 1440 }
                                     .map { start ->
                                         VideoAppearanceScheduleEntry(
-                                            profileId = appearanceSchedule.fallbackProfileId,
+                                            profileId = VideoAppearancePreferences.activeId(context),
                                             startMinutes = start,
                                             endMinutes = (start + 60) % 1440
                                         )

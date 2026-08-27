@@ -102,10 +102,13 @@ internal data class VideoAppearanceSchedule(
     val fallbackProfileId: String,
     val entries: List<VideoAppearanceScheduleEntry>
 ) {
-    fun profileAt(minutesOfDay: Int): String? {
+    fun activeEntryAt(minutesOfDay: Int): VideoAppearanceScheduleEntry? {
         if (!enabled) return null
-        return entries.firstOrNull { it.contains(minutesOfDay) }?.profileId ?: fallbackProfileId
+        return entries.firstOrNull { it.contains(minutesOfDay) }
     }
+
+    fun profileAt(minutesOfDay: Int): String? =
+        activeEntryAt(minutesOfDay)?.profileId
 }
 
 private fun VideoAppearanceScheduleEntry.contains(minutesOfDay: Int): Boolean = when {
@@ -114,12 +117,47 @@ private fun VideoAppearanceScheduleEntry.contains(minutesOfDay: Int): Boolean = 
     else -> minutesOfDay >= startMinutes || minutesOfDay < endMinutes
 }
 
+/*
+ * PERSISTENT_PICTURE_MODE_SCHEDULE_V36
+ *
+ * A schedule entry overrides the player's persisted manual mode only once per
+ * occurrence. If the user changes mode after that, the manual choice remains
+ * active until a later scheduled window begins.
+ *
+ * The occurrence date is based on the entry's local start date. Overnight
+ * windows therefore keep one identity across midnight but get a new identity
+ * the next day.
+ */
+private fun VideoAppearanceScheduleEntry.occurrenceKey(now: Calendar): String {
+    val nowMinutes =
+        now.get(Calendar.HOUR_OF_DAY) * 60 +
+            now.get(Calendar.MINUTE)
+    val startDay = now.clone() as Calendar
+
+    if (startMinutes > endMinutes && nowMinutes < endMinutes) {
+        startDay.add(Calendar.DAY_OF_YEAR, -1)
+    }
+
+    return buildString {
+        append(startDay.get(Calendar.YEAR))
+        append(':')
+        append(startDay.get(Calendar.DAY_OF_YEAR))
+        append(':')
+        append(startMinutes)
+        append(':')
+        append(endMinutes)
+        append(':')
+        append(profileId)
+    }
+}
+
 internal fun schedulesOverlap(
     first: VideoAppearanceScheduleEntry,
     second: VideoAppearanceScheduleEntry
 ): Boolean = (0 until 1440).any { first.contains(it) && second.contains(it) }
 
 internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
+    "default" -> Icons.Default.FilterNone
     "movie" -> Icons.Default.Movie
     "standard" -> Icons.Default.Tv
     "natural" -> Icons.Default.Eco
@@ -132,10 +170,16 @@ internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
 internal object VideoAppearancePreferences {
     private const val FILE = "video_appearance_profiles"
     private const val ACTIVE = "active"
+    private const val SCHEDULE_APPLIED_OCCURRENCE =
+        "schedule_applied_occurrence_v4"
     private const val SCHEDULE_ENABLED = "schedule_enabled"
     private const val SCHEDULE_FALLBACK = "schedule_fallback_v3"
     private const val SCHEDULE_ENTRIES = "schedule_entries_v3"
     private val defaults = listOf(
+        // DEFAULT_UNFILTERED_PICTURE_MODE_V36
+        // Hard-coded neutral values; this profile is never loaded from or
+        // written to editable preference keys.
+        VideoAppearanceProfile("default", "Default", 0f, 0f, 0f, 0f, 0f),
         VideoAppearanceProfile("movie", "Movie", .02f, .08f, 0f, 0f, .03f),
         VideoAppearanceProfile("standard", "Standard", 0f, 0f, 0f, 0f, 0f),
         VideoAppearanceProfile("natural", "Natural", .01f, .03f, 0f, -.02f, .01f),
@@ -147,18 +191,48 @@ internal object VideoAppearancePreferences {
 
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
     fun profiles(context: Context): List<VideoAppearanceProfile> = defaults.map { preset ->
-        val p = prefs(context)
-        preset.copy(
-            name = p.getString("${preset.id}_name", preset.name).orEmpty().ifBlank { preset.name },
-            brightness = p.getInt("${preset.id}_brightness", (preset.brightness * 100).roundToInt()) / 100f,
-            warmth = p.getInt("${preset.id}_warmth", (preset.warmth * 100).roundToInt()) / 100f,
-            coolness = p.getInt("${preset.id}_coolness", (preset.coolness * 100).roundToInt()) / 100f,
-            tint = p.getInt("${preset.id}_tint", (preset.tint * 100).roundToInt()) / 100f,
-            dimming = p.getInt("${preset.id}_dimming", (preset.dimming * 100).roundToInt()) / 100f
-        )
+        if (preset.id == "default") {
+            preset
+        } else {
+            val p = prefs(context)
+            preset.copy(
+                name = p.getString("${preset.id}_name", preset.name).orEmpty().ifBlank { preset.name },
+                brightness = p.getInt("${preset.id}_brightness", (preset.brightness * 100).roundToInt()) / 100f,
+                warmth = p.getInt("${preset.id}_warmth", (preset.warmth * 100).roundToInt()) / 100f,
+                coolness = p.getInt("${preset.id}_coolness", (preset.coolness * 100).roundToInt()) / 100f,
+                tint = p.getInt("${preset.id}_tint", (preset.tint * 100).roundToInt()) / 100f,
+                dimming = p.getInt("${preset.id}_dimming", (preset.dimming * 100).roundToInt()) / 100f
+            )
+        }
     }
-    fun activeId(context: Context) = prefs(context).getString(ACTIVE, "standard") ?: "standard"
-    fun setActive(context: Context, id: String) { prefs(context).edit().putString(ACTIVE, id).apply() }
+
+    fun activeId(context: Context): String =
+        prefs(context).getString(ACTIVE, "default") ?: "default"
+
+    fun setActive(context: Context, id: String) {
+        if (defaults.none { it.id == id }) return
+        prefs(context).edit().putString(ACTIVE, id).apply()
+    }
+
+    fun appliedScheduleOccurrence(context: Context): String? =
+        prefs(context).getString(SCHEDULE_APPLIED_OCCURRENCE, null)
+
+    fun applyScheduledOccurrence(
+        context: Context,
+        profileId: String,
+        occurrenceKey: String
+    ) {
+        if (defaults.none { it.id == profileId }) return
+        val p = prefs(context)
+        if (p.getString(SCHEDULE_APPLIED_OCCURRENCE, null) == occurrenceKey) {
+            return
+        }
+        p.edit()
+            .putString(ACTIVE, profileId)
+            .putString(SCHEDULE_APPLIED_OCCURRENCE, occurrenceKey)
+            .apply()
+    }
+
     private val defaultScheduleEntries = listOf(
         VideoAppearanceScheduleEntry("bright", 6 * 60, 9 * 60),
         VideoAppearanceScheduleEntry("movie", 18 * 60, 22 * 60),
@@ -166,7 +240,9 @@ internal object VideoAppearancePreferences {
     )
     fun defaultSchedule(enabled: Boolean = false) = VideoAppearanceSchedule(
         enabled = enabled,
-        fallbackProfileId = "standard",
+        // Retained for preference-format compatibility only. Unscheduled time
+        // now keeps the persisted player choice instead of applying fallback.
+        fallbackProfileId = "default",
         entries = defaultScheduleEntries
     )
     fun schedule(context: Context): VideoAppearanceSchedule {
@@ -196,9 +272,16 @@ internal object VideoAppearancePreferences {
             .putBoolean(SCHEDULE_ENABLED, schedule.enabled)
             .putString(SCHEDULE_FALLBACK, schedule.fallbackProfileId)
             .putString(SCHEDULE_ENTRIES, normalized.joinToString(";") { "${it.startMinutes},${it.endMinutes},${it.profileId}" })
+            .also { editor ->
+                if (!schedule.enabled) {
+                    editor.remove(SCHEDULE_APPLIED_OCCURRENCE)
+                }
+            }
             .apply()
     }
     fun update(context: Context, profile: VideoAppearanceProfile) {
+        // Default is an immutable unfiltered reference mode.
+        if (profile.id == "default") return
         prefs(context).edit()
             .putString("${profile.id}_name", profile.name)
             .putInt("${profile.id}_brightness", (profile.brightness.coerceIn(0f, 1f) * 100).roundToInt())
@@ -235,14 +318,62 @@ internal fun rememberVideoAppearanceProfiles(
     val schedule = remember(context, revision, clockTick, useSchedule) {
         VideoAppearancePreferences.schedule(context)
     }
-    val nowMinutes = remember(clockTick) {
-        val now = Calendar.getInstance()
+    val now = remember(clockTick) { Calendar.getInstance() }
+    val nowMinutes = remember(now) {
         now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
     }
-    val effectiveId = (if (useSchedule) schedule.profileAt(nowMinutes) else null)
-        ?: VideoAppearancePreferences.activeId(context)
+    val scheduledEntry = remember(schedule, nowMinutes, useSchedule) {
+        if (useSchedule) schedule.activeEntryAt(nowMinutes) else null
+    }
+    val scheduledOccurrenceKey = remember(scheduledEntry, now) {
+        scheduledEntry?.occurrenceKey(now)
+    }
+    val occurrenceAlreadyApplied = remember(
+        context,
+        revision,
+        scheduledOccurrenceKey
+    ) {
+        scheduledOccurrenceKey != null &&
+            VideoAppearancePreferences.appliedScheduleOccurrence(context) ==
+                scheduledOccurrenceKey
+    }
+
+    /*
+     * A scheduled window wins once when that occurrence starts. Afterwards,
+     * setActive() is free to persist a manual player override. Leaving a
+     * scheduled window does not apply a fallback; it simply arms the next
+     * scheduled occurrence.
+     */
+    LaunchedEffect(
+        context,
+        useSchedule,
+        schedule.enabled,
+        scheduledEntry?.profileId,
+        scheduledOccurrenceKey
+    ) {
+        if (
+            useSchedule &&
+            schedule.enabled &&
+            scheduledEntry != null &&
+            scheduledOccurrenceKey != null
+        ) {
+            VideoAppearancePreferences.applyScheduledOccurrence(
+                context,
+                scheduledEntry.profileId,
+                scheduledOccurrenceKey
+            )
+        }
+    }
+
+    val persistedId = VideoAppearancePreferences.activeId(context)
+    val effectiveId =
+        if (scheduledEntry != null && !occurrenceAlreadyApplied) {
+            scheduledEntry.profileId
+        } else {
+            persistedId
+        }
     val active = profiles.firstOrNull { it.id == effectiveId }
-        ?: profiles.first { it.id == "standard" }
+        ?: profiles.first { it.id == "default" }
     return profiles to active
 }
 
@@ -1049,11 +1180,19 @@ internal fun PlayerPictureModeEditor(
                         }
                     }
                 }
-                PlayerEditorSlider("Brightness", brightness, 0f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
-                PlayerEditorSlider("Warmth", warmth, 0f..1f, warmthRequester, brightnessRequester, coolnessRequester) { warmth = it }
-                PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
-                PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
-                PlayerEditorSlider("Dimming", dimming, 0f..1f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
+                if (selected.id == "default") {
+                    Text(
+                        "Default is the unfiltered reference. No brightness, color, tint or dimming filters are applied, and this mode cannot be edited.",
+                        color = Color.LightGray,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    PlayerEditorSlider("Brightness", brightness, 0f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
+                    PlayerEditorSlider("Warmth", warmth, 0f..1f, warmthRequester, brightnessRequester, coolnessRequester) { warmth = it }
+                    PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
+                    PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
+                    PlayerEditorSlider("Dimming", dimming, 0f..1f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End

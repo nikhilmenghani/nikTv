@@ -102,11 +102,11 @@ internal fun VlcPlayerScreen(
     var inPictureInPicture by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
-    val (appearanceProfiles, scheduledAppearanceProfile) = rememberVideoAppearanceProfiles(useSchedule = true)
-    var appearanceOverrideId by remember { mutableStateOf<String?>(null) }
+    val (appearanceProfiles, persistedAppearanceProfile) =
+        rememberVideoAppearanceProfiles(useSchedule = true)
     var appearancePreview by remember { mutableStateOf<VideoAppearanceProfile?>(null) }
-    val activeAppearanceProfile = appearancePreview ?: appearanceProfiles.firstOrNull { it.id == appearanceOverrideId }
-        ?: scheduledAppearanceProfile
+    val activeAppearanceProfile =
+        appearancePreview ?: persistedAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
@@ -687,7 +687,7 @@ internal fun VlcPlayerScreen(
                         profiles = appearanceProfiles,
                         activeProfile = activeAppearanceProfile,
                         onPictureMode = { next ->
-                            appearanceOverrideId = next.id
+                            VideoAppearancePreferences.setActive(context, next.id)
                             modeFeedback = "Picture mode · ${next.name}"
                         },
                         onEditPictureMode = { queueVisible = false; pictureEditorVisible = true },
@@ -824,7 +824,9 @@ internal fun VlcPlayerScreen(
             selectedId = activeAppearanceProfile.id,
             onDismiss = { pictureEditorVisible = false; appearancePreview = null; dpadInteraction++; showControls() },
             onPreview = { appearancePreview = it },
-            onSelected = { appearanceOverrideId = it }
+            onSelected = {
+                VideoAppearancePreferences.setActive(context, it)
+            }
         )
 
         if (buffering && error == null) Column(
