@@ -1342,11 +1342,18 @@ private fun ModernTmdbCollection(
         if (returnFocusId != null && returnIndex >= 0) {
             // Header is lazy-grid item zero; posters begin at item one.
             gridState.scrollToItem(returnIndex + 1)
-            if (isTv) {
-                delay(120L)
-                runCatching {
-                    returnFocusRequester.requestFocus()
+            // A tablet or touch device may still be controlled by a remote.
+            // Always restore the exact launching tile instead of leaving focus
+            // on the navigation rail when fullscreen playback closes.
+            withFrameNanos { }
+            delay(120L)
+            repeat(5) { attempt ->
+                if (runCatching {
+                        returnFocusRequester.requestFocus()
+                    }.getOrDefault(false)) {
+                    return@LaunchedEffect
                 }
+                delay(50L * (attempt + 1))
             }
         }
     }
@@ -1412,7 +1419,7 @@ private fun ModernTmdbCollection(
                     item = media,
                     modifier = Modifier
                         .onFocusChanged {
-                            if (it.isFocused) focusedPosterIndex = index
+                            if (it.hasFocus) focusedPosterIndex = index
                         }
                         .focusRequester(
                             itemFocusRequesters.getOrPut(media.id) {
@@ -1472,7 +1479,7 @@ private fun ModernTmdbCollection(
                     item = media,
                     modifier = Modifier
                         .onFocusChanged {
-                            if (it.isFocused) focusedPosterIndex = index
+                            if (it.hasFocus) focusedPosterIndex = index
                         }
                         .focusRequester(
                             itemFocusRequesters.getOrPut(media.id) {
@@ -1658,11 +1665,15 @@ private fun ModernIptvCollection(
         if (returnFocusId != null && returnIndex >= 0) {
             // Header is lazy-grid item zero; posters begin at item one.
             gridState.scrollToItem(returnIndex + 1)
-            if (isTv) {
-                delay(120L)
-                runCatching {
-                    returnFocusRequester.requestFocus()
+            withFrameNanos { }
+            delay(120L)
+            repeat(5) { attempt ->
+                if (runCatching {
+                        returnFocusRequester.requestFocus()
+                    }.getOrDefault(false)) {
+                    return@LaunchedEffect
                 }
+                delay(50L * (attempt + 1))
             }
         }
     }
@@ -1711,7 +1722,7 @@ private fun ModernIptvCollection(
                 item = media,
                 modifier = Modifier
                     .onFocusChanged {
-                        if (it.isFocused) focusedPosterIndex = index
+                        if (it.hasFocus) focusedPosterIndex = index
                     }
                     .focusRequester(
                         itemFocusRequesters.getOrPut(media.id) {
@@ -1873,7 +1884,7 @@ private fun ModernCollectionPoster(
     )
 
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
             .zIndex(visualProgress)
             .graphicsLayer {
@@ -1892,7 +1903,7 @@ private fun ModernCollectionPoster(
         Surface(
             onClick = onClick,
             interactionSource = interactionSource,
-            modifier = modifier
+            modifier = Modifier
                 .fillMaxWidth()
                 .shadow(
                     elevation =
