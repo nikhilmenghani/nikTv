@@ -1786,8 +1786,14 @@ private fun ModernBrowseScreen(
         )
     }
 
+    /*
+     * LIVE_TV_CARD_HIERARCHY_V33
+     *
+     * Four Fire TV columns leave too little room for real-world station names.
+     * Three is the TV maximum; the selector still supports 1-3 columns.
+     */
     val maxLiveTvColumns = when {
-        isTv -> 4
+        isTv -> 3
         configuration.screenWidthDp >= 1200 -> 4
         configuration.screenWidthDp >= 900 -> 3
         configuration.screenWidthDp >= 600 -> 2
@@ -3019,8 +3025,8 @@ private fun ModernGrid(
     state: LazyGridState = rememberLazyGridState(),
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(16.dp),
-    verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(16.dp),
-    horizontalArrangement: Arrangement.Horizontal = Arrangement.spacedBy(16.dp),
+    verticalArrangement: Arrangement.Vertical = Arrangement.spacedBy(20.dp),
+    horizontalArrangement: Arrangement.Horizontal = Arrangement.spacedBy(20.dp),
     content: LazyGridScope.() -> Unit
 ) {
     LazyVerticalGrid(
@@ -4022,7 +4028,7 @@ private fun ModernPosterCard(
     val posterScale by androidx.compose.animation.core.animateFloatAsState(
         targetValue =
             if (isTv) {
-                if (focused) 1.045f else 1f
+                if (focused) 1.08f else 1f
             } else if (focused) {
                 focusedScale
             } else {
@@ -4066,11 +4072,11 @@ private fun ModernPosterCard(
                 .then(
                     if (focused) {
                         Modifier.shadow(
-                            14.dp,
+                            20.dp,
                             posterShape,
                             clip = false,
-                            ambientColor = Color(0x66000000),
-                            spotColor = Color(0x55E50914)
+                            ambientColor = Color(0x88000000),
+                            spotColor = Color(0x66E50914)
                         )
                     } else {
                         Modifier
@@ -4079,8 +4085,8 @@ private fun ModernPosterCard(
                 .clip(posterShape)
                 .background(Color(0xFF242424))
                 .border(
-                    if (focused) 2.dp else 1.dp,
-                    if (focused) Color(0xFFF2F3F5) else Color(0xFF30343B),
+                    if (focused) 3.dp else 1.dp,
+                    if (focused) Color.White else Color(0xFF30343B),
                     posterShape
                 ), contentAlignment = Alignment.Center) {
                 if (item.logo.isNullOrBlank()) {
@@ -4173,13 +4179,13 @@ private fun ModernMediaListCard(
     )
     val scale =
         1f + (
-            (if (channelStyle) 0.035f else 0.045f) *
+            (if (channelStyle) 0.075f else 0.08f) *
                 focusProgress
             )
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(16.dp)
     val backgroundColor = lerp(
         Color(0xFF15171B),
-        Color(0xFF22252B),
+        Color(0xFF2C3038),
         focusProgress
     )
     val borderColor = lerp(
@@ -4215,11 +4221,11 @@ private fun ModernMediaListCard(
                 scaleY = scale
             }
             .shadow(
-                elevation = (12f * focusProgress).dp,
+                elevation = (20f * focusProgress).dp,
                 shape = shape,
                 clip = false,
-                ambientColor = Color(0x66000000),
-                spotColor = Color(0x55E50914)
+                ambientColor = Color(0x88000000),
+                spotColor = Color(0x66E50914)
             )
             .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(
@@ -4234,7 +4240,7 @@ private fun ModernMediaListCard(
 
             else ->
                 BorderStroke(
-                    (1f + focusProgress).dp,
+                    if (focused) 3.dp else 1.dp,
                     borderColor
                 )
         }
@@ -4243,7 +4249,7 @@ private fun ModernMediaListCard(
             modifier = Modifier
                 .then(
                     if (channelStyle) {
-                        Modifier.heightIn(min = 76.dp)
+                        Modifier.heightIn(min = 94.dp)
                     } else {
                         Modifier
                     }
@@ -4254,16 +4260,20 @@ private fun ModernMediaListCard(
                 ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(
-                if (channelStyle) 10.dp
+                if (channelStyle) 12.dp
                 else if (compact) 8.dp
                 else 12.dp
             )
         ) {
-            if (isCurrentlyPlaying) {
+            if (isCurrentlyPlaying || (channelStyle && focused)) {
                 Box(
                     Modifier
-                        .width(3.dp)
-                        .height(if (compact) 52.dp else 42.dp)
+                        .width(if (channelStyle) 4.dp else 3.dp)
+                        .height(
+                            if (channelStyle) 62.dp
+                            else if (compact) 52.dp
+                            else 42.dp
+                        )
                         .clip(RoundedCornerShape(2.dp))
                         .background(Color(0xFFE50914))
                 )
@@ -4274,8 +4284,8 @@ private fun ModernMediaListCard(
                     .then(
                         if (channelStyle) {
                             Modifier
-                                .width(68.dp)
-                                .height(52.dp)
+                                .width(84.dp)
+                                .height(62.dp)
                         } else {
                             Modifier
                                 .width(if (compact) 72.dp else 132.dp)
@@ -4313,7 +4323,7 @@ private fun ModernMediaListCard(
                         },
                         contentDescription = null,
                         modifier = Modifier.size(
-                            if (channelStyle) 27.dp
+                            if (channelStyle) 30.dp
                             else if (compact) 30.dp
                             else 42.dp
                         ),
@@ -4327,7 +4337,7 @@ private fun ModernMediaListCard(
                             if (channelStyle) {
                                 Modifier
                                     .fillMaxSize()
-                                    .padding(7.dp)
+                                    .padding(8.dp)
                             } else {
                                 Modifier.fillMaxSize()
                             },
@@ -4350,7 +4360,7 @@ private fun ModernMediaListCard(
                                 },
                                 contentDescription = null,
                                 modifier = Modifier.size(
-                                    if (channelStyle) 27.dp
+                                    if (channelStyle) 30.dp
                                     else if (compact) 30.dp
                                     else 42.dp
                                 ),
@@ -4382,7 +4392,7 @@ private fun ModernMediaListCard(
                         else Color(0xFFE1E3E7),
                     style =
                         if (channelStyle) {
-                            MaterialTheme.typography.labelLarge
+                            MaterialTheme.typography.titleSmall
                         } else if (compact) {
                             MaterialTheme.typography.titleSmall
                         } else {

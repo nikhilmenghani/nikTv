@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -364,10 +365,11 @@ private fun ModernDestinationHub(
 ) {
     val configuration = LocalConfiguration.current
     /*
-     * PROFILE_TILE_VISUAL_LANGUAGE_V32
+     * PROFILE_TILE_VISUAL_LANGUAGE_V33
      *
-     * TV gets fewer, better-spaced destination cards so the profile-style
-     * scale lift has room to breathe and long TMDB/IPTV labels remain legible.
+     * Fire TV focus must remain obvious at couch distance. Content tiles use
+     * a larger profile-inspired lift, a fixed white focus ring and enough
+     * spacing that scaled cards never visually collide with their neighbors.
      */
     val destinationColumns = when {
         isTv -> 3
@@ -421,16 +423,16 @@ private fun ModernDestinationHub(
         columns = GridCells.Fixed(destinationColumns),
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(
-            start = if (isTv) 28.dp else 18.dp,
-            end = if (isTv) 28.dp else 18.dp,
-            top = if (isTv) 24.dp else 20.dp,
+            start = if (isTv) 32.dp else 18.dp,
+            end = if (isTv) 32.dp else 18.dp,
+            top = if (isTv) 28.dp else 20.dp,
             bottom = 72.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isTv) 22.dp else 14.dp
+            if (isTv) 28.dp else 14.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
-            if (isTv) 22.dp else 14.dp
+            if (isTv) 28.dp else 14.dp
         )
     ) {
         item("hub-header", span = fullSpan) {
@@ -763,8 +765,8 @@ private fun ModernDestinationTile(
         animationSpec = tween(durationMillis = 170),
         label = "modernDestinationProfileFocus"
     )
-    val scale = 1f + (0.045f * focusProgress)
-    val iconScale = 1f + (0.08f * focusProgress)
+    val scale = 1f + (0.09f * focusProgress)
+    val iconScale = 1f + (0.12f * focusProgress)
     val shape = RoundedCornerShape(if (isTv) 18.dp else 16.dp)
     val borderColor = lerp(
         Color(0xFF35383F),
@@ -785,11 +787,11 @@ private fun ModernDestinationTile(
                 scaleY = scale
             }
             .shadow(
-                elevation = (14f * focusProgress).dp,
+                elevation = (22f * focusProgress).dp,
                 shape = shape,
                 clip = false,
-                ambientColor = Color(0x66000000),
-                spotColor = Color(0x55E50914)
+                ambientColor = Color(0x88000000),
+                spotColor = Color(0x77E50914)
             )
             .onFocusChanged {
                 focused = it.isFocused
@@ -797,7 +799,7 @@ private fun ModernDestinationTile(
         shape = shape,
         color = Color.Transparent,
         border = BorderStroke(
-            (1f + focusProgress).dp,
+            if (focused) 3.dp else 1.dp,
             borderColor
         )
     ) {
@@ -869,6 +871,16 @@ private fun ModernDestinationTile(
                     )
                 }
             }
+
+            if (focused) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .width(72.dp)
+                        .height(4.dp)
+                        .background(Color(0xFFE50914))
+                )
+            }
         }
     }
 }
@@ -933,7 +945,7 @@ private fun ModernCompactMediaCard(
         animationSpec = tween(durationMillis = 170),
         label = "modernCompactProfileFocus"
     )
-    val scale = 1f + (0.045f * focusProgress)
+    val scale = 1f + (0.08f * focusProgress)
     val shape = RoundedCornerShape(14.dp)
     val backgroundColor = lerp(
         Color(0xFF15171B),
@@ -956,11 +968,11 @@ private fun ModernCompactMediaCard(
                 scaleY = scale
             }
             .shadow(
-                elevation = (12f * focusProgress).dp,
+                elevation = (18f * focusProgress).dp,
                 shape = shape,
                 clip = false,
-                ambientColor = Color(0x66000000),
-                spotColor = Color(0x55E50914)
+                ambientColor = Color(0x88000000),
+                spotColor = Color(0x66E50914)
             )
             .onFocusChanged {
                 focused = it.isFocused
@@ -968,7 +980,7 @@ private fun ModernCompactMediaCard(
         shape = shape,
         color = backgroundColor,
         border = BorderStroke(
-            (1f + focusProgress).dp,
+            if (focused) 3.dp else 1.dp,
             borderColor
         )
     ) {
@@ -1188,10 +1200,10 @@ private fun ModernTmdbCollection(
             bottom = 54.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isTv) 22.dp else 16.dp
+            if (isTv) 28.dp else 16.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
-            if (isTv) 16.dp else 12.dp
+            if (isTv) 20.dp else 12.dp
         )
     ) {
         item("collection-header", span = fullSpan) {
@@ -1504,10 +1516,10 @@ private fun ModernIptvCollection(
             bottom = 54.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isTv) 22.dp else 16.dp
+            if (isTv) 28.dp else 16.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
-            if (isTv) 16.dp else 12.dp
+            if (isTv) 20.dp else 12.dp
         )
     ) {
         item("collection-header", span = fullSpan) {
@@ -1658,7 +1670,7 @@ private fun ModernCollectionPoster(
         animationSpec = tween(durationMillis = 170),
         label = "modernPosterProfileFocus"
     )
-    val scale = 1f + (0.045f * focusProgress)
+    val scale = 1f + (0.085f * focusProgress)
     val shape = RoundedCornerShape(11.dp)
     val borderColor = lerp(
         Color(0xFF30343B),
@@ -1688,11 +1700,11 @@ private fun ModernCollectionPoster(
             modifier = modifier
                 .fillMaxWidth()
                 .shadow(
-                    elevation = (14f * focusProgress).dp,
+                    elevation = (20f * focusProgress).dp,
                     shape = shape,
                     clip = false,
-                    ambientColor = Color(0x66000000),
-                    spotColor = Color(0x55E50914)
+                    ambientColor = Color(0x88000000),
+                    spotColor = Color(0x66E50914)
                 )
                 .onFocusChanged {
                     focused = it.isFocused
@@ -1700,7 +1712,7 @@ private fun ModernCollectionPoster(
             shape = shape,
             color = Color(0xFF202020),
             border = BorderStroke(
-                (1f + focusProgress).dp,
+                if (focused) 3.dp else 1.dp,
                 borderColor
             )
         ) {
@@ -1715,6 +1727,16 @@ private fun ModernCollectionPoster(
                     context = context,
                     modifier = Modifier.fillMaxSize()
                 )
+
+                if (focused) {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(Color(0xFFE50914))
+                    )
+                }
             }
         }
 
