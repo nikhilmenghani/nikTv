@@ -660,8 +660,10 @@ fun PlayerScreen(
     BackHandler {
         when {
             queueVisible -> queueVisible = false
-            pictureEditorVisible -> pictureEditorVisible = false
-            startFullscreen -> onBack()
+            pictureEditorVisible -> {
+                pictureEditorVisible = false
+                appearancePreview = null
+            }
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -672,6 +674,9 @@ fun PlayerScreen(
                     runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
             }
+            // A direct-fullscreen player gets a two-step Back interaction:
+            // first hide controls, then leave playback on the next Back.
+            startFullscreen -> onBack()
             focusMode -> {
                 focusMode = false
                 onFullscreenChanged?.invoke(false)

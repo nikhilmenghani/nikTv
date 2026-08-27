@@ -285,8 +285,10 @@ internal fun VlcPlayerScreen(
     BackHandler {
         when {
             queueVisible -> queueVisible = false
-            pictureEditorVisible -> pictureEditorVisible = false
-            startFullscreen -> onBack()
+            pictureEditorVisible -> {
+                pictureEditorVisible = false
+                appearancePreview = null
+            }
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -297,6 +299,9 @@ internal fun VlcPlayerScreen(
                     runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
             }
+            // Match Media3/ExoPlayer: Back dismisses controls before a second
+            // Back exits direct-fullscreen playback.
+            startFullscreen -> onBack()
             focusMode -> {
                 focusMode = false
                 onFullscreenChanged?.invoke(false)
