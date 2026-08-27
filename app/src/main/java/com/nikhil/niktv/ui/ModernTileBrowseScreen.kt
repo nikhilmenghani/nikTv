@@ -401,6 +401,15 @@ private fun ModernDestinationHub(
             }
         }
 
+    val liveCategories =
+        if (dashboardSurface == DashboardSurface.HOME) {
+            state.modernVisibleIptvCategories(
+                CatalogType.LIVE_TV,
+                requireExplicitSelection = true
+            )
+        } else {
+            emptyList()
+        }
     val movieCategories =
         if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.MOVIES)) {
             state.modernVisibleIptvCategories(
@@ -497,6 +506,21 @@ private fun ModernDestinationHub(
 
                     when (dashboardSurface) {
                         DashboardSurface.HOME -> {
+                            item("configure-live") {
+                                AssistChip(
+                                    onClick = {
+                                        configureIptv(CatalogType.LIVE_TV)
+                                    },
+                                    label = { Text("Live TV categories") },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.LiveTv,
+                                            null,
+                                            Modifier.size(17.dp)
+                                        )
+                                    }
+                                )
+                            }
                             item("configure-movies") {
                                 AssistChip(
                                     onClick = {
@@ -634,6 +658,28 @@ private fun ModernDestinationHub(
             }
         }
 
+        if (liveCategories.isNotEmpty()) {
+            item("iptv-live-heading", span = fullSpan) {
+                ModernHubSectionHeading(
+                    "Live TV",
+                    "Provider categories selected for Home."
+                )
+            }
+            gridItems(
+                items = liveCategories,
+                key = { "iptv-live-${it.id}" }
+            ) { category ->
+                ModernDestinationTile(
+                    title = category.title,
+                    subtitle = "IPTV · Live TV",
+                    icon = Icons.Default.LiveTv,
+                    seed = "live:${category.id}:${category.title}",
+                    isTv = isTv,
+                    onClick = { openIptvCategory(category) }
+                )
+            }
+        }
+
         if (movieCategories.isNotEmpty()) {
             item("iptv-movie-heading", span = fullSpan) {
                 ModernHubSectionHeading(
@@ -680,6 +726,7 @@ private fun ModernDestinationHub(
 
         if (
             tmdbSections.isEmpty() &&
+            liveCategories.isEmpty() &&
             movieCategories.isEmpty() &&
             seriesCategories.isEmpty()
         ) {
@@ -711,7 +758,7 @@ private fun ModernDestinationHub(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "Add TMDB sections above. For IPTV tiles on Home, explicitly choose Movie or Series categories.",
+                            "Add TMDB sections above. For IPTV tiles on Home, explicitly choose Live TV, Movie, or Series categories.",
                             color = Color(0xFFB9B9B9)
                         )
                     }

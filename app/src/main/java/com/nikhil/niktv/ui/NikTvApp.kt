@@ -454,7 +454,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 CategoryManagerDialog(
                     state = state,
                     close = vm::closeCategoryManager,
-                    setType = vm::setCategoryManagerType,
                     applyFilters = vm::applyCategoryFilters
                 )
             }
@@ -7193,7 +7192,6 @@ private fun ProjectCardConfirmationDialog(
 private fun CategoryManagerDialog(
     state: NikTvState,
     close: () -> Unit,
-    setType: (CatalogType) -> Unit,
     applyFilters: (Map<CatalogType, List<String>>) -> Unit
 ) {
     val type = state.categoryManagerType
@@ -7204,30 +7202,19 @@ private fun CategoryManagerDialog(
     val enabledIds = state.categoryFilters[filterKey]
 
     /*
-     * DASHBOARD_SELECTION_APPLY_V31
+     * TAB_SCOPED_CATEGORY_FILTERS_V35
      *
-     * The old dialog rendered saved/default rows through currentEnabledSet,
-     * but draftSelections itself started empty. Apply & Close therefore could
-     * submit an empty map even while the UI visibly showed selected rows.
-     *
-     * Seed the draft with every persisted type and always include the current
-     * effective selection in the Apply payload.
+     * This editor owns exactly one CatalogType for its lifetime. A Movie
+     * dialog cannot mutate Series or Live TV selections, and vice versa.
      */
-    var draftSelections by remember(profileKey) {
+    var currentEnabledSet by remember(profileKey, type, enabledIds, raw) {
         mutableStateOf(
-            visibleCatalogTypes.mapNotNull { catalogType ->
-                state.categoryFilters["$profileKey|${catalogType.name}"]
-                    ?.take(10)
-                    ?.toSet()
-                    ?.let { catalogType to it }
-            }.toMap()
+            enabledIds?.take(10)?.toSet()
+                ?: raw.take(10).map { it.id }.toSet()
         )
     }
-    val currentEnabledSet = draftSelections[type]
-        ?: enabledIds?.take(10)?.toSet()
-        ?: raw.take(10).map { it.id }.toSet()
     val updateCurrentSelection: (Set<String>) -> Unit = { selection ->
-        draftSelections = draftSelections + (type to selection.take(10).toSet())
+        currentEnabledSet = selection.take(10).toSet()
     }
     var searchQuery by rememberSaveable(type) { mutableStateOf("") }
     val filteredRaw = remember(raw, searchQuery) {
@@ -7247,7 +7234,6 @@ private fun CategoryManagerDialog(
         else -> 1
     }
     val closeRequester = remember { FocusRequester() }
-    val typeRequesters = remember { visibleCatalogTypes.associateWith { FocusRequester() } }
     val searchRequester = remember { FocusRequester() }
     val selectAllRequester = remember { FocusRequester() }
     val deselectAllRequester = remember { FocusRequester() }
@@ -7273,8 +7259,9 @@ private fun CategoryManagerDialog(
         }
     }
 
-    LaunchedEffect(Unit) {
-        typeRequesters.getValue(type).requestFocus()
+    LaunchedEffect(type) {
+        withFrameNanos { }
+        (firstCategoryRequester ?: searchRequester).requestFocus()
     }
     LaunchedEffect(type, searchQuery) {
         if (filteredRaw.isNotEmpty()) gridState.scrollToItem(0)
@@ -7314,27 +7301,21 @@ private fun CategoryManagerDialog(
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Category Filters", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text("Choose up to 10 categories, then apply", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${type.title} Categories", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("Choose up to 10 categories for ${type.title}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Button(
                         onClick = {
-                            val selectionsToApply =
-                                draftSelections + (type to currentEnabledSet)
-                            applyFilters(
-                                selectionsToApply.mapValues { (_, ids) ->
-                                    ids.toList()
-                                }
-                            )
+                            applyFilters(mapOf(type to currentEnabledSet.toList()))
                             close()
                         },
                         modifier = Modifier
                             .height(48.dp)
                             .focusRequester(applyRequester)
                             .focusProperties {
-                                left = typeRequesters.getValue(visibleCatalogTypes.last())
+                                left = FocusRequester.Cancel
                                 right = closeRequester
-                                down = typeRequesters.getValue(type)
+                                down = firstCategoryRequester ?: searchRequester
                             }
                             .onFocusChanged { applyFocused = it.isFocused }
                             .border(
@@ -7353,7 +7334,7 @@ private fun CategoryManagerDialog(
                             .focusRequester(closeRequester)
                             .focusProperties {
                                 left = applyRequester
-                                down = typeRequesters.getValue(type)
+                                down = firstCategoryRequester ?: searchRequester
                             }
                             .onFocusChanged { closeFocused = it.isFocused }
                             .background(
@@ -7365,29 +7346,6 @@ private fun CategoryManagerDialog(
 
                 Spacer(Modifier.height(8.dp))
 
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    visibleCatalogTypes.forEachIndexed { index, catalogType ->
-                        val shape = uniformSegmentShape(index, visibleCatalogTypes.size)
-                        SegmentedButton(
-                            selected = type == catalogType,
-                            onClick = { setType(catalogType) },
-                            shape = shape,
-                            modifier = Modifier
-                                .focusRequester(typeRequesters.getValue(catalogType))
-                                .focusProperties {
-                                    left = if (index > 0) typeRequesters.getValue(visibleCatalogTypes[index - 1])
-                                        else FocusRequester.Cancel
-                                    right = if (index < visibleCatalogTypes.lastIndex) {
-                                        typeRequesters.getValue(visibleCatalogTypes[index + 1])
-                                    } else closeRequester
-                                    up = applyRequester
-                                    down = firstCategoryRequester ?: searchRequester
-                                }
-                                .remoteFocusFrame(shape)
-                        ) { Text(catalogType.title, maxLines = 1) }
-                    }
-                }
-
                 val enabledCount = currentEnabledSet.size
                 val totalCount = raw.size
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -7395,7 +7353,7 @@ private fun CategoryManagerDialog(
                         text = if (searchQuery.isNotBlank()) {
                             "${filteredRaw.size} matching · $enabledCount of 10 selected ($totalCount available)"
                         } else {
-                            "$enabledCount of 10 dashboard categories selected · $totalCount available"
+                            "$enabledCount of 10 ${type.title} categories selected · $totalCount available"
                         },
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
@@ -7461,7 +7419,7 @@ private fun CategoryManagerDialog(
                                     .height(44.dp)
                                     .focusRequester(rowRequester)
                                     .focusProperties {
-                                        if (index < categoryColumns) up = typeRequesters.getValue(type)
+                                        if (index < categoryColumns) up = applyRequester
                                         if (index >= filteredRaw.size - categoryColumns) down = searchRequester
                                     }
                                     .onFocusChanged {
@@ -7534,7 +7492,7 @@ private fun CategoryManagerDialog(
                                     modifier = Modifier.weight(1f)
                                         .focusRequester(searchRequester)
                                         .focusProperties {
-                                            up = lastCategoryRequester ?: typeRequesters.getValue(type)
+                                            up = lastCategoryRequester ?: applyRequester
                                             right = selectAllRequester
                                             down = applyRequester
                                         }
@@ -7586,7 +7544,7 @@ private fun CategoryManagerDialog(
                         modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
                             left = searchRequester
                             right = deselectAllRequester
-                            up = lastCategoryRequester ?: typeRequesters.getValue(type)
+                            up = lastCategoryRequester ?: applyRequester
                             down = applyRequester
                         }
                     )
@@ -7596,7 +7554,7 @@ private fun CategoryManagerDialog(
                         modifier = Modifier.weight(1f).focusRequester(deselectAllRequester).focusProperties {
                             left = selectAllRequester
                             right = FocusRequester.Cancel
-                            up = lastCategoryRequester ?: typeRequesters.getValue(type)
+                            up = lastCategoryRequester ?: applyRequester
                             down = applyRequester
                         }
                     )

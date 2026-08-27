@@ -1612,9 +1612,47 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openModernIptvCategory(category: Category) {
         val snapshot = _state.value
-        if (!snapshot.modernUiEnabled ||
-            category.type !in setOf(CatalogType.MOVIES, CatalogType.SERIES)
-        ) return
+        if (!snapshot.modernUiEnabled) return
+
+        /*
+         * HOME_LIVE_CATEGORY_ROUTE_V35
+         *
+         * Movies and Series use the modern collection destination. Live TV
+         * must retain the existing Live TV browse/player UI (fitted logos,
+         * title hierarchy, D-pad behavior), so a Live category tile on Home
+         * exits Home and opens that category through the native Live TV path.
+         */
+        if (category.type == CatalogType.LIVE_TV) {
+            _state.update { current ->
+                current.copy(
+                    homeOpen = false,
+                    favoritesOpen = false,
+                    settingsOpen = false,
+                    searchOpen = false,
+                    categoryManagerOpen = false,
+                    modernTmdbSection = null,
+                    modernIptvCategory = null,
+                    modernSectionOriginHome = false,
+                    modernTmdbMovies = emptyList(),
+                    modernTmdbSeries = emptyList(),
+                    modernTmdbLoading = false,
+                    modernTmdbPage = 0,
+                    modernTmdbHasMore = false,
+                    modernTmdbError = null,
+                    playbackReturnFocusId = null,
+                    selectedType = CatalogType.LIVE_TV,
+                    selectedCategory = category,
+                    selectedSeries = null,
+                    seriesOpenedFromModernSection = false
+                )
+            }
+            loadCategory(category)
+            return
+        }
+
+        if (category.type !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
+            return
+        }
 
         _state.update { current ->
             current.copy(
