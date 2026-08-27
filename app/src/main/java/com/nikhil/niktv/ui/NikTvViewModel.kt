@@ -2,6 +2,8 @@ package com.nikhil.niktv.ui
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nikhil.niktv.data.ProfileStore
@@ -20,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.async
@@ -139,6 +142,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var browseLayouts: Map<String, BrowseLayout> = emptyMap()
     private var tmdbDashboardConfigs: Map<String, List<TmdbHomeSection>> = emptyMap()
     private val watchRefreshMutex = Mutex()
+    private val playbackQueuePrefetches =
+        mutableMapOf<String, Deferred<PortalCatalogPage>>()
 
     init {
         prepareProfileChooser()
@@ -1187,20 +1192,33 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             runCatching {
                 withTimeout(45_000L) {
-                    var requestedPage = snapshot.playbackQueuePage + 1
-                    var result = portal.catalogPage(session, category, requestedPage)
-                    var duplicatePagesSkipped = 0
-
-                    while (
-                        result.hasMore &&
-                        result.items.none { it.id !in existingPlaybackIds } &&
-                        duplicatePagesSkipped < 3
-                    ) {
-                        duplicatePagesSkipped++
-                        requestedPage = (result.page + 1).coerceAtLeast(requestedPage + 1)
-                        result = portal.catalogPage(session, category, requestedPage)
+                    val requestedPage = snapshot.playbackQueuePage + 1
+                    val prefetchKey = playbackQueuePrefetchKey(scope, requestedPage)
+                    val prefetched = playbackQueuePrefetches.remove(prefetchKey)
+                    val startedAt = SystemClock.elapsedRealtime()
+                    val prefetchedResult = prefetched?.let {
+                        runCatching { it.await() }
+                            .onFailure { error ->
+                                Log.w(
+                                    PLAYBACK_QUEUE_LOG_TAG,
+                                    "Prefetch failed; retrying page $requestedPage",
+                                    error
+                                )
+                            }
+                            .getOrNull()
                     }
-
+                    val result = prefetchedResult
+                        ?: fetchNextUniquePlaybackPage(
+                            session = session,
+                            category = category,
+                            requestedPage = requestedPage,
+                            existingIds = existingPlaybackIds
+                        )
+                    Log.i(
+                        PLAYBACK_QUEUE_LOG_TAG,
+                        "Load more page=${result.page} source=${if (prefetchedResult != null) "prefetch" else "foreground"} " +
+                            "waitMs=${SystemClock.elapsedRealtime() - startedAt} items=${result.items.size}"
+                    )
                     result
                 }
             }.onSuccess { result ->
@@ -1251,6 +1269,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (updatedCache != null) {
                     store.saveBrowseCatalog(updatedCache)
+                }
+
+                if (hasMore) {
+                    schedulePlaybackQueuePrefetch(
+                        session = session,
+                        scope = scope,
+                        category = category,
+                        currentPage = result.page,
+                        existingIds = mergedQueue.mapTo(mutableSetOf()) { it.id }
+                    )
                 }
 
                 _state.update { current ->
@@ -1345,6 +1373,72 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         return true
+    }
+
+    private suspend fun fetchNextUniquePlaybackPage(
+        session: PortalSession,
+        category: Category,
+        requestedPage: Int,
+        existingIds: Set<String>
+    ): PortalCatalogPage {
+        var nextPage = requestedPage
+        var result = portal.catalogPage(session, category, nextPage)
+        var duplicatePagesSkipped = 0
+
+        while (
+            result.hasMore &&
+            result.items.none { it.id !in existingIds } &&
+            duplicatePagesSkipped < 3
+        ) {
+            duplicatePagesSkipped++
+            nextPage = (result.page + 1).coerceAtLeast(nextPage + 1)
+            result = portal.catalogPage(session, category, nextPage)
+        }
+        return result
+    }
+
+    private fun playbackQueuePrefetchKey(scope: String, requestedPage: Int) =
+        "$scope:page:$requestedPage"
+
+    private fun schedulePlaybackQueuePrefetch(
+        session: PortalSession,
+        scope: String,
+        category: Category,
+        currentPage: Int,
+        existingIds: Set<String>
+    ) {
+        if (session.profile.portalType != PortalType.STALKER) return
+        if (category.type !in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES)) return
+
+        val requestedPage = currentPage + 1
+        val key = playbackQueuePrefetchKey(scope, requestedPage)
+        // A completed Deferred is the warm cache. Do not replace it when the
+        // user switches to another item in the same playback queue.
+        if (playbackQueuePrefetches.containsKey(key)) return
+
+        playbackQueuePrefetches.keys
+            .filterNot { it.startsWith("$scope:page:") }
+            .forEach { staleKey ->
+                playbackQueuePrefetches.remove(staleKey)?.cancel()
+            }
+
+        playbackQueuePrefetches[key] = viewModelScope.async {
+            // Let playback initialization and its first artwork requests win.
+            delay(750L)
+            val startedAt = SystemClock.elapsedRealtime()
+            fetchNextUniquePlaybackPage(
+                session = session,
+                category = category,
+                requestedPage = requestedPage,
+                existingIds = existingIds
+            ).also { result ->
+                Log.i(
+                    PLAYBACK_QUEUE_LOG_TAG,
+                    "Prefetched page=${result.page} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} " +
+                        "items=${result.items.size}"
+                )
+            }
+        }
     }
 
     fun refreshPlaybackQueue() = task {
@@ -2908,6 +3002,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 playbackQueueLoadingMore = false
             )
         }
+        if (
+            newPlaybackScope != null &&
+            initialPlaybackHasMore &&
+            type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES)
+        ) {
+            val categoryId = playbackScopeItem.portalCategoryId
+            if (!categoryId.isNullOrBlank()) {
+                val category =
+                    paginationSnapshot.rawCategoriesByType[type]
+                        .orEmpty()
+                        .firstOrNull { it.id == categoryId }
+                        ?: Category(categoryId, "Playback queue", type)
+                schedulePlaybackQueuePrefetch(
+                    session = session,
+                    scope = newPlaybackScope,
+                    category = category,
+                    currentPage = initialPlaybackPage,
+                    existingIds = playbackQueue.mapTo(mutableSetOf()) { it.id }
+                )
+            }
+        }
         recordRecent(item, type, series)
     }
 
@@ -3723,6 +3838,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        private const val PLAYBACK_QUEUE_LOG_TAG = "NikTvQueue"
         private const val MAX_RECENT_ITEMS = 100
         private const val MAX_PROGRESS_ITEMS = 200
         private const val MAX_PLAYBACK_URLS = 500
