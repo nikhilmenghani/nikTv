@@ -1583,12 +1583,12 @@ private fun ModernIptvCollection(
             GridItemSpan = {
         GridItemSpan(maxLineSpan)
     }
-    val kind =
-        if (category.type == CatalogType.MOVIES) {
-            FavoriteKind.MOVIE
-        } else {
-            FavoriteKind.SERIES
-        }
+    val kind = when (category.type) {
+        CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
+        CatalogType.MOVIES -> FavoriteKind.MOVIE
+        CatalogType.SERIES -> FavoriteKind.SERIES
+        CatalogType.RADIO -> FavoriteKind.CHANNEL
+    }
     val focusIds = state.items.map { it.id }
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
