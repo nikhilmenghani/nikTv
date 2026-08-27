@@ -6940,8 +6940,26 @@ private fun CategoryManagerDialog(
     val raw = state.rawCategoriesByType[type].orEmpty().ifEmpty { if (state.selectedType == type) state.categories else emptyList() }
     val filterKey = "$profileKey|${type.name}"
     val enabledIds = state.categoryFilters[filterKey]
+
+    /*
+     * DASHBOARD_SELECTION_APPLY_V31
+     *
+     * The old dialog rendered saved/default rows through currentEnabledSet,
+     * but draftSelections itself started empty. Apply & Close therefore could
+     * submit an empty map even while the UI visibly showed selected rows.
+     *
+     * Seed the draft with every persisted type and always include the current
+     * effective selection in the Apply payload.
+     */
     var draftSelections by remember(profileKey) {
-        mutableStateOf<Map<CatalogType, Set<String>>>(emptyMap())
+        mutableStateOf(
+            visibleCatalogTypes.mapNotNull { catalogType ->
+                state.categoryFilters["$profileKey|${catalogType.name}"]
+                    ?.take(10)
+                    ?.toSet()
+                    ?.let { catalogType to it }
+            }.toMap()
+        )
     }
     val currentEnabledSet = draftSelections[type]
         ?: enabledIds?.take(10)?.toSet()
@@ -7039,7 +7057,13 @@ private fun CategoryManagerDialog(
                     }
                     Button(
                         onClick = {
-                            applyFilters(draftSelections.mapValues { (_, ids) -> ids.toList() })
+                            val selectionsToApply =
+                                draftSelections + (type to currentEnabledSet)
+                            applyFilters(
+                                selectionsToApply.mapValues { (_, ids) ->
+                                    ids.toList()
+                                }
+                            )
                             close()
                         },
                         modifier = Modifier

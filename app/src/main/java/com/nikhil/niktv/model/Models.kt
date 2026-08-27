@@ -180,6 +180,7 @@ enum class BrowseLayout { SECTIONS, GRID, LIST }
 
 enum class DashboardSurface { HOME, LIVE_TV, MOVIES, SERIES }
 
+@Serializable
 enum class TmdbHomeSection(val title: String, val series: Boolean = false) {
     TRENDING_MOVIES("Trending Movies"),
     TRENDING_SERIES("Trending Series", series = true),

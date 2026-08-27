@@ -190,7 +190,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val key = _state.value.session?.profile?.cacheKey()
             _state.update { it.copy(browseLayout = key?.let(layouts::get) ?: BrowseLayout.SECTIONS) }
         } }
-        viewModelScope.launch { store.tmdbDashboardSections.collect { stored ->
+        viewModelScope.launch { store.tmdbDashboardSections.distinctUntilChanged().collect { stored ->
             tmdbDashboardConfigs = stored
             val profileKey = _state.value.session?.profile?.cacheKey()
             val sections = if (profileKey == null) emptyMap() else DashboardSurface.entries.associateWith { surface ->
@@ -214,7 +214,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            store.categoryFilters.collect { filters ->
+            store.categoryFilters.distinctUntilChanged().collect { filters ->
                 val snapshot = _state.value
                 val profileKey = snapshot.session?.profile?.cacheKey()
                 val activeFilterChanged = !categoryFilterApplyInProgress && profileKey != null &&
@@ -1814,11 +1814,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setTmdbSections(surface: DashboardSurface, sections: List<TmdbHomeSection>) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return
+        val normalized = sections.distinct()
+        val configKey = "$profileKey|${surface.name}"
         val warmLegacyRows = !_state.value.modernUiEnabled
+
+        // Apply locally before persistence so closing/reopening the dialog and
+        // the modern dashboard both observe the exact selection immediately.
+        tmdbDashboardConfigs =
+            tmdbDashboardConfigs + (configKey to normalized)
         _state.update { current ->
             current.copy(
                 tmdbSectionsBySurface =
-                    current.tmdbSectionsBySurface + (surface to sections.distinct()),
+                    current.tmdbSectionsBySurface + (surface to normalized),
                 feedRefreshing = warmLegacyRows,
                 feedRefreshMessage =
                     "Refreshing ${surface.name.lowercase().replace('_', ' ')} feed…"
@@ -1831,7 +1838,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            store.setTmdbDashboardSections(profileKey, surface, sections)
+            runCatching {
+                store.setTmdbDashboardSections(
+                    profileKey,
+                    surface,
+                    normalized
+                )
+            }.onFailure { failure ->
+                _state.update { current ->
+                    current.copy(
+                        error =
+                            failure.message
+                                ?: "Could not save TMDB dashboard sections"
+                    )
+                }
+            }
         }
     }
 
@@ -3472,8 +3493,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (normalized.isEmpty()) return@launch
 
+        val filterUpdates =
+            normalized.mapKeys { (type, _) ->
+                filterKey(profileKey, type)
+            }
+
+        // Modern Home can configure Movies/Series while selectedType points at
+        // another catalog. Update every submitted filter immediately instead
+        // of waiting for the DataStore collector/active-type branch.
         _state.update {
             it.copy(
+                categoryFilters = it.categoryFilters + filterUpdates,
                 feedRefreshing = !snapshot.modernUiEnabled,
                 feedRefreshMessage = "Refreshing ${snapshot.selectedType.title} feed…"
             )
