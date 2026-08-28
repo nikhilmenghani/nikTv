@@ -403,6 +403,7 @@ private fun ModernDestinationHub(
     val isTablet = !isTv && configuration.screenWidthDp >= 600
     val destinationColumns = when {
         isTv -> 3
+        configuration.smallestScreenWidthDp < 600 -> 1
         configuration.screenWidthDp >= 1200 -> 4
         configuration.screenWidthDp >= 720 -> 3
         else -> 2

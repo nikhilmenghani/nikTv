@@ -5158,6 +5158,8 @@ private fun ModernSettingsScreen(
         withFrameNanos { }
         runCatching { settingsEntryRequester.requestFocus() }
     }
+    val settingsConfiguration = LocalConfiguration.current
+    val compactSettingsHeader = settingsConfiguration.screenWidthDp < 600
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = Color(0xFF07080A),
@@ -5179,7 +5181,10 @@ private fun ModernSettingsScreen(
             )
             .padding(padding)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 24.dp),
+            .padding(
+                horizontal = if (compactSettingsHeader) 14.dp else 24.dp,
+                vertical = if (compactSettingsHeader) 16.dp else 24.dp
+            ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Surface(
@@ -5189,32 +5194,68 @@ private fun ModernSettingsScreen(
             border = BorderStroke(1.dp, Color(0xFF292C33)),
             shadowElevation = 10.dp
         ) {
-            Row(
+            Column(
                 Modifier
                     .background(
                         Brush.horizontalGradient(
                             listOf(Color(0xFF171A20), Color(0xFF111318))
                         )
                     )
-                    .padding(22.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(if (compactSettingsHeader) 16.dp else 22.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF2A1215),
-                    border = BorderStroke(1.dp, Color(0xFF6F2028))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Icon(Icons.Default.Tune, null, Modifier.padding(14.dp).size(28.dp), tint = Color(0xFFFF6973))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF2A1215),
+                        border = BorderStroke(1.dp, Color(0xFF6F2028))
+                    ) {
+                        Icon(
+                            Icons.Default.Tune,
+                            null,
+                            Modifier.padding(if (compactSettingsHeader) 11.dp else 14.dp)
+                                .size(if (compactSettingsHeader) 24.dp else 28.dp),
+                            tint = Color(0xFFFF6973)
+                        )
+                    }
+                    Text(
+                        "Make NikTV yours",
+                        modifier = Modifier.weight(1f),
+                        style = if (compactSettingsHeader) {
+                            MaterialTheme.typography.titleLarge
+                        } else {
+                            MaterialTheme.typography.headlineSmall
+                        },
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFF5F5F7)
+                    )
+                    if (!compactSettingsHeader) {
+                        AssistChip(
+                            onClick = {},
+                            enabled = false,
+                            label = { Text("v${BuildConfig.VERSION_NAME}") }
+                        )
+                    }
                 }
-                Column(Modifier.weight(1f)) {
-                    Text("Make NikTV yours", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color(0xFFF5F5F7))
-                    Text("Playback, appearance, content, profiles and updates", color = Color(0xFF9B9FA8))
+                Text(
+                    "Playback, appearance, content, profiles and updates",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF9B9FA8),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                if (compactSettingsHeader) {
+                    Text(
+                        "NikTV ${BuildConfig.VERSION_NAME}",
+                        color = Color(0xFF70757E),
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
-                AssistChip(onClick = {}, enabled = false, label = { Text("v${BuildConfig.VERSION_NAME}") })
             }
         }
-        val settingsConfiguration = LocalConfiguration.current
         val orientationMode by rememberUiOrientationMode()
         val showMobileAppearance =
             settingsConfiguration.smallestScreenWidthDp < 600 &&
