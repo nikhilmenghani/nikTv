@@ -427,6 +427,7 @@ internal fun PlayerVisualButtons(
                 right = pictureModeRequester
                 down = downRequester
             }
+            .playerDpadFocusRoutes(leftRequester, pictureModeRequester, downRequester)
             .playerControlFocus { onControlsFocused(it) }
     ) {
         Icon(
@@ -451,6 +452,7 @@ internal fun PlayerVisualButtons(
                 right = pictureSettingsRequester
                 down = downRequester
             }
+            .playerDpadFocusRoutes(resizeRequester, pictureSettingsRequester, downRequester)
             .playerControlFocus { onControlsFocused(it) }
     ) {
         Icon(
@@ -467,10 +469,31 @@ internal fun PlayerVisualButtons(
                 right = rightRequester
                 down = downRequester
             }
+            .playerDpadFocusRoutes(pictureModeRequester, rightRequester, downRequester)
             .playerControlFocus { onControlsFocused(it) }
     ) {
         Icon(Icons.Default.Tune, "Edit picture mode settings", tint = Color.White)
     }
+}
+
+/**
+ * Fire TV occasionally falls back to geometry-based focus search after the
+ * player controls recompose. Route the top control strip explicitly so every
+ * D-pad press has a stable destination.
+ */
+internal fun Modifier.playerDpadFocusRoutes(
+    left: FocusRequester? = null,
+    right: FocusRequester? = null,
+    down: FocusRequester? = null
+): Modifier = onPreviewKeyEvent { event ->
+    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+    val destination = when (event.key) {
+        Key.DirectionLeft -> left
+        Key.DirectionRight -> right
+        Key.DirectionDown -> down
+        else -> null
+    } ?: return@onPreviewKeyEvent false
+    runCatching { destination.requestFocus() }.getOrDefault(false)
 }
 
 @Composable

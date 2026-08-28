@@ -636,6 +636,10 @@ internal fun VlcPlayerScreen(
                                 right = if (pipAvailable) pipRequester else playerSwitchRequester
                                 down = playRequester
                             }
+                            .playerDpadFocusRoutes(
+                                right = if (pipAvailable) pipRequester else playerSwitchRequester,
+                                down = playRequester
+                            )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
                     Column(Modifier.weight(1f).padding(horizontal = if (compactMobileControls) 4.dp else 10.dp)) {
@@ -656,6 +660,7 @@ internal fun VlcPlayerScreen(
                         },
                         modifier = Modifier.focusRequester(pipRequester)
                             .focusProperties { left = backRequester; right = playerSwitchRequester; down = playRequester }
+                            .playerDpadFocusRoutes(backRequester, playerSwitchRequester, playRequester)
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     IconButton(
@@ -672,6 +677,11 @@ internal fun VlcPlayerScreen(
                                 right = resizeRequester
                                 down = playRequester
                             }
+                            .playerDpadFocusRoutes(
+                                left = if (pipAvailable) pipRequester else backRequester,
+                                right = resizeRequester,
+                                down = playRequester
+                            )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) {
                         Icon(Icons.Default.SmartDisplay, "Switch player. Current: ${configuredEngine.playerChoiceLabel()}", tint = Color.White)
@@ -721,6 +731,10 @@ internal fun VlcPlayerScreen(
                                 left = pictureSettingsRequester
                                 down = playRequester
                             }
+                            .playerDpadFocusRoutes(
+                                left = pictureSettingsRequester,
+                                down = playRequester
+                            )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White) }
                 }
