@@ -1688,6 +1688,7 @@ private fun ModernBrowseScreen(
             openSettings = openSettings,
             openProfileSwitcher = openProfileSwitcher,
             openRecent = openRecent,
+            openWatchedEpisode = openWatchedEpisode,
             openTmdbSection = openModernTmdbSection,
             openIptvCategory = openModernIptvCategory,
             closeSection = closeModernSection,

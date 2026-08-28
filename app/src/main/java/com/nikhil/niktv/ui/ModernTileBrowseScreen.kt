@@ -112,6 +112,7 @@ import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.TmdbHomeSection
+import com.nikhil.niktv.model.WatchedSeries
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -128,6 +129,7 @@ internal fun ModernTileBrowseScreen(
     openSettings: () -> Unit,
     openProfileSwitcher: () -> Unit,
     openRecent: (RecentItem) -> Unit,
+    openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
     closeSection: () -> Unit,
@@ -199,6 +201,7 @@ internal fun ModernTileBrowseScreen(
                         state = state,
                         dashboardSurface = dashboardSurface,
                         openRecent = openRecent,
+                        openWatchedEpisode = openWatchedEpisode,
                         toggleFavorite = toggleFavorite,
                         openTmdbSection = openTmdbSection,
                         openIptvCategory = openIptvCategory,
@@ -364,6 +367,7 @@ private fun ModernDestinationHub(
     state: NikTvState,
     dashboardSurface: DashboardSurface,
     openRecent: (RecentItem) -> Unit,
+    openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
@@ -643,12 +647,32 @@ private fun ModernDestinationHub(
         }
 
         if (dashboardSurface == DashboardSurface.HOME) {
+            val newEpisodes = state.watchedSeries.flatMap { watched ->
+                watched.newEpisodes.map { episode -> watched to episode }
+            }
             val recents = state.recentlyPlayed
                 .filter {
                     it.kind == FavoriteKind.MOVIE ||
                         it.kind == FavoriteKind.SERIES
                 }
                 .take(12)
+
+            if (newEpisodes.isNotEmpty()) {
+                item("new-episodes-header", span = fullSpan) {
+                    ModernHubSectionHeading(
+                        "New Episodes",
+                        "Fresh episodes from series you follow."
+                    )
+                }
+                item("new-episodes-row", span = fullSpan) {
+                    ModernNewEpisodesRow(
+                        entries = newEpisodes,
+                        favorites = state.favorites,
+                        open = openWatchedEpisode,
+                        toggleFavorite = toggleFavorite
+                    )
+                }
+            }
 
             if (recents.isNotEmpty()) {
                 item("continue-header", span = fullSpan) {
@@ -803,6 +827,57 @@ private fun ModernDestinationHub(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ModernNewEpisodesRow(
+    entries: List<Pair<WatchedSeries, MediaItem>>,
+    favorites: List<FavoriteItem>,
+    open: (WatchedSeries, MediaItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        items(
+            items = entries,
+            key = { (watched, episode) ->
+                "modern-new-episode-${watched.series.id}-${episode.id}"
+            }
+        ) { (watched, episode) ->
+            val displayMedia = if (
+                episode.logo.isNullOrBlank() &&
+                !watched.series.logo.isNullOrBlank()
+            ) {
+                episode.copy(logo = watched.series.logo)
+            } else {
+                episode
+            }
+            val episodeLabel = listOfNotNull(
+                episode.seasonNumber?.let { "S$it" },
+                episode.episodeNumber?.let { "E$it" }
+            ).joinToString(" · ")
+            val favorite = FavoriteItem(
+                kind = FavoriteKind.EPISODE,
+                media = episode,
+                series = watched.series,
+                profileKey = watched.profileKey,
+                categoryTitle = watched.categoryTitle
+            )
+
+            ModernCompactMediaCard(
+                item = displayMedia,
+                subtitle = listOf(watched.series.title, episodeLabel)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" · "),
+                onClick = { open(watched, episode) },
+                isFavorite = favorites.any { it.key == favorite.key },
+                onFavorite = { toggleFavorite(favorite) }
+            )
         }
     }
 }
