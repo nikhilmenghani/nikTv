@@ -279,6 +279,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null
     ) }
     val appContext = LocalContext.current
+    val onScreenDpadEnabled by rememberOnScreenDpadEnabled()
+    val appConfiguration = LocalConfiguration.current
     val hostActivity = remember(appContext) {
         appContext.findHostActivity()
     }
@@ -576,6 +578,18 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     confirmButton = { Button(onClick = vm::dismissBackupMessage) { Text("OK") } },
                     title = { Text("NikTV backup") },
                     text = { Text(message) }
+                )
+            }
+            if (
+                onScreenDpadEnabled &&
+                appConfiguration.smallestScreenWidthDp < 600 &&
+                !appContext.isTvLikeDevice(appConfiguration)
+            ) {
+                MovableOnScreenDpad(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(16.dp)
                 )
             }
            }
@@ -5263,6 +5277,7 @@ private fun ModernSettingsScreen(
 
         if (showMobileAppearance) SettingsSection("Mobile appearance") {
             val mobileDesign by rememberMobileUiDesign()
+            val onScreenDpad by rememberOnScreenDpadEnabled()
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Portrait phone layout", style = MaterialTheme.typography.titleMedium)
                 Text("Auto selects the YouTube layout on phones. Fullscreen video still opens in landscape.", color = Color.Gray)
@@ -5280,6 +5295,26 @@ private fun ModernSettingsScreen(
                             shape = shape
                         ) { Text(label) }
                     }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("On-screen D-pad", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Show a movable remote control overlay for testing focus navigation on this phone.",
+                            color = Color.Gray,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Switch(
+                        checked = onScreenDpad,
+                        onCheckedChange = { OnScreenDpadPreferences.setEnabled(context, it) },
+                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                    )
                 }
             }
         }

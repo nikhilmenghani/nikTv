@@ -114,6 +114,7 @@ data class MediaItem(
     val portalCategoryId: String? = null,
     val portalEpisodeId: String? = null,
     val liveProgramme: LiveProgramme? = null,
+    val liveSchedule: List<LiveProgramme> = emptyList(),
     val channelNumber: Int? = null,
     val epgChannelId: String? = null,
     val streamType: String? = null,

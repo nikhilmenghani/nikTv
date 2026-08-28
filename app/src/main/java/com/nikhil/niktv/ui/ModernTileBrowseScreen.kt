@@ -2262,6 +2262,13 @@ private fun ModernLiveChannelTile(
                 .coerceIn(0f, 1f)
         } else null
     }
+    val upcomingProgramme = remember(item.liveSchedule, programme) {
+        val now = System.currentTimeMillis()
+        item.liveSchedule.firstOrNull { entry ->
+            entry != programme && (entry.startTimeMillis ?: Long.MAX_VALUE) > now &&
+                entry.title.isNotBlank() && !entry.title.equals(item.title, ignoreCase = true)
+        }
+    }
     val technicalSummary = remember(
         item.channelNumber,
         item.streamType,
@@ -2375,6 +2382,19 @@ private fun ModernLiveChannelTile(
                             it,
                             color = Color.White.copy(alpha = .68f),
                             style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    upcomingProgramme?.let { next ->
+                        val start = next.startTimeMillis?.let {
+                            java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                                .format(java.util.Date(it))
+                        }
+                        Text(
+                            listOfNotNull("Next", start, next.title).joinToString(" · "),
+                            color = Color.White.copy(alpha = .62f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     programmeProgress?.let { progress ->

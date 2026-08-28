@@ -39,6 +39,9 @@ class StalkerPortalClient(private val context: Context) {
     private val trafficPrefs = context.getSharedPreferences("portal_traffic_guard", Context.MODE_PRIVATE)
     private val requestTimes = ArrayDeque<Long>()
     private var lastRequestAt = 0L
+    @Volatile private var epgCacheKey: String? = null
+    @Volatile private var epgCacheAtMillis: Long = 0L
+    @Volatile private var epgCache: Map<String, List<LiveProgramme>> = emptyMap()
 
     suspend fun authenticate(profile: PortalProfile): PortalSession = authMutex.withLock { withContext(Dispatchers.IO) {
         if (profile.portalType == PortalType.XTREAM) return@withContext authenticateXtream(profile)
@@ -149,7 +152,7 @@ class StalkerPortalClient(private val context: Context) {
         )
         val payload = request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams)).payload()
         val listingNodes = payload.arrayFromData()
-        val items = listingNodes.mapNotNull { node ->
+        val rawItems = listingNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
                 // Category selection and request shape are authoritative. This
                 // provider reports both is_movie=true and is_series=1 for Series,
@@ -173,6 +176,7 @@ class StalkerPortalClient(private val context: Context) {
                     } else null
                 )
             }
+        val items = if (category.type == CatalogType.LIVE_TV) enrichWithPortalEpg(session, rawItems) else rawItems
         val metadata = payload as? JsonObject
         val maxPage = metadata?.string("max_page")?.toIntOrNull()
             ?: metadata?.string("total_pages")?.toIntOrNull()
@@ -187,6 +191,43 @@ class StalkerPortalClient(private val context: Context) {
             else -> listingNodes.isNotEmpty()
         }
         PortalCatalogPage(items, requestedPage, hasMore)
+    }
+
+    /** Enrich a whole channel page with the separate Ministra guide in one request. */
+    private suspend fun enrichWithPortalEpg(session: PortalSession, items: List<MediaItem>): List<MediaItem> {
+        if (items.isEmpty()) return items
+        val cacheKey = "${session.endpointUrl}|${session.token.take(12)}"
+        val now = System.currentTimeMillis()
+        val schedules = if (
+            epgCacheKey == cacheKey && now - epgCacheAtMillis < EPG_CACHE_MILLIS && epgCache.isNotEmpty()
+        ) epgCache else {
+            val response = runCatching {
+                request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+                    "type" to "itv", "action" to "get_epg_info", "period" to "24"
+                )))
+            }.getOrNull() ?: return items
+            response.epgSchedulesByChannel().also { fresh ->
+                if (fresh.isNotEmpty()) {
+                    epgCacheKey = cacheKey
+                    epgCacheAtMillis = now
+                    epgCache = fresh
+                }
+            }
+        }
+        if (schedules.isEmpty()) return items
+        return items.map { item ->
+            val schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
+                .filter { it.endTimeMillis == null || it.endTimeMillis > now }
+                .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
+            if (schedule.isEmpty()) item else item.copy(
+                liveProgramme = schedule.firstOrNull { programme ->
+                    val start = programme.startTimeMillis
+                    val end = programme.endTimeMillis
+                    start != null && end != null && now in start until end
+                } ?: item.liveProgramme,
+                liveSchedule = schedule
+            )
+        }
     }
 
     suspend fun fullCatalog(session: PortalSession, type: CatalogType, categories: List<Category>): List<MediaItem> = withContext(Dispatchers.IO) {
@@ -806,7 +847,43 @@ class StalkerPortalClient(private val context: Context) {
             endTimeMillis = timestamp("stop_timestamp", "end_timestamp", "stop_ts", "end_ts", "end_time")
         )
     }
+
+    private fun JsonElement.epgSchedulesByChannel(): Map<String, List<LiveProgramme>> {
+        val root = payload()
+        val data = (root as? JsonObject)?.get("data") ?: root
+        val result = linkedMapOf<String, MutableList<LiveProgramme>>()
+        fun add(channelId: String?, node: JsonElement) {
+            val id = channelId?.takeIf(String::isNotBlank) ?: return
+            val programme = (node as? JsonObject)?.liveProgramme() ?: return
+            result.getOrPut(id) { mutableListOf() }.add(programme)
+        }
+        when (data) {
+            is JsonObject -> data.forEach { (channelKey, value) ->
+                when (value) {
+                    is JsonArray -> value.forEach { node ->
+                        val o = node as? JsonObject
+                        add(o?.string("ch_id") ?: o?.string("channel_id") ?: channelKey, node)
+                    }
+                    is JsonObject -> {
+                        val entries = value["data"] as? JsonArray
+                            ?: value["programs"] as? JsonArray
+                            ?: value["epg"] as? JsonArray
+                        if (entries != null) entries.forEach { add(channelKey, it) }
+                        else add(value.string("ch_id") ?: value.string("channel_id") ?: channelKey, value)
+                    }
+                    else -> Unit
+                }
+            }
+            is JsonArray -> data.forEach { node ->
+                val o = node as? JsonObject ?: return@forEach
+                add(o.string("ch_id") ?: o.string("channel_id") ?: o.string("id"), o)
+            }
+            else -> Unit
+        }
+        return result.mapValues { (_, values) -> values.distinct().sortedBy { it.startTimeMillis } }
+    }
     companion object {
+        private const val EPG_CACHE_MILLIS = 5 * 60 * 1000L
         internal fun rankMovieDetailCommands(
             selectedId: String,
             selectedTitle: String,
