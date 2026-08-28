@@ -958,6 +958,7 @@ private fun ModernDestinationTile(
     var focused by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
@@ -1049,7 +1050,13 @@ private fun ModernDestinationTile(
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(if (isTv) 1.72f else 16f / 9f)
+                .then(
+                    if (isPhone) {
+                        Modifier.height(88.dp)
+                    } else {
+                        Modifier.aspectRatio(if (isTv) 1.72f else 16f / 9f)
+                    }
+                )
                 .background(
                     Brush.linearGradient(
                         listOf(
@@ -1058,7 +1065,13 @@ private fun ModernDestinationTile(
                         )
                     )
                 )
-                .padding(if (isTv) 18.dp else 15.dp)
+                .padding(
+                    when {
+                        isTv -> 18.dp
+                        isPhone -> 12.dp
+                        else -> 15.dp
+                    }
+                )
         ) {
             Row(
                 modifier = Modifier
@@ -1068,7 +1081,13 @@ private fun ModernDestinationTile(
             ) {
                 Surface(
                     modifier = Modifier
-                        .size(if (isTv) 46.dp else 42.dp)
+                        .size(
+                            when {
+                                isTv -> 46.dp
+                                isPhone -> 36.dp
+                                else -> 42.dp
+                            }
+                        )
                         .graphicsLayer {
                             scaleX = iconScale
                             scaleY = iconScale
@@ -1080,19 +1099,37 @@ private fun ModernDestinationTile(
                         Icon(
                             icon,
                             null,
-                            Modifier.size(if (isTv) 25.dp else 23.dp),
+                            Modifier.size(
+                                when {
+                                    isTv -> 25.dp
+                                    isPhone -> 20.dp
+                                    else -> 23.dp
+                                }
+                            ),
                             tint = Color.White
                         )
                     }
                 }
-                Spacer(Modifier.width(if (isTv) 14.dp else 12.dp))
+                Spacer(
+                    Modifier.width(
+                        when {
+                            isTv -> 14.dp
+                            isPhone -> 10.dp
+                            else -> 12.dp
+                        }
+                    )
+                )
                 Column(
                     Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         title,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (isPhone) {
+                            MaterialTheme.typography.bodyLarge
+                        } else {
+                            MaterialTheme.typography.titleMedium
+                        },
                         fontWeight =
                             if (active) FontWeight.Black
                             else FontWeight.Bold,
@@ -1102,7 +1139,11 @@ private fun ModernDestinationTile(
                     )
                     Text(
                         subtitle,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = if (isPhone) {
+                            MaterialTheme.typography.labelSmall
+                        } else {
+                            MaterialTheme.typography.labelMedium
+                        },
                         color =
                             if (active) {
                                 Color(0xFFD5D7DC)
