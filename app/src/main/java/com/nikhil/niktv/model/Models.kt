@@ -114,6 +114,10 @@ data class MediaItem(
     val portalCategoryId: String? = null,
     val portalEpisodeId: String? = null,
     val liveProgramme: LiveProgramme? = null,
+    val channelNumber: Int? = null,
+    val epgChannelId: String? = null,
+    val streamType: String? = null,
+    val catchupAvailable: Boolean? = null,
     /** Provider-supplied TMDB identity, when available (not a guessed match). */
     val externalTmdbId: Int? = null
 )

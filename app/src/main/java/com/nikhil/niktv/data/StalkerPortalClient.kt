@@ -162,7 +162,15 @@ class StalkerPortalClient(private val context: Context) {
                     o.string("cmd"),
                     o.string("description") ?: o.string("descr") ?: o.string("genres_str"),
                     portalCategoryId = category.id,
-                    liveProgramme = if (category.type == CatalogType.LIVE_TV) o.liveProgramme() else null
+                    liveProgramme = if (category.type == CatalogType.LIVE_TV) o.liveProgramme() else null,
+                    channelNumber = o.string("number")?.toIntOrNull()
+                        ?: o.string("num")?.toIntOrNull(),
+                    epgChannelId = o.string("xmltv_id") ?: o.string("epg_channel_id"),
+                    streamType = o.string("stream_type") ?: o.string("type"),
+                    catchupAvailable = if (category.type == CatalogType.LIVE_TV) {
+                        o.boolish("tv_archive") ||
+                            (o.string("tv_archive_duration")?.toIntOrNull() ?: 0) > 0
+                    } else null
                 )
             }
         val metadata = payload as? JsonObject
@@ -478,6 +486,14 @@ class StalkerPortalClient(private val context: Context) {
                 o.string("plot") ?: o.string("description"),
                 portalCategoryId = o.string("category_id") ?: categoryId,
                 liveProgramme = if (type == CatalogType.LIVE_TV) o.liveProgramme() else null,
+                channelNumber = o.string("num")?.toIntOrNull(),
+                epgChannelId = o.string("epg_channel_id"),
+                streamType = o.string("stream_type")
+                    ?: o.string("container_extension"),
+                catchupAvailable = if (type == CatalogType.LIVE_TV) {
+                    o.boolish("tv_archive") ||
+                        (o.string("tv_archive_duration")?.toIntOrNull() ?: 0) > 0
+                } else null,
                 externalTmdbId = listOf("tmdb", "tmdb_id", "tmdbid")
                     .firstNotNullOfOrNull { key -> o.string(key)?.toIntOrNull() }
             )

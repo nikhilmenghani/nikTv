@@ -67,6 +67,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -2107,6 +2108,7 @@ private fun ModernIptvCollection(
             if (isLiveTv) {
                 ModernLiveChannelTile(
                     item = media,
+                    categoryTitle = category.title,
                     themed = themedLiveTiles,
                     isFavorite = favorite,
                     onFavorite = favoriteAction,
@@ -2219,6 +2221,7 @@ private fun ModernCollectionHeader(
 @Composable
 private fun ModernLiveChannelTile(
     item: MediaItem,
+    categoryTitle: String,
     themed: Boolean,
     isFavorite: Boolean,
     onFavorite: () -> Unit,
@@ -2236,12 +2239,50 @@ private fun ModernLiveChannelTile(
     val palette = remember(item.id, item.title) {
         destinationPalette("live:${item.id}:${item.title}")
     }
+    val programme = item.liveProgramme
+    val scheduleText = remember(programme?.startTimeMillis, programme?.endTimeMillis) {
+        val formatter = java.text.SimpleDateFormat(
+            "h:mm a",
+            java.util.Locale.getDefault()
+        )
+        when {
+            programme?.startTimeMillis != null && programme.endTimeMillis != null ->
+                "${formatter.format(java.util.Date(programme.startTimeMillis))}–" +
+                    formatter.format(java.util.Date(programme.endTimeMillis))
+            programme?.startTimeMillis != null ->
+                "From ${formatter.format(java.util.Date(programme.startTimeMillis))}"
+            else -> null
+        }
+    }
+    val programmeProgress = remember(programme?.startTimeMillis, programme?.endTimeMillis) {
+        val start = programme?.startTimeMillis
+        val end = programme?.endTimeMillis
+        if (start != null && end != null && end > start) {
+            ((System.currentTimeMillis() - start).toFloat() / (end - start))
+                .coerceIn(0f, 1f)
+        } else null
+    }
+    val technicalSummary = remember(
+        item.channelNumber,
+        item.streamType,
+        item.catchupAvailable,
+        item.epgChannelId,
+        categoryTitle
+    ) {
+        buildList {
+            item.channelNumber?.let { add("CH $it") }
+            add(categoryTitle)
+            item.streamType?.takeIf { it.isNotBlank() }?.let { add(it.uppercase()) }
+            if (item.catchupAvailable == true) add("Catch-up")
+            if (!item.epgChannelId.isNullOrBlank()) add("EPG")
+        }.distinct().joinToString("  •  ")
+    }
 
     Box(Modifier.fillMaxWidth()) {
         Surface(
             modifier = modifier
                 .fillMaxWidth()
-                .heightIn(min = if (isPhone) 82.dp else 104.dp)
+                .heightIn(min = if (isPhone) 102.dp else 118.dp)
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
@@ -2304,10 +2345,52 @@ private fun ModernLiveChannelTile(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    programme?.title?.takeIf {
+                        it.isNotBlank() && !it.equals(item.title, ignoreCase = true)
+                    }?.let { title ->
+                        Text(
+                            "Now · $title",
+                            color = Color(0xFFF1C7CB),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (programme == null) {
+                        item.description?.takeIf {
+                            it.isNotBlank() && !it.equals(item.title, ignoreCase = true)
+                        }?.let { description ->
+                            Text(
+                                description,
+                                color = Color.White.copy(alpha = .72f),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    scheduleText?.let {
+                        Text(
+                            it,
+                            color = Color.White.copy(alpha = .68f),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    programmeProgress?.let { progress ->
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().height(3.dp),
+                            color = Color(0xFFE50914),
+                            trackColor = Color.White.copy(alpha = .16f)
+                        )
+                    }
                     Text(
-                        if (themed) "Live TV" else "Channel thumbnail",
-                        color = Color.White.copy(alpha = .68f),
-                        style = MaterialTheme.typography.labelSmall
+                        technicalSummary,
+                        color = Color.White.copy(alpha = .58f),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Icon(
