@@ -76,10 +76,18 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
     val bootstrapFocus = remember { FocusRequester() }
     var x by rememberSaveable { mutableFloatStateOf(0f) }
     var y by rememberSaveable { mutableFloatStateOf(0f) }
+    /*
+     * VIRTUAL_DPAD_ACTIVITY_DISPATCH_V40
+     *
+     * A hardware remote enters through Activity.dispatchKeyEvent(), which
+     * allows NikTV's explicit onPreviewKeyEvent routes, focusProperties and
+     * Compose's normal focus search to participate in the same event path.
+     *
+     * Dispatching directly to the Activity content child can report a key as
+     * handled inside one focus island without completing app-wide traversal.
+     */
     fun send(keyCode: Int): Boolean {
         val hostActivity = activity ?: return false
-        val content = hostActivity.findViewById<android.view.ViewGroup>(android.R.id.content)
-        val target = content?.getChildAt(0) ?: hostActivity.window.decorView
         val pressedAt = SystemClock.uptimeMillis()
         fun event(action: Int) = KeyEvent(
             pressedAt,
@@ -93,19 +101,32 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
             KeyEvent.FLAG_VIRTUAL_HARD_KEY,
             InputDevice.SOURCE_DPAD
         )
-        val handled = target.dispatchKeyEvent(event(KeyEvent.ACTION_DOWN))
-        target.dispatchKeyEvent(event(KeyEvent.ACTION_UP))
+        val handled =
+            hostActivity.dispatchKeyEvent(event(KeyEvent.ACTION_DOWN))
+        hostActivity.dispatchKeyEvent(event(KeyEvent.ACTION_UP))
         return handled
     }
-    fun navigate(keyCode: Int) {
+
+    fun navigate(
+        keyCode: Int,
+        direction: FocusDirection
+    ) {
         inputModeManager.requestInputMode(InputMode.Keyboard)
-        if (!send(keyCode)) {
-            // Touch-only screens may not have established a Compose focus
-            // owner yet. Bootstrap once, then enter the screen's normal
-            // traversal order. Later presses use spatial DPAD navigation.
-            bootstrapFocus.requestFocus()
-            focusManager.moveFocus(FocusDirection.Next)
-        }
+
+        /*
+         * VIRTUAL_DPAD_COMPOSE_FALLBACK_V40
+         *
+         * Prefer the real remote event path so screen-specific routes such as
+         * same-column poster navigation remain authoritative. If no handler
+         * accepts the synthetic event, fall back to Compose directional focus.
+         * The final bootstrap is only for touch screens that do not yet have a
+         * Compose focus owner.
+         */
+        if (send(keyCode)) return
+        if (focusManager.moveFocus(direction)) return
+
+        bootstrapFocus.requestFocus()
+        focusManager.moveFocus(FocusDirection.Next)
     }
     Surface(
         modifier = modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) },
@@ -143,16 +164,36 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
                     .padding(3.dp),
                 tint = Color.LightGray
             )
-            DpadKey(Icons.Default.KeyboardArrowUp, "Up") { navigate(KeyEvent.KEYCODE_DPAD_UP) }
+            DpadKey(Icons.Default.KeyboardArrowUp, "Up") {
+                navigate(
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    FocusDirection.Up
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left") { navigate(KeyEvent.KEYCODE_DPAD_LEFT) }
+                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left") {
+                    navigate(
+                        KeyEvent.KEYCODE_DPAD_LEFT,
+                        FocusDirection.Left
+                    )
+                }
                 DpadKey(null, "Select") {
                     inputModeManager.requestInputMode(InputMode.Keyboard)
                     send(KeyEvent.KEYCODE_DPAD_CENTER)
                 }
-                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right") { navigate(KeyEvent.KEYCODE_DPAD_RIGHT) }
+                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right") {
+                    navigate(
+                        KeyEvent.KEYCODE_DPAD_RIGHT,
+                        FocusDirection.Right
+                    )
+                }
             }
-            DpadKey(Icons.Default.KeyboardArrowDown, "Down") { navigate(KeyEvent.KEYCODE_DPAD_DOWN) }
+            DpadKey(Icons.Default.KeyboardArrowDown, "Down") {
+                navigate(
+                    KeyEvent.KEYCODE_DPAD_DOWN,
+                    FocusDirection.Down
+                )
+            }
             Row(
                 modifier = Modifier
                     .height(46.dp)
