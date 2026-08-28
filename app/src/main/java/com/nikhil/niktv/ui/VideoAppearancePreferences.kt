@@ -1084,6 +1084,23 @@ internal fun PlayerPictureModeEditor(
     onSelected: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val pictureEditorConfiguration = LocalConfiguration.current
+    val pictureEditorIsTv =
+        context.packageManager.hasSystemFeature(
+            android.content.pm.PackageManager.FEATURE_LEANBACK
+        ) ||
+            (
+                pictureEditorConfiguration.uiMode and
+                    android.content.res.Configuration.UI_MODE_TYPE_MASK
+                ) ==
+                android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
+            !context.packageManager.hasSystemFeature(
+                android.content.pm.PackageManager.FEATURE_TOUCHSCREEN
+            )
+    val compactMobileEditor =
+        !pictureEditorIsTv &&
+            pictureEditorConfiguration.smallestScreenWidthDp < 600
+
     var selected by remember(selectedId) { mutableStateOf(profiles.firstOrNull { it.id == selectedId } ?: profiles.first()) }
     var brightness by remember(selected.id) { mutableFloatStateOf(selected.brightness) }
     var warmth by remember(selected.id) { mutableFloatStateOf(selected.warmth) }
@@ -1099,6 +1116,11 @@ internal fun PlayerPictureModeEditor(
     val cancelRequester = remember { FocusRequester() }
     val saveRequester = remember { FocusRequester() }
     val profileListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val profileChipShape =
+        androidx.compose.foundation.shape.RoundedCornerShape(
+            if (compactMobileEditor) 14.dp else 18.dp
+        )
+
     LaunchedEffect(selected, brightness, warmth, coolness, tint, dimming) {
         onPreview(selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
     }
@@ -1120,34 +1142,67 @@ internal fun PlayerPictureModeEditor(
     }
     BackHandler(onBack = onDismiss)
     Box(
-        Modifier.fillMaxSize().focusGroup().padding(end = 24.dp, bottom = 20.dp),
+        Modifier
+            .fillMaxSize()
+            .focusGroup()
+            .padding(
+                end = if (compactMobileEditor) 10.dp else 24.dp,
+                bottom = if (compactMobileEditor) 8.dp else 20.dp
+            ),
         contentAlignment = Alignment.BottomEnd
     ) {
+        /*
+         * COMPACT_MOBILE_PICTURE_EDITOR_V39
+         *
+         * A phone in fullscreen landscape has much less vertical space than
+         * tablet/TV layouts. Keep the same controls and focus graph, but spend
+         * less height on panel chrome, preset chips and slider rows.
+         */
         // PROFILE_SCREEN_VISUAL_LANGUAGE_V20
         Surface(
             modifier = Modifier
-                .fillMaxWidth(.50f)
-                .widthIn(min = 360.dp, max = 660.dp),
+                .fillMaxWidth(if (compactMobileEditor) .58f else .50f)
+                .widthIn(
+                    min = if (compactMobileEditor) 320.dp else 360.dp,
+                    max = if (compactMobileEditor) 560.dp else 660.dp
+                ),
             color = Color(0xF2111317),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                if (compactMobileEditor) 16.dp else 22.dp
+            ),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
                 Color(0xFF30343B)
             ),
-            shadowElevation = 14.dp
+            shadowElevation = if (compactMobileEditor) 8.dp else 14.dp
         ) {
             Column(
-                Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                Modifier.padding(
+                    horizontal = if (compactMobileEditor) 14.dp else 20.dp,
+                    vertical = if (compactMobileEditor) 8.dp else 16.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(
+                    if (compactMobileEditor) 2.dp else 6.dp
+                )
             ) {
                 Text(
                     "Picture mode · ${selected.name}",
-                    style = MaterialTheme.typography.titleLarge,
+                    style =
+                        if (compactMobileEditor) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.titleLarge
+                        },
                     color = Color(0xFFF5F5F7)
                 )
                 Text(
                     "Adjust while watching the video.",
-                    style = MaterialTheme.typography.bodySmall,
+                    style =
+                        if (compactMobileEditor) {
+                            MaterialTheme.typography.labelSmall
+                        } else {
+                            MaterialTheme.typography.bodySmall
+                        },
                     color = Color(0xFF9B9FA8)
                 )
                 /*
@@ -1247,7 +1302,7 @@ internal fun PlayerPictureModeEditor(
                                         Modifier.border(
                                             2.dp,
                                             Color(0xFFF2F3F5),
-                                            androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+                                            profileChipShape
                                         )
                                     } else {
                                         Modifier
@@ -1263,16 +1318,23 @@ internal fun PlayerPictureModeEditor(
                                 profile.id == selected.id -> Color(0xFF35191D)
                                 else -> Color(0xFF1B1D22)
                             },
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+                            shape = profileChipShape
                         ) {
                             Text(
                                 profile.name,
                                 Modifier.padding(
-                                    horizontal = 11.dp,
-                                    vertical = 7.dp
+                                    horizontal =
+                                        if (compactMobileEditor) 9.dp else 11.dp,
+                                    vertical =
+                                        if (compactMobileEditor) 4.dp else 7.dp
                                 ),
                                 color = Color(0xFFF5F5F7),
-                                style = MaterialTheme.typography.labelMedium
+                                style =
+                                    if (compactMobileEditor) {
+                                        MaterialTheme.typography.labelSmall
+                                    } else {
+                                        MaterialTheme.typography.labelMedium
+                                    }
                             )
                         }
                     }
@@ -1284,12 +1346,27 @@ internal fun PlayerPictureModeEditor(
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
-                    PlayerEditorSlider("Brightness", brightness, -1f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
-                    PlayerEditorSlider("Warmth", warmth, 0f..1f, warmthRequester, brightnessRequester, coolnessRequester) { warmth = it }
-                    PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
-                    PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
-                    PlayerEditorSlider("Dimming", dimming, 0f..1f, dimmingRequester, tintRequester, cancelRequester) { dimming = it }
+                    PlayerEditorSlider("Brightness", brightness, -1f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester, compactMobileEditor) { brightness = it }
+                    PlayerEditorSlider("Warmth", warmth, 0f..1f, warmthRequester, brightnessRequester, coolnessRequester, compactMobileEditor) { warmth = it }
+                    PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester, compactMobileEditor) { coolness = it }
+                    PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester, compactMobileEditor) { tint = it }
+                    PlayerEditorSlider("Dimming", dimming, 0f..1f, dimmingRequester, tintRequester, cancelRequester, compactMobileEditor) { dimming = it }
                 }
+
+                /*
+                 * MOBILE_PICTURE_EDITOR_ACTION_DIVIDER_V39
+                 *
+                 * The action row is visually and spatially independent from
+                 * Dimming so the final slider cannot run into Cancel/Save.
+                 */
+                androidx.compose.material3.HorizontalDivider(
+                    modifier = Modifier.padding(
+                        top = if (compactMobileEditor) 2.dp else 4.dp
+                    ),
+                    thickness = 1.dp,
+                    color = Color(0xFF30343B)
+                )
+
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
@@ -1435,6 +1512,7 @@ private fun PlayerEditorSlider(
     requester: FocusRequester,
     upRequester: FocusRequester,
     downRequester: FocusRequester,
+    compact: Boolean,
     onValue: (Float) -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -1447,7 +1525,7 @@ private fun PlayerEditorSlider(
     Row(
         Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(if (compact) 36.dp else 44.dp)
             .focusRequester(requester)
             .focusProperties {
                 up = upRequester
@@ -1490,15 +1568,23 @@ private fun PlayerEditorSlider(
             }
             .focusable(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(
+            if (compact) 6.dp else 10.dp
+        )
     ) {
         Text(
             text = label,
-            modifier = Modifier.width(94.dp),
+            modifier = Modifier.width(if (compact) 78.dp else 94.dp),
             color =
                 if (focused) Color(0xFFF5F5F7)
                 else Color(0xFFD4D7DC),
-            style = MaterialTheme.typography.bodyMedium
+            style =
+                if (compact) {
+                    MaterialTheme.typography.bodySmall
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
+            maxLines = 1
         )
 
         /*
@@ -1514,7 +1600,7 @@ private fun PlayerEditorSlider(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .height(32.dp)
+                .height(if (compact) 28.dp else 32.dp)
                 .background(
                     Color(0xFF15171B),
                     trackShape
@@ -1537,10 +1623,13 @@ private fun PlayerEditorSlider(
                     Box(
                         Modifier
                             .width(
-                                if (focused) 10.dp
-                                else 6.dp
+                                if (focused) {
+                                    if (compact) 8.dp else 10.dp
+                                } else {
+                                    if (compact) 5.dp else 6.dp
+                                }
                             )
-                            .height(26.dp)
+                            .height(if (compact) 22.dp else 26.dp)
                             .background(
                                 if (focused) {
                                     Color(0xFF22252B)
@@ -1567,11 +1656,16 @@ private fun PlayerEditorSlider(
 
         Text(
             text = "$percentage%",
-            modifier = Modifier.width(58.dp),
+            modifier = Modifier.width(if (compact) 46.dp else 58.dp),
             color =
                 if (focused) Color(0xFFF5F5F7)
                 else Color(0xFF9B9FA8),
-            style = MaterialTheme.typography.labelMedium,
+            style =
+                if (compact) {
+                    MaterialTheme.typography.labelSmall
+                } else {
+                    MaterialTheme.typography.labelMedium
+                },
             textAlign = androidx.compose.ui.text.style.TextAlign.End,
             maxLines = 1
         )
