@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,7 +29,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
@@ -36,6 +36,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
@@ -73,28 +76,30 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
     val bootstrapFocus = remember { FocusRequester() }
     var x by rememberSaveable { mutableFloatStateOf(0f) }
     var y by rememberSaveable { mutableFloatStateOf(0f) }
-    fun send(keyCode: Int) {
-        activity?.window?.decorView?.post {
-            val pressedAt = SystemClock.uptimeMillis()
-            fun event(action: Int) = KeyEvent(
-                pressedAt,
-                SystemClock.uptimeMillis(),
-                action,
-                keyCode,
-                0,
-                0,
-                KeyCharacterMap.VIRTUAL_KEYBOARD,
-                0,
-                KeyEvent.FLAG_VIRTUAL_HARD_KEY,
-                InputDevice.SOURCE_DPAD
-            )
-            activity.dispatchKeyEvent(event(KeyEvent.ACTION_DOWN))
-            activity.dispatchKeyEvent(event(KeyEvent.ACTION_UP))
-        }
+    fun send(keyCode: Int): Boolean {
+        val hostActivity = activity ?: return false
+        val content = hostActivity.findViewById<android.view.ViewGroup>(android.R.id.content)
+        val target = content?.getChildAt(0) ?: hostActivity.window.decorView
+        val pressedAt = SystemClock.uptimeMillis()
+        fun event(action: Int) = KeyEvent(
+            pressedAt,
+            SystemClock.uptimeMillis(),
+            action,
+            keyCode,
+            0,
+            0,
+            KeyCharacterMap.VIRTUAL_KEYBOARD,
+            0,
+            KeyEvent.FLAG_VIRTUAL_HARD_KEY,
+            InputDevice.SOURCE_DPAD
+        )
+        val handled = target.dispatchKeyEvent(event(KeyEvent.ACTION_DOWN))
+        target.dispatchKeyEvent(event(KeyEvent.ACTION_UP))
+        return handled
     }
-    fun navigate(direction: FocusDirection) {
+    fun navigate(keyCode: Int) {
         inputModeManager.requestInputMode(InputMode.Keyboard)
-        if (!focusManager.moveFocus(direction)) {
+        if (!send(keyCode)) {
             // Touch-only screens may not have established a Compose focus
             // owner yet. Bootstrap once, then enter the screen's normal
             // traversal order. Later presses use spatial DPAD navigation.
@@ -138,19 +143,33 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
                     .padding(3.dp),
                 tint = Color.LightGray
             )
-            DpadKey(Icons.Default.KeyboardArrowUp, "Up") { navigate(FocusDirection.Up) }
+            DpadKey(Icons.Default.KeyboardArrowUp, "Up") { navigate(KeyEvent.KEYCODE_DPAD_UP) }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left") { navigate(FocusDirection.Left) }
+                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left") { navigate(KeyEvent.KEYCODE_DPAD_LEFT) }
                 DpadKey(null, "Select") {
                     inputModeManager.requestInputMode(InputMode.Keyboard)
                     send(KeyEvent.KEYCODE_DPAD_CENTER)
                 }
-                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right") { navigate(FocusDirection.Right) }
+                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right") { navigate(KeyEvent.KEYCODE_DPAD_RIGHT) }
             }
-            DpadKey(Icons.Default.KeyboardArrowDown, "Down") { navigate(FocusDirection.Down) }
-            TextButton(
-                onClick = { (activity as? ComponentActivity)?.onBackPressedDispatcher?.onBackPressed() },
-                modifier = Modifier.focusProperties { canFocus = false }
+            DpadKey(Icons.Default.KeyboardArrowDown, "Down") { navigate(KeyEvent.KEYCODE_DPAD_DOWN) }
+            Row(
+                modifier = Modifier
+                    .height(46.dp)
+                    .padding(horizontal = 12.dp)
+                    .pointerInput(activity) {
+                        detectTapGestures {
+                            (activity as? ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
+                        }
+                    }
+                    .semantics {
+                        contentDescription = "Back"
+                        onClick {
+                            (activity as? ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
+                            true
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
@@ -162,9 +181,18 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
 
 @Composable
 private fun DpadKey(icon: androidx.compose.ui.graphics.vector.ImageVector?, label: String, onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier.size(46.dp).focusProperties { canFocus = false }
+    Box(
+        modifier = Modifier
+            .size(46.dp)
+            .pointerInput(onClick) { detectTapGestures { onClick() } }
+            .semantics {
+                contentDescription = label
+                onClick {
+                    onClick()
+                    true
+                }
+            },
+        contentAlignment = Alignment.Center
     ) {
         if (icon != null) Icon(icon, label, Modifier.size(30.dp), tint = Color.White)
         else Surface(Modifier.size(22.dp), CircleShape, color = Color(0xFFE50914)) { }
