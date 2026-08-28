@@ -44,8 +44,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.DashboardCustomize
-import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.HeartBroken
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
@@ -59,6 +60,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -129,7 +132,9 @@ internal fun ModernTileBrowseScreen(
     openSettings: () -> Unit,
     openProfileSwitcher: () -> Unit,
     openRecent: (RecentItem) -> Unit,
+    removeRecent: (RecentItem) -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
     closeSection: () -> Unit,
@@ -201,7 +206,9 @@ internal fun ModernTileBrowseScreen(
                         state = state,
                         dashboardSurface = dashboardSurface,
                         openRecent = openRecent,
+                        removeRecent = removeRecent,
                         openWatchedEpisode = openWatchedEpisode,
+                        dismissWatchedEpisode = dismissWatchedEpisode,
                         toggleFavorite = toggleFavorite,
                         openTmdbSection = openTmdbSection,
                         openIptvCategory = openIptvCategory,
@@ -367,7 +374,9 @@ private fun ModernDestinationHub(
     state: NikTvState,
     dashboardSurface: DashboardSurface,
     openRecent: (RecentItem) -> Unit,
+    removeRecent: (RecentItem) -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
@@ -669,6 +678,7 @@ private fun ModernDestinationHub(
                         entries = newEpisodes,
                         favorites = state.favorites,
                         open = openWatchedEpisode,
+                        clear = dismissWatchedEpisode,
                         toggleFavorite = toggleFavorite
                     )
                 }
@@ -687,6 +697,7 @@ private fun ModernDestinationHub(
                         favorites = state.favorites,
                         returnFocusId = state.playbackReturnFocusId,
                         open = openRecent,
+                        clear = removeRecent,
                         toggleFavorite = toggleFavorite
                     )
                 }
@@ -836,6 +847,7 @@ private fun ModernNewEpisodesRow(
     entries: List<Pair<WatchedSeries, MediaItem>>,
     favorites: List<FavoriteItem>,
     open: (WatchedSeries, MediaItem) -> Unit,
+    clear: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
     LazyRow(
@@ -876,7 +888,8 @@ private fun ModernNewEpisodesRow(
                     .joinToString(" · "),
                 onClick = { open(watched, episode) },
                 isFavorite = favorites.any { it.key == favorite.key },
-                onFavorite = { toggleFavorite(favorite) }
+                onFavorite = { toggleFavorite(favorite) },
+                onClear = { clear(watched, episode) }
             )
         }
     }
@@ -1137,6 +1150,7 @@ private fun ModernContinueRow(
     favorites: List<FavoriteItem>,
     returnFocusId: String?,
     open: (RecentItem) -> Unit,
+    clear: (RecentItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
     val listState = rememberLazyListState()
@@ -1206,6 +1220,7 @@ private fun ModernContinueRow(
                         )
                     )
                 },
+                onClear = { clear(recent) },
                 modifier = Modifier.focusRequester(
                     requesters.getOrPut(focusId) { FocusRequester() }
                 )
@@ -1221,9 +1236,11 @@ private fun ModernCompactMediaCard(
     onClick: () -> Unit,
     isFavorite: Boolean,
     onFavorite: () -> Unit,
+    onClear: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isModernTileTv(configuration)
@@ -1268,7 +1285,7 @@ private fun ModernCompactMediaCard(
         visualProgress
     )
 
-    Surface(
+    Box(
         modifier = modifier
             .width(
                 when {
@@ -1303,24 +1320,25 @@ private fun ModernCompactMediaCard(
             .onFocusChanged {
                 focused = it.isFocused
             }
-            .clickable(
+            .remoteCombinedClickable(
                 interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
+                onClick = onClick,
+                onLongClick = { menuOpen = true }
             )
-            .focusable(),
-        shape = shape,
-        color = backgroundColor,
-        border = BorderStroke(
-            when {
-                isTv && focused -> 3.dp
-                !isTv && focused -> 2.dp
-                else -> 1.dp
-            },
-            borderColor
-        )
     ) {
-        Column {
+        Surface(
+            shape = shape,
+            color = backgroundColor,
+            border = BorderStroke(
+                when {
+                    isTv && focused -> 3.dp
+                    !isTv && focused -> 2.dp
+                    else -> 1.dp
+                },
+                borderColor
+            )
+        ) {
+          Column {
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -1354,15 +1372,60 @@ private fun ModernCompactMediaCard(
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
-                    IconButton(onClick = onFavorite, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            if (isFavorite) "Remove from My List" else "Add to My List",
-                            tint = if (isFavorite) Color(0xFFE50914) else Color(0xFFD4D7DC)
-                        )
-                    }
                 }
             }
+          }
+        }
+        ModernTileActionsMenu(
+            expanded = menuOpen,
+            isFavorite = isFavorite,
+            dismiss = { menuOpen = false },
+            toggleFavorite = onFavorite,
+            clear = onClear
+        )
+    }
+}
+
+@Composable
+private fun ModernTileActionsMenu(
+    expanded: Boolean,
+    isFavorite: Boolean,
+    dismiss: () -> Unit,
+    toggleFavorite: () -> Unit,
+    clear: (() -> Unit)?
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = dismiss,
+        modifier = Modifier,
+        containerColor = Color(0xFF202020),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        DropdownMenuItem(
+            text = {
+                Text(if (isFavorite) "Remove from My List" else "Add to My List")
+            },
+            leadingIcon = {
+                Icon(
+                    if (isFavorite) Icons.Default.HeartBroken
+                    else Icons.Default.FavoriteBorder,
+                    null
+                )
+            },
+            onClick = {
+                dismiss()
+                toggleFavorite()
+            }
+        )
+        clear?.let { clearAction ->
+            DropdownMenuItem(
+                text = { Text("Clear from this list") },
+                leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                onClick = {
+                    dismiss()
+                    clearAction()
+                }
+            )
         }
     }
 }
@@ -1782,6 +1845,9 @@ private fun ModernIptvCollection(
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
+    var loadMoreStartCount by remember(category.id) {
+        mutableIntStateOf(-1)
+    }
 
     val gridState = rememberLazyGridState()
     val returnFocusRequester = remember(
@@ -1853,6 +1919,37 @@ private fun ModernIptvCollection(
                 runCatching { returnFocusRequester.requestFocus() }
                 delay(70L + 25L * attempt)
             }
+        }
+    }
+
+    LaunchedEffect(
+        state.items.size,
+        state.catalogLoadingMore,
+        loadMoreStartCount
+    ) {
+        if (loadMoreStartCount < 0) return@LaunchedEffect
+
+        if (state.items.size > loadMoreStartCount) {
+            val newIndex = loadMoreStartCount
+            val newItem = state.items[newIndex]
+            gridState.scrollToItem(newIndex + 1)
+            withFrameNanos { }
+            delay(120L)
+            repeat(5) { attempt ->
+                if (runCatching {
+                        itemFocusRequesters.getOrPut(newItem.id) {
+                            FocusRequester()
+                        }.requestFocus()
+                    }.getOrDefault(false)
+                ) {
+                    focusedPosterIndex = newIndex
+                    loadMoreStartCount = -1
+                    return@LaunchedEffect
+                }
+                delay(50L * (attempt + 1))
+            }
+        } else if (!state.catalogLoadingMore) {
+            loadMoreStartCount = -1
         }
     }
 
@@ -1954,7 +2051,12 @@ private fun ModernIptvCollection(
                             "Load more"
                         },
                     loading = state.catalogLoadingMore,
-                    onClick = loadMore
+                    onClick = {
+                        if (!state.catalogLoadingMore) {
+                            loadMoreStartCount = state.items.size
+                            loadMore()
+                        }
+                    }
                 )
             }
         }
@@ -2031,6 +2133,7 @@ private fun ModernCollectionPoster(
     isTv: Boolean
 ) {
     var focused by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTablet = !isTv && configuration.screenWidthDp >= 600
@@ -2087,8 +2190,6 @@ private fun ModernCollectionPoster(
          * activation before the click callback is dispatched.
          */
         Surface(
-            onClick = onClick,
-            interactionSource = interactionSource,
             modifier = Modifier
                 .fillMaxWidth()
                 .shadow(
@@ -2111,7 +2212,16 @@ private fun ModernCollectionPoster(
                 )
                 .onFocusChanged {
                     focused = it.isFocused
-                },
+                }
+                .remoteCombinedClickable(
+                    interactionSource = interactionSource,
+                    onClick = onClick,
+                    onLongClick = if (onFavorite != null) {
+                        { menuOpen = true }
+                    } else {
+                        null
+                    }
+                ),
             shape = shape,
             color = Color(0xFF202020),
             border = BorderStroke(
@@ -2179,29 +2289,15 @@ private fun ModernCollectionPoster(
                     )
                 }
             }
-            if (onFavorite != null) {
-                IconButton(
-                    onClick = onFavorite,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        if (isFavorite) {
-                            Icons.Default.Favorite
-                        } else {
-                            Icons.Default.FavoriteBorder
-                        },
-                        if (isFavorite) {
-                            "Remove from My List"
-                        } else {
-                            "Add to My List"
-                        },
-                        tint =
-                            if (isFavorite) Color(0xFFE50914)
-                            else Color.Gray,
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-            }
+        }
+        onFavorite?.let { favoriteAction ->
+            ModernTileActionsMenu(
+                expanded = menuOpen,
+                isFavorite = isFavorite,
+                dismiss = { menuOpen = false },
+                toggleFavorite = favoriteAction,
+                clear = null
+            )
         }
     }
 }
@@ -2289,7 +2385,10 @@ private fun ModernLoadMoreButton(
     ) {
         Button(
             onClick = onClick,
-            enabled = !loading,
+            // Retain focus while pagination is running. Disabling this
+            // button removes it from the TV focus graph and lets focus jump
+            // to the navigation rail before the new tiles are composed.
+            enabled = true,
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFFE50914),
                 contentColor = Color.White

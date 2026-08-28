@@ -197,7 +197,7 @@ private fun Modifier.remoteFocusFrame(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Modifier.remoteCombinedClickable(
+internal fun Modifier.remoteCombinedClickable(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
     interactionSource: MutableInteractionSource? = null
@@ -404,6 +404,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     openHome = vm::openHome,
                     openRecent = vm::openRecent,
                     removeRecent = vm::removeRecent,
+                    dismissWatchedEpisode = vm::dismissWatchedEpisode,
                     clearRecent = vm::clearRecent,
                     openFavorite = vm::openFavorite,
                     toggleFavorite = vm::toggleFavorite,
@@ -1367,6 +1368,7 @@ private fun CatalogScreen(
     openHome: () -> Unit,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     clearRecent: (FavoriteKind) -> Unit,
     openFavorite: (FavoriteItem) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
@@ -1537,6 +1539,7 @@ private fun CatalogScreen(
                     openHome = openHome,
                     openRecent = openRecent,
                     removeRecent = removeRecent,
+                    dismissWatchedEpisode = dismissWatchedEpisode,
                     clearRecent = clearRecent,
                     openWatchedEpisode = openWatchedEpisode,
                     toggleFavorite = toggleFavorite,
@@ -1642,6 +1645,7 @@ private fun ModernBrowseScreen(
     openHome: () -> Unit,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     clearRecent: (FavoriteKind) -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (MediaItem) -> Unit,
@@ -1688,7 +1692,9 @@ private fun ModernBrowseScreen(
             openSettings = openSettings,
             openProfileSwitcher = openProfileSwitcher,
             openRecent = openRecent,
+            removeRecent = removeRecent,
             openWatchedEpisode = openWatchedEpisode,
+            dismissWatchedEpisode = dismissWatchedEpisode,
             openTmdbSection = openModernTmdbSection,
             openIptvCategory = openModernIptvCategory,
             closeSection = closeModernSection,
@@ -5308,9 +5314,9 @@ private fun ModernSettingsScreen(
                                 }
                         )
                         AppearanceSliderRow(
-                            label = "Brightness lift",
+                            label = "Brightness",
                             value = editBrightness,
-                            valueRange = 0f..0.4f,
+                            valueRange = -1f..1f,
                             requester = brightnessRequester,
                             upRequester = profileNameRequester,
                             downRequester = warmthRequester,
@@ -5384,6 +5390,18 @@ private fun ModernSettingsScreen(
                             shape = CircleShape
                         ) { Text("Save profile") }
                     }
+                }
+                OutlinedButton(
+                    onClick = {
+                        VideoAppearancePreferences.resetRecommendedProfiles(context)
+                    },
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .remoteFocusFrame(CircleShape)
+                ) {
+                    Icon(Icons.Default.RestartAlt, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Reset profiles to recommended")
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(
@@ -5845,8 +5863,20 @@ private fun ModernSettingsScreen(
                     modifier = Modifier
                         .remoteFocusFrame()
                         .clickable(
-                            enabled = !cleaningObsoleteApks && (obsoleteApks?.fileCount ?: 0) > 0
+                            // Keep this row in the TV focus graph even when
+                            // there is currently nothing to delete. A disabled
+                            // clickable is removed from D-pad traversal.
+                            enabled = !cleaningObsoleteApks
                         ) {
+                            if ((obsoleteApks?.fileCount ?: 0) == 0) {
+                                apkCleanupMessage =
+                                    if (obsoleteApks == null) {
+                                        "Still checking Downloads/NikTV for older installers"
+                                    } else {
+                                        "No obsolete NikTV installers found"
+                                    }
+                                return@clickable
+                            }
                             cleaningObsoleteApks = true
                             apkCleanupMessage = null
                             scope.launch {

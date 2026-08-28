@@ -171,6 +171,8 @@ internal fun videoAppearanceIcon(profileId: String) = when (profileId) {
 
 internal object VideoAppearancePreferences {
     private const val FILE = "video_appearance_profiles"
+    private const val RECOMMENDED_PRESET_SCHEMA = "recommended_preset_schema"
+    private const val CURRENT_RECOMMENDED_PRESET_SCHEMA = 2
     private const val ACTIVE = "active"
     private const val SCHEDULE_APPLIED_OCCURRENCE =
         "schedule_applied_occurrence_v4"
@@ -182,17 +184,55 @@ internal object VideoAppearancePreferences {
         // Hard-coded neutral values; this profile is never loaded from or
         // written to editable preference keys.
         VideoAppearanceProfile("default", "Default", 0f, 0f, 0f, 0f, 0f),
-        VideoAppearanceProfile("movie", "Movie", .02f, .08f, 0f, 0f, .03f),
+        VideoAppearanceProfile("movie", "Movie", -.03f, .10f, 0f, .01f, .02f),
         VideoAppearanceProfile("standard", "Standard", 0f, 0f, 0f, 0f, 0f),
-        VideoAppearanceProfile("natural", "Natural", .01f, .03f, 0f, -.02f, .01f),
-        VideoAppearanceProfile("bright", "Bright room", .12f, 0f, .02f, 0f, 0f),
-        VideoAppearanceProfile("bedroom", "Bedroom", 0f, .12f, 0f, 0f, .07f),
-        VideoAppearanceProfile("night", "Night light", 0f, .25f, 0f, 0f, .18f),
+        VideoAppearanceProfile("natural", "Natural", -.02f, .04f, .01f, -.02f, 0f),
+        VideoAppearanceProfile("bright", "Bright room", .16f, 0f, .03f, 0f, 0f),
+        VideoAppearanceProfile("bedroom", "Bedroom", -.08f, .14f, 0f, 0f, .07f),
+        VideoAppearanceProfile("night", "Night light", -.18f, .28f, 0f, 0f, .18f),
         VideoAppearanceProfile("custom", "Custom", 0f, 0f, 0f, 0f, 0f)
     )
 
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-    fun profiles(context: Context): List<VideoAppearanceProfile> = defaults.map { preset ->
+    private val editablePreferenceSuffixes = listOf(
+        "name", "brightness", "warmth", "coolness", "tint", "dimming"
+    )
+
+    private fun applyRecommendedPresetMigration(context: Context) {
+        val p = prefs(context)
+        if (
+            p.getInt(RECOMMENDED_PRESET_SCHEMA, 0) >=
+            CURRENT_RECOMMENDED_PRESET_SCHEMA
+        ) return
+
+        val editor = p.edit()
+        defaults.filterNot { it.id == "default" }.forEach { profile ->
+            editablePreferenceSuffixes.forEach { suffix ->
+                editor.remove("${profile.id}_$suffix")
+            }
+        }
+        editor.putInt(
+            RECOMMENDED_PRESET_SCHEMA,
+            CURRENT_RECOMMENDED_PRESET_SCHEMA
+        ).apply()
+    }
+
+    fun resetRecommendedProfiles(context: Context) {
+        val editor = prefs(context).edit()
+        defaults.filterNot { it.id == "default" }.forEach { profile ->
+            editablePreferenceSuffixes.forEach { suffix ->
+                editor.remove("${profile.id}_$suffix")
+            }
+        }
+        editor.putInt(
+            RECOMMENDED_PRESET_SCHEMA,
+            CURRENT_RECOMMENDED_PRESET_SCHEMA
+        ).apply()
+    }
+
+    fun profiles(context: Context): List<VideoAppearanceProfile> {
+        applyRecommendedPresetMigration(context)
+        return defaults.map { preset ->
         if (preset.id == "default") {
             preset
         } else {
@@ -206,6 +246,7 @@ internal object VideoAppearancePreferences {
                 dimming = p.getInt("${preset.id}_dimming", (preset.dimming * 100).roundToInt()) / 100f
             )
         }
+      }
     }
 
     fun activeId(context: Context): String =
@@ -286,7 +327,7 @@ internal object VideoAppearancePreferences {
         if (profile.id == "default") return
         prefs(context).edit()
             .putString("${profile.id}_name", profile.name)
-            .putInt("${profile.id}_brightness", (profile.brightness.coerceIn(0f, 1f) * 100).roundToInt())
+            .putInt("${profile.id}_brightness", (profile.brightness.coerceIn(-1f, 1f) * 100).roundToInt())
             .putInt("${profile.id}_warmth", (profile.warmth.coerceIn(0f, 1f) * 100).roundToInt())
             .putInt("${profile.id}_coolness", (profile.coolness.coerceIn(0f, 1f) * 100).roundToInt())
             .putInt("${profile.id}_tint", (profile.tint.coerceIn(-1f, 1f) * 100).roundToInt())
@@ -384,6 +425,11 @@ internal fun VideoAppearanceOverlay(profile: VideoAppearanceProfile) {
     Box(Modifier.fillMaxSize()) {
         if (profile.brightness > 0f) Box(
             Modifier.fillMaxSize().background(Color.White.copy(alpha = profile.brightness * .28f))
+        )
+        if (profile.brightness < 0f) Box(
+            Modifier.fillMaxSize().background(
+                Color.Black.copy(alpha = kotlin.math.abs(profile.brightness) * .45f)
+            )
         )
         if (profile.warmth > 0f) Box(
             Modifier.fillMaxSize().background(Color(0xFFFF8A3D).copy(alpha = profile.warmth * .34f))
@@ -1052,13 +1098,24 @@ internal fun PlayerPictureModeEditor(
     val dimmingRequester = remember { FocusRequester() }
     val cancelRequester = remember { FocusRequester() }
     val saveRequester = remember { FocusRequester() }
+    val profileListState = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(selected, brightness, warmth, coolness, tint, dimming) {
         onPreview(selected.copy(brightness = brightness, warmth = warmth, coolness = coolness, tint = tint, dimming = dimming))
     }
     LaunchedEffect(selected.id) {
-        delay(100L)
-        runCatching {
-            profileRequesters.getOrPut(selected.id) { FocusRequester() }.requestFocus()
+        val selectedIndex = profiles.indexOfFirst { it.id == selected.id }
+            .coerceAtLeast(0)
+        profileListState.scrollToItem(selectedIndex)
+        withFrameNanos { }
+        val requester = profileRequesters.getOrPut(selected.id) {
+            FocusRequester()
+        }
+        delay(120L)
+        repeat(6) { attempt ->
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
+                return@LaunchedEffect
+            }
+            delay(50L * (attempt + 1))
         }
     }
     BackHandler(onBack = onDismiss)
@@ -1102,6 +1159,7 @@ internal fun PlayerPictureModeEditor(
                  * controls composed underneath this overlay.
                  */
                 androidx.compose.foundation.lazy.LazyRow(
+                    state = profileListState,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     itemsIndexed(
@@ -1137,7 +1195,11 @@ internal fun PlayerPictureModeEditor(
                                 .focusRequester(profileRequester)
                                 .focusProperties {
                                     up = profileRequester
-                                    down = brightnessRequester
+                                    down = if (selected.id == "default") {
+                                        cancelRequester
+                                    } else {
+                                        brightnessRequester
+                                    }
                                     left = leftRequester
                                     right = rightRequester
                                 }
@@ -1154,7 +1216,11 @@ internal fun PlayerPictureModeEditor(
                                         }
                                         Key.DirectionDown -> {
                                             runCatching {
-                                                brightnessRequester.requestFocus()
+                                                if (selected.id == "default") {
+                                                    cancelRequester.requestFocus()
+                                                } else {
+                                                    brightnessRequester.requestFocus()
+                                                }
                                             }
                                             true
                                         }
@@ -1218,7 +1284,7 @@ internal fun PlayerPictureModeEditor(
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
-                    PlayerEditorSlider("Brightness", brightness, 0f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
+                    PlayerEditorSlider("Brightness", brightness, -1f..1f, brightnessRequester, profileRequesters.getOrPut(selected.id) { FocusRequester() }, warmthRequester) { brightness = it }
                     PlayerEditorSlider("Warmth", warmth, 0f..1f, warmthRequester, brightnessRequester, coolnessRequester) { warmth = it }
                     PlayerEditorSlider("Coolness", coolness, 0f..1f, coolnessRequester, warmthRequester, tintRequester) { coolness = it }
                     PlayerEditorSlider("Color tint", tint, -1f..1f, tintRequester, coolnessRequester, dimmingRequester) { tint = it }
@@ -1233,7 +1299,13 @@ internal fun PlayerPictureModeEditor(
                         modifier = Modifier
                             .focusRequester(cancelRequester)
                             .focusProperties {
-                                up = dimmingRequester
+                                up = if (selected.id == "default") {
+                                    profileRequesters.getOrPut(selected.id) {
+                                        FocusRequester()
+                                    }
+                                } else {
+                                    dimmingRequester
+                                }
                                 down = cancelRequester
                                 left = cancelRequester
                                 right = saveRequester
@@ -1245,7 +1317,13 @@ internal fun PlayerPictureModeEditor(
                                 when (event.key) {
                                     Key.DirectionUp -> {
                                         runCatching {
-                                            dimmingRequester.requestFocus()
+                                            if (selected.id == "default") {
+                                                profileRequesters.getOrPut(selected.id) {
+                                                    FocusRequester()
+                                                }.requestFocus()
+                                            } else {
+                                                dimmingRequester.requestFocus()
+                                            }
                                         }
                                         true
                                     }
@@ -1288,7 +1366,13 @@ internal fun PlayerPictureModeEditor(
                         modifier = Modifier
                             .focusRequester(saveRequester)
                             .focusProperties {
-                                up = dimmingRequester
+                                up = if (selected.id == "default") {
+                                    profileRequesters.getOrPut(selected.id) {
+                                        FocusRequester()
+                                    }
+                                } else {
+                                    dimmingRequester
+                                }
                                 down = saveRequester
                                 left = cancelRequester
                                 right = saveRequester
@@ -1300,7 +1384,13 @@ internal fun PlayerPictureModeEditor(
                                 when (event.key) {
                                     Key.DirectionUp -> {
                                         runCatching {
-                                            dimmingRequester.requestFocus()
+                                            if (selected.id == "default") {
+                                                profileRequesters.getOrPut(selected.id) {
+                                                    FocusRequester()
+                                                }.requestFocus()
+                                            } else {
+                                                dimmingRequester.requestFocus()
+                                            }
                                         }
                                         true
                                     }

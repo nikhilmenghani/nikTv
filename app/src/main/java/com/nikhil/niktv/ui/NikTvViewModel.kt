@@ -3823,6 +3823,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.saveWatchedSeries(allWatchedSeries)
         playInternal(episode, CatalogType.SERIES, watched.series, queue)
     }
+
+    fun dismissWatchedEpisode(watched: WatchedSeries, episode: MediaItem) =
+        viewModelScope.launch {
+            val profileKey = _state.value.session?.profile?.cacheKey()
+                ?: return@launch
+            val updated = _state.value.watchedSeries.map {
+                if (it.key == watched.key) {
+                    it.copy(
+                        newEpisodes = it.newEpisodes.filterNot { candidate ->
+                            candidate.id == episode.id
+                        }
+                    )
+                } else {
+                    it
+                }
+            }
+            allWatchedSeries =
+                allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
+            _state.update { it.copy(watchedSeries = updated) }
+            store.saveWatchedSeries(allWatchedSeries)
+        }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }
 
