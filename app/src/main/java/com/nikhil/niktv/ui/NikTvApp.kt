@@ -7740,9 +7740,14 @@ private fun ModernSeriesDetailScreen(
     val returningEpisodeRequester = remember(series.id) { FocusRequester() }
     val episodeListState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val episodeContext = LocalContext.current
     val episodeConfiguration = LocalConfiguration.current
+    val episodeIsTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
         episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val mobileEpisodeLayout =
+        !episodeIsTv &&
+            episodeConfiguration.smallestScreenWidthDp < 600
 
     fun activateEpisodeSearch() {
         episodeSearchEditing = true
@@ -8222,7 +8227,10 @@ private fun ModernSeriesDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .then(if (state.playbackReturnFocusId == episode.id) Modifier.focusRequester(returningEpisodeRequester) else Modifier)
-                            .padding(horizontal = 24.dp, vertical = 6.dp)
+                            .padding(
+                                horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp,
+                                vertical = if (mobileEpisodeLayout) 4.dp else 6.dp
+                            )
                     )
                 }
                 if (state.episodeHasMore && searchQuery.isBlank()) {
@@ -8258,6 +8266,22 @@ private fun ModernEpisodeCard(
     modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
+    val episodeContext = LocalContext.current
+    val episodeConfiguration = LocalConfiguration.current
+    val isTv = episodeContext.isTvLikeDevice(episodeConfiguration)
+
+    /*
+     * MOBILE_SERIES_EPISODE_CARD_V36
+     *
+     * Phone episode rows prioritize episode identity and synopsis over artwork.
+     * Tablet and Fire TV keep the existing 136x78 geometry and trailing play
+     * affordance. Phones use a narrower thumbnail, move LAST WATCHED onto the
+     * artwork, and allow the title to wrap to two lines.
+     */
+    val mobileLayout =
+        !isTv &&
+            episodeConfiguration.smallestScreenWidthDp < 600
+
     val progressFraction = remember(progress) {
         if (progress != null && progress.durationMillis > 0L) {
             (progress.positionMillis.toFloat() / progress.durationMillis.toFloat()).coerceIn(0f, 1f)
@@ -8278,14 +8302,28 @@ private fun ModernEpisodeCard(
             .onFocusChanged { focused = it.isFocused }
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(
+                horizontal = if (mobileLayout) 10.dp else 12.dp,
+                vertical = if (mobileLayout) 10.dp else 12.dp
+            ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(
+                if (mobileLayout) 10.dp else 14.dp
+            )
         ) {
             Box(
                 modifier = Modifier
-                    .width(136.dp)
-                    .height(78.dp)
+                    .then(
+                        if (mobileLayout) {
+                            Modifier
+                                .width(104.dp)
+                                .aspectRatio(16f / 9f)
+                        } else {
+                            Modifier
+                                .width(136.dp)
+                                .height(78.dp)
+                        }
+                    )
                     .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF1E293B)),
                 contentAlignment = Alignment.Center
@@ -8293,7 +8331,7 @@ private fun ModernEpisodeCard(
                 val imageUrl = episode.logo ?: series.logo
                 if (!imageUrl.isNullOrBlank()) {
                     SubcomposeAsyncImage(
-                        model = artworkRequest(LocalContext.current, episode.copy(logo = imageUrl)),
+                        model = artworkRequest(episodeContext, episode.copy(logo = imageUrl)),
                         contentDescription = episode.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -8309,7 +8347,7 @@ private fun ModernEpisodeCard(
                     Icon(
                         Icons.Default.PlayCircle,
                         contentDescription = null,
-                        modifier = Modifier.size(34.dp),
+                        modifier = Modifier.size(if (mobileLayout) 28.dp else 34.dp),
                         tint = Color.White.copy(alpha = 0.9f)
                     )
                 }
@@ -8327,6 +8365,25 @@ private fun ModernEpisodeCard(
                                 .fillMaxHeight()
                                 .fillMaxWidth(progressFraction)
                                 .background(Color(0xFFE50914))
+                        )
+                    }
+                }
+
+                if (isCurrentResume && mobileLayout) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(5.dp),
+                        shape = RoundedCornerShape(5.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    ) {
+                        Text(
+                            text = "LAST WATCHED",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
                 }
@@ -8356,7 +8413,7 @@ private fun ModernEpisodeCard(
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                    if (isCurrentResume) {
+                    if (isCurrentResume && !mobileLayout) {
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.primary
@@ -8377,7 +8434,7 @@ private fun ModernEpisodeCard(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
-                    maxLines = 1,
+                    maxLines = if (mobileLayout) 2 else 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
@@ -8392,12 +8449,14 @@ private fun ModernEpisodeCard(
                 }
             }
 
-            Icon(
-                Icons.Default.PlayArrow,
-                contentDescription = "Play ${episode.title}",
-                tint = Color.White.copy(alpha = 0.7f),
-                modifier = Modifier.size(24.dp)
-            )
+            if (!mobileLayout) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Play ${episode.title}",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }
