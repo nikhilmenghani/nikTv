@@ -8369,24 +8369,6 @@ private fun ModernEpisodeCard(
                     }
                 }
 
-                if (isCurrentResume && mobileLayout) {
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(5.dp),
-                        shape = RoundedCornerShape(5.dp),
-                        color = MaterialTheme.colorScheme.primary
-                    ) {
-                        Text(
-                            text = "LAST WATCHED",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
             }
 
             Column(
@@ -8426,6 +8408,32 @@ private fun ModernEpisodeCard(
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                             )
                         }
+                    }
+                }
+
+                /*
+                 * MOBILE_LAST_WATCHED_BADGE_V37
+                 *
+                 * The phone thumbnail is intentionally compact. Keep the full
+                 * LAST WATCHED label in the metadata column instead of clipping
+                 * it inside the 104dp artwork.
+                 */
+                if (isCurrentResume && mobileLayout) {
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    ) {
+                        Text(
+                            text = "LAST WATCHED",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black,
+                            maxLines = 1,
+                            modifier = Modifier.padding(
+                                horizontal = 6.dp,
+                                vertical = 2.dp
+                            )
+                        )
                     }
                 }
 
