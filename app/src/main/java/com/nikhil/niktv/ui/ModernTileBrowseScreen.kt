@@ -63,6 +63,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -1524,10 +1525,7 @@ private fun ModernTmdbCollection(
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
-    val columns = modernPosterColumns(
-        configuration,
-        isTv
-    )
+    val columns = modernPosterColumns(configuration, isTv)
     val fullSpan:
         androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() ->
             GridItemSpan = {
@@ -1868,10 +1866,22 @@ private fun ModernIptvCollection(
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
-    val columns = modernPosterColumns(
-        configuration,
-        isTv
-    )
+    val context = LocalContext.current
+    val isLiveTv = category.type == CatalogType.LIVE_TV
+    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val liveTilePreferences = remember(context) {
+        context.getSharedPreferences("modern_live_tv_tiles", Context.MODE_PRIVATE)
+    }
+    var themedLiveTiles by remember(category.type) {
+        mutableStateOf(liveTilePreferences.getBoolean("themed", true))
+    }
+    val columns = when {
+        isLiveTv && isPhone -> 1
+        isLiveTv && themedLiveTiles && isTv -> 3
+        isLiveTv && themedLiveTiles && configuration.screenWidthDp >= 800 -> 3
+        isLiveTv && themedLiveTiles -> 2
+        else -> modernPosterColumns(configuration, isTv)
+    }
     val fullSpan:
         androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() ->
             GridItemSpan = {
@@ -2025,7 +2035,38 @@ private fun ModernIptvCollection(
                 title = category.title,
                 subtitle =
                     "IPTV · ${category.type.title} · ${state.items.size} loaded",
-                close = close
+                close = close,
+                action = if (isLiveTv) {
+                    {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = themedLiveTiles,
+                                onClick = {
+                                    themedLiveTiles = true
+                                    liveTilePreferences.edit()
+                                        .putBoolean("themed", true)
+                                        .apply()
+                                },
+                                label = { Text("Theme") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Tune, null, Modifier.size(17.dp))
+                                }
+                            )
+                            FilterChip(
+                                selected = !themedLiveTiles,
+                                onClick = {
+                                    themedLiveTiles = false
+                                    liveTilePreferences.edit()
+                                        .putBoolean("themed", false)
+                                        .apply()
+                                },
+                                label = { Text("Thumbnails") }
+                            )
+                        }
+                    }
+                } else {
+                    null
+                }
             )
         }
 
@@ -2035,42 +2076,53 @@ private fun ModernIptvCollection(
                 "modern-iptv-${category.type.name}-${media.id}"
             }
         ) { index, media ->
-            ModernCollectionPoster(
-                item = media,
-                modifier = Modifier
-                    .onFocusChanged {
-                        if (it.hasFocus) focusedPosterIndex = index
+            val tileModifier = Modifier
+                .onFocusChanged {
+                    if (it.hasFocus) focusedPosterIndex = index
+                }
+                .focusRequester(
+                    itemFocusRequesters.getOrPut(media.id) {
+                        FocusRequester()
                     }
-                    .focusRequester(
-                        itemFocusRequesters.getOrPut(media.id) {
-                            FocusRequester()
-                        }
+                )
+                .modernGridVerticalFocus(
+                    enabled = true,
+                    index = index,
+                    columns = columns,
+                    itemCount = focusIds.size,
+                    moveFocus = moveFocusToIndex
+                )
+            val favorite = state.favorites.any {
+                it.kind == kind && it.media.id == media.id
+            }
+            val favoriteAction = {
+                toggleFavorite(
+                    FavoriteItem(
+                        kind = kind,
+                        media = media,
+                        categoryTitle = category.title
                     )
-                    .modernGridVerticalFocus(
-                        enabled = true,
-                        index = index,
-                        columns = columns,
-                        itemCount = focusIds.size,
-                        moveFocus = moveFocusToIndex
-                    ),
+                )
+            }
+            if (isLiveTv) {
+                ModernLiveChannelTile(
+                    item = media,
+                    themed = themedLiveTiles,
+                    isFavorite = favorite,
+                    onFavorite = favoriteAction,
+                    onClick = { openItem(media) },
+                    modifier = tileModifier,
+                    isTv = isTv
+                )
+            } else ModernCollectionPoster(
+                item = media,
+                modifier = tileModifier,
                 subtitle = media.description.orEmpty(),
                 onClick = {
                     openItem(media)
                 },
-                isFavorite = state.favorites.any {
-                    it.kind == kind &&
-                        it.media.id == media.id
-                },
-                onFavorite = {
-                    toggleFavorite(
-                        FavoriteItem(
-                            kind = kind,
-                            media = media,
-                            categoryTitle = category.title
-                        )
-                    )
-                },
-                compactLandscape = category.type == CatalogType.LIVE_TV,
+                isFavorite = favorite,
+                onFavorite = favoriteAction,
                 isTv = isTv
             )
         }
@@ -2128,38 +2180,150 @@ private fun modernPosterColumns(
 private fun ModernCollectionHeader(
     title: String,
     subtitle: String,
-    close: () -> Unit
+    close: () -> Unit,
+    action: (@Composable () -> Unit)? = null
 ) {
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .padding(bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        FilledTonalIconButton(
-            onClick = close
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
-                "Back"
-            )
+            FilledTonalIconButton(onClick = close) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFAFAFAF)
+                )
+            }
         }
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Black,
-                color = Color.White,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+        action?.invoke()
+    }
+}
+
+@Composable
+private fun ModernLiveChannelTile(
+    item: MediaItem,
+    themed: Boolean,
+    isFavorite: Boolean,
+    onFavorite: () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    isTv: Boolean
+) {
+    var focused by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val shape = RoundedCornerShape(if (isPhone) 14.dp else 16.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val palette = remember(item.id, item.title) {
+        destinationPalette("live:${item.id}:${item.title}")
+    }
+
+    Box(Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = modifier
+                .fillMaxWidth()
+                .heightIn(min = if (isPhone) 82.dp else 104.dp)
+                .onFocusChanged { focused = it.isFocused }
+                .remoteCombinedClickable(
+                    interactionSource = interactionSource,
+                    onClick = onClick,
+                    onLongClick = { menuOpen = true }
+                ),
+            shape = shape,
+            color = Color.Transparent,
+            border = BorderStroke(
+                if (focused) if (isTv) 3.dp else 2.dp else 1.dp,
+                if (focused) Color.White else Color(0xFF35383F)
             )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFAFAFAF)
-            )
+        ) {
+            Row(
+                Modifier
+                    .background(
+                        if (themed) {
+                            Brush.linearGradient(listOf(palette.first, palette.second))
+                        } else {
+                            Brush.linearGradient(listOf(Color(0xFF171A20), Color(0xFF101216)))
+                        }
+                    )
+                    .padding(if (isPhone) 10.dp else 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(if (isPhone) 11.dp else 14.dp)
+            ) {
+                Surface(
+                    modifier = Modifier.size(if (isPhone) 58.dp else 72.dp),
+                    shape = RoundedCornerShape(if (isPhone) 11.dp else 13.dp),
+                    color = Color.Black.copy(alpha = .30f)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (!themed && !item.logo.isNullOrBlank()) {
+                            AsyncImage(
+                                model = artworkRequest(context, item),
+                                contentDescription = item.title,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.LiveTv,
+                                null,
+                                Modifier.size(if (isPhone) 27.dp else 32.dp),
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+                Column(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(
+                        item.title,
+                        color = Color.White,
+                        style = if (isPhone) MaterialTheme.typography.bodyLarge
+                        else MaterialTheme.typography.titleMedium,
+                        fontWeight = if (focused) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        if (themed) "Live TV" else "Channel thumbnail",
+                        color = Color.White.copy(alpha = .68f),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Icon(
+                    Icons.Default.PlayArrow,
+                    null,
+                    tint = Color.White.copy(alpha = if (focused) 1f else .62f)
+                )
+            }
         }
+        ModernTileActionsMenu(
+            expanded = menuOpen,
+            isFavorite = isFavorite,
+            dismiss = { menuOpen = false },
+            toggleFavorite = onFavorite,
+            clear = null
+        )
     }
 }
 
