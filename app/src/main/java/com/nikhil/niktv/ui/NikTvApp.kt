@@ -138,7 +138,7 @@ private fun uniformSegmentShape(index: Int, count: Int): RoundedCornerShape = wh
 
 @Composable
 private fun Modifier.remoteFocusFrame(
-    shape: Shape = RoundedCornerShape(12.dp)
+    shape: Shape = CircleShape
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
@@ -1121,7 +1121,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                 Button(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text(if (saved == null) "Add profile" else "Save profile") }
                 OutlinedButton(
                     onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
-                    modifier = Modifier.fillMaxWidth().remoteFocusFrame()
+                    modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(10.dp))
                 ) { Icon(Icons.Default.FileDownload, null); Spacer(Modifier.width(8.dp)); Text("Import NikTV backup") }
                 Text("Only connect to services you are authorized to access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.navigationBarsPadding())
@@ -5159,33 +5159,57 @@ private fun ModernSettingsScreen(
         runCatching { settingsEntryRequester.requestFocus() }
     }
     Scaffold(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
-        containerColor = Color(0xFF090909),
+        modifier = Modifier.fillMaxSize(),
+        containerColor = Color(0xFF07080A),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ModernScreenTopBar("Settings", closeSettings)
         }
     ) { padding -> Column(
-        Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 20.dp),
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFF111318),
+                        Color(0xFF090A0C),
+                        Color(0xFF060606)
+                    )
+                )
+            )
+            .padding(padding)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(28.dp),
-            color = Color(0xFF171B2A),
-            border = BorderStroke(1.dp, Color(0x33E50914))
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF111318),
+            border = BorderStroke(1.dp, Color(0xFF292C33)),
+            shadowElevation = 10.dp
         ) {
             Row(
-                Modifier.background(Brush.horizontalGradient(listOf(Color(0x332F80ED), Color(0x33E50914)))).padding(22.dp),
+                Modifier
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color(0xFF171A20), Color(0xFF111318))
+                        )
+                    )
+                    .padding(22.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFE50914)) {
-                    Icon(Icons.Default.Tune, null, Modifier.padding(14.dp).size(28.dp), tint = Color.White)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF2A1215),
+                    border = BorderStroke(1.dp, Color(0xFF6F2028))
+                ) {
+                    Icon(Icons.Default.Tune, null, Modifier.padding(14.dp).size(28.dp), tint = Color(0xFFFF6973))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text("Make NikTV yours", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("Playback, appearance, content, profiles and updates", color = Color.LightGray)
+                    Text("Make NikTV yours", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color(0xFFF5F5F7))
+                    Text("Playback, appearance, content, profiles and updates", color = Color(0xFF9B9FA8))
                 }
                 AssistChip(onClick = {}, enabled = false, label = { Text("v${BuildConfig.VERSION_NAME}") })
             }
@@ -5587,7 +5611,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Add profile") },
                 supportingContent = { Text("Connect another Stalker or Xtream service") },
                 leadingContent = { Icon(Icons.Default.AddCircleOutline, null) },
-                modifier = Modifier.remoteFocusFrame().clickable(onClick = addProfile),
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = addProfile),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
@@ -5641,7 +5665,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Export NikTV setup") },
                 supportingContent = { Text("Save profiles, credentials, filters, preferences, favorites, and viewing progress") },
                 leadingContent = { Icon(Icons.Default.FileUpload, null) },
-                modifier = Modifier.remoteFocusFrame().clickable {
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable {
                     val timestamp = java.text.SimpleDateFormat(
                         "yyyyMMdd-HHmmss",
                         java.util.Locale.getDefault()
@@ -5655,7 +5679,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Import NikTV setup") },
                 supportingContent = { Text("Restore a backup from another TV; profiles authenticate with fresh sessions") },
                 leadingContent = { Icon(Icons.Default.FileDownload, null) },
-                modifier = Modifier.remoteFocusFrame().clickable {
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable {
                     importLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
                 },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -5666,7 +5690,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Re-authenticate") },
                 supportingContent = { Text("Request a fresh session token using the saved profile") },
                 leadingContent = { Icon(Icons.Default.Refresh, null) },
-                modifier = Modifier.remoteFocusFrame().clickable(onClick = reauthenticate),
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = reauthenticate),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
             HorizontalDivider()
@@ -5674,7 +5698,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Edit connection") },
                 supportingContent = { Text("Change portal address or credentials") },
                 leadingContent = { Icon(Icons.Default.Edit, null) },
-                modifier = Modifier.remoteFocusFrame().clickable(onClick = editProfile),
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = editProfile),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
             HorizontalDivider()
@@ -5682,7 +5706,7 @@ private fun ModernSettingsScreen(
                 headlineContent = { Text("Clear all app data", color = MaterialTheme.colorScheme.error) },
                 supportingContent = { Text("Remove every profile, cache, favorite, recent item, and session") },
                 leadingContent = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
-                modifier = Modifier.remoteFocusFrame().clickable(onClick = logout),
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = logout),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
@@ -5735,7 +5759,7 @@ private fun ModernSettingsScreen(
                         Switch(
                             checked = updateEnforcementEnabled,
                             onCheckedChange = AppUpdates::setUpdateEnforcementEnabled,
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(16.dp))
+                            modifier = Modifier.remoteFocusFrame(CircleShape)
                         )
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -5753,7 +5777,7 @@ private fun ModernSettingsScreen(
                     },
                     leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
                     trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
-                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame().clickable(enabled = !checkingUpdate) {
+                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(enabled = !checkingUpdate) {
                         checkingUpdate = true; updateMessage = "Checking for updates…"
                         scope.launch {
                             runCatching { AppUpdates.check() }
@@ -5861,7 +5885,7 @@ private fun ModernSettingsScreen(
                         if (cleaningObsoleteApks) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     },
                     modifier = Modifier
-                        .remoteFocusFrame()
+                        .remoteFocusFrame(RoundedCornerShape(14.dp))
                         .clickable(
                             // Keep this row in the TV focus graph even when
                             // there is currently nothing to delete. A disabled
@@ -6943,21 +6967,32 @@ private fun formatScheduleTime(minutes: Int): String {
 
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            title.uppercase(),
-            Modifier.padding(horizontal = 10.dp),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.1.sp,
-            color = Color(0xFFFF6973)
-        )
+    Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier.padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .height(18.dp)
+                    .background(Color(0xFFE50914), CircleShape)
+            )
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = .2.sp,
+                color = Color(0xFFF5F5F7)
+            )
+        }
         Surface(
             Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF151A28),
-            tonalElevation = 2.dp,
-            border = BorderStroke(1.dp, Color(0xFF252D40)),
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF111318),
+            shadowElevation = 5.dp,
+            border = BorderStroke(1.dp, Color(0xFF292C33)),
             content = { Column(content = content) }
         )
     }
