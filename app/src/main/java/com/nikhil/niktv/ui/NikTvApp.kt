@@ -1694,7 +1694,7 @@ private fun ModernBrowseScreen(
             openTmdbMovie = openTrendingMovie,
             openTmdbSeries = openTrendingSeries,
             openIptvItem = play,
-            toggleFavorite = toggleFavorite,
+            toggleFavorite = toggleFavoriteEntry,
             loadMoreTmdb = loadMoreModernTmdbSection,
             loadMoreIptv = loadMoreCatalog,
             configureTmdb = { tmdbSetupOpen = true },

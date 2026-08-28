@@ -108,6 +108,7 @@ import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.Category
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.FavoriteKind
+import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.TmdbHomeSection
@@ -133,7 +134,7 @@ internal fun ModernTileBrowseScreen(
     openTmdbMovie: (TrendingMovie) -> Unit,
     openTmdbSeries: (TrendingSeries) -> Unit,
     openIptvItem: (MediaItem) -> Unit,
-    toggleFavorite: (MediaItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
     loadMoreTmdb: () -> Unit,
     loadMoreIptv: () -> Unit,
     configureTmdb: () -> Unit,
@@ -160,6 +161,7 @@ internal fun ModernTileBrowseScreen(
                     close = closeSection,
                     openMovie = openTmdbMovie,
                     openSeries = openTmdbSeries,
+                    toggleFavorite = toggleFavorite,
                     loadMore = loadMoreTmdb,
                     isTv = isTv
                 )
@@ -197,6 +199,7 @@ internal fun ModernTileBrowseScreen(
                         state = state,
                         dashboardSurface = dashboardSurface,
                         openRecent = openRecent,
+                        toggleFavorite = toggleFavorite,
                         openTmdbSection = openTmdbSection,
                         openIptvCategory = openIptvCategory,
                         openSearch = openSearch,
@@ -361,6 +364,7 @@ private fun ModernDestinationHub(
     state: NikTvState,
     dashboardSurface: DashboardSurface,
     openRecent: (RecentItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
     openSearch: () -> Unit,
@@ -656,8 +660,10 @@ private fun ModernDestinationHub(
                 item("continue-row", span = fullSpan) {
                     ModernContinueRow(
                         recents = recents,
+                        favorites = state.favorites,
                         returnFocusId = state.playbackReturnFocusId,
-                        open = openRecent
+                        open = openRecent,
+                        toggleFavorite = toggleFavorite
                     )
                 }
             }
@@ -1053,8 +1059,10 @@ private fun destinationPalette(
 @Composable
 private fun ModernContinueRow(
     recents: List<RecentItem>,
+    favorites: List<FavoriteItem>,
     returnFocusId: String?,
-    open: (RecentItem) -> Unit
+    open: (RecentItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit
 ) {
     val listState = rememberLazyListState()
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
@@ -1112,6 +1120,17 @@ private fun ModernContinueRow(
                         "Movie"
                     },
                 onClick = { open(recent) },
+                isFavorite = favorites.any { it.key == recent.key },
+                onFavorite = {
+                    toggleFavorite(
+                        FavoriteItem(
+                            kind = recent.kind,
+                            media = recent.media,
+                            series = recent.series,
+                            profileKey = recent.profileKey
+                        )
+                    )
+                },
                 modifier = Modifier.focusRequester(
                     requesters.getOrPut(focusId) { FocusRequester() }
                 )
@@ -1125,6 +1144,8 @@ private fun ModernCompactMediaCard(
     item: MediaItem,
     subtitle: String,
     onClick: () -> Unit,
+    isFavorite: Boolean,
+    onFavorite: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -1241,24 +1262,31 @@ private fun ModernCompactMediaCard(
                 Modifier.padding(if (isTv) 10.dp else 9.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text(
-                    item.title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight =
-                        if (active) FontWeight.SemiBold
-                        else FontWeight.Medium,
-                    color = if (focused) Color.White else Color(0xFFD4D7DC)
-                )
-                Text(
-                    subtitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color =
-                        if (active) Color(0xFFBFC3CA)
-                        else Color(0xFF858B94),
-                    style = MaterialTheme.typography.labelSmall
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            item.title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (focused) Color.White else Color(0xFFD4D7DC)
+                        )
+                        Text(
+                            subtitle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (active) Color(0xFFBFC3CA) else Color(0xFF858B94),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    IconButton(onClick = onFavorite, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            if (isFavorite) "Remove from My List" else "Add to My List",
+                            tint = if (isFavorite) Color(0xFFE50914) else Color(0xFFD4D7DC)
+                        )
+                    }
+                }
             }
         }
     }
@@ -1311,6 +1339,7 @@ private fun ModernTmdbCollection(
     close: () -> Unit,
     openMovie: (TrendingMovie) -> Unit,
     openSeries: (TrendingSeries) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
     loadMore: () -> Unit,
     isTv: Boolean
 ) {
@@ -1520,6 +1549,12 @@ private fun ModernTmdbCollection(
                     onClick = {
                         openSeries(entry)
                     },
+                    isFavorite = state.favorites.any {
+                        it.kind == FavoriteKind.SERIES && it.media.id == media.id
+                    },
+                    onFavorite = {
+                        toggleFavorite(FavoriteItem(FavoriteKind.SERIES, media))
+                    },
                     isTv = isTv
                 )
             }
@@ -1579,6 +1614,12 @@ private fun ModernTmdbCollection(
                     }.joinToString(" · "),
                     onClick = {
                         openMovie(entry)
+                    },
+                    isFavorite = state.favorites.any {
+                        it.kind == FavoriteKind.MOVIE && it.media.id == media.id
+                    },
+                    onFavorite = {
+                        toggleFavorite(FavoriteItem(FavoriteKind.MOVIE, media))
                     },
                     isTv = isTv
                 )
@@ -1642,7 +1683,7 @@ private fun ModernIptvCollection(
     category: Category,
     close: () -> Unit,
     openItem: (MediaItem) -> Unit,
-    toggleFavorite: (MediaItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
     loadMore: () -> Unit,
     isTv: Boolean
 ) {
@@ -1807,7 +1848,13 @@ private fun ModernIptvCollection(
                         it.media.id == media.id
                 },
                 onFavorite = {
-                    toggleFavorite(media)
+                    toggleFavorite(
+                        FavoriteItem(
+                            kind = kind,
+                            media = media,
+                            categoryTitle = category.title
+                        )
+                    )
                 },
                 compactLandscape = category.type == CatalogType.LIVE_TV,
                 isTv = isTv
