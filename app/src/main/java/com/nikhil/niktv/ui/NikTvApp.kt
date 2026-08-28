@@ -378,7 +378,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     message = state.profileLoadMessage,
                     progress = state.profileLoadProgress ?: 0f
                 )
-                state.session == null && state.settingsOpen && state.savedProfile != null -> ModernSettingsScreen(
+                state.session == null && state.settingsOpen -> ModernSettingsScreen(
                     state = state,
                     closeSettings = vm::closeSettings,
                     reauthenticate = vm::reauthenticate,
@@ -388,6 +388,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     importBackup = vm::importBackup,
                     switchProfile = vm::switchProfile,
                     removeProfile = vm::removeProfile,
+                    setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled,
                     logout = vm::logout,
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds,
@@ -453,6 +454,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,openProfileSwitcher = vm::openProfileSwitcher
                     ,switchProfile = vm::switchProfile
                     ,removeProfile = vm::removeProfile
+                    ,setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled
                     ,openCategoryManager = vm::openCategoryManager
                     ,loadMoreCategorySection = vm::loadMoreCategorySection
                     ,setTmdbSections = vm::setTmdbSections
@@ -844,7 +846,7 @@ private fun ProfileLoadingScreen(profileName: String?, message: String, progress
 }
 
 @Composable
-private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit) {
+private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile?) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit) {
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(importBackup)
     }
@@ -1008,8 +1010,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     icon = Icons.Default.Settings,
                     compact = compactLandscape
                 ) {
-                    (saved ?: profiles.firstOrNull())
-                        ?.let(openSettings)
+                    openSettings(saved ?: profiles.firstOrNull())
                 }
 
                 ProfileChooserTile(
@@ -1055,22 +1056,7 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
 
     val context = LocalContext.current
     val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
-    val stalkerDefaults = remember(generatedIdentity) { PortalProfile(
-        BuildConfig.DEFAULT_PROFILE_NAME.withoutConfigurationQuotes(),
-        BuildConfig.DEFAULT_PORTAL_URL.withoutConfigurationQuotes(),
-        BuildConfig.DEFAULT_MAC_ADDRESS.withoutConfigurationQuotes().ifBlank { generatedIdentity.macAddress },
-        BuildConfig.DEFAULT_SERIAL_NUMBER.withoutConfigurationQuotes().ifBlank { generatedIdentity.serialNumber },
-        PortalType.STALKER
-    ) }
-    val xtreamDefaults = remember { PortalProfile(
-        BuildConfig.XTREAM_PROFILE_NAME.withoutConfigurationQuotes(),
-        BuildConfig.XTREAM_PORTAL_URL.withoutConfigurationQuotes(),
-        macAddress = "",
-        portalType = PortalType.XTREAM,
-        username = BuildConfig.XTREAM_USERNAME.withoutConfigurationQuotes(),
-        password = BuildConfig.XTREAM_PASSWORD.withoutConfigurationQuotes()
-    ) }
-    val initial = saved ?: stalkerDefaults
+    val initial = saved ?: PortalProfile("", "", "")
     var name by remember(saved, editorOpen) { mutableStateOf(initial.name) }
     var url by remember(saved, editorOpen) { mutableStateOf(initial.portalUrl) }
     var mac by remember(saved, editorOpen) { mutableStateOf(initial.macAddress) }
@@ -1081,11 +1067,10 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
     var advanced by remember(saved, editorOpen) { mutableStateOf(initial.serialNumber.isNotBlank()) }
     fun useDefaults(type: PortalType) {
         portalType = type
-        if (saved != null) return
-        val defaults = if (type == PortalType.STALKER) stalkerDefaults else xtreamDefaults
-        name = defaults.name; url = defaults.portalUrl; mac = defaults.macAddress
-        serial = defaults.serialNumber; username = defaults.username; password = defaults.password
-        advanced = defaults.serialNumber.isNotBlank()
+        if (saved == null) {
+            name = ""; url = ""; mac = ""; serial = ""; username = ""; password = ""
+            advanced = false
+        }
     }
     val nameFocus = remember { FocusRequester() }; val urlFocus = remember { FocusRequester() }
     val credentialFocus = remember { FocusRequester() }; val lastFocus = remember { FocusRequester() }
@@ -1141,7 +1126,10 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                     if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus).profileTextField("serial"), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, readOnly = profileIsTv && editingField != "serial", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { editingField = null; keyboard?.hide() }))
                 }
                 val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
-                Button(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.fillMaxWidth()) { Text(if (saved == null) "Add profile" else "Save profile") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) { Text(if (saved == null) "Add profile" else "Save profile") }
+                    if (saved == null) OutlinedButton(onClick = { keyboard?.hide(); openSettings(null) }, modifier = Modifier.weight(1f)) { Text("Skip Profile") }
+                }
                 OutlinedButton(
                     onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
                     modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(10.dp))
@@ -1429,6 +1417,7 @@ private fun CatalogScreen(
     openProfileSwitcher: () -> Unit,
     switchProfile: (PortalProfile) -> Unit,
     removeProfile: (PortalProfile) -> Unit,
+    setPreconfiguredProfileEnabled: (PortalProfile, Boolean) -> Unit,
     openCategoryManager: (CatalogType) -> Unit,
     loadMoreCategorySection: (Category) -> Unit,
     setTmdbSections: (DashboardSurface, List<TmdbHomeSection>) -> Unit,
@@ -1509,6 +1498,7 @@ private fun CatalogScreen(
                     importBackup = importBackup,
                     switchProfile = switchProfile,
                     removeProfile = removeProfile,
+                    setPreconfiguredProfileEnabled = setPreconfiguredProfileEnabled,
                     logout = logout,
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
@@ -5056,6 +5046,7 @@ private fun ModernSettingsScreen(
     importBackup: (android.net.Uri) -> Unit,
     switchProfile: (PortalProfile) -> Unit,
     removeProfile: (PortalProfile) -> Unit,
+    setPreconfiguredProfileEnabled: (PortalProfile, Boolean) -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
@@ -5066,9 +5057,29 @@ private fun ModernSettingsScreen(
     setBrowseLayout: (BrowseLayout) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
 ) {
-    val profile = state.savedProfile ?: return
+    val profile = state.savedProfile
     BackHandler(onBack = closeSettings)
     val context = LocalContext.current
+    val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
+    val preconfiguredProfiles = remember(generatedIdentity) {
+        listOf(
+            PortalProfile(
+                BuildConfig.DEFAULT_PROFILE_NAME.withoutConfigurationQuotes().ifBlank { "WIO" },
+                BuildConfig.DEFAULT_PORTAL_URL.withoutConfigurationQuotes(),
+                BuildConfig.DEFAULT_MAC_ADDRESS.withoutConfigurationQuotes().ifBlank { generatedIdentity.macAddress },
+                BuildConfig.DEFAULT_SERIAL_NUMBER.withoutConfigurationQuotes().ifBlank { generatedIdentity.serialNumber },
+                PortalType.STALKER
+            ),
+            PortalProfile(
+                BuildConfig.XTREAM_PROFILE_NAME.withoutConfigurationQuotes().ifBlank { "Xtream" },
+                BuildConfig.XTREAM_PORTAL_URL.withoutConfigurationQuotes(),
+                macAddress = "",
+                portalType = PortalType.XTREAM,
+                username = BuildConfig.XTREAM_USERNAME.withoutConfigurationQuotes(),
+                password = BuildConfig.XTREAM_PASSWORD.withoutConfigurationQuotes()
+            )
+        )
+    }
     val scope = rememberCoroutineScope()
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri?.let(exportBackup)
@@ -5717,10 +5728,35 @@ private fun ModernSettingsScreen(
             )
         }
         SettingsSection("Profiles") {
+            Text(
+                "Preconfigured profiles",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.titleMedium
+            )
+            preconfiguredProfiles.forEach { builtIn ->
+                val enabled = state.profiles.any { it.cacheKey() == builtIn.cacheKey() }
+                ListItem(
+                    headlineContent = { Text(builtIn.name) },
+                    supportingContent = { Text(if (enabled) "Available on the profile screen" else "Hidden from the profile screen") },
+                    leadingContent = { Icon(if (builtIn.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
+                    trailingContent = {
+                        Switch(
+                            checked = enabled,
+                            onCheckedChange = { setPreconfiguredProfileEnabled(builtIn, it) },
+                            enabled = builtIn.portalUrl.isNotBlank() &&
+                                (builtIn.portalType == PortalType.STALKER ||
+                                    (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+            }
+            HorizontalDivider()
             state.profiles.forEachIndexed { index, saved ->
+                val isPreconfigured = preconfiguredProfiles.any { it.cacheKey() == saved.cacheKey() }
                 ListItem(
                     headlineContent = { Text(saved.name) },
-                    supportingContent = { Text("${saved.portalType.displayName()} · ${saved.portalUrl}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    supportingContent = { Text(if (isPreconfigured) "Preconfigured ${saved.portalType.displayName()} profile" else "${saved.portalType.displayName()} · ${saved.portalUrl}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = { Icon(if (saved.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
                     trailingContent = {
                         Row(
@@ -5755,7 +5791,7 @@ private fun ModernSettingsScreen(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
-        SettingsSection("Category Filters") {
+        if (profile != null) SettingsSection("Category Filters") {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Content Visibility", style = MaterialTheme.typography.titleMedium)
                 Text("Choose which categories to include for Live TV, Movies, and Series.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -5782,9 +5818,9 @@ private fun ModernSettingsScreen(
         }
         OrientationSettingsSection(Modifier.focusGroup())
 
-        PlaybackDesignSettingsSection(profile.cacheKey(), Modifier.focusGroup())
+        if (profile != null) PlaybackDesignSettingsSection(profile.cacheKey(), Modifier.focusGroup())
 
-        SettingsSection("Connection") {
+        if (profile != null) SettingsSection("Connection") {
             SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
             HorizontalDivider()
             SettingsValueRow(Icons.Default.Language, "Portal", profile.portalUrl)

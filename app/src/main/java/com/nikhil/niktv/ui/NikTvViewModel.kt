@@ -3410,8 +3410,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openSettings() = _state.update { it.copy(settingsOpen = true) }
-    fun openSettingsFromProfileChooser(profile: PortalProfile) =
+    fun openSettingsFromProfileChooser(profile: PortalProfile? = null) =
         _state.update { it.copy(savedProfile = profile, settingsOpen = true, profileEditorOpen = false) }
+
+    fun setPreconfiguredProfileEnabled(profile: PortalProfile, enabled: Boolean) = viewModelScope.launch {
+        if (enabled) store.addProfile(profile) else store.removeProfile(profile)
+        val profiles = store.profiles.first()
+        _state.update { current ->
+            current.copy(
+                profiles = profiles,
+                savedProfile = current.savedProfile?.takeIf { active ->
+                    profiles.any { it.cacheKey() == active.cacheKey() }
+                }
+            )
+        }
+    }
     fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
     fun reauthenticate() {
         val profile = _state.value.savedProfile ?: return

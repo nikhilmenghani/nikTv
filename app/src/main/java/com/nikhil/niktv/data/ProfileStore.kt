@@ -154,6 +154,12 @@ class ProfileStore(private val context: Context) {
         it[key] = Json.encodeToString(session.profile)
         it[sessionKey] = Json.encodeToString(session)
     }
+    suspend fun addProfile(profile: PortalProfile) = context.dataStore.edit { prefs ->
+        val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
+        if (profiles.none { it.identity() == profile.identity() }) {
+            prefs[profilesKey] = Json.encodeToString(profiles + profile)
+        }
+    }
     suspend fun activate(profile: PortalProfile) = context.dataStore.edit { prefs ->
         prefs[activeProfileKey] = profile.identity()
         prefs[key] = Json.encodeToString(profile)
