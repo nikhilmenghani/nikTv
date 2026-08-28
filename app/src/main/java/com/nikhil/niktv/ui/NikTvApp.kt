@@ -274,9 +274,13 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
+    val startupUpdateCheckEnabled by AppUpdates.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
     var discoveredUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var checkingForRequiredUpdate by remember { mutableStateOf(
-        pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null
+        updateEnforcementEnabled &&
+            startupUpdateCheckEnabled &&
+            pendingUpdate == null &&
+            updateDownloadState.updateInfoOrNull() == null
     ) }
     val appContext = LocalContext.current
     val onScreenDpadEnabled by rememberOnScreenDpadEnabled()
@@ -317,7 +321,12 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     }
     LaunchedEffect(updateEnforcementEnabled) {
-        if (updateEnforcementEnabled && pendingUpdate == null && updateDownloadState.updateInfoOrNull() == null) {
+        if (
+            updateEnforcementEnabled &&
+            startupUpdateCheckEnabled &&
+            pendingUpdate == null &&
+            updateDownloadState.updateInfoOrNull() == null
+        ) {
             discoveredUpdate = runCatching { AppUpdates.check() }.getOrNull()
         }
         checkingForRequiredUpdate = false
@@ -5078,9 +5087,12 @@ private fun ModernSettingsScreen(
     var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
     var restoreVersionFocus by remember { mutableStateOf(false) }
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    var pendingPermissionInstallAfterDownload by remember { mutableStateOf(false) }
+    var oneClickUpdating by remember { mutableStateOf(false) }
     val downloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
+    val startupUpdateCheckEnabled by AppUpdates.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
     var obsoleteApks by remember { mutableStateOf<DownloadedApkCleanup?>(null) }
     var cleaningObsoleteApks by remember { mutableStateOf(false) }
     var apkCleanupMessage by remember { mutableStateOf<String?>(null) }
@@ -5100,26 +5112,74 @@ private fun ModernSettingsScreen(
                 updateMessage = "Could not start download: ${it.message}"
             }
     }
+    val performDownloadAndInstall: (UpdateInfo) -> Unit = { update ->
+        downloadActionMessage = null
+        runCatching { AppUpdates.downloadAndInstall(context, update) }
+            .onSuccess {
+                updateMessage = "Updating to ${update.version} · installer will open automatically"
+                availableUpdate = null
+            }
+            .onFailure {
+                downloadActionMessage = it.message ?: "Could not start the one-click update"
+                updateMessage = "Could not start update: ${it.message}"
+            }
+    }
     val storagePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         val update = pendingPermissionUpdate
+        val installAfterDownload = pendingPermissionInstallAfterDownload
         if ((granted || AppUpdates.canWritePublicDownloads(context)) && update != null) {
             pendingPermissionUpdate = null
-            performDownload(update)
+            pendingPermissionInstallAfterDownload = false
+            if (installAfterDownload) {
+                performDownloadAndInstall(update)
+            } else {
+                performDownload(update)
+            }
         } else {
             downloadActionMessage =
                 "${AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE} Select Allow & download to request it again."
             updateMessage = AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE
         }
     }
-    fun requestUpdateDownload(update: UpdateInfo) {
+    fun requestUpdateDownload(
+        update: UpdateInfo,
+        installAfterDownload: Boolean = false
+    ) {
         if (AppUpdates.canWritePublicDownloads(context)) {
-            performDownload(update)
+            if (installAfterDownload) {
+                performDownloadAndInstall(update)
+            } else {
+                performDownload(update)
+            }
         } else {
             pendingPermissionUpdate = update
+            pendingPermissionInstallAfterDownload = installAfterDownload
             downloadActionMessage = AppUpdates.PUBLIC_DOWNLOADS_PERMISSION_MESSAGE
             storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+    fun runOneClickUpdate() {
+        if (oneClickUpdating) return
+        oneClickUpdating = true
+        downloadActionMessage = null
+        updateMessage = "Checking for updates…"
+        scope.launch {
+            runCatching { AppUpdates.check() }
+                .onSuccess { update ->
+                    if (update == null) {
+                        updateMessage = "You're up to date"
+                    } else {
+                        updateMessage = "Version ${update.version} is available · starting update…"
+                        requestUpdateDownload(update, installAfterDownload = true)
+                    }
+                }
+                .onFailure {
+                    updateMessage = "Could not check: ${it.message}"
+                    downloadActionMessage = it.message ?: "Could not check for updates"
+                }
+            oneClickUpdating = false
         }
     }
     LaunchedEffect(pendingUpdate) {
@@ -5145,7 +5205,11 @@ private fun ModernSettingsScreen(
     val deviceMacAddress = remember(context) { cast4kStyleDeviceMacAddress(context) }
     val downloadStatus = when (val download = downloadState) {
         UpdateDownloadState.Idle ->
-            updateMessage ?: "Updates are checked on startup and every 24 hours"
+            updateMessage ?: if (startupUpdateCheckEnabled) {
+                "Updates are checked on startup and every 24 hours"
+            } else {
+                "Startup update checks are off · background checks still run every 24 hours"
+            }
         is UpdateDownloadState.Queued ->
             "NikTV ${download.version} is queued in Android Download Manager"
         is UpdateDownloadState.Downloading ->
@@ -5842,6 +5906,55 @@ private fun ModernSettingsScreen(
                 )
                 HorizontalDivider()
                 ListItem(
+                    headlineContent = { Text("Check for updates on startup") },
+                    supportingContent = {
+                        Text(
+                            if (startupUpdateCheckEnabled) {
+                                "Enabled · check for an update whenever NikTV starts"
+                            } else {
+                                "Disabled · no launch-time update check"
+                            }
+                        )
+                    },
+                    leadingContent = { Icon(Icons.Default.Refresh, null) },
+                    trailingContent = {
+                        Switch(
+                            checked = startupUpdateCheckEnabled,
+                            onCheckedChange = AppUpdates::setStartupUpdateCheckEnabled,
+                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("One-click update") },
+                    supportingContent = {
+                        Text(
+                            if (oneClickUpdating) {
+                                "Checking for an update…"
+                            } else {
+                                "Check now, download an available update, then open Android's installer"
+                            }
+                        )
+                    },
+                    leadingContent = { Icon(Icons.Default.SystemUpdateAlt, null) },
+                    trailingContent = {
+                        if (oneClickUpdating) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.ChevronRight, "Run one-click update")
+                        }
+                    },
+                    modifier = Modifier
+                        .remoteFocusFrame(RoundedCornerShape(14.dp))
+                        .clickable(enabled = !oneClickUpdating && !checkingUpdate) {
+                            runOneClickUpdate()
+                        },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+                HorizontalDivider()
+                ListItem(
                     headlineContent = { Text("NikTV ${BuildConfig.VERSION_NAME}") },
                     supportingContent = {
                         Column {
@@ -5853,7 +5966,7 @@ private fun ModernSettingsScreen(
                     },
                     leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
                     trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
-                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(enabled = !checkingUpdate) {
+                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(enabled = !checkingUpdate && !oneClickUpdating) {
                         checkingUpdate = true; updateMessage = "Checking for updates…"
                         scope.launch {
                             runCatching { AppUpdates.check() }

@@ -136,6 +136,7 @@ object AppUpdates {
     private const val PREF_PENDING_URL = "pending_url"
     private const val PREF_INSTALL_AFTER_DOWNLOAD = "install_after_download"
     private const val PREF_ENFORCE_UPDATES = "enforce_updates"
+    private const val PREF_STARTUP_CHECK = "startup_check_enabled"
     private const val CHANNEL = "niktv-updates"
     private const val AVAILABLE_NOTIFICATION_ID = 1001
     private const val READY_NOTIFICATION_ID = 1002
@@ -155,6 +156,8 @@ object AppUpdates {
     val pendingUpdate: StateFlow<UpdateInfo?> = mutablePendingUpdate.asStateFlow()
     private val mutableUpdateEnforcementEnabled = MutableStateFlow(!BuildConfig.DEBUG)
     val updateEnforcementEnabled: StateFlow<Boolean> = mutableUpdateEnforcementEnabled.asStateFlow()
+    private val mutableStartupUpdateCheckEnabled = MutableStateFlow(true)
+    val startupUpdateCheckEnabled: StateFlow<Boolean> = mutableStartupUpdateCheckEnabled.asStateFlow()
 
     const val ACTION_REQUEST_UPDATE_DOWNLOAD =
         "com.nikhil.niktv.action.REQUEST_UPDATE_DOWNLOAD"
@@ -172,6 +175,8 @@ object AppUpdates {
         appContext = context.applicationContext
         initialized = true
         mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !BuildConfig.DEBUG)
+        mutableStartupUpdateCheckEnabled.value =
+            preferences().getBoolean(PREF_STARTUP_CHECK, true)
         createChannel(appContext)
         restorePendingUpdate()
 
@@ -183,11 +188,16 @@ object AppUpdates {
                 .setConstraints(constraints)
                 .build()
         )
-        WorkManager.getInstance(appContext).enqueueUniqueWork(
-            STARTUP,
-            ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<UpdateCheckWorker>().setConstraints(constraints).build()
-        )
+        val workManager = WorkManager.getInstance(appContext)
+        if (mutableStartupUpdateCheckEnabled.value) {
+            workManager.enqueueUniqueWork(
+                STARTUP,
+                ExistingWorkPolicy.KEEP,
+                OneTimeWorkRequestBuilder<UpdateCheckWorker>().setConstraints(constraints).build()
+            )
+        } else {
+            workManager.cancelUniqueWork(STARTUP)
+        }
         restoreDownload()
     }
 
@@ -195,6 +205,15 @@ object AppUpdates {
         check(initialized) { "AppUpdates has not been initialized" }
         preferences().edit().putBoolean(PREF_ENFORCE_UPDATES, enabled).apply()
         mutableUpdateEnforcementEnabled.value = enabled
+    }
+
+    fun setStartupUpdateCheckEnabled(enabled: Boolean) {
+        check(initialized) { "AppUpdates has not been initialized" }
+        preferences().edit().putBoolean(PREF_STARTUP_CHECK, enabled).apply()
+        mutableStartupUpdateCheckEnabled.value = enabled
+        if (!enabled) {
+            WorkManager.getInstance(appContext).cancelUniqueWork(STARTUP)
+        }
     }
 
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
