@@ -1035,6 +1035,10 @@ fun PlayerScreen(
                                 }
                                 down = playPauseFocusRequester
                             }
+                            .playerDpadFocusRoutes(
+                                right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
+                                down = playPauseFocusRequester
+                            )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
                     Column(Modifier.weight(1f).padding(horizontal = if (compactMobileControls) 4.dp else 10.dp)) {
@@ -1064,6 +1068,7 @@ fun PlayerScreen(
                                     right = playerSwitchFocusRequester
                                     down = playPauseFocusRequester
                                 }
+                                .playerDpadFocusRoutes(backFocusRequester, playerSwitchFocusRequester, playPauseFocusRequester)
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     }
@@ -1085,6 +1090,11 @@ fun PlayerScreen(
                                 right = resizeFocusRequester
                                 down = playPauseFocusRequester
                             }
+                            .playerDpadFocusRoutes(
+                                left = if (pipAvailable) pipFocusRequester else backFocusRequester,
+                                right = resizeFocusRequester,
+                                down = playPauseFocusRequester
+                            )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) {
                         Icon(Icons.Default.SmartDisplay, "Switch player. Current: ${playbackEngine.playerChoiceLabel()}", tint = Color.White)
@@ -1136,6 +1146,10 @@ fun PlayerScreen(
                             left = pictureSettingsFocusRequester
                             down = playPauseFocusRequester
                         }
+                        .playerDpadFocusRoutes(
+                            left = pictureSettingsFocusRequester,
+                            down = playPauseFocusRequester
+                        )
                         .playerControlFocus(CircleShape) { controlsFocused = it }) {
                         Icon(if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
                     }
