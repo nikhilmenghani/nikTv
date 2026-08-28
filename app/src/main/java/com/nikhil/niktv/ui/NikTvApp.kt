@@ -5260,17 +5260,17 @@ private fun ModernSettingsScreen(
             .padding(padding)
             .verticalScroll(rememberScrollState())
             .padding(
-                horizontal = if (compactSettingsHeader) 14.dp else 24.dp,
-                vertical = if (compactSettingsHeader) 16.dp else 24.dp
+                horizontal = if (compactSettingsHeader) 12.dp else 18.dp,
+                vertical = if (compactSettingsHeader) 12.dp else 18.dp
             ),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(18.dp),
             color = Color(0xFF111318),
             border = BorderStroke(1.dp, Color(0xFF292C33)),
-            shadowElevation = 10.dp
+            shadowElevation = 6.dp
         ) {
             Column(
                 Modifier
@@ -5279,24 +5279,24 @@ private fun ModernSettingsScreen(
                             listOf(Color(0xFF171A20), Color(0xFF111318))
                         )
                     )
-                    .padding(if (compactSettingsHeader) 16.dp else 22.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(if (compactSettingsHeader) 13.dp else 17.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(13.dp),
                         color = Color(0xFF2A1215),
                         border = BorderStroke(1.dp, Color(0xFF6F2028))
                     ) {
                         Icon(
                             Icons.Default.Tune,
                             null,
-                            Modifier.padding(if (compactSettingsHeader) 11.dp else 14.dp)
-                                .size(if (compactSettingsHeader) 24.dp else 28.dp),
+                            Modifier.padding(if (compactSettingsHeader) 9.dp else 11.dp)
+                                .size(if (compactSettingsHeader) 22.dp else 24.dp),
                             tint = Color(0xFFFF6973)
                         )
                     }
@@ -5304,9 +5304,9 @@ private fun ModernSettingsScreen(
                         "Make NikTV yours",
                         modifier = Modifier.weight(1f),
                         style = if (compactSettingsHeader) {
-                            MaterialTheme.typography.titleLarge
+                            MaterialTheme.typography.titleMedium
                         } else {
-                            MaterialTheme.typography.headlineSmall
+                            MaterialTheme.typography.titleLarge
                         },
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFFF5F5F7)
@@ -5342,7 +5342,7 @@ private fun ModernSettingsScreen(
         if (showMobileAppearance) SettingsSection("Mobile appearance") {
             val mobileDesign by rememberMobileUiDesign()
             val onScreenDpad by rememberOnScreenDpadEnabled()
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Portrait phone layout", style = MaterialTheme.typography.titleMedium)
                 Text("Auto selects the YouTube layout on phones. Fullscreen video still opens in landscape.", color = Color.Gray)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -5384,7 +5384,7 @@ private fun ModernSettingsScreen(
         }
         PlaybackEngineSettingsSection(state.playbackEngine, setPlaybackEngine)
         SettingsSection("Player controls") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Hide controls after", style = MaterialTheme.typography.titleMedium)
                 Text("While video is playing, controls automatically disappear after this period of inactivity.", color = Color.Gray)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -5428,7 +5428,7 @@ private fun ModernSettingsScreen(
             val tintRequester = remember { FocusRequester() }
             val dimmingRequester = remember { FocusRequester() }
             val saveProfileRequester = remember { FocusRequester() }
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Picture mode profiles", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Choose the active picture mode in the player. Edit filter profiles and scheduled windows here; Default is an immutable unfiltered reference.",
@@ -5460,7 +5460,7 @@ private fun ModernSettingsScreen(
                     color = Color(0xFF101522),
                     border = BorderStroke(1.dp, Color(0xFF2A3244))
                 ) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Edit ${editing.name}", style = MaterialTheme.typography.titleMedium)
                         OutlinedTextField(
                             value = editName,
@@ -5756,7 +5756,7 @@ private fun ModernSettingsScreen(
             )
         }
         SettingsSection("Category Filters") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Content Visibility", style = MaterialTheme.typography.titleMedium)
                 Text("Choose which categories to include for Live TV, Movies, and Series.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 visibleCatalogTypes.forEachIndexed { index, type ->
@@ -5851,7 +5851,7 @@ private fun ModernSettingsScreen(
             )
         }
         SettingsSection("Catalog cache") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Refresh interval", style = MaterialTheme.typography.titleMedium)
                 Text("Categories and media lists are stored on this device and refreshed after this interval.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -5868,7 +5868,7 @@ private fun ModernSettingsScreen(
             }
         }
         SettingsSection("Series") {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Default season", style = MaterialTheme.typography.titleMedium)
                 Text("Used only when a series has no remembered season. NikTV loads one season at a time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -6966,7 +6966,7 @@ private fun PlaybackEngineSettingsSection(
     setPlaybackEngine: (PlaybackEngine) -> Unit
 ) {
     SettingsSection("Default media player") {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Used for Live TV, movies and episodes", style = MaterialTheme.typography.titleMedium)
             Text("Auto learns compatibility per series. You can force a specific engine here.", color = Color.Gray)
             val engines = listOf(
@@ -7156,31 +7156,31 @@ private fun formatScheduleTime(minutes: Int): String {
 
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
-            Modifier.padding(horizontal = 8.dp),
+            Modifier.padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 Modifier
                     .width(4.dp)
-                    .height(18.dp)
+                    .height(20.dp)
                     .background(Color(0xFFE50914), CircleShape)
             )
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = .2.sp,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = .15.sp,
                 color = Color(0xFFF5F5F7)
             )
         }
         Surface(
             Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(16.dp),
             color = Color(0xFF111318),
-            shadowElevation = 5.dp,
+            shadowElevation = 3.dp,
             border = BorderStroke(1.dp, Color(0xFF292C33)),
             content = { Column(content = content) }
         )
