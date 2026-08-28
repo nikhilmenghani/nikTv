@@ -7,7 +7,6 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -26,10 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.pointerInput
@@ -41,6 +37,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.channels.Channel
 import kotlin.math.roundToInt
 
 internal object OnScreenDpadPreferences {
@@ -73,7 +70,9 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
     val activity = remember(context) { context.findActivity() }
     val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
-    val bootstrapFocus = remember { FocusRequester() }
+    val virtualInputCommands = remember {
+        Channel<Pair<Int, FocusDirection?>>(Channel.UNLIMITED)
+    }
     var x by rememberSaveable { mutableFloatStateOf(0f) }
     var y by rememberSaveable { mutableFloatStateOf(0f) }
     /*
@@ -107,26 +106,64 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
         return handled
     }
 
+    /*
+     * VIRTUAL_DPAD_ORDERED_TOUCH_BRIDGE_V41
+     *
+     * Pointer taps put Android/Compose into touch mode while the gesture is
+     * still being delivered. Process virtual remote input on the next frame,
+     * after the tap has completed, so Keyboard mode and focus traversal are
+     * stable. A Channel preserves one command per tap and their exact order.
+     */
+    LaunchedEffect(virtualInputCommands) {
+        for ((keyCode, direction) in virtualInputCommands) {
+            // Finish the pointer/tap frame before switching input modes.
+            withFrameNanos { }
+            inputModeManager.requestInputMode(InputMode.Keyboard)
+
+            if (send(keyCode)) {
+                continue
+            }
+
+            if (direction != null && focusManager.moveFocus(direction)) {
+                continue
+            }
+
+            /*
+             * VIRTUAL_DPAD_NO_HIDDEN_FOCUS_TARGET_V41
+             *
+             * Never bootstrap through an invisible focusable node inside the
+             * D-pad overlay. Such a node participates in spatial focus search
+             * and can hijack Right/Down navigation across the entire app.
+             *
+             * If a screen has no current focus owner yet, enter its natural
+             * traversal order directly from the Compose root. At a genuine
+             * directional dead-end this also provides a linear escape path
+             * instead of trapping the virtual remote in a small focus island.
+             */
+            if (direction != null) {
+                val escapeDirection =
+                    when (direction) {
+                        FocusDirection.Left,
+                        FocusDirection.Up -> FocusDirection.Previous
+
+                        else -> FocusDirection.Next
+                    }
+                focusManager.moveFocus(escapeDirection)
+            }
+        }
+    }
+
     fun navigate(
         keyCode: Int,
         direction: FocusDirection
     ) {
-        inputModeManager.requestInputMode(InputMode.Keyboard)
+        virtualInputCommands.trySend(keyCode to direction)
+    }
 
-        /*
-         * VIRTUAL_DPAD_COMPOSE_FALLBACK_V40
-         *
-         * Prefer the real remote event path so screen-specific routes such as
-         * same-column poster navigation remain authoritative. If no handler
-         * accepts the synthetic event, fall back to Compose directional focus.
-         * The final bootstrap is only for touch screens that do not yet have a
-         * Compose focus owner.
-         */
-        if (send(keyCode)) return
-        if (focusManager.moveFocus(direction)) return
-
-        bootstrapFocus.requestFocus()
-        focusManager.moveFocus(FocusDirection.Next)
+    fun select() {
+        virtualInputCommands.trySend(
+            KeyEvent.KEYCODE_DPAD_CENTER to null
+        )
     }
     Surface(
         modifier = modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) },
@@ -139,13 +176,6 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
             Modifier.padding(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                Modifier
-                    .size(1.dp)
-                    .alpha(0f)
-                    .focusRequester(bootstrapFocus)
-                    .focusable()
-            )
             Icon(
                 Icons.Default.DragHandle,
                 "Move on-screen D-pad",
@@ -178,8 +208,7 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
                     )
                 }
                 DpadKey(null, "Select") {
-                    inputModeManager.requestInputMode(InputMode.Keyboard)
-                    send(KeyEvent.KEYCODE_DPAD_CENTER)
+                    select()
                 }
                 DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right") {
                     navigate(
