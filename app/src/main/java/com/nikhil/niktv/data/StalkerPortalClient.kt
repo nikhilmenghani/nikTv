@@ -146,7 +146,7 @@ class StalkerPortalClient(private val context: Context) {
         val requestType = if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) "vod" else category.type.apiType
         val requestedPage = page.coerceAtLeast(1)
         val listingParams = mutableMapOf("type" to requestType, "action" to action, categoryKey to category.id, "p" to requestedPage.toString())
-        if (category.type == CatalogType.MOVIES) listingParams += mapOf(
+        if (category.type == CatalogType.MOVIES || category.type == CatalogType.SERIES) listingParams += mapOf(
             "movie_id" to "0", "season_id" to "0", "episode_id" to "0", "fav" to "0",
             "sortby" to "added", "hd" to "0", "ended" to "0", "search" to ""
         )
@@ -154,6 +154,12 @@ class StalkerPortalClient(private val context: Context) {
         val listingNodes = payload.arrayFromData()
         val rawItems = listingNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
+                // A category page must contain top-level VOD containers. Some
+                // Ministra portals return episode rows when the hierarchy is
+                // ambiguous; never promote those rows into Series tiles.
+                val episodeRow = o.boolish("is_episode") ||
+                    o.string("episode_id")?.toLongOrNull()?.let { it > 0L } == true
+                if (category.type == CatalogType.SERIES && episodeRow) return@mapNotNull null
                 // Category selection and request shape are authoritative. This
                 // provider reports both is_movie=true and is_series=1 for Series,
                 // making row-level flags unsuitable for separating the two tabs.

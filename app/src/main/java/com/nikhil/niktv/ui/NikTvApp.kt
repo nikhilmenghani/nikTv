@@ -1717,6 +1717,7 @@ private fun ModernBrowseScreen(
             toggleFavorite = toggleFavoriteEntry,
             loadMoreTmdb = loadMoreModernTmdbSection,
             loadMoreIptv = loadMoreCatalog,
+            refreshIptv = refreshCatalog,
             configureTmdb = { tmdbSetupOpen = true },
             configureIptv = openCategoryManager,
             resetSurface = { resetConfirmationOpen = true }

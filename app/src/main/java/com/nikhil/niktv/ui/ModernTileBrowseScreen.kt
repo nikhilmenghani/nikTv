@@ -146,6 +146,7 @@ internal fun ModernTileBrowseScreen(
     toggleFavorite: (FavoriteItem) -> Unit,
     loadMoreTmdb: () -> Unit,
     loadMoreIptv: () -> Unit,
+    refreshIptv: () -> Unit,
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
     resetSurface: () -> Unit
@@ -184,6 +185,7 @@ internal fun ModernTileBrowseScreen(
                     openItem = openIptvItem,
                     toggleFavorite = toggleFavorite,
                     loadMore = loadMoreIptv,
+                    refresh = refreshIptv,
                     isTv = isTv
                 )
             }
@@ -1864,6 +1866,7 @@ private fun ModernIptvCollection(
     openItem: (MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     loadMore: () -> Unit,
+    refresh: () -> Unit,
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
@@ -2037,9 +2040,16 @@ private fun ModernIptvCollection(
                 subtitle =
                     "IPTV · ${category.type.title} · ${state.items.size} loaded",
                 close = close,
-                action = if (isLiveTv) {
-                    {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                action = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = false,
+                            onClick = refresh,
+                            enabled = !state.loading && !state.catalogLoadingMore,
+                            label = { Text("Refresh") },
+                            leadingIcon = { Icon(Icons.Default.RestartAlt, null, Modifier.size(17.dp)) }
+                        )
+                        if (isLiveTv) {
                             FilterChip(
                                 selected = themedLiveTiles,
                                 onClick = {
@@ -2065,8 +2075,6 @@ private fun ModernIptvCollection(
                             )
                         }
                     }
-                } else {
-                    null
                 }
             )
         }

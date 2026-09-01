@@ -539,8 +539,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             categories = filteredCategories,
             selectedCategory = selected,
             items = items,
-            catalogPage = 1,
-            catalogHasMore = session.profile.portalType == PortalType.STALKER && items.isNotEmpty(),
+            catalogPage = selected?.let { cache.pagesByCategory[it.id] } ?: 1,
+            catalogHasMore = selected?.let { cache.hasMoreByCategory[it.id] } ?: false,
             selectedSeries = null,
             fullSearchItems = null,
             fullSearchCachedAtMillis = null,
@@ -651,21 +651,38 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             ?: filteredCategories.firstOrNull { type != CatalogType.SERIES || it.id != "*" }
             ?: filteredCategories.firstOrNull()
 
+        var loadedPage: PortalCatalogPage? = null
         val items = if (selected != null) {
-            val cachedForSelected = cachedItems[selected.id]
+            val cachedForSelected = cachedItems[selected.id]?.takeIf {
+                cachedBrowse?.pagesByCategory?.containsKey(selected.id) == true &&
+                    cachedBrowse?.hasMoreByCategory?.containsKey(selected.id) == true
+            }
             if (!forceRefresh && cachedBrowse != null && cachedForSelected != null && (System.currentTimeMillis() - cachedBrowse.cachedAtMillis < maxAge)) {
                 cachedForSelected
             } else {
-                portal.catalog(session, selected).let { loaded ->
+                portal.catalogPage(session, selected, 1).also { loadedPage = it }.items.let { loaded ->
                     if (session.profile.portalType == PortalType.XTREAM) loaded.take(120) else loaded
                 }
             }
         } else emptyList()
 
-        val cache = cachedBrowse?.copy(categories = allCategories, itemsByCategory = if (selected != null) cachedItems + (selected.id to items) else cachedItems)
-            ?: BrowseCatalogCache(profileKey, type, System.currentTimeMillis(), allCategories, selected?.let { mapOf(it.id to items) }.orEmpty())
+        val pageUpdates = selected?.let { category -> loadedPage?.let { mapOf(category.id to it.page) } }.orEmpty()
+        val hasMoreUpdates = selected?.let { category -> loadedPage?.let { mapOf(category.id to it.hasMore) } }.orEmpty()
+        val cache = cachedBrowse?.copy(
+            cachedAtMillis = if (loadedPage != null) System.currentTimeMillis() else cachedBrowse.cachedAtMillis,
+            categories = allCategories,
+            itemsByCategory = if (selected != null) cachedItems + (selected.id to items) else cachedItems,
+            pagesByCategory = cachedBrowse.pagesByCategory + pageUpdates,
+            hasMoreByCategory = cachedBrowse.hasMoreByCategory + hasMoreUpdates
+        ) ?: BrowseCatalogCache(
+            profileKey, type, System.currentTimeMillis(), allCategories,
+            selected?.let { mapOf(it.id to items) }.orEmpty(), pageUpdates, hasMoreUpdates
+        )
 
-        if (allCategories.isNotEmpty() && (selected == null || items.isNotEmpty()) && cache != cachedBrowse) {
+        if (allCategories.isNotEmpty() &&
+            (selected == null || items.isNotEmpty() || loadedPage != null) &&
+            cache != cachedBrowse
+        ) {
             store.saveBrowseCatalog(cache)
         }
 
@@ -677,8 +694,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categories = filteredCategories,
                 selectedCategory = selected,
                 items = items,
-                catalogPage = 1,
-                catalogHasMore = session.profile.portalType == PortalType.STALKER && items.isNotEmpty(),
+                catalogPage = selected?.let { cache.pagesByCategory[it.id] } ?: 1,
+                catalogHasMore = selected?.let { cache.hasMoreByCategory[it.id] } ?: false,
                 selectedSeries = null,
                 fullSearchItems = null,
                 fullSearchCachedAtMillis = null,
@@ -701,13 +718,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
-        val cached = _state.value.browseCachesByType[category.type]?.itemsByCategory?.get(category.id)
+        val categoryCache = _state.value.browseCachesByType[category.type]
+        val cached = categoryCache?.itemsByCategory?.get(category.id)?.takeIf {
+            categoryCache.pagesByCategory.containsKey(category.id) &&
+                categoryCache.hasMoreByCategory.containsKey(category.id)
+        }
         val firstPage = if (cached == null) portal.catalogPage(session, category, 1) else null
         val items = cached ?: firstPage!!.items
         if (cached == null) {
             val existing = _state.value.browseCachesByType[category.type]
             if (existing != null && existing.type == category.type) {
-                val updated = existing.copy(itemsByCategory = existing.itemsByCategory + (category.id to items))
+                val updated = existing.copy(
+                    itemsByCategory = existing.itemsByCategory + (category.id to items),
+                    pagesByCategory = existing.pagesByCategory + (category.id to firstPage!!.page),
+                    hasMoreByCategory = existing.hasMoreByCategory + (category.id to firstPage.hasMore)
+                )
                 store.saveBrowseCatalog(updated)
                 _state.update { current -> current.copy(
                     browseCache = updated,
@@ -717,8 +742,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         _state.update { it.copy(
             items = items,
-            catalogPage = 1,
-            catalogHasMore = firstPage?.hasMore ?: (session.profile.portalType == PortalType.STALKER && items.isNotEmpty())
+            catalogPage = firstPage?.page ?: _state.value.browseCachesByType[category.type]?.pagesByCategory?.get(category.id) ?: 1,
+            catalogHasMore = firstPage?.hasMore ?: _state.value.browseCachesByType[category.type]?.hasMoreByCategory?.get(category.id) ?: false
         ) }
     }
 
@@ -842,7 +867,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             System.currentTimeMillis(),
                         itemsByCategory =
                             existing.itemsByCategory +
-                                (category.id to merged)
+                                (category.id to merged),
+                        pagesByCategory = existing.pagesByCategory + (category.id to result.page),
+                        hasMoreByCategory = existing.hasMoreByCategory +
+                            (category.id to (result.hasMore && actuallyAdded))
                     )
 
                     if (updated != null) {
