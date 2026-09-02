@@ -10,7 +10,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -24,6 +30,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -112,6 +120,24 @@ private val NikColors = darkColorScheme(
 private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 private val menuActivationKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+
+private enum class MobileSettingsPage(val title: String, val icon: ImageVector) {
+    APPEARANCE("Appearance", Icons.Default.Palette),
+    PLAYBACK("Playback", Icons.Default.PlayCircle),
+    CONTENT("Content", Icons.Default.VideoLibrary),
+    ACCOUNT("Account", Icons.Default.ManageAccounts)
+}
+
+private val LocalMobileSettingsPage = compositionLocalOf<MobileSettingsPage?> { null }
+
+private fun settingsPageFor(title: String): MobileSettingsPage = when (title) {
+    "Mobile appearance", "Picture and video appearance", "Screen awake" ->
+        MobileSettingsPage.APPEARANCE
+    "Default media player", "Player controls", "Series" ->
+        MobileSettingsPage.PLAYBACK
+    "Category Filters", "Catalog cache" -> MobileSettingsPage.CONTENT
+    else -> MobileSettingsPage.ACCOUNT
+}
 
 private fun Context.isTvLikeDevice(configuration: Configuration): Boolean =
     packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
@@ -5266,14 +5292,29 @@ private fun ModernSettingsScreen(
     }
     val settingsConfiguration = LocalConfiguration.current
     val compactSettingsHeader = settingsConfiguration.screenWidthDp < 600
+    val mobileSettingsPages = MobileSettingsPage.entries
+    val settingsPagerState = rememberPagerState(pageCount = { mobileSettingsPages.size })
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = Color(0xFF07080A),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ModernScreenTopBar("Settings", closeSettings)
+        },
+        bottomBar = {
+            if (compactSettingsHeader) {
+                MobileSettingsBottomNavigation(
+                    currentPage = mobileSettingsPages[settingsPagerState.currentPage],
+                    selectPage = { page ->
+                        scope.launch {
+                            settingsPagerState.animateScrollToPage(mobileSettingsPages.indexOf(page))
+                        }
+                    }
+                )
+            }
         }
-    ) { padding -> Column(
+    ) { padding ->
+        val settingsPageContent: @Composable () -> Unit = { Column(
         Modifier
             .fillMaxSize()
             .background(
@@ -5833,9 +5874,16 @@ private fun ModernSettingsScreen(
                 }
             }
         }
-        OrientationSettingsSection(Modifier.focusGroup())
+        val activeMobileSettingsPage = LocalMobileSettingsPage.current
+        if (activeMobileSettingsPage == null || activeMobileSettingsPage == MobileSettingsPage.APPEARANCE) {
+            OrientationSettingsSection(Modifier.focusGroup())
+        }
 
-        if (profile != null) PlaybackDesignSettingsSection(profile.cacheKey(), Modifier.focusGroup())
+        if (profile != null &&
+            (activeMobileSettingsPage == null || activeMobileSettingsPage == MobileSettingsPage.PLAYBACK)
+        ) {
+            PlaybackDesignSettingsSection(profile.cacheKey(), Modifier.focusGroup())
+        }
 
         if (profile != null) SettingsSection("Connection") {
             SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
@@ -6181,7 +6229,24 @@ private fun ModernSettingsScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-    } }
+        } }
+        if (compactSettingsHeader) {
+            HorizontalPager(
+                state = settingsPagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                CompositionLocalProvider(
+                    LocalMobileSettingsPage provides mobileSettingsPages[page]
+                ) {
+                    settingsPageContent()
+                }
+            }
+        } else {
+            CompositionLocalProvider(LocalMobileSettingsPage provides null) {
+                settingsPageContent()
+            }
+        }
+    }
     pendingRemoval?.let { target ->
         AlertDialog(
             onDismissRequest = { pendingRemoval = null },
@@ -7210,6 +7275,8 @@ private fun formatScheduleTime(minutes: Int): String {
 
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val mobilePage = LocalMobileSettingsPage.current
+    if (mobilePage != null && settingsPageFor(title) != mobilePage) return
     Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.padding(horizontal = 6.dp),
@@ -7249,6 +7316,68 @@ private fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
         leadingContent = { Icon(icon, null) },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
+}
+
+@Composable
+private fun MobileSettingsBottomNavigation(
+    currentPage: MobileSettingsPage,
+    selectPage: (MobileSettingsPage) -> Unit
+) {
+    Surface(color = Color(0xFF101216), tonalElevation = 8.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .animateContentSize(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            MobileSettingsPage.entries.forEach { page ->
+                val selected = page == currentPage
+                val containerColor by animateColorAsState(
+                    if (selected) Color(0xFF4A171B) else Color(0xFF191B20),
+                    label = "settingsNavigationContainer"
+                )
+                val contentColor by animateColorAsState(
+                    if (selected) Color(0xFFFFA2A8) else Color(0xFFB4B7BF),
+                    label = "settingsNavigationContent"
+                )
+                Surface(
+                    onClick = { selectPage(page) },
+                    modifier = (if (selected) Modifier.weight(1f) else Modifier.width(54.dp))
+                        .semantics {
+                            role = Role.Tab
+                            this.selected = selected
+                        },
+                    shape = RoundedCornerShape(20.dp),
+                    color = containerColor,
+                    contentColor = contentColor,
+                    tonalElevation = if (selected) 2.dp else 0.dp
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(page.icon, if (selected) null else page.title, Modifier.size(22.dp))
+                        AnimatedVisibility(
+                            visible = selected,
+                            enter = fadeIn() + expandHorizontally(),
+                            exit = fadeOut() + shrinkHorizontally()
+                        ) {
+                            Text(
+                                page.title,
+                                Modifier.padding(start = 8.dp),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
