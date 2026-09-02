@@ -15,6 +15,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.nikhil.niktv.model.TmdbHomeSection
+import java.io.IOException
 import java.text.Normalizer
 import java.util.concurrent.TimeUnit
 
@@ -343,34 +344,41 @@ class TmdbClient {
         path: String,
         query: Map<String, String>
     ) = run {
-        val urlBuilder = "https://api.themoviedb.org$path"
-            .toHttpUrl()
-            .newBuilder()
-            .addQueryParameter("language", "en-US")
+        var lastConnectionFailure: IOException? = null
+        for (baseUrl in API_BASE_URLS) {
+            try {
+                val urlBuilder = "$baseUrl$path"
+                    .toHttpUrl()
+                    .newBuilder()
+                    .addQueryParameter("language", "en-US")
 
-        query.forEach { (name, value) ->
-            urlBuilder.addQueryParameter(name, value)
-        }
+                query.forEach { (name, value) ->
+                    urlBuilder.addQueryParameter(name, value)
+                }
 
-        if (readAccessToken.isBlank()) {
-            urlBuilder.addQueryParameter("api_key", apiKey)
-        }
+                if (readAccessToken.isBlank()) {
+                    urlBuilder.addQueryParameter("api_key", apiKey)
+                }
 
-        val requestBuilder = Request.Builder()
-            .url(urlBuilder.build())
-            .header("Accept", "application/json")
+                val requestBuilder = Request.Builder()
+                    .url(urlBuilder.build())
+                    .header("Accept", "application/json")
 
-        if (readAccessToken.isNotBlank()) {
-            requestBuilder.header("Authorization", "Bearer $readAccessToken")
-        }
+                if (readAccessToken.isNotBlank()) {
+                    requestBuilder.header("Authorization", "Bearer $readAccessToken")
+                }
 
-        val response = http.newCall(requestBuilder.build()).execute()
-        response.use {
-            if (!it.isSuccessful) {
-                error("TMDB returned HTTP ${it.code} for $path")
+                return@run http.newCall(requestBuilder.build()).execute().use {
+                    if (!it.isSuccessful) {
+                        error("TMDB returned HTTP ${it.code} for $path")
+                    }
+                    json.parseToJsonElement(it.body?.string().orEmpty()).jsonObject
+                }
+            } catch (failure: IOException) {
+                lastConnectionFailure = failure
             }
-            json.parseToJsonElement(it.body?.string().orEmpty()).jsonObject
         }
+        throw lastConnectionFailure ?: IOException("Could not connect to TMDB")
     }
 
     private data class CachedMovies(
@@ -390,6 +398,12 @@ class TmdbClient {
     }
 
     private companion object {
+        // Some Indian mobile/ISP DNS resolvers black-hole api.themoviedb.org.
+        // api.tmdb.org serves the same API and remains reachable on those networks.
+        val API_BASE_URLS = listOf(
+            "https://api.tmdb.org",
+            "https://api.themoviedb.org"
+        )
         const val CACHE_TTL_MILLIS = 30L * 60L * 1000L
         const val IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
         const val BACKDROP_BASE_URL = "https://image.tmdb.org/t/p/w780"
