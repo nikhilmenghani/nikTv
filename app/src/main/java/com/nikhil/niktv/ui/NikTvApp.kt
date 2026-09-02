@@ -132,7 +132,7 @@ private enum class MobileSettingsPage(val title: String, val icon: ImageVector) 
 private val LocalMobileSettingsPage = compositionLocalOf<MobileSettingsPage?> { null }
 
 private fun settingsPageFor(title: String): MobileSettingsPage = when (title) {
-    "Mobile appearance", "Picture and video appearance", "Screen awake" ->
+    "Mobile controls", "Picture and video appearance", "Display and screen" ->
         MobileSettingsPage.APPEARANCE
     "Default media player", "Player controls", "Series" ->
         MobileSettingsPage.PLAYBACK
@@ -5358,7 +5358,7 @@ private fun ModernSettingsScreen(
             ),
         verticalArrangement = Arrangement.spacedBy(if (compactSettingsHeader) 20.dp else 12.dp)
     ) {
-        Surface(
+        if (!compactSettingsHeader) Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(18.dp),
             color = Color(0xFF111318),
@@ -5427,33 +5427,12 @@ private fun ModernSettingsScreen(
                 }
             }
         }
-        val orientationMode by rememberUiOrientationMode()
         val showMobileAppearance =
-            settingsConfiguration.smallestScreenWidthDp < 600 &&
-                orientationMode != UiOrientationMode.LANDSCAPE
+            settingsConfiguration.smallestScreenWidthDp < 600
 
-        if (showMobileAppearance) SettingsSection("Mobile appearance") {
-            val mobileDesign by rememberMobileUiDesign()
+        if (showMobileAppearance) SettingsSection("Mobile controls") {
             val onScreenDpad by rememberOnScreenDpadEnabled()
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Portrait phone layout", style = MaterialTheme.typography.titleMedium)
-                Text("Auto selects the YouTube layout on phones. Fullscreen video still opens in landscape.", color = Color.Gray)
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf(
-                        MobileUiDesign.AUTO to "Auto",
-                        MobileUiDesign.YOUTUBE to "YouTube",
-                        MobileUiDesign.CLASSIC to "Classic"
-                    ).forEachIndexed { index, (design, label) ->
-                        val shape = uniformSegmentShape(index, 3)
-                        SegmentedButton(
-                            selected = mobileDesign == design,
-                            onClick = { MobileUiPreferences.set(context, design) },
-                            modifier = Modifier.remoteFocusFrame(shape),
-                            shape = shape
-                        ) { Text(label) }
-                    }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -5488,7 +5467,7 @@ private fun ModernSettingsScreen(
                 }
             }
         }
-        SettingsSection("Picture and video appearance") {
+        if (!compactSettingsHeader) SettingsSection("Picture and video appearance") {
             val (appearanceProfiles, activeAppearance) =
                 rememberVideoAppearanceProfiles()
             val editableAppearanceProfiles =
@@ -5778,7 +5757,7 @@ private fun ModernSettingsScreen(
                 }
             }
         }
-        SettingsSection("Screen awake") {
+        SettingsSection("Display and screen") {
             ListItem(
                 headlineContent = {
                     Text("Only keep screen awake during playback")
@@ -5808,6 +5787,10 @@ private fun ModernSettingsScreen(
                     containerColor = Color.Transparent
                 )
             )
+            if (compactSettingsHeader) {
+                HorizontalDivider()
+                OrientationSettingsSection(Modifier.padding(8.dp))
+            }
         }
         SettingsSection("Profiles") {
             Text(
@@ -5873,7 +5856,7 @@ private fun ModernSettingsScreen(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
-        if (profile != null) SettingsSection("Category Filters") {
+        if (!compactSettingsHeader && profile != null) SettingsSection("Category Filters") {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Content Visibility", style = MaterialTheme.typography.titleMedium)
                 Text("Choose which categories to include for Live TV, Movies, and Series.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -5899,7 +5882,7 @@ private fun ModernSettingsScreen(
             }
         }
         val activeMobileSettingsPage = LocalMobileSettingsPage.current
-        if (activeMobileSettingsPage == null || activeMobileSettingsPage == MobileSettingsPage.APPEARANCE) {
+        if (activeMobileSettingsPage == null) {
             OrientationSettingsSection(Modifier.focusGroup())
         }
 
