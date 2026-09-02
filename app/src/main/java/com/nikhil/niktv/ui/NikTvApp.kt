@@ -7560,6 +7560,7 @@ private fun CategoryManagerDialog(
     val categoryConfiguration = LocalConfiguration.current
     val categoryContext = LocalContext.current
     val categoryIsTv = categoryContext.isTvLikeDevice(categoryConfiguration)
+    val categoryIsCompact = !categoryIsTv && categoryConfiguration.screenWidthDp < 600
     val categoryColumns = when {
         categoryIsTv || categoryConfiguration.screenWidthDp >= 840 -> 4
         categoryConfiguration.screenWidthDp >= 600 -> 2
@@ -7631,7 +7632,69 @@ private fun CategoryManagerDialog(
                     .then(if (!categoryIsTv) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (categoryIsCompact) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xFF2B1014),
+                            border = BorderStroke(1.dp, Color(0x66E50914))
+                        ) {
+                            Icon(
+                                Icons.Default.Tune,
+                                null,
+                                Modifier.padding(10.dp).size(22.dp),
+                                tint = Color(0xFFFF3340)
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${type.title} Categories",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "Choose up to 10 categories",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = close,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .focusRequester(closeRequester)
+                                .onFocusChanged { closeFocused = it.isFocused }
+                                .background(
+                                    if (closeFocused) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                    CircleShape
+                                )
+                        ) { Icon(Icons.Default.Close, "Close") }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            applyFilters(mapOf(type to currentEnabledSet.toList()))
+                            close()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .focusRequester(applyRequester)
+                            .onFocusChanged { applyFocused = it.isFocused },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFE50914),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("Apply & Close", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color(0xFF2B1014),
