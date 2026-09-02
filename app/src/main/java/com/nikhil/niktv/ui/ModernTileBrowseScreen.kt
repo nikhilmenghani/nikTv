@@ -1405,15 +1405,15 @@ private fun ModernCompactMediaCard(
                     Column(Modifier.weight(1f)) {
                         Text(
                             item.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            maxLines = if (isTv) 1 else Int.MAX_VALUE,
+                            overflow = if (isTv) TextOverflow.Ellipsis else TextOverflow.Clip,
                             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                             color = if (focused) Color.White else Color(0xFFD4D7DC)
                         )
                         Text(
                             subtitle,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            maxLines = if (isTv) 1 else Int.MAX_VALUE,
+                            overflow = if (isTv) TextOverflow.Ellipsis else TextOverflow.Clip,
                             color = if (active) Color(0xFFBFC3CA) else Color(0xFF858B94),
                             style = MaterialTheme.typography.labelSmall
                         )

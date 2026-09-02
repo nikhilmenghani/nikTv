@@ -5830,6 +5830,7 @@ private fun ModernSettingsScreen(
             HorizontalDivider()
             SettingsValueRow(Icons.Default.Wifi, "Device MAC Address", deviceMacAddress)
         }
+        TmdbCredentialSettingsSection()
         SettingsSection("Backup and restore") {
             Text(
                 "Backup files contain your portal addresses and credentials. Store them securely.",
@@ -7232,6 +7233,56 @@ private fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
         leadingContent = { Icon(icon, null) },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
+}
+
+@Composable
+private fun TmdbCredentialSettingsSection() {
+    var revealCredentials by rememberSaveable { mutableStateOf(false) }
+    val apiKey = BuildConfig.TMDB_API_KEY.trim()
+    val readAccessToken = BuildConfig.TMDB_READ_ACCESS_TOKEN.trim()
+
+    SettingsSection("TMDB diagnostics") {
+        ListItem(
+            headlineContent = { Text("Reveal embedded credentials") },
+            supportingContent = {
+                Text("Credentials are hidden by default because anyone viewing this screen can copy them.")
+            },
+            leadingContent = {
+                Icon(if (revealCredentials) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
+            },
+            trailingContent = {
+                Switch(
+                    checked = revealCredentials,
+                    onCheckedChange = { revealCredentials = it },
+                    modifier = Modifier.remoteFocusFrame(CircleShape)
+                )
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+        )
+        HorizontalDivider()
+        SelectionContainer {
+            Column {
+                SettingsValueRow(
+                    Icons.Default.Key,
+                    "TMDB API key",
+                    apiKey.credentialDiagnosticValue(revealCredentials)
+                )
+                HorizontalDivider()
+                SettingsValueRow(
+                    Icons.Default.VpnKey,
+                    "TMDB read access token",
+                    readAccessToken.credentialDiagnosticValue(revealCredentials)
+                )
+            }
+        }
+    }
+}
+
+private fun String.credentialDiagnosticValue(revealed: Boolean): String = when {
+    isBlank() -> "Not embedded in this build"
+    revealed -> this
+    length <= 8 -> "Embedded · ${"•".repeat(length)}"
+    else -> "Embedded · ${take(4)}${"•".repeat(8)}${takeLast(4)} · $length characters"
 }
 
 private fun CatalogType.icon() = when (this) { CatalogType.LIVE_TV -> Icons.Default.LiveTv; CatalogType.MOVIES -> Icons.Default.Movie; CatalogType.SERIES -> Icons.Default.VideoLibrary; CatalogType.RADIO -> Icons.Default.Radio }
