@@ -14,7 +14,9 @@ import com.nikhil.niktv.data.TrendingSeries
 import com.nikhil.niktv.data.matchTmdbMovie
 import com.nikhil.niktv.data.matchTmdbSeries
 import com.nikhil.niktv.data.rankTmdbMovieMatches
+import com.nikhil.niktv.data.rankTmdbSeriesMatches
 import com.nikhil.niktv.data.TmdbMovie
+import com.nikhil.niktv.data.TmdbSeries
 import com.nikhil.niktv.data.prefetchArtwork
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
@@ -55,6 +57,8 @@ data class NikTvState(
     val movieMatchSelection: TmdbMovie? = null,
     val movieMatchCandidates: List<MediaItem> = emptyList(),
     val movieMatchLoadingMore: Boolean = false,
+    val seriesMatchSelection: TmdbSeries? = null,
+    val seriesMatchCandidates: List<MediaItem> = emptyList(),
     val feedRefreshing: Boolean = false,
     val feedRefreshMessage: String = "Refreshing feed…",
     val loading: Boolean = false,
@@ -2220,69 +2224,80 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openTrendingSeries(entry: TrendingSeries) = task {
         val session = requireNotNull(_state.value.session)
-        val openedFromModernSection =
-            _state.value.modernUiEnabled &&
-                _state.value.modernTmdbSection?.series == true
-
-        /*
-         * Enter the detail destination before a provider lookup. Xtream may
-         * need to resolve an uncached TMDB title, and keeping homeOpen visible
-         * during that work made the click appear to open the Series dashboard.
-         */
-        _state.update { current ->
-            current.copy(
-                homeOpen = false,
-                favoritesOpen = false,
-                settingsOpen = false,
-                searchOpen = false,
-                categoryManagerOpen = false,
-                selectedType = CatalogType.SERIES,
-                selectedSeries = entry.tmdb.asMediaItem(),
-                seriesOpenedFromHome = !openedFromModernSection,
-                seriesOpenedFromModernSection = openedFromModernSection,
-                seriesOpenedFromFavorites = false,
-                items = emptyList(),
-                availableSeriesSeasons = emptyList(),
-                selectedSeriesSeason = null
-            )
+        val saved = store.tmdbMappings.first().firstOrNull {
+            it.profileKey == session.profile.cacheKey() &&
+                it.type == CatalogType.SERIES &&
+                it.tmdbId == entry.tmdb.id &&
+                (it.confirmedByUser || it.media.externalTmdbId == entry.tmdb.id)
+        }
+        if (saved != null) {
+            commitTmdbSeriesSelection(session, entry.tmdb, saved.media, saved.confirmedByUser)
+            return@task
         }
 
-        val resolved = runCatching {
-            entry.iptv
-                ?: matchTmdbSeries(entry.tmdb, localSeriesCandidates(_state.value))
-                ?: resolveTmdbSeriesFromPortal(session, entry)
-        }.getOrElse { error ->
-            returnToHomeAfterTrendingSeriesFailure()
-            throw error
-        }
-
-        if (resolved == null) {
-            returnToHomeAfterTrendingSeriesFailure()
+        val candidates = resolveInitialTmdbSeriesCandidates(session, entry)
+        if (candidates.isEmpty()) {
             error(
                 "\"${entry.tmdb.name}\" was not found in this IPTV profile."
             )
         }
+        if (candidates.size > 1) {
+            _state.update {
+                it.copy(
+                    seriesMatchSelection = entry.tmdb,
+                    seriesMatchCandidates = candidates
+                )
+            }
+            return@task
+        }
+        commitTmdbSeriesSelection(session, entry.tmdb, candidates.single(), confirmedByUser = false)
+    }
 
+    fun selectTmdbSeriesMatch(item: MediaItem) = task {
+        val session = requireNotNull(_state.value.session)
+        val series = requireNotNull(_state.value.seriesMatchSelection)
+        commitTmdbSeriesSelection(session, series, item, confirmedByUser = true)
+    }
+
+    fun closeTmdbSeriesMatches() = _state.update {
+        it.copy(seriesMatchSelection = null, seriesMatchCandidates = emptyList())
+    }
+
+    private suspend fun commitTmdbSeriesSelection(
+        session: PortalSession,
+        series: TmdbSeries,
+        resolved: MediaItem,
+        confirmedByUser: Boolean
+    ) {
+        val openedFromModernSection =
+            _state.value.modernUiEnabled &&
+                _state.value.modernTmdbSection?.series == true
 
         store.saveTmdbMapping(
-            TmdbIptvMapping(session.profile.cacheKey(), CatalogType.SERIES, entry.tmdb.id, resolved)
+            TmdbIptvMapping(
+                session.profile.cacheKey(),
+                CatalogType.SERIES,
+                series.id,
+                resolved,
+                confirmedByUser = confirmedByUser
+            )
         )
 
         _state.update { current ->
             current.copy(
                 trendingSeries = current.trendingSeries.map { item ->
-                    if (item.tmdb.id == entry.tmdb.id) {
+                    if (item.tmdb.id == series.id) {
                         item.copy(iptv = resolved)
                     } else item
                 },
                 modernTmdbSeries = current.modernTmdbSeries.map { item ->
-                    if (item.tmdb.id == entry.tmdb.id) {
+                    if (item.tmdb.id == series.id) {
                         item.copy(iptv = resolved)
                     } else item
                 },
                 tmdbHomeSeriesRows = current.tmdbHomeSeriesRows.mapValues { (_, row) ->
                     row.map { item ->
-                        if (item.tmdb.id == entry.tmdb.id) {
+                        if (item.tmdb.id == series.id) {
                             item.copy(iptv = resolved)
                         } else item
                     }
@@ -2298,7 +2313,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 seriesOpenedFromFavorites = false,
                 items = emptyList(),
                 availableSeriesSeasons = emptyList(),
-                selectedSeriesSeason = null
+                selectedSeriesSeason = null,
+                seriesMatchSelection = null,
+                seriesMatchCandidates = emptyList()
             )
         }
 
@@ -2507,16 +2524,23 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val pendingRequests: List<Pair<String, Int>>
     )
 
-    private suspend fun resolveTmdbSeriesFromPortal(
+    private suspend fun resolveInitialTmdbSeriesCandidates(
         session: PortalSession,
         entry: TrendingSeries
-    ): MediaItem? {
+    ): List<MediaItem> {
         if (session.profile.portalType == PortalType.XTREAM) {
-            return resolveTmdbFromXtreamCatalog(
-                session,
-                CatalogType.SERIES,
-                entry.tmdb.id
-            ) { candidates -> matchTmdbSeries(entry.tmdb, candidates) }
+            val profileKey = session.profile.cacheKey()
+            val cached = store.searchCatalog(CatalogType.SERIES, profileKey).first()?.items
+            val catalog = if (!cached.isNullOrEmpty()) cached else {
+                portal.fullCatalog(session, CatalogType.SERIES, emptyList()).also { items ->
+                    if (items.isNotEmpty()) {
+                        store.saveSearchCatalog(
+                            SearchCatalogCache(profileKey, CatalogType.SERIES, System.currentTimeMillis(), items)
+                        )
+                    }
+                }
+            }
+            return rankTmdbSeriesMatches(entry.tmdb, catalog)
         }
 
         val queries = listOf(entry.tmdb.name, entry.tmdb.originalName)
@@ -2524,6 +2548,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             .filter(String::isNotBlank)
             .distinct()
 
+        val candidates = localSeriesCandidates(_state.value).toMutableList()
         for (query in queries) {
             val page = portal.search(
                 session = session,
@@ -2532,9 +2557,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 page = 1,
                 categoryId = "*"
             )
-            matchTmdbSeries(entry.tmdb, page.items)?.let { return it }
+            candidates += page.items
         }
-        return null
+        return rankTmdbSeriesMatches(entry.tmdb, candidates.distinctBy { it.id })
     }
 
     private suspend fun resolveTmdbFromXtreamCatalog(

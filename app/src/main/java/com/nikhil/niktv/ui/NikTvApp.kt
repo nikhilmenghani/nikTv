@@ -409,6 +409,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     selectTmdbMovieMatch = vm::selectTmdbMovieMatch,
                     closeTmdbMovieMatches = vm::closeTmdbMovieMatches,
                     openTrendingSeries = vm::openTrendingSeries,
+                    selectTmdbSeriesMatch = vm::selectTmdbSeriesMatch,
+                    closeTmdbSeriesMatches = vm::closeTmdbSeriesMatches,
                     closeSeries = vm::closeSeries,
                     refreshCatalog = vm::refreshCatalog,
                     openFavorites = vm::openFavorites,
@@ -1372,6 +1374,8 @@ private fun CatalogScreen(
     selectTmdbMovieMatch: (MediaItem) -> Unit,
     closeTmdbMovieMatches: () -> Unit,
     openTrendingSeries: (TrendingSeries) -> Unit,
+    selectTmdbSeriesMatch: (MediaItem) -> Unit,
+    closeTmdbSeriesMatches: () -> Unit,
     closeSeries: () -> Unit,
     refreshCatalog: () -> Unit,
     openFavorites: () -> Unit,
@@ -1441,6 +1445,7 @@ private fun CatalogScreen(
 
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
     BackHandler(enabled = state.movieMatchSelection != null, onBack = closeTmdbMovieMatches)
+    BackHandler(enabled = state.seriesMatchSelection != null, onBack = closeTmdbSeriesMatches)
     BackHandler(enabled = !state.settingsOpen && state.searchOpen, onBack = closeSearch)
     BackHandler(enabled = !state.settingsOpen && !state.searchOpen && state.favoritesOpen, onBack = closeFavorites)
     BackHandler(
@@ -1460,6 +1465,7 @@ private fun CatalogScreen(
         enabled =
             !exitConfirmationOpen &&
                 state.movieMatchSelection == null &&
+                state.seriesMatchSelection == null &&
                 !state.settingsOpen &&
                 !state.searchOpen &&
                 !state.favoritesOpen &&
@@ -1481,12 +1487,21 @@ private fun CatalogScreen(
     fun MainContent(modifier: Modifier = Modifier) {
         Box(modifier) {
             when {
-                state.movieMatchSelection != null -> TmdbMovieMatchScreen(
-                    movie = state.movieMatchSelection,
+                state.movieMatchSelection != null -> TmdbMatchScreen(
+                    title = state.movieMatchSelection.title,
+                    year = state.movieMatchSelection.releaseYear,
                     candidates = state.movieMatchCandidates,
                     loadingMore = state.movieMatchLoadingMore,
                     select = selectTmdbMovieMatch,
                     close = closeTmdbMovieMatches
+                )
+                state.seriesMatchSelection != null -> TmdbMatchScreen(
+                    title = state.seriesMatchSelection.name,
+                    year = state.seriesMatchSelection.firstAirYear,
+                    candidates = state.seriesMatchCandidates,
+                    loadingMore = false,
+                    select = selectTmdbSeriesMatch,
+                    close = closeTmdbSeriesMatches
                 )
                 state.settingsOpen -> ModernSettingsScreen(
                     state = state,
@@ -3652,8 +3667,9 @@ private fun DashboardMovieRail(
 }
 
 @Composable
-private fun TmdbMovieMatchScreen(
-    movie: TmdbMovie,
+private fun TmdbMatchScreen(
+    title: String,
+    year: Int?,
     candidates: List<MediaItem>,
     loadingMore: Boolean,
     select: (MediaItem) -> Unit,
@@ -3669,8 +3685,8 @@ private fun TmdbMovieMatchScreen(
                 Text("Choose the IPTV version", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(
                     buildString {
-                        append(movie.title)
-                        movie.releaseYear?.let { append(" ($it)") }
+                        append(title)
+                        year?.let { append(" ($it)") }
                         append(" · ${candidates.size} matches found")
                         if (loadingMore) append(" · Finding more…")
                     },

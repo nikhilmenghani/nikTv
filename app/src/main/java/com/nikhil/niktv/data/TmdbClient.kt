@@ -429,12 +429,17 @@ fun rankTmdbMovieMatches(
 fun matchTmdbSeries(
     series: TmdbSeries,
     candidates: List<MediaItem>
-): MediaItem? = rankTmdbTitleMatches(
+): MediaItem? = rankTmdbSeriesMatches(series, candidates).firstOrNull()
+
+fun rankTmdbSeriesMatches(
+    series: TmdbSeries,
+    candidates: List<MediaItem>
+): List<MediaItem> = rankTmdbTitleMatches(
     tmdbId = series.id,
     titles = listOf(series.name, series.originalName),
     year = series.firstAirYear,
     candidates = candidates
-).firstOrNull()
+)
 
 private fun rankTmdbTitleMatches(
     tmdbId: Int,
