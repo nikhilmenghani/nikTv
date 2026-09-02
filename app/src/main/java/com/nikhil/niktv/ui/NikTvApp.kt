@@ -3390,27 +3390,38 @@ private fun YouTubeStyleBottomBar(
     openFavorites: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    NavigationBar(modifier = modifier.fillMaxWidth(), containerColor = Color(0xFF101010), tonalElevation = 8.dp) {
-        NavigationBarItem(
-            selected = state.homeOpen && !state.favoritesOpen,
-            onClick = openHome,
-            icon = { Icon(Icons.Default.Home, null) },
-            label = { Text("Home") }
-        )
-        listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach { type ->
-            NavigationBarItem(
-                selected = !state.homeOpen && !state.favoritesOpen && state.selectedType == type,
-                onClick = { selectType(type) },
-                icon = { Icon(type.icon(), null) },
-                label = { Text(when (type) { CatalogType.LIVE_TV -> "Live"; else -> type.title }) }
-            )
+    val destinations = listOf(
+        Triple("Home", Icons.Default.Home, openHome),
+        Triple("Live", CatalogType.LIVE_TV.icon()) { selectType(CatalogType.LIVE_TV) },
+        Triple("Movies", CatalogType.MOVIES.icon()) { selectType(CatalogType.MOVIES) },
+        Triple("Series", CatalogType.SERIES.icon()) { selectType(CatalogType.SERIES) },
+        Triple("Library", Icons.Default.VideoLibrary, openFavorites)
+    )
+    val selectedLabel = when {
+        state.favoritesOpen -> "Library"
+        state.homeOpen -> "Home"
+        state.selectedType == CatalogType.LIVE_TV -> "Live"
+        state.selectedType == CatalogType.MOVIES -> "Movies"
+        else -> "Series"
+    }
+    Surface(modifier = modifier.fillMaxWidth(), color = Color(0xFF101216), tonalElevation = 8.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 9.dp)
+                .animateContentSize(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            destinations.forEach { (label, icon, action) ->
+                ExpressiveBottomNavigationItem(
+                    icon = icon,
+                    label = label,
+                    selected = selectedLabel == label,
+                    onClick = action,
+                    inactiveWidth = 48.dp
+                )
+            }
         }
-        NavigationBarItem(
-            selected = state.favoritesOpen,
-            onClick = openFavorites,
-            icon = { Icon(Icons.Default.VideoLibrary, null) },
-            label = { Text("Library") }
-        )
     }
 }
 
@@ -7383,6 +7394,57 @@ private fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
 }
 
 @Composable
+private fun RowScope.ExpressiveBottomNavigationItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    inactiveWidth: Dp
+) {
+    val containerColor by animateColorAsState(
+        if (selected) Color(0xFF4A171B) else Color(0xFF191B20),
+        label = "navigationContainer"
+    )
+    val contentColor by animateColorAsState(
+        if (selected) Color(0xFFFFA2A8) else Color(0xFFB4B7BF),
+        label = "navigationContent"
+    )
+    Surface(
+        onClick = onClick,
+        modifier = (if (selected) Modifier.weight(1f) else Modifier.width(inactiveWidth))
+            .semantics {
+                role = Role.Tab
+                this.selected = selected
+            },
+        shape = RoundedCornerShape(20.dp),
+        color = containerColor,
+        contentColor = contentColor,
+        tonalElevation = if (selected) 2.dp else 0.dp
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, if (selected) null else label, Modifier.size(22.dp))
+            AnimatedVisibility(
+                visible = selected,
+                enter = fadeIn() + expandHorizontally(),
+                exit = fadeOut() + shrinkHorizontally()
+            ) {
+                Text(
+                    label,
+                    Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun MobileSettingsBottomNavigation(
     currentPage: MobileSettingsPage,
     selectPage: (MobileSettingsPage) -> Unit
@@ -7397,48 +7459,13 @@ private fun MobileSettingsBottomNavigation(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             MobileSettingsPage.entries.forEach { page ->
-                val selected = page == currentPage
-                val containerColor by animateColorAsState(
-                    if (selected) Color(0xFF4A171B) else Color(0xFF191B20),
-                    label = "settingsNavigationContainer"
-                )
-                val contentColor by animateColorAsState(
-                    if (selected) Color(0xFFFFA2A8) else Color(0xFFB4B7BF),
-                    label = "settingsNavigationContent"
-                )
-                Surface(
+                ExpressiveBottomNavigationItem(
+                    icon = page.icon,
+                    label = page.title,
+                    selected = page == currentPage,
                     onClick = { selectPage(page) },
-                    modifier = (if (selected) Modifier.weight(1f) else Modifier.width(54.dp))
-                        .semantics {
-                            role = Role.Tab
-                            this.selected = selected
-                        },
-                    shape = RoundedCornerShape(20.dp),
-                    color = containerColor,
-                    contentColor = contentColor,
-                    tonalElevation = if (selected) 2.dp else 0.dp
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(page.icon, if (selected) null else page.title, Modifier.size(22.dp))
-                        AnimatedVisibility(
-                            visible = selected,
-                            enter = fadeIn() + expandHorizontally(),
-                            exit = fadeOut() + shrinkHorizontally()
-                        ) {
-                            Text(
-                                page.title,
-                                Modifier.padding(start = 8.dp),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
+                    inactiveWidth = 54.dp
+                )
             }
         }
     }

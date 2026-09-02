@@ -418,9 +418,10 @@ private fun ModernDestinationHub(
         GridItemSpan(maxLineSpan)
     }
 
-    val tmdbSections = state.tmdbSectionsBySurface[dashboardSurface]
-        .orEmpty()
-        .filter { section ->
+    val tmdbSections = if (dashboardSurface == DashboardSurface.LIVE_TV) {
+        emptyList()
+    } else state.tmdbSectionsBySurface[dashboardSurface]
+        .orEmpty().filter { section ->
             when (dashboardSurface) {
                 DashboardSurface.MOVIES -> !section.series
                 DashboardSurface.SERIES -> section.series
@@ -531,18 +532,20 @@ private fun ModernDestinationHub(
                             }
                         )
                     }
-                    item("configure-tmdb") {
-                        AssistChip(
-                            onClick = configureTmdb,
-                            label = { Text("TMDB sections") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.DashboardCustomize,
-                                    null,
-                                    Modifier.size(17.dp)
-                                )
-                            }
-                        )
+                    if (dashboardSurface != DashboardSurface.LIVE_TV) {
+                        item("configure-tmdb") {
+                            AssistChip(
+                                onClick = configureTmdb,
+                                label = { Text("TMDB sections") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.DashboardCustomize,
+                                        null,
+                                        Modifier.size(17.dp)
+                                    )
+                                }
+                            )
+                        }
                     }
 
                     when (dashboardSurface) {

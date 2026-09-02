@@ -17,6 +17,9 @@ import okhttp3.Request
 import com.nikhil.niktv.model.TmdbHomeSection
 import java.io.IOException
 import java.text.Normalizer
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 data class TmdbMovie(
@@ -205,6 +208,8 @@ class TmdbClient {
         when (section) {
             TmdbHomeSection.TRENDING_MOVIES -> trendingMovies(limit)
             TmdbHomeSection.TOP_RATED_MOVIES -> fetchMovies("/3/movie/top_rated", limit)
+            TmdbHomeSection.NEW_HOLLYWOOD_MOVIES -> recentMovies("en", "US", limit)
+            TmdbHomeSection.NEW_BOLLYWOOD_MOVIES -> recentMovies("hi", "IN", limit)
             TmdbHomeSection.HOLLYWOOD -> fetchMovies("/3/discover/movie", limit, mapOf("with_original_language" to "en", "region" to "US", "sort_by" to "popularity.desc"))
             TmdbHomeSection.BOLLYWOOD -> fetchMovies("/3/discover/movie", limit, mapOf("with_original_language" to "hi", "region" to "IN", "sort_by" to "popularity.desc"))
             TmdbHomeSection.ACTION -> discoverGenre("28", limit)
@@ -215,6 +220,8 @@ class TmdbClient {
             TmdbHomeSection.DOCUMENTARY -> discoverGenre("99", limit)
             TmdbHomeSection.TRENDING_SERIES,
             TmdbHomeSection.TOP_RATED_SERIES,
+            TmdbHomeSection.NEW_HOLLYWOOD_SERIES,
+            TmdbHomeSection.NEW_BOLLYWOOD_SERIES,
             TmdbHomeSection.HOLLYWOOD_SERIES,
             TmdbHomeSection.BOLLYWOOD_SERIES,
             TmdbHomeSection.ACTION_SERIES,
@@ -230,6 +237,8 @@ class TmdbClient {
         when (section) {
             TmdbHomeSection.TRENDING_SERIES -> trendingSeries(limit)
             TmdbHomeSection.TOP_RATED_SERIES -> fetchSeries("/3/tv/top_rated", limit)
+            TmdbHomeSection.NEW_HOLLYWOOD_SERIES -> recentSeries("en", "US", limit)
+            TmdbHomeSection.NEW_BOLLYWOOD_SERIES -> recentSeries("hi", "IN", limit)
             TmdbHomeSection.HOLLYWOOD_SERIES -> discoverSeries(limit, mapOf("with_original_language" to "en"))
             TmdbHomeSection.BOLLYWOOD_SERIES -> discoverSeries(limit, mapOf("with_original_language" to "hi"))
             TmdbHomeSection.ACTION_SERIES -> discoverSeries(limit, mapOf("with_genres" to "10759"))
@@ -245,6 +254,47 @@ class TmdbClient {
         "/3/discover/movie", limit,
         mapOf("with_genres" to genreId, "sort_by" to "popularity.desc", "include_adult" to "false")
     )
+
+    private fun recentMovies(language: String, region: String, limit: Int): List<TmdbMovie> {
+        val (startDate, endDate) = recentDateRange()
+        return fetchMovies(
+            "/3/discover/movie",
+            limit,
+            mapOf(
+                "with_original_language" to language,
+                "region" to region,
+                "release_date.gte" to startDate,
+                "release_date.lte" to endDate,
+                "sort_by" to "primary_release_date.desc",
+                "include_adult" to "false",
+                "include_video" to "false"
+            )
+        )
+    }
+
+    private fun recentSeries(language: String, originCountry: String, limit: Int): List<TmdbSeries> {
+        val (startDate, endDate) = recentDateRange()
+        return fetchSeries(
+            "/3/discover/tv",
+            limit,
+            mapOf(
+                "with_original_language" to language,
+                "with_origin_country" to originCountry,
+                "first_air_date.gte" to startDate,
+                "first_air_date.lte" to endDate,
+                "sort_by" to "first_air_date.desc",
+                "include_adult" to "false"
+            )
+        )
+    }
+
+    private fun recentDateRange(): Pair<String, String> {
+        val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val end = Calendar.getInstance()
+        val start = end.clone() as Calendar
+        start.add(Calendar.DAY_OF_YEAR, -120)
+        return formatter.format(start.time) to formatter.format(end.time)
+    }
 
     private fun discoverSeries(limit: Int, query: Map<String, String>) = fetchSeries(
         "/3/discover/tv",
