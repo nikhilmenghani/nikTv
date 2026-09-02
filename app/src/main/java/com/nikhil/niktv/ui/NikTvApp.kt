@@ -70,6 +70,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -5294,12 +5295,35 @@ private fun ModernSettingsScreen(
     val compactSettingsHeader = settingsConfiguration.screenWidthDp < 600
     val mobileSettingsPages = MobileSettingsPage.entries
     val settingsPagerState = rememberPagerState(pageCount = { mobileSettingsPages.size })
+    val mobileSettingsTopBarBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .then(
+                if (compactSettingsHeader) {
+                    Modifier.nestedScroll(mobileSettingsTopBarBehavior.nestedScrollConnection)
+                } else Modifier
+            ),
         containerColor = Color(0xFF07080A),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            ModernScreenTopBar("Settings", closeSettings)
+            if (compactSettingsHeader) {
+                LargeTopAppBar(
+                    title = { Text("Settings", fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = closeSettings) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(0xFF090A0C),
+                        scrolledContainerColor = Color(0xFF101216)
+                    ),
+                    scrollBehavior = mobileSettingsTopBarBehavior
+                )
+            } else {
+                ModernScreenTopBar("Settings", closeSettings)
+            }
         },
         bottomBar = {
             if (compactSettingsHeader) {
@@ -5329,10 +5353,10 @@ private fun ModernSettingsScreen(
             .padding(padding)
             .verticalScroll(rememberScrollState())
             .padding(
-                horizontal = if (compactSettingsHeader) 12.dp else 18.dp,
-                vertical = if (compactSettingsHeader) 12.dp else 18.dp
+                horizontal = if (compactSettingsHeader) 16.dp else 18.dp,
+                vertical = if (compactSettingsHeader) 20.dp else 18.dp
             ),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(if (compactSettingsHeader) 20.dp else 12.dp)
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -7277,6 +7301,63 @@ private fun formatScheduleTime(minutes: Int): String {
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     val mobilePage = LocalMobileSettingsPage.current
     if (mobilePage != null && settingsPageFor(title) != mobilePage) return
+    if (mobilePage != null) {
+        var expanded by rememberSaveable(title, mobilePage) { mutableStateOf(true) }
+        Surface(
+            Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF15171C),
+            border = BorderStroke(1.dp, Color(0xFF34373F)),
+            shadowElevation = 2.dp
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { expanded = !expanded }
+                        .padding(start = 8.dp, end = 2.dp, top = 5.dp, bottom = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .width(4.dp)
+                            .height(24.dp)
+                            .background(Color(0xFFE50914), CircleShape)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        title,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFF5F5F7)
+                    )
+                    IconButton(onClick = { expanded = !expanded }) {
+                        Icon(
+                            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            if (expanded) "Collapse $title" else "Expand $title"
+                        )
+                    }
+                }
+                AnimatedVisibility(visible = expanded) {
+                    Surface(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF0F1115),
+                        border = BorderStroke(1.dp, Color(0xFF292C33))
+                    ) {
+                        Column(
+                            Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            content = content
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
     Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.padding(horizontal = 6.dp),
