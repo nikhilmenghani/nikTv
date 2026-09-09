@@ -120,26 +120,46 @@ internal fun PlayerControlsTimeoutButton(
     onChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val displaySeconds = seconds.coerceIn(0, 99).toString()
+    val badgeWidth = if (displaySeconds.length > 1) 20.dp else 17.dp
+
     IconButton(
         onClick = { onChange(nextPlayerControlsTimeoutSeconds(seconds)) },
         modifier = modifier
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        Box(
+            modifier = Modifier.size(30.dp),
+            contentAlignment = Alignment.Center
         ) {
             Icon(
                 Icons.Default.Timer,
                 "Controls hide after ${seconds}s",
-                Modifier.size(20.dp),
+                Modifier.fillMaxSize(),
                 tint = Color.White
             )
-            Text(
-                "${seconds}s",
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1
-            )
+
+            Surface(
+                modifier = Modifier
+                    .offset(y = 2.dp)
+                    .width(badgeWidth)
+                    .height(17.dp),
+                shape = RoundedCornerShape(9.dp),
+                color = Color(0xFF090909),
+                contentColor = Color.White
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = displaySeconds,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
         }
     }
 }

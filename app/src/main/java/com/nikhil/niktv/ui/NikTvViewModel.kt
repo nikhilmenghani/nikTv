@@ -1676,10 +1676,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // An explicit selection applies while navigating seasons. On a fresh series open,
         // honor the configured first/latest preference instead of an older remembered season.
         val desired = requestedSeason
-        val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         val cached = if (forceRefresh) null else episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
-                (desired == null || cache.season == desired) && System.currentTimeMillis() - cache.cachedAtMillis < maxAge
+                (desired == null || cache.season == desired)
         }
         var result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season, it.page, it.hasMore) }
             ?: portal.episodeSeason(session, series, _state.value.seriesStartSeason, desired).also { loaded ->
@@ -1741,7 +1740,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("NikTvEpisodeMetadata", "TMDB episode metadata candidates=${tmdbEpisodes.size}; IPTV episodes=${result.episodes.size}")
                 result = result.copy(episodes = result.episodes.map { episode ->
                     val metadata = episode.episodeNumber?.let(metadataByNumber::get) ?: return@map episode
-                    val providerHasSpecificTitle = !episode.title.matches(Regex("(?i)^\\s*(?:season\\s+\\d+\\s*[·:-]\\s*)?episode\\s+\\d+\\s*$"))
+                    val providerHasSpecificTitle = episode.title.hasSpecificEpisodeTitle()
                     episode.copy(
                         title = if (providerHasSpecificTitle) episode.title else metadata.name ?: episode.title,
                         logo = metadata.stillUrl ?: episode.logo,
@@ -1758,6 +1757,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         result.selectedSeason?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
         _state.update { it.copy(items = result.episodes, availableSeriesSeasons = result.availableSeasons, selectedSeriesSeason = result.selectedSeason,
             episodePage = result.page, episodeHasMore = result.hasMore, episodeLoadingMore = false) }
+    }
+
+    private fun String.hasSpecificEpisodeTitle(): Boolean {
+        val remainder = trim()
+            .replaceFirst(
+                Regex("^\\s*(?:S\\d+\\s*[:._-]?\\s*E(?:P(?:ISODE)?)?\\s*\\d+|(?:EPISODE|EP|E)\\s*#?\\s*\\d+)\\s*[. :|\\-–—]*\\s*", RegexOption.IGNORE_CASE),
+                ""
+            )
+            .replaceFirst(Regex("^\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}\\s*[. :|\\-–—]*\\s*"), "")
+            .trim(' ', '.', ':', '-', '–', '—', '|')
+        return remainder.isNotBlank()
     }
 
     fun loadMoreEpisodes() {

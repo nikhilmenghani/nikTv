@@ -7660,14 +7660,14 @@ private fun MediaItem.displayTitle(series: MediaItem): String {
             Regex("^\\s*(?:S\\d+\\s*[:._-]?\\s*E(?:P(?:ISODE)?)?\\s*\\d+|(?:EPISODE|EP|E)\\s*#?\\s*\\d+)\\s*[. :|\\-–—]*\\s*", RegexOption.IGNORE_CASE),
             ""
         )
-        .replaceFirst(Regex("^\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s*[. :|\\-–—]*\\s*"), "")
+        .replaceFirst(Regex("^\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}\\s*[. :|\\-–—]*\\s*"), "")
         .trim(' ', '.', ':', '-', '–', '—', '|')
 
     return cleaned.takeIf { it.isNotBlank() } ?: original
 }
 
 private fun MediaItem.displayAirDate(): String? = episodeAirDate?.takeIf(String::isNotBlank)
-    ?: Regex("\\b(?:19|20)\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}\\b")
+    ?: Regex("\\b(?:19|20)\\d{2}[-/.]\\d{1,2}[-/.]\\d{1,2}\\b")
         .find(title)
         ?.value
 
