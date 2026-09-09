@@ -144,7 +144,10 @@ internal fun ModernSearchScreen(
             } else {
                 "Search"
             },
-            subtitle = state.session?.profile?.name,
+            subtitle = listOfNotNull(
+                state.session?.profile?.name?.takeIf { it.isNotBlank() },
+                selectedCategoryTitle.takeUnless { it == "All categories" }
+            ).joinToString(" · ").takeIf { it.isNotBlank() },
             close = close
         )
 
@@ -276,7 +279,31 @@ internal fun ModernSearchScreen(
             Spacer(Modifier.height(10.dp))
         }
 
-        if (state.recentSearches.isNotEmpty() && state.searchResults.isEmpty()) {
+        if (state.searchLocalLoading && !state.searchServerLoading) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CircularProgressIndicator(
+                    Modifier.size(16.dp),
+                    strokeWidth = 2.dp
+                )
+                Text(
+                    "Checking available items…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (
+            state.searchQuery.isBlank() &&
+            state.recentSearches.isNotEmpty() &&
+            state.searchResults.isEmpty()
+        ) {
             Text(
                 "Recent searches",
                 Modifier.padding(top = 4.dp, bottom = 6.dp),
@@ -291,7 +318,8 @@ internal fun ModernSearchScreen(
                 state.recentSearches
                     .filter {
                         it.type in searchVisibleTypes &&
-                            it.profileKey == activeProfileKey
+                            it.profileKey == activeProfileKey &&
+                            (!state.searchScopeLocked || it.type == state.searchType)
                     }
                     .forEach { recent ->
                         val recentShape = RoundedCornerShape(12.dp)
@@ -341,6 +369,7 @@ internal fun ModernSearchScreen(
         if (
             state.searchQuery.isNotBlank() &&
             state.searchResults.isEmpty() &&
+            !state.searchLocalLoading &&
             !state.searchServerLoading
         ) {
             Column(
@@ -357,11 +386,15 @@ internal fun ModernSearchScreen(
                     tint = Color(0xFF7C818A)
                 )
                 Text(
-                    "No cached results",
+                    "No matches available now",
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    "Search the portal once for this title. Requests are rate-limited for account safety.",
+                    if (selectedCategoryTitle == "All categories") {
+                        "Search your IPTV provider when you want to look beyond content already available on this device."
+                    } else {
+                        "No available match in $selectedCategoryTitle. Search your IPTV provider in this category when you want to look further."
+                    },
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 OutlinedButton(
@@ -371,7 +404,7 @@ internal fun ModernSearchScreen(
                 ) {
                     Icon(Icons.Default.CloudDownload, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Search server")
+                    Text("Search provider")
                 }
             }
         }
@@ -382,13 +415,11 @@ internal fun ModernSearchScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "${state.searchResults.size} results${
-                        if (state.searchUsedServer) {
-                            " · through page ${state.searchPage}"
-                        } else {
-                            " · cached"
-                        }
-                    }",
+                    if (state.searchUsedServer) {
+                        "${state.searchResults.size} results"
+                    } else {
+                        "${state.searchResults.size} available now"
+                    },
                     Modifier.weight(1f),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -398,7 +429,7 @@ internal fun ModernSearchScreen(
                     enabled = !state.searchServerLoading,
                     border = BorderStroke(1.dp, Color.Gray)
                 ) {
-                    Text("Search server")
+                    Text("Search provider")
                 }
             }
 

@@ -109,6 +109,7 @@ data class NikTvState(
     val searchType: SearchContentType = SearchContentType.SERIES,
     val searchScopeLocked: Boolean = false,
     val searchQuery: String = "",
+    val searchLocalLoading: Boolean = false,
     val searchResults: List<MediaItem> = emptyList(),
     val searchServerLoading: Boolean = false,
     val searchUsedServer: Boolean = false,
@@ -151,6 +152,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val favoriteSeriesMetadataMutex = Mutex()
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
+    private var searchPreviewJob: kotlinx.coroutines.Job? = null
 
     init {
         prepareProfileChooser()
@@ -2970,72 +2972,401 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
+    private fun catalogTypeForSearch(type: SearchContentType): CatalogType = when (type) {
+        SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
+        SearchContentType.MOVIES -> CatalogType.MOVIES
+        SearchContentType.SERIES,
+        SearchContentType.EPISODES -> CatalogType.SERIES
+    }
+
+    private fun searchTypeForCatalog(type: CatalogType): SearchContentType = when (type) {
+        CatalogType.LIVE_TV,
+        CatalogType.RADIO -> SearchContentType.LIVE_TV
+        CatalogType.MOVIES -> SearchContentType.MOVIES
+        CatalogType.SERIES -> SearchContentType.SERIES
+    }
+
     fun openSearch() {
+        searchPreviewJob?.cancel()
+
         val snapshot = _state.value
-        val tabType = if (snapshot.homeOpen) null else when (snapshot.selectedType) {
-            CatalogType.LIVE_TV -> SearchContentType.LIVE_TV
-            CatalogType.MOVIES -> SearchContentType.MOVIES
-            CatalogType.SERIES -> SearchContentType.SERIES
-            CatalogType.RADIO -> SearchContentType.LIVE_TV
-        }
+        val tabType =
+            if (snapshot.homeOpen || snapshot.favoritesOpen) {
+                null
+            } else {
+                searchTypeForCatalog(snapshot.selectedType)
+            }
         val effectiveType = tabType ?: snapshot.searchType
-        _state.update {
-            it.copy(
+
+        /*
+         * SEARCH_CONTEXT_CATEGORY_V2
+         *
+         * Tile-first browse keeps selectedCategory warm even on the top-level
+         * destination. That is not a real user-selected search scope. In the
+         * modern UI, inherit a category only when a category section is
+         * actually open. Legacy/grid browsing can use selectedCategory.
+         */
+        val contextualCategory =
+            if (tabType == null) {
+                null
+            } else if (snapshot.modernUiEnabled) {
+                snapshot.modernIptvCategory
+                    ?.takeIf { it.type == catalogTypeForSearch(effectiveType) }
+            } else {
+                snapshot.selectedCategory
+                    ?.takeIf { it.type == catalogTypeForSearch(effectiveType) }
+            }
+
+        val effectiveCategoryId = when {
+            contextualCategory != null -> contextualCategory.id
+            tabType != null -> "*"
+            snapshot.searchType == effectiveType -> snapshot.searchCategoryId
+            else -> "*"
+        }
+
+        _state.update { current ->
+            current.copy(
                 searchOpen = true,
                 settingsOpen = false,
                 favoritesOpen = false,
                 searchType = effectiveType,
                 searchScopeLocked = tabType != null,
-                searchResults = if (it.searchType == effectiveType) it.searchResults else emptyList(),
-                searchUsedServer = if (it.searchType == effectiveType) it.searchUsedServer else false,
-                searchPage = if (it.searchType == effectiveType) it.searchPage else 0,
-                searchHasMore = if (it.searchType == effectiveType) it.searchHasMore else false,
-                searchCategoryId = if (it.searchType == effectiveType) it.searchCategoryId else "*"
+                searchResults = emptyList(),
+                searchLocalLoading = current.searchQuery.isNotBlank(),
+                searchUsedServer = false,
+                searchPage = 0,
+                searchHasMore = false,
+                searchCategories = emptyList(),
+                searchCategoryId = effectiveCategoryId
             )
         }
+
         loadSearchCategories(effectiveType)
+
+        snapshot.searchQuery
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                scheduleSearchPreview(
+                    query = it,
+                    type = effectiveType,
+                    categoryId = effectiveCategoryId
+                )
+            }
     }
-    fun closeSearch() = _state.update { it.copy(searchOpen = false, searchServerLoading = false) }
-    fun setSearchType(type: SearchContentType) = _state.update {
-        if (it.searchScopeLocked) it else it.copy(searchType = type, searchResults = emptyList(), searchUsedServer = false, searchPage = 0,
-            searchHasMore = false, searchCategoryId = "*", searchCategories = emptyList())
-    }.also { if (!_state.value.searchScopeLocked) loadSearchCategories(type) }
-    fun setSearchCategory(categoryId: String) = _state.update {
-        it.copy(searchCategoryId = categoryId, searchResults = emptyList(), searchUsedServer = false, searchPage = 0, searchHasMore = false)
+
+    fun closeSearch() {
+        searchPreviewJob?.cancel()
+        _state.update {
+            it.copy(
+                searchOpen = false,
+                searchLocalLoading = false,
+                searchServerLoading = false
+            )
+        }
+    }
+
+    fun setSearchType(type: SearchContentType) {
+        val snapshot = _state.value
+        if (snapshot.searchScopeLocked || snapshot.searchType == type) return
+
+        searchPreviewJob?.cancel()
+
+        _state.update {
+            it.copy(
+                searchType = type,
+                searchResults = emptyList(),
+                searchLocalLoading = snapshot.searchQuery.isNotBlank(),
+                searchUsedServer = false,
+                searchPage = 0,
+                searchHasMore = false,
+                searchCategoryId = "*",
+                searchCategories = emptyList()
+            )
+        }
+
+        loadSearchCategories(type)
+
+        snapshot.searchQuery
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                scheduleSearchPreview(
+                    query = it,
+                    type = type,
+                    categoryId = "*"
+                )
+            }
+    }
+
+    fun setSearchCategory(categoryId: String) {
+        val snapshot = _state.value
+        if (snapshot.searchCategoryId == categoryId) return
+
+        searchPreviewJob?.cancel()
+
+        _state.update {
+            it.copy(
+                searchCategoryId = categoryId,
+                searchResults = emptyList(),
+                searchLocalLoading = snapshot.searchQuery.isNotBlank(),
+                searchUsedServer = false,
+                searchPage = 0,
+                searchHasMore = false
+            )
+        }
+
+        snapshot.searchQuery
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                scheduleSearchPreview(
+                    query = it,
+                    type = snapshot.searchType,
+                    categoryId = categoryId
+                )
+            }
     }
 
     private fun loadSearchCategories(type: SearchContentType) = viewModelScope.launch {
-        val catalogType = when (type) {
-            SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
-            SearchContentType.MOVIES -> CatalogType.MOVIES
-            else -> CatalogType.SERIES
-        }
+        val catalogType = catalogTypeForSearch(type)
         val session = _state.value.session ?: return@launch
         val profileKey = session.profile.cacheKey()
-        val cached = store.browseCatalog(catalogType, profileKey).first()?.categories.orEmpty()
-        val raw = if (cached.isNotEmpty()) cached else runCatching { portal.categories(session, catalogType) }.getOrDefault(emptyList())
-        val filtered = filterCategories(raw, profileKey, catalogType, _state.value.categoryFilters)
+        val beforeCategoryId = _state.value.searchCategoryId
+        val snapshot = _state.value
+
+        val memoryCategories =
+            snapshot.rawCategoriesByType[catalogType].orEmpty()
+                .ifEmpty {
+                    snapshot.browseCachesByType[catalogType]
+                        ?.categories
+                        .orEmpty()
+                }
+
+        val cached =
+            if (memoryCategories.isNotEmpty()) {
+                memoryCategories
+            } else {
+                store.browseCatalog(catalogType, profileKey)
+                    .first()
+                    ?.categories
+                    .orEmpty()
+            }
+
+        val raw =
+            if (cached.isNotEmpty()) {
+                cached
+            } else {
+                runCatching {
+                    portal.categories(session, catalogType)
+                }.getOrDefault(emptyList())
+            }
+
+        val filtered =
+            filterCategories(
+                raw,
+                profileKey,
+                catalogType,
+                _state.value.categoryFilters
+            ).distinctBy { it.id }
+
         _state.update { current ->
-            if (current.searchType == type) current.copy(searchCategories = filtered.distinctBy { it.id }) else current
+            if (current.searchType != type) {
+                current
+            } else {
+                val categoryId =
+                    current.searchCategoryId.takeIf { requested ->
+                        requested == "*" ||
+                            filtered.any { it.id == requested }
+                    } ?: "*"
+
+                current.copy(
+                    searchCategories = filtered,
+                    searchCategoryId = categoryId
+                )
+            }
+        }
+
+        val current = _state.value
+        if (
+            current.searchType == type &&
+            current.searchCategoryId != beforeCategoryId &&
+            current.searchQuery.isNotBlank()
+        ) {
+            scheduleSearchPreview(
+                query = current.searchQuery,
+                type = current.searchType,
+                categoryId = current.searchCategoryId
+            )
         }
     }
-    fun setSearchQuery(query: String) = _state.update { it.copy(searchQuery = query) }
+
+    fun setSearchQuery(query: String) {
+        searchPreviewJob?.cancel()
+
+        val trimmed = query.trim()
+        val snapshot = _state.value
+
+        _state.update {
+            it.copy(
+                searchQuery = query,
+                searchResults = emptyList(),
+                searchLocalLoading = trimmed.isNotBlank(),
+                searchUsedServer = false,
+                searchPage = 0,
+                searchHasMore = false
+            )
+        }
+
+        if (trimmed.isBlank()) return
+
+        scheduleSearchPreview(
+            query = query,
+            type = snapshot.searchType,
+            categoryId = snapshot.searchCategoryId
+        )
+    }
+
+    private fun scheduleSearchPreview(
+        query: String,
+        type: SearchContentType,
+        categoryId: String
+    ) {
+        searchPreviewJob?.cancel()
+
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) {
+            _state.update {
+                it.copy(
+                    searchResults = emptyList(),
+                    searchLocalLoading = false,
+                    searchUsedServer = false,
+                    searchPage = 0,
+                    searchHasMore = false
+                )
+            }
+            return
+        }
+
+        val profileKey =
+            _state.value.session?.profile?.cacheKey()
+                ?: run {
+                    _state.update { it.copy(searchLocalLoading = false) }
+                    return
+                }
+
+        searchPreviewJob = viewModelScope.launch {
+            delay(SEARCH_PREVIEW_DEBOUNCE_MS)
+
+            val saved =
+                store.pagedSearches.first().firstOrNull {
+                    it.profileKey == profileKey &&
+                        it.type == type &&
+                        it.categoryId == categoryId &&
+                        it.query.equals(normalizedQuery, true)
+                }
+
+            val local =
+                (
+                    localSearch(
+                        type = type,
+                        query = normalizedQuery,
+                        categoryId = categoryId
+                    ) +
+                        saved?.items.orEmpty()
+                    )
+                    .distinctBy { it.id }
+
+            _state.update { current ->
+                val stillCurrent =
+                    current.searchOpen &&
+                        current.session?.profile?.cacheKey() == profileKey &&
+                        current.searchType == type &&
+                        current.searchCategoryId == categoryId &&
+                        current.searchQuery.trim() == normalizedQuery
+
+                if (!stillCurrent) {
+                    current
+                } else {
+                    current.copy(
+                        searchResults = local,
+                        searchLocalLoading = false,
+                        searchUsedServer = saved != null,
+                        searchPage = saved?.lastPage ?: 0,
+                        searchHasMore = saved?.hasMore ?: false
+                    )
+                }
+            }
+        }
+    }
 
     fun search(forceServer: Boolean = false) {
+        searchPreviewJob?.cancel()
+
         val snapshot = _state.value
         val query = snapshot.searchQuery.trim()
+        val profileKey = snapshot.session?.profile?.cacheKey() ?: return
+
         if (query.isBlank() || snapshot.searchServerLoading) return
+
+        _state.update {
+            it.copy(searchLocalLoading = true)
+        }
+
         viewModelScope.launch {
             rememberSearch(query, snapshot.searchType)
-            val saved = store.pagedSearches.first().firstOrNull {
-                it.profileKey == snapshot.session?.profile?.cacheKey() && it.type == snapshot.searchType &&
-                    it.categoryId == snapshot.searchCategoryId && it.query.equals(query, true)
+
+            val saved =
+                store.pagedSearches.first().firstOrNull {
+                    it.profileKey == profileKey &&
+                        it.type == snapshot.searchType &&
+                        it.categoryId == snapshot.searchCategoryId &&
+                        it.query.equals(query, true)
+                }
+
+            val localOnly =
+                localSearch(
+                    type = snapshot.searchType,
+                    query = query,
+                    categoryId = snapshot.searchCategoryId
+                )
+
+            val available =
+                (localOnly + saved?.items.orEmpty())
+                    .distinctBy { it.id }
+
+            val current = _state.value
+            val stillCurrent =
+                current.session?.profile?.cacheKey() == profileKey &&
+                    current.searchType == snapshot.searchType &&
+                    current.searchCategoryId == snapshot.searchCategoryId &&
+                    current.searchQuery.trim() == query
+
+            if (!stillCurrent) return@launch
+
+            _state.update {
+                it.copy(
+                    searchResults = available,
+                    searchLocalLoading = false,
+                    searchUsedServer = saved != null,
+                    searchPage = saved?.lastPage ?: 0,
+                    searchHasMore = saved?.hasMore ?: false
+                )
             }
-            val local = (localSearch(snapshot.searchType, query) + saved?.items.orEmpty()).distinctBy { it.id }
-            _state.update { it.copy(searchResults = local, searchUsedServer = saved != null,
-                searchPage = saved?.lastPage ?: 0, searchHasMore = saved?.hasMore ?: false) }
-            if (!forceServer && local.isNotEmpty()) return@launch
-            fetchSearchPage(query, snapshot.searchType, snapshot.searchCategoryId, 1, emptyList())
+
+            /*
+             * SEARCH_PROVIDER_EXPLICIT_V2
+             *
+             * Normal Search/IME submission never escalates to the IPTV
+             * provider. The provider is contacted only from the explicit
+             * Search provider action.
+             */
+            if (!forceServer) return@launch
+
+            fetchSearchPage(
+                query = query,
+                type = snapshot.searchType,
+                categoryId = snapshot.searchCategoryId,
+                page = 1,
+                existing = localOnly
+            )
         }
     }
 
@@ -3054,78 +3385,268 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun fetchSearchPage(query: String, type: SearchContentType, categoryId: String, page: Int, existing: List<MediaItem>) {
-            _state.update { it.copy(searchServerLoading = true) }
-            val session = requireNotNull(_state.value.session)
-            runCatching { portal.search(session, type, query, page, categoryId) }
-                .onSuccess { result ->
-                    val combined = (existing + result.items).distinctBy { it.id }
-                    val cache = SearchResultCache(session.profile.cacheKey(), type, query, categoryId, result.page, result.hasMore, combined)
-                    store.savePagedSearch(cache)
-                    _state.update { current -> current.copy(searchResults = combined,
-                        searchServerLoading = false, searchUsedServer = true,
-                        searchPage = result.page, searchHasMore = result.hasMore) }
-                }.onFailure { error ->
-                    _state.update { it.copy(searchServerLoading = false, error = error.message ?: "Server search failed") }
-                }
-    }
-
-    private suspend fun localSearch(type: SearchContentType, query: String): List<MediaItem> {
-        val catalogType = when (type) {
-            SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
-            SearchContentType.SERIES -> CatalogType.SERIES
-            else -> CatalogType.MOVIES
+    private suspend fun fetchSearchPage(
+        query: String,
+        type: SearchContentType,
+        categoryId: String,
+        page: Int,
+        existing: List<MediaItem>
+    ) {
+        _state.update {
+            it.copy(
+                searchServerLoading = true,
+                searchLocalLoading = false
+            )
         }
-        val profileKey = _state.value.session?.profile?.cacheKey()
-        val indexed = store.searchCatalog(catalogType, profileKey).first()?.items.orEmpty()
-        val browsed = store.browseCatalog(catalogType, profileKey).first()?.itemsByCategory?.values?.flatten().orEmpty()
-        val episodes = if (type == SearchContentType.EPISODES) {
-            (_state.value.favorites.filter { it.kind == FavoriteKind.EPISODE }.map { it.media } +
-                _state.value.recentlyPlayed.filter { it.kind == FavoriteKind.EPISODE }.map { it.media } +
-                _state.value.items.filter { it.episodeNumber != null })
-        } else emptyList()
-        val source = if (type == SearchContentType.EPISODES) episodes else indexed + browsed
-        val categoryId = _state.value.searchCategoryId
-        return source.distinctBy { it.id }
-            .filter { (categoryId == "*" || it.portalCategoryId == categoryId) && it.title.matchesTitleKeywords(query) }
-            .sortedByDescending { it.title.titleKeywordScore(query) }
+
+        val session = requireNotNull(_state.value.session)
+        val profileKey = session.profile.cacheKey()
+
+        runCatching {
+            portal.search(session, type, query, page, categoryId)
+        }.onSuccess { result ->
+            val combined =
+                (existing + result.items)
+                    .distinctBy { it.id }
+
+            val cache =
+                SearchResultCache(
+                    profileKey,
+                    type,
+                    query,
+                    categoryId,
+                    result.page,
+                    result.hasMore,
+                    combined
+                )
+
+            store.savePagedSearch(cache)
+
+            _state.update { current ->
+                val stillCurrent =
+                    current.session?.profile?.cacheKey() == profileKey &&
+                        current.searchType == type &&
+                        current.searchCategoryId == categoryId &&
+                        current.searchQuery.trim().equals(query, true)
+
+                if (!stillCurrent) {
+                    current.copy(searchServerLoading = false)
+                } else {
+                    current.copy(
+                        searchResults = combined,
+                        searchServerLoading = false,
+                        searchUsedServer = true,
+                        searchPage = result.page,
+                        searchHasMore = result.hasMore
+                    )
+                }
+            }
+        }.onFailure { error ->
+            _state.update { current ->
+                val stillCurrent =
+                    current.session?.profile?.cacheKey() == profileKey &&
+                        current.searchType == type &&
+                        current.searchCategoryId == categoryId &&
+                        current.searchQuery.trim().equals(query, true)
+
+                if (!stillCurrent) {
+                    current.copy(searchServerLoading = false)
+                } else {
+                    current.copy(
+                        searchServerLoading = false,
+                        error = error.message ?: "Provider search failed"
+                    )
+                }
+            }
+        }
     }
 
-    private suspend fun rememberSearch(query: String, type: SearchContentType) {
+    private suspend fun localSearch(
+        type: SearchContentType,
+        query: String,
+        categoryId: String
+    ): List<MediaItem> {
+        val catalogType = catalogTypeForSearch(type)
+        val snapshot = _state.value
+        val profileKey = snapshot.session?.profile?.cacheKey()
+
+        fun scopedItems(cache: BrowseCatalogCache?): List<MediaItem> {
+            val itemsByCategory = cache?.itemsByCategory.orEmpty()
+            return if (categoryId == "*") {
+                itemsByCategory.values.flatten()
+            } else {
+                itemsByCategory[categoryId].orEmpty()
+            }
+        }
+
+        val memoryBrowse =
+            scopedItems(snapshot.browseCachesByType[catalogType])
+
+        val persistedBrowse =
+            scopedItems(
+                store.browseCatalog(catalogType, profileKey).first()
+            )
+
+        val indexed =
+            store.searchCatalog(catalogType, profileKey)
+                .first()
+                ?.items
+                .orEmpty()
+                .filter {
+                    categoryId == "*" ||
+                        it.portalCategoryId == categoryId
+                }
+
+        val visible =
+            if (
+                snapshot.selectedType == catalogType &&
+                snapshot.selectedSeries == null &&
+                (
+                    categoryId == "*" ||
+                        snapshot.selectedCategory?.id == categoryId
+                    )
+            ) {
+                snapshot.items
+            } else {
+                emptyList()
+            }
+
+        val episodes =
+            if (type == SearchContentType.EPISODES) {
+                (
+                    snapshot.favorites
+                        .filter { it.kind == FavoriteKind.EPISODE }
+                        .map { it.media } +
+                        snapshot.recentlyPlayed
+                            .filter { it.kind == FavoriteKind.EPISODE }
+                            .map { it.media } +
+                        snapshot.items
+                            .filter { it.episodeNumber != null }
+                    )
+                    .filter {
+                        categoryId == "*" ||
+                            it.portalCategoryId == categoryId
+                    }
+            } else {
+                emptyList()
+            }
+
+        val source =
+            if (type == SearchContentType.EPISODES) {
+                episodes
+            } else {
+                memoryBrowse +
+                    visible +
+                    indexed +
+                    persistedBrowse
+            }
+
+        return source
+            .distinctBy { it.id }
+            .filter { it.title.matchesTitleKeywords(query) }
+            .sortedByDescending {
+                it.title.titleKeywordScore(query)
+            }
+    }
+
+    private suspend fun rememberSearch(
+        query: String,
+        type: SearchContentType
+    ) {
         val snapshot = _state.value
         val categoryId = snapshot.searchCategoryId
-        val categoryTitle = snapshot.searchCategories.firstOrNull { it.id == categoryId }?.title
-            ?: if (categoryId == "*") "All categories" else categoryId
-        store.addRecentSearch(RecentSearch(
-            query = query,
-            type = type,
-            categoryId = categoryId,
-            categoryTitle = categoryTitle,
-            profileKey = snapshot.session?.profile?.cacheKey().orEmpty()
-        ))
+        val categoryTitle =
+            snapshot.searchCategories
+                .firstOrNull { it.id == categoryId }
+                ?.title
+                ?: if (categoryId == "*") {
+                    "All categories"
+                } else {
+                    categoryId
+                }
+
+        store.addRecentSearch(
+            RecentSearch(
+                query = query,
+                type = type,
+                categoryId = categoryId,
+                categoryTitle = categoryTitle,
+                profileKey =
+                    snapshot.session?.profile?.cacheKey().orEmpty()
+            )
+        )
     }
+
     fun useRecentSearch(search: RecentSearch) {
-        _state.update { it.copy(searchQuery = search.query, searchType = search.type, searchOpen = true,
-            searchCategoryId = search.categoryId, searchCategories = emptyList(), searchResults = emptyList()) }
-        loadSearchCategories(search.type)
-        search()
+        searchPreviewJob?.cancel()
+
+        val snapshot = _state.value
+        val effectiveType =
+            if (snapshot.searchScopeLocked) {
+                snapshot.searchType
+            } else {
+                search.type
+            }
+        val effectiveCategoryId =
+            if (
+                snapshot.searchScopeLocked &&
+                search.type != snapshot.searchType
+            ) {
+                snapshot.searchCategoryId
+            } else {
+                search.categoryId
+            }
+
+        _state.update {
+            it.copy(
+                searchQuery = search.query,
+                searchType = effectiveType,
+                searchOpen = true,
+                searchCategoryId = effectiveCategoryId,
+                searchCategories = emptyList(),
+                searchResults = emptyList(),
+                searchLocalLoading = search.query.isNotBlank(),
+                searchUsedServer = false,
+                searchPage = 0,
+                searchHasMore = false
+            )
+        }
+
+        loadSearchCategories(effectiveType)
+
+        scheduleSearchPreview(
+            query = search.query,
+            type = effectiveType,
+            categoryId = effectiveCategoryId
+        )
     }
+
     fun deleteRecentSearch(search: RecentSearch) = viewModelScope.launch {
         store.removeRecentSearch(search)
     }
+
     fun openSearchResult(item: MediaItem) {
         when (_state.value.searchType) {
             SearchContentType.LIVE_TV -> play(item, CatalogType.LIVE_TV)
             SearchContentType.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(searchOpen = false, homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = item, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null) }
+                _state.update {
+                    it.copy(
+                        searchOpen = false,
+                        homeOpen = false,
+                        selectedType = CatalogType.SERIES,
+                        selectedSeries = item,
+                        items = emptyList(),
+                        availableSeriesSeasons = emptyList(),
+                        selectedSeriesSeason = null
+                    )
+                }
                 loadSeriesEpisodes(item)
             }
             SearchContentType.MOVIES -> play(item, CatalogType.MOVIES)
             SearchContentType.EPISODES -> play(item, CatalogType.SERIES)
         }
     }
-
     private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) = task {
         playInternal(item, type, series, episodes)
     }
@@ -4272,5 +4793,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30
         private const val INITIAL_MOVIE_MATCH_LIMIT = 5
         private const val MAX_BACKGROUND_MATCH_REQUESTS = 8
+        private const val SEARCH_PREVIEW_DEBOUNCE_MS = 220L
     }
 }
