@@ -8348,8 +8348,14 @@ private fun ModernSeriesDetailScreen(
 
     fun activateEpisodeSearch() {
         episodeSearchEditing = true
-        episodeSearchRequester.requestFocus()
-        keyboardController?.show()
+    }
+
+    LaunchedEffect(episodeSearchEditing) {
+        if (episodeSearchEditing) {
+            delay(80L)
+            runCatching { episodeSearchRequester.requestFocus() }
+            keyboardController?.show()
+        }
     }
 
     val isFavorite = remember(state.favorites, series) {
@@ -8371,7 +8377,23 @@ private fun ModernSeriesDetailScreen(
     val filteredEpisodes = remember(seasonFilteredItems, searchQuery, comparator, episodeSortDescending) {
         val query = searchQuery.trim()
         val baseList = if (query.isBlank()) seasonFilteredItems else {
-            seasonFilteredItems.filter { ep -> ep.title.matchesTitleKeywords(query) || ep.episodeNumber?.toString() == query }
+            seasonFilteredItems.filter { ep ->
+                val episodeNumber = ep.episodeNumber ?: ep.title.episodeNumberFromTitle()
+                val seasonNumber = ep.seasonNumber ?: ep.title.seasonNumberFromTitle()
+                val episodeDescription = ep.description?.takeUnless { description ->
+                    description.trim().equals(series.description?.trim(), ignoreCase = true)
+                }.orEmpty()
+                val searchableDetails = buildString {
+                    append(ep.title)
+                    append(' ')
+                    append(episodeDescription)
+                    episodeNumber?.let { append(" episode $it e$it") }
+                    if (seasonNumber != null && episodeNumber != null) append(" s${seasonNumber}e$episodeNumber")
+                }
+                val numericQuery = query.toIntOrNull()
+                if (numericQuery != null) episodeNumber == numericQuery
+                else searchableDetails.matchesTitleKeywords(query)
+            }
                 .sortedByDescending { it.title.titleKeywordScore(query) }
         }
         if (selectedSeason != null) {
@@ -8429,7 +8451,7 @@ private fun ModernSeriesDetailScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(if (compactPortrait) 470.dp else 340.dp)
+                        .height(if (compactPortrait) 275.dp else 340.dp)
                 ) {
                     val backdropUrl = series.logo
                     if (!backdropUrl.isNullOrBlank()) {
@@ -8480,10 +8502,37 @@ private fun ModernSeriesDetailScreen(
                         }
                         Spacer(Modifier.weight(1f))
                         IconButton(
-                            onClick = openSearch,
+                            onClick = { activateEpisodeSearch() },
                             modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
                         ) {
-                            Icon(Icons.Default.Search, "Search", tint = Color.White)
+                            Icon(Icons.Default.Search, "Search episodes", tint = Color.White)
+                        }
+                        if (mobileEpisodeLayout) {
+                            IconButton(
+                                onClick = { primaryEpisodeToPlay?.let(play) },
+                                enabled = primaryEpisodeToPlay != null,
+                                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, "Play episode", tint = Color.White)
+                            }
+                            IconButton(
+                                onClick = { toggleFavorite(series) },
+                                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
+                            ) {
+                                Icon(if (isFavorite) Icons.Default.Check else Icons.Default.Add, if (isFavorite) "Remove from My List" else "Add to My List", tint = Color.White)
+                            }
+                            IconButton(
+                                onClick = toggleSeriesWatch,
+                                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
+                            ) {
+                                Icon(if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone, "Watch updates", tint = Color.White)
+                            }
+                            IconButton(
+                                onClick = refreshCatalog,
+                                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
+                            ) {
+                                Icon(Icons.Default.Refresh, "Refresh episodes", tint = Color.White)
+                            }
                         }
                         Spacer(Modifier.width(8.dp))
                         IconButton(
@@ -8502,10 +8551,10 @@ private fun ModernSeriesDetailScreen(
                     ) {
                         Text(
                             text = series.title,
-                            style = MaterialTheme.typography.headlineLarge,
+                            style = if (mobileEpisodeLayout) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge,
                             fontWeight = FontWeight.Black,
                             color = Color.White,
-                            maxLines = 2,
+                            maxLines = if (mobileEpisodeLayout) 1 else 2,
                             overflow = TextOverflow.Ellipsis
                         )
 
@@ -8542,7 +8591,7 @@ private fun ModernSeriesDetailScreen(
                             )
                         }
 
-                        if (!series.description.isNullOrBlank()) {
+                        if (!series.description.isNullOrBlank() && !mobileEpisodeLayout) {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 text = series.description,
@@ -8555,7 +8604,7 @@ private fun ModernSeriesDetailScreen(
 
                         Spacer(Modifier.height(16.dp))
 
-                        FlowRow(
+                        if (!mobileEpisodeLayout) FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
@@ -8719,13 +8768,13 @@ private fun ModernSeriesDetailScreen(
                         Spacer(Modifier.weight(1f))
 
                         Text(
-                            text = "${filteredEpisodes.size} episodes",
+                            text = "${filteredEpisodes.size} ${if (filteredEpisodes.size == 1) "episode" else "episodes"}",
                             style = MaterialTheme.typography.labelMedium,
                             color = Color.Gray
                         )
                     }
 
-                    OutlinedTextField(
+                    if (!mobileEpisodeLayout) OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
                         modifier = Modifier.fillMaxWidth()
@@ -8850,6 +8899,48 @@ private fun ModernSeriesDetailScreen(
                 }
             }
         }
+
+        if (mobileEpisodeLayout && episodeSearchEditing) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xF5151820),
+                shadowElevation = 12.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        episodeSearchEditing = false
+                        keyboardController?.hide()
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close episode search", tint = Color.White)
+                    }
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(episodeSearchRequester),
+                        placeholder = { Text("Episode name or number") },
+                        trailingIcon = if (searchQuery.isNotEmpty()) {{
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, "Clear episode search")
+                            }
+                        }} else null,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -8878,6 +8969,9 @@ private fun ModernEpisodeCard(
     val mobileLayout =
         !isTv &&
             episodeConfiguration.smallestScreenWidthDp < 600
+    val episodeDescription = episode.description?.takeUnless { description ->
+        description.trim().equals(series.description?.trim(), ignoreCase = true)
+    }
 
     val progressFraction = remember(progress) {
         if (progress != null && progress.durationMillis > 0L) {
@@ -9043,9 +9137,9 @@ private fun ModernEpisodeCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                if (!episode.description.isNullOrBlank()) {
+                if (!episodeDescription.isNullOrBlank()) {
                     Text(
-                        text = episode.description,
+                        text = episodeDescription,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.LightGray.copy(alpha = 0.8f),
                         maxLines = 2,

@@ -442,11 +442,14 @@ class StalkerPortalClient(private val context: Context) {
             if (item.boolish("is_episode") && command != null && explicitEpisode != null) {
                 listOf(MediaItem(
                     "${series.id}:$season:$explicitEpisode", item.string("name") ?: episodeTitle(season, explicitEpisode),
-                    series.logo, command, series.description, season, explicitEpisode, portalSeasonId ?: item.string("season_id"),
+                    series.logo, command, item.string("description"), season, explicitEpisode, portalSeasonId ?: item.string("season_id"),
                     series.portalCategoryId, item.string("id") ?: item.string("episode_id")
                 ))
             } else if (numbered.isNotEmpty() && command != null) numbered.map { episode ->
-                MediaItem("${series.id}:$season:$episode", episodeTitle(season, episode), series.logo, command, series.description, season, episode,
+                // This response shape contains only episode numbers. The parent description
+                // describes the whole series, so leave episode synopsis empty instead of
+                // repeating it on every card.
+                MediaItem("${series.id}:$season:$episode", episodeTitle(season, episode), series.logo, command, null, season, episode,
                     portalSeasonId ?: item.string("season_id"), series.portalCategoryId, item.string("id") ?: item.string("episode_id"))
             } else {
                 val episode = explicitEpisode
