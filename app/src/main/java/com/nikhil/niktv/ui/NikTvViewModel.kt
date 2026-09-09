@@ -3372,16 +3372,38 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadMoreSearch() {
         val snapshot = _state.value
-        if (!snapshot.searchHasMore || snapshot.searchServerLoading || snapshot.searchQuery.isBlank()) return
+        if (
+            !snapshot.searchHasMore ||
+            snapshot.searchServerLoading ||
+            snapshot.searchQuery.isBlank()
+        ) {
+            return
+        }
+
         viewModelScope.launch {
-            repeat(3) {
-                val current = _state.value
-                if (!current.searchHasMore || current.searchServerLoading) return@launch
-                val previousPage = current.searchPage
-                fetchSearchPage(current.searchQuery.trim(), current.searchType, current.searchCategoryId,
-                    current.searchPage + 1, current.searchResults)
-                if (_state.value.searchPage == previousPage) return@launch
+            val current = _state.value
+            if (
+                !current.searchHasMore ||
+                current.searchServerLoading ||
+                current.searchQuery.isBlank()
+            ) {
+                return@launch
             }
+
+            /*
+             * SEARCH_ONE_PAGE_LOAD_MORE_V3
+             *
+             * One activation owns one provider request. This prevents the
+             * previous three-page burst and keeps request cost predictable on
+             * IPTV portals.
+             */
+            fetchSearchPage(
+                query = current.searchQuery.trim(),
+                type = current.searchType,
+                categoryId = current.searchCategoryId,
+                page = current.searchPage + 1,
+                existing = current.searchResults
+            )
         }
     }
 
@@ -3409,6 +3431,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 (existing + result.items)
                     .distinctBy { it.id }
 
+            val actuallyAdded = combined.size > existing.size
+            val hasMore =
+                result.hasMore &&
+                    (page == 1 || actuallyAdded)
+
             val cache =
                 SearchResultCache(
                     profileKey,
@@ -3416,7 +3443,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     query,
                     categoryId,
                     result.page,
-                    result.hasMore,
+                    hasMore,
                     combined
                 )
 
@@ -3437,7 +3464,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         searchServerLoading = false,
                         searchUsedServer = true,
                         searchPage = result.page,
-                        searchHasMore = result.hasMore
+                        searchHasMore = hasMore
                     )
                 }
             }

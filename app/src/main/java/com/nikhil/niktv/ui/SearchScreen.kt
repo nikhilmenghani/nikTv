@@ -112,6 +112,7 @@ internal fun ModernSearchScreen(
             .firstOrNull { it.id == state.searchCategoryId }
             ?.title
             ?: "All categories"
+    val searchingSpecificCategory = state.searchCategoryId != "*"
 
     fun activateSearchField() {
         searchEditing = true
@@ -386,25 +387,73 @@ internal fun ModernSearchScreen(
                     tint = Color(0xFF7C818A)
                 )
                 Text(
-                    "No matches available now",
+                    when {
+                        state.searchUsedServer && searchingSpecificCategory ->
+                            "No provider matches in $selectedCategoryTitle"
+                        state.searchUsedServer ->
+                            "No provider matches"
+                        else ->
+                            "No matches available now"
+                    },
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    if (selectedCategoryTitle == "All categories") {
-                        "Search your IPTV provider when you want to look beyond content already available on this device."
-                    } else {
-                        "No available match in $selectedCategoryTitle. Search your IPTV provider in this category when you want to look further."
+                    when {
+                        !state.searchUsedServer && searchingSpecificCategory ->
+                            "Nothing available locally in $selectedCategoryTitle. Search your IPTV provider in this category before broadening the search."
+                        !state.searchUsedServer ->
+                            "Search your IPTV provider when you want to look beyond content already available on this device."
+                        searchingSpecificCategory ->
+                            "Nothing matched in $selectedCategoryTitle. Broaden only if you want to search every ${state.searchType.title.lowercase()} category."
+                        else ->
+                            "Try another title or choose a different category."
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                OutlinedButton(
-                    onClick = { search(true) },
-                    modifier = Modifier.remoteFocusFrame(),
-                    border = BorderStroke(1.dp, Color.Gray)
-                ) {
-                    Icon(Icons.Default.CloudDownload, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Search provider")
+
+                when {
+                    !state.searchUsedServer -> {
+                        OutlinedButton(
+                            onClick = { search(true) },
+                            modifier = Modifier.remoteFocusFrame(),
+                            enabled = !state.searchServerLoading,
+                            border = BorderStroke(1.dp, Color.Gray)
+                        ) {
+                            Icon(Icons.Default.CloudDownload, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (searchingSpecificCategory) {
+                                    "Search provider in $selectedCategoryTitle"
+                                } else {
+                                    "Search provider"
+                                }
+                            )
+                        }
+                    }
+
+                    searchingSpecificCategory -> {
+                        OutlinedButton(
+                            onClick = {
+                                /*
+                                 * SEARCH_BROADEN_EXPLICIT_V3
+                                 *
+                                 * setCategory updates StateFlow synchronously;
+                                 * search(true) then owns the explicit wildcard
+                                 * provider request and cancels the scheduled
+                                 * local preview from setCategory.
+                                 */
+                                setCategory("*")
+                                search(true)
+                            },
+                            modifier = Modifier.remoteFocusFrame(),
+                            enabled = !state.searchServerLoading,
+                            border = BorderStroke(1.dp, Color.Gray)
+                        ) {
+                            Icon(Icons.Default.SelectAll, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Search all categories")
+                        }
+                    }
                 }
             }
         }
@@ -423,13 +472,22 @@ internal fun ModernSearchScreen(
                     Modifier.weight(1f),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                OutlinedButton(
-                    onClick = { search(true) },
-                    modifier = Modifier.remoteFocusFrame(),
-                    enabled = !state.searchServerLoading,
-                    border = BorderStroke(1.dp, Color.Gray)
-                ) {
-                    Text("Search provider")
+
+                if (!state.searchUsedServer) {
+                    OutlinedButton(
+                        onClick = { search(true) },
+                        modifier = Modifier.remoteFocusFrame(),
+                        enabled = !state.searchServerLoading,
+                        border = BorderStroke(1.dp, Color.Gray)
+                    ) {
+                        Text(
+                            if (searchingSpecificCategory) {
+                                "Search provider in category"
+                            } else {
+                                "Search provider"
+                            }
+                        )
+                    }
                 }
             }
 
@@ -495,13 +553,13 @@ internal fun ModernSearchScreen(
                                 Icon(Icons.Default.ExpandMore, null)
                             }
                             Spacer(Modifier.width(8.dp))
-                            Text("Load up to 3 more pages")
+                            Text("Load more results")
                         }
                     }
                 } else if (state.searchUsedServer) {
                     item("all-pages-loaded") {
                         Text(
-                            "All available result pages loaded",
+                            "No more provider results",
                             Modifier
                                 .fillMaxWidth()
                                 .padding(16.dp),
