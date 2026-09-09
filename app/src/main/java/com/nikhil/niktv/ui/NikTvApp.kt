@@ -173,6 +173,7 @@ private fun Modifier.remoteFocusFrame(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isTvLikeDevice(configuration)
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
 
     /*
      * FIRE_TV_STABLE_FOCUS_V13
@@ -199,7 +200,7 @@ private fun Modifier.remoteFocusFrame(
             if (focused) {
                 Modifier
                     .then(
-                        if (!isTv) {
+                        if (!remoteNavigationActive) {
                             Modifier.shadow(
                                 16.dp,
                                 shape,
@@ -212,7 +213,7 @@ private fun Modifier.remoteFocusFrame(
                     )
                     .background(Color(0xFF3A1014), shape)
                     .border(
-                        if (isTv) 3.dp else 4.dp,
+                        if (remoteNavigationActive) 3.dp else 4.dp,
                         Color(0xFFFF3340),
                         shape
                     )

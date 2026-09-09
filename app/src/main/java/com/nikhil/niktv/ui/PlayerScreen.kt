@@ -759,6 +759,7 @@ fun PlayerScreen(
                     var gestureStartY = 0f
                     var gestureStartValue = 0f
                     var brightnessGesture = false
+                    var levelGestureEligible = false
                     var adjustingLevel = false
                     var gestureConsumed = false
                     var tapCandidate = false
@@ -866,10 +867,24 @@ fun PlayerScreen(
                         var panned = false
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
+                                val topSystemGestureInset =
+                                    48f * resources.displayMetrics.density
+                                if (
+                                    focusMode &&
+                                    event.y < topSystemGestureInset
+                                ) {
+                                    // Reserve the top edge for Android's transient
+                                    // status/navigation-bar reveal gesture.
+                                    return@setOnTouchListener false
+                                }
                                 dpadInteraction++
                                 lastTouch = Offset(event.x, event.y)
                                 gestureStartY = event.y
-                                brightnessGesture = event.x < playerView.width / 2f
+                                val sideBand = playerView.width * 0.34f
+                                val brightnessBand = event.x <= sideBand
+                                val volumeBand = event.x >= playerView.width - sideBand
+                                levelGestureEligible = brightnessBand || volumeBand
+                                brightnessGesture = brightnessBand
                                 adjustingLevel = false
                                 gestureConsumed = false
                                 tapCandidate = true
@@ -878,14 +893,18 @@ fun PlayerScreen(
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         event.y >= playerView.height * 0.72f
-                                gestureStartValue = if (brightnessGesture) {
-                                    val windowValue = activity?.window?.attributes?.screenBrightness ?: -1f
-                                    if (windowValue >= 0f) windowValue else {
-                                        Settings.System.getInt(viewContext.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                gestureStartValue = when {
+                                    !levelGestureEligible -> 0f
+                                    brightnessGesture -> {
+                                        val windowValue = activity?.window?.attributes?.screenBrightness ?: -1f
+                                        if (windowValue >= 0f) windowValue else {
+                                            Settings.System.getInt(viewContext.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                        }
                                     }
-                                } else {
-                                    audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() /
-                                        audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                    else -> {
+                                        audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() /
+                                            audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                    }
                                 }
                             }
                             MotionEvent.ACTION_POINTER_DOWN -> lastTouch = Offset(event.x, event.y)
@@ -918,7 +937,10 @@ fun PlayerScreen(
                                     lastTouch = current
                                 } else {
                                     val deltaY = gestureStartY - event.y
-                                    if (adjustingLevel || kotlin.math.abs(deltaY) > 24f * resources.displayMetrics.density) {
+                                    if (
+                                        levelGestureEligible &&
+                                        (adjustingLevel || kotlin.math.abs(deltaY) > 24f * resources.displayMetrics.density)
+                                    ) {
                                         adjustingLevel = true
                                         val level = (gestureStartValue + deltaY / playerView.height.coerceAtLeast(1)).coerceIn(0f, 1f)
                                         if (brightnessGesture) {
@@ -1346,7 +1368,7 @@ fun PlayerScreen(
         gestureFeedback?.let { (isBrightness, level) ->
             Surface(
                 modifier = Modifier
-                    .align(if (isBrightness) Alignment.CenterStart else Alignment.CenterEnd)
+                    .align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
                     .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)

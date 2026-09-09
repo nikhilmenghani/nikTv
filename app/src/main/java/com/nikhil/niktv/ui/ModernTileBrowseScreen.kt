@@ -1307,6 +1307,7 @@ private fun ModernCompactMediaCard(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isModernTileTv(configuration)
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
     val isTablet = !isTv && configuration.screenWidthDp >= 600
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
@@ -1396,8 +1397,8 @@ private fun ModernCompactMediaCard(
             color = backgroundColor,
             border = BorderStroke(
                 when {
-                    isTv && focused -> 3.dp
-                    !isTv && focused -> 2.dp
+                    remoteNavigationActive && focused -> 3.dp
+                    focused -> 2.dp
                     else -> 1.dp
                 },
                 borderColor

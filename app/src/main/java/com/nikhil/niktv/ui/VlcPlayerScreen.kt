@@ -444,6 +444,7 @@ internal fun VlcPlayerScreen(
                     var gestureStartY = 0f
                     var gestureStartValue = 0f
                     var brightnessGesture = false
+                    var levelGestureEligible = false
                     var adjustingLevel = false
                     var queueGestureOwned = false
                     var queueSwipeTriggered = false
@@ -478,9 +479,23 @@ internal fun VlcPlayerScreen(
                     layout.setOnTouchListener { _, event ->
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
+                                val topSystemGestureInset =
+                                    48f * layout.resources.displayMetrics.density
+                                if (
+                                    focusMode &&
+                                    event.y < topSystemGestureInset
+                                ) {
+                                    // Leave the fullscreen top edge to Android's
+                                    // transient status/navigation-bar reveal gesture.
+                                    return@setOnTouchListener false
+                                }
                                 dpadInteraction++
                                 gestureStartY = event.y
-                                brightnessGesture = event.x < layout.width / 2f
+                                val sideBand = layout.width * 0.34f
+                                val brightnessBand = event.x <= sideBand
+                                val volumeBand = event.x >= layout.width - sideBand
+                                levelGestureEligible = brightnessBand || volumeBand
+                                brightnessGesture = brightnessBand
                                 adjustingLevel = false
                                 queueSwipeTriggered = false
                                 queueGestureOwned =
@@ -488,14 +503,18 @@ internal fun VlcPlayerScreen(
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         event.y >= layout.height * 0.72f
-                                gestureStartValue = if (brightnessGesture) {
-                                    val configured = activity?.window?.attributes?.screenBrightness ?: -1f
-                                    if (configured >= 0f) configured else {
-                                        Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                gestureStartValue = when {
+                                    !levelGestureEligible -> 0f
+                                    brightnessGesture -> {
+                                        val configured = activity?.window?.attributes?.screenBrightness ?: -1f
+                                        if (configured >= 0f) configured else {
+                                            Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
+                                        }
                                     }
-                                } else {
-                                    audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() /
-                                        audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                    else -> {
+                                        audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() /
+                                            audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                    }
                                 }
                             }
                             MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1) {
@@ -513,6 +532,7 @@ internal fun VlcPlayerScreen(
                                         queueSwipeTriggered = true
                                     }
                                 } else if (
+                                    levelGestureEligible &&
                                     (adjustingLevel || kotlin.math.abs(deltaY) > 24f * layout.resources.displayMetrics.density)
                                 ) {
                                     adjustingLevel = true
@@ -898,7 +918,7 @@ internal fun VlcPlayerScreen(
         gestureFeedback?.let { (isBrightness, level) ->
             Surface(
                 modifier = Modifier
-                    .align(if (isBrightness) Alignment.CenterStart else Alignment.CenterEnd)
+                    .align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
                     .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp),
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)

@@ -1,6 +1,8 @@
 package com.nikhil.niktv.ui
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyCharacterMap
@@ -52,6 +54,20 @@ internal object OnScreenDpadPreferences {
     fun setEnabled(context: Context, enabled: Boolean) = prefs(context).edit().putBoolean(ENABLED, enabled).apply()
     fun sharedPreferences(context: Context) = prefs(context)
 }
+
+/*
+ * REMOTE_NAVIGATION_MODE_V1
+ *
+ * Layout remains device-specific. A phone using the diagnostic on-screen
+ * D-pad should, however, exercise the same focus presentation and remote
+ * navigation policies as a physical D-pad device.
+ */
+internal fun Context.usesRemoteNavigation(configuration: Configuration): Boolean =
+    packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK ==
+            Configuration.UI_MODE_TYPE_TELEVISION ||
+        !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN) ||
+        OnScreenDpadPreferences.enabled(this)
 
 @Composable
 internal fun rememberOnScreenDpadEnabled(): State<Boolean> {

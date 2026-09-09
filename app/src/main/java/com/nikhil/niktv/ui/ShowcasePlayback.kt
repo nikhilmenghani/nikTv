@@ -1191,6 +1191,10 @@ private fun BoxScope.ShowcaseRail(
         showcaseContext.isShowcaseTvLikeDevice(
             showcaseConfiguration
         )
+    val remoteNavigationActive =
+        showcaseContext.usesRemoteNavigation(
+            showcaseConfiguration
+        )
 
     /*
      * PLAYER_MOVIE_THUMBNAIL_READABILITY_V7
@@ -1332,7 +1336,7 @@ private fun BoxScope.ShowcaseRail(
                     val loadMoreScale by
                         androidx.compose.animation.core.animateFloatAsState(
                             targetValue =
-                                if (isTv) {
+                                if (remoteNavigationActive) {
                                     1f
                                 } else if (loadMoreFocused) {
                                     1.06f
@@ -1398,7 +1402,7 @@ private fun BoxScope.ShowcaseRail(
                                     if (loadMoreFocused) {
                                         Modifier
                                             .then(
-                                                if (!isTv) {
+                                                if (!remoteNavigationActive) {
                                                     Modifier.shadow(
                                                         12.dp,
                                                         loadMoreShape,
@@ -1574,6 +1578,10 @@ private fun ShowcasePosterCard(
         context.isShowcaseTvLikeDevice(
             configuration
         )
+    val remoteNavigationActive =
+        context.usesRemoteNavigation(
+            configuration
+        )
     val scope = rememberCoroutineScope()
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     var focused by remember { mutableStateOf(false) }
@@ -1588,7 +1596,7 @@ private fun ShowcasePosterCard(
      * The LazyRow slot does not change size, so focus movement remains stable.
      */
     val targetScale = when {
-        isTv -> 1f
+        remoteNavigationActive -> 1f
         focused -> 1.12f
         selected -> 1.04f
         else -> 0.92f
@@ -1626,7 +1634,7 @@ private fun ShowcasePosterCard(
                     scaleY = cardScale
                 }
                 .then(
-                    if (focused && !isTv) {
+                    if (focused && !remoteNavigationActive) {
                         Modifier.shadow(
                             16.dp,
                             RoundedCornerShape(8.dp),
@@ -1766,6 +1774,10 @@ private fun Modifier.showcaseFocusFrame(shape: RoundedCornerShape): Modifier {
         context.isShowcaseTvLikeDevice(
             configuration
         )
+    val remoteNavigationActive =
+        context.usesRemoteNavigation(
+            configuration
+        )
 
     return this
         .onFocusChanged { focused = it.isFocused }
@@ -1773,7 +1785,7 @@ private fun Modifier.showcaseFocusFrame(shape: RoundedCornerShape): Modifier {
             if (focused) {
                 Modifier
                     .then(
-                        if (!isTv) {
+                        if (!remoteNavigationActive) {
                             Modifier.shadow(
                                 12.dp,
                                 shape,
