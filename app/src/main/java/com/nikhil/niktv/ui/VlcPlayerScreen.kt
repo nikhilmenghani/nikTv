@@ -64,6 +64,7 @@ internal fun VlcPlayerScreen(
     modifier: Modifier = Modifier,
     embeddedMode: Boolean = false,
     controlsTimeoutSeconds: Int = 3,
+    onControlsTimeoutChanged: (Int) -> Unit = {},
     embeddedControlsDismissRequest: Int = 0,
     startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
@@ -139,6 +140,7 @@ internal fun VlcPlayerScreen(
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureSettingsRequester = remember(media.progressKey) { FocusRequester() }
+    val controlsTimeoutRequester = remember(media.progressKey) { FocusRequester() }
     val previousRequester = remember(media.progressKey) { FocusRequester() }
     val rewindRequester = remember(media.progressKey) { FocusRequester() }
     val playRequester = remember(media.progressKey) { FocusRequester() }
@@ -690,6 +692,7 @@ internal fun VlcPlayerScreen(
                             maxLines = 1
                         )
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                        PlayerDateTime(compact = compactMobileControls)
                         Text("Player: VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                     if (pipAvailable) IconButton(
@@ -747,9 +750,29 @@ internal fun VlcPlayerScreen(
                         pictureModeRequester = pictureModeRequester,
                         pictureSettingsRequester = pictureSettingsRequester,
                         leftRequester = playerSwitchRequester,
-                        rightRequester = fullscreenRequester,
+                        rightRequester = controlsTimeoutRequester,
                         downRequester = playRequester,
                         onControlsFocused = { controlsFocused = it }
+                    )
+                    PlayerControlsTimeoutButton(
+                        seconds = controlsTimeoutSeconds,
+                        onChange = { seconds ->
+                            onControlsTimeoutChanged(seconds)
+                            modeFeedback = "Controls hide after ${seconds}s"
+                        },
+                        modifier = Modifier
+                            .focusRequester(controlsTimeoutRequester)
+                            .focusProperties {
+                                left = pictureSettingsRequester
+                                right = fullscreenRequester
+                                down = playRequester
+                            }
+                            .playerDpadFocusRoutes(
+                                left = pictureSettingsRequester,
+                                right = fullscreenRequester,
+                                down = playRequester
+                            )
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
                     )
                     IconButton(
                         onClick = {
@@ -768,11 +791,11 @@ internal fun VlcPlayerScreen(
                         },
                         modifier = Modifier.focusRequester(fullscreenRequester)
                             .focusProperties {
-                                left = pictureSettingsRequester
+                                left = controlsTimeoutRequester
                                 down = playRequester
                             }
                             .playerDpadFocusRoutes(
-                                left = pictureSettingsRequester,
+                                left = controlsTimeoutRequester,
                                 down = playRequester
                             )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -788,11 +811,6 @@ internal fun VlcPlayerScreen(
                             vertical = if (compactMobileControls) 8.dp else 16.dp
                         )
                 ) {
-                    PlayerDateTime(
-                        compact = compactMobileControls,
-                        modifier = Modifier.align(Alignment.End)
-                    )
-
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {

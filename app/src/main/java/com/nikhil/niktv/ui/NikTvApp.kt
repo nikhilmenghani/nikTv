@@ -400,6 +400,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     queueLoadingMore = state.playbackQueueLoadingMore,
                     onLoadMoreQueue = vm::loadMorePlaybackQueue,
                     controlsTimeoutSeconds = state.playerControlsTimeoutSeconds,
+                    onControlsTimeoutChanged = vm::setPlayerControlsTimeoutSeconds,
                     playbackEngine = state.playbackEngine,
                     onPlaybackEngineChanged = vm::setPlaybackEngine,
                     startFullscreen = true
@@ -5512,9 +5513,14 @@ private fun ModernSettingsScreen(
                 Text("Hide controls after", style = MaterialTheme.typography.titleMedium)
                 Text("While video is playing, controls automatically disappear after this period of inactivity.", color = Color.Gray)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf(3 to "3s", 5 to "5s", 10 to "10s", 15 to "15s").forEachIndexed { index, (seconds, label) ->
-                        val shape = uniformSegmentShape(index, 4)
-                        SegmentedButton(state.playerControlsTimeoutSeconds == seconds, { setPlayerControlsTimeoutSeconds(seconds) }, shape, modifier = Modifier.remoteFocusFrame(shape)) { Text(label) }
+                    PLAYER_CONTROLS_TIMEOUT_OPTIONS.forEachIndexed { index, seconds ->
+                        val shape = uniformSegmentShape(index, PLAYER_CONTROLS_TIMEOUT_OPTIONS.size)
+                        SegmentedButton(
+                            state.playerControlsTimeoutSeconds == seconds,
+                            { setPlayerControlsTimeoutSeconds(seconds) },
+                            shape,
+                            modifier = Modifier.remoteFocusFrame(shape)
+                        ) { Text("${seconds}s") }
                     }
                 }
             }

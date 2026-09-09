@@ -1060,8 +1060,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.setCacheIntervalMinutes(minutes)
     }
 
-    fun setPlayerControlsTimeoutSeconds(seconds: Int) = viewModelScope.launch {
-        store.setPlayerControlsTimeoutSeconds(seconds)
+    fun setPlayerControlsTimeoutSeconds(seconds: Int) {
+        val normalized = seconds.coerceIn(1, 30)
+        _state.update { it.copy(playerControlsTimeoutSeconds = normalized) }
+        viewModelScope.launch {
+            store.setPlayerControlsTimeoutSeconds(normalized)
+        }
     }
 
     fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = viewModelScope.launch {

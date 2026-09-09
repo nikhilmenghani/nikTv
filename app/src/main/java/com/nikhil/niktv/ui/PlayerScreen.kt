@@ -101,6 +101,49 @@ internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
     PlaybackEngine.EXOPLAYER -> "ExoPlayer"
 }
 
+internal val PLAYER_CONTROLS_TIMEOUT_OPTIONS = listOf(3, 5, 10, 15)
+
+internal fun nextPlayerControlsTimeoutSeconds(current: Int): Int {
+    val exactIndex = PLAYER_CONTROLS_TIMEOUT_OPTIONS.indexOf(current)
+    if (exactIndex >= 0) {
+        return PLAYER_CONTROLS_TIMEOUT_OPTIONS[
+            (exactIndex + 1) % PLAYER_CONTROLS_TIMEOUT_OPTIONS.size
+        ]
+    }
+    return PLAYER_CONTROLS_TIMEOUT_OPTIONS.firstOrNull { it > current }
+        ?: PLAYER_CONTROLS_TIMEOUT_OPTIONS.first()
+}
+
+@Composable
+internal fun PlayerControlsTimeoutButton(
+    seconds: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = { onChange(nextPlayerControlsTimeoutSeconds(seconds)) },
+        modifier = modifier
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                Icons.Default.Timer,
+                "Controls hide after ${seconds}s",
+                Modifier.size(20.dp),
+                tint = Color.White
+            )
+            Text(
+                "${seconds}s",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1
+            )
+        }
+    }
+}
+
 private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
     PlaybackEngine.VLC -> "VLC"
     PlaybackEngine.EXOPLAYER -> "ExoPlayer"
@@ -133,6 +176,7 @@ fun PlayerScreen(
     queueLoadingMore: Boolean = false,
     onLoadMoreQueue: () -> Boolean = { false },
     controlsTimeoutSeconds: Int = 3,
+    onControlsTimeoutChanged: (Int) -> Unit = {},
     playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
     onPlaybackEngineChanged: (PlaybackEngine) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -175,6 +219,7 @@ fun PlayerScreen(
             modifier = modifier,
             embeddedMode = embeddedMode,
             controlsTimeoutSeconds = controlsTimeoutSeconds,
+            onControlsTimeoutChanged = onControlsTimeoutChanged,
             embeddedControlsDismissRequest = embeddedControlsDismissRequest,
             startFullscreen = startFullscreen,
             fullscreenOverride = fullscreenOverride,
@@ -301,6 +346,7 @@ fun PlayerScreen(
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rewindFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1084,6 +1130,7 @@ fun PlayerScreen(
                             maxLines = 1
                         )
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                        PlayerDateTime(compact = compactMobileControls)
                         videoDetails.takeIf { it.isNotBlank() }?.let {
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
@@ -1157,9 +1204,29 @@ fun PlayerScreen(
                         pictureModeRequester = pictureModeFocusRequester,
                         pictureSettingsRequester = pictureSettingsFocusRequester,
                         leftRequester = playerSwitchFocusRequester,
-                        rightRequester = fullscreenFocusRequester,
+                        rightRequester = controlsTimeoutFocusRequester,
                         downRequester = playPauseFocusRequester,
                         onControlsFocused = { controlsFocused = it }
+                    )
+                    PlayerControlsTimeoutButton(
+                        seconds = controlsTimeoutSeconds,
+                        onChange = { seconds ->
+                            onControlsTimeoutChanged(seconds)
+                            modeFeedback = "Controls hide after ${seconds}s"
+                        },
+                        modifier = Modifier
+                            .focusRequester(controlsTimeoutFocusRequester)
+                            .focusProperties {
+                                left = pictureSettingsFocusRequester
+                                right = fullscreenFocusRequester
+                                down = playPauseFocusRequester
+                            }
+                            .playerDpadFocusRoutes(
+                                left = pictureSettingsFocusRequester,
+                                right = fullscreenFocusRequester,
+                                down = playPauseFocusRequester
+                            )
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
                     )
                     IconButton(onClick = {
                         val enteringFullscreen = !focusMode
@@ -1178,11 +1245,11 @@ fun PlayerScreen(
                         }
                     }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
                         .focusProperties {
-                            left = pictureSettingsFocusRequester
+                            left = controlsTimeoutFocusRequester
                             down = playPauseFocusRequester
                         }
                         .playerDpadFocusRoutes(
-                            left = pictureSettingsFocusRequester,
+                            left = controlsTimeoutFocusRequester,
                             down = playPauseFocusRequester
                         )
                         .playerControlFocus(CircleShape) { controlsFocused = it }) {
@@ -1199,11 +1266,6 @@ fun PlayerScreen(
                             vertical = if (compactMobileControls) 8.dp else 16.dp
                         )
                 ) {
-                    PlayerDateTime(
-                        compact = compactMobileControls,
-                        modifier = Modifier.align(Alignment.End)
-                    )
-
                     val seekable = duration > 0L && media.catalogType != com.nikhil.niktv.model.CatalogType.LIVE_TV
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->
@@ -1270,12 +1332,6 @@ fun PlayerScreen(
                             Spacer(Modifier.width(8.dp))
                             Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
-                    }
-                    if (!embeddedMode) Box(
-                        modifier = Modifier.fillMaxWidth().height(20.dp),
-                        contentAlignment = Alignment.BottomEnd
-                    ) {
-                        Text(videoDetails, color = Color.LightGray, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
