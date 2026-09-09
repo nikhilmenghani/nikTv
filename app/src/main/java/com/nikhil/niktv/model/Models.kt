@@ -120,7 +120,9 @@ data class MediaItem(
     val streamType: String? = null,
     val catchupAvailable: Boolean? = null,
     /** Provider-supplied TMDB identity, when available (not a guessed match). */
-    val externalTmdbId: Int? = null
+    val externalTmdbId: Int? = null,
+    /** Episode air date in ISO-8601 form when supplied by IPTV or TMDB. */
+    val episodeAirDate: String? = null
 )
 
 @Serializable

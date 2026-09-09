@@ -76,6 +76,15 @@ data class TrendingSeries(
     val iptv: MediaItem? = null
 )
 
+data class TmdbEpisode(
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val name: String?,
+    val overview: String?,
+    val airDate: String?,
+    val stillUrl: String?
+)
+
 class TmdbClient {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -248,6 +257,61 @@ class TmdbClient {
             TmdbHomeSection.DOCUMENTARY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "99"))
             else -> emptyList()
         }
+    }
+
+    suspend fun confidentlyMatchSeries(item: MediaItem): TmdbSeries? = withContext(Dispatchers.IO) {
+        if (!configured) return@withContext null
+        item.externalTmdbId?.let { id ->
+            val root = execute("/3/tv/$id", emptyMap())
+            return@withContext root.toTmdbSeries()
+        }
+        val queries = listOf(
+            item.title.substringAfter(':').substringBefore(" - ").trim(),
+            item.title.substringBefore(" - ").trim(),
+            item.title.trim()
+        ).filter { it.isNotBlank() }.distinct()
+        for (query in queries) {
+            val wanted = query.tmdbLookupTitle()
+            fetchSeries("/3/search/tv", 8, mapOf("query" to wanted)).firstOrNull { candidate ->
+                candidate.name.tmdbLookupTitle() == wanted || candidate.originalName.tmdbLookupTitle() == wanted
+            }?.let { return@withContext it }
+        }
+        null
+    }
+
+    suspend fun seasonEpisodes(seriesId: Int, seasonNumber: Int): List<TmdbEpisode> = withContext(Dispatchers.IO) {
+        if (!configured) return@withContext emptyList()
+        val root = execute("/3/tv/$seriesId/season/$seasonNumber", emptyMap())
+        root["episodes"]?.jsonArray.orEmpty().mapNotNull { element ->
+            val episode = element.jsonObject
+            val number = episode["episode_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+            val season = episode["season_number"]?.jsonPrimitive?.intOrNull ?: seasonNumber
+            val still = episode["still_path"]?.jsonPrimitive?.contentOrNull
+            TmdbEpisode(
+                seasonNumber = season,
+                episodeNumber = number,
+                name = episode["name"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+                overview = episode["overview"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+                airDate = episode["air_date"]?.jsonPrimitive?.contentOrNull,
+                stillUrl = still?.let { "$BACKDROP_BASE_URL$it" }
+            )
+        }
+    }
+
+    private fun kotlinx.serialization.json.JsonObject.toTmdbSeries(): TmdbSeries? {
+        val id = this["id"]?.jsonPrimitive?.intOrNull ?: return null
+        val name = this["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (name.isBlank()) return null
+        val originalName = this["original_name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty().ifBlank { name }
+        val poster = this["poster_path"]?.jsonPrimitive?.contentOrNull
+        val backdrop = this["backdrop_path"]?.jsonPrimitive?.contentOrNull
+        return TmdbSeries(
+            id, name, originalName,
+            this["overview"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+            poster?.let { "$IMAGE_BASE_URL$it" }, backdrop?.let { "$BACKDROP_BASE_URL$it" },
+            this["first_air_date"]?.jsonPrimitive?.contentOrNull,
+            this["vote_average"]?.jsonPrimitive?.doubleOrNull
+        )
     }
 
     private fun discoverGenre(genreId: String, limit: Int) = fetchMovies(

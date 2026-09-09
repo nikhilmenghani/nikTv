@@ -1588,6 +1588,48 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 hasMore = next.hasMore
             )
         }
+        val favoriteSeries = allFavorites.any { favorite ->
+            (favorite.profileKey.isBlank() || favorite.profileKey == profileKey) &&
+                favorite.kind == FavoriteKind.SERIES && favorite.media.id == series.id
+        }
+        if (favoriteSeries && tmdb.configured && result.episodes.isNotEmpty() && result.episodes.none { it.externalTmdbId != null }) {
+            val savedTmdbId = store.tmdbMappings.first().firstOrNull { mapping ->
+                mapping.profileKey == profileKey && mapping.type == CatalogType.SERIES && mapping.media.id == series.id
+            }?.tmdbId
+            val tmdbSeries = savedTmdbId?.let { series.copy(externalTmdbId = it) } ?: series
+            val matched = runCatching { tmdb.confidentlyMatchSeries(tmdbSeries) }
+                .onFailure { Log.w("NikTvEpisodeMetadata", "TMDB favorite-series lookup failed", it) }
+                .getOrNull()
+            Log.i("NikTvEpisodeMetadata", "Favorite series TMDB match: ${matched?.id ?: "none"}; season=${result.selectedSeason}")
+            if (matched != null) {
+                val requestedNumbers = result.episodes.mapNotNull { it.episodeNumber }.toSet()
+                val selectedSeason = result.selectedSeason ?: result.episodes.firstNotNullOfOrNull { it.seasonNumber }
+                val exactSeasonEpisodes = selectedSeason?.let { season ->
+                    runCatching { tmdb.seasonEpisodes(matched.id, season) }.getOrDefault(emptyList())
+                }.orEmpty()
+                val exactMatches = exactSeasonEpisodes.filter { it.episodeNumber in requestedNumbers }
+                val tmdbEpisodes = if (exactMatches.isNotEmpty() || selectedSeason == 1) {
+                    exactSeasonEpisodes
+                } else {
+                    // Long-running daily series are sometimes represented by TMDB as one
+                    // season with absolute episode numbers while IPTV groups them by year.
+                    runCatching { tmdb.seasonEpisodes(matched.id, 1) }.getOrDefault(emptyList())
+                }
+                val metadataByNumber = tmdbEpisodes.associateBy { it.episodeNumber }
+                Log.i("NikTvEpisodeMetadata", "TMDB episode metadata candidates=${tmdbEpisodes.size}; IPTV episodes=${result.episodes.size}")
+                result = result.copy(episodes = result.episodes.map { episode ->
+                    val metadata = episode.episodeNumber?.let(metadataByNumber::get) ?: return@map episode
+                    val providerHasSpecificTitle = !episode.title.matches(Regex("(?i)^\\s*(?:season\\s+\\d+\\s*[·:-]\\s*)?episode\\s+\\d+\\s*$"))
+                    episode.copy(
+                        title = if (providerHasSpecificTitle) episode.title else metadata.name ?: episode.title,
+                        logo = metadata.stillUrl ?: episode.logo,
+                        description = metadata.overview ?: episode.description,
+                        externalTmdbId = matched.id,
+                        episodeAirDate = metadata.airDate ?: episode.episodeAirDate
+                    )
+                })
+            }
+        }
         val expandedCache = EpisodeSeasonCache(profileKey, series.id, result.selectedSeason, result.availableSeasons, result.episodes, result.page, result.hasMore)
         episodeSeasonCaches = listOf(expandedCache) + episodeSeasonCaches.filterNot { it.key == expandedCache.key }
         store.saveEpisodeSeasonCache(expandedCache)

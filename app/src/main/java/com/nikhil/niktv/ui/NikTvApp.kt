@@ -7660,6 +7660,11 @@ private fun MediaItem.displayTitle(series: MediaItem): String {
     return cleaned.takeIf { it.isNotBlank() } ?: original
 }
 
+private fun MediaItem.displayAirDate(): String? = episodeAirDate?.takeIf(String::isNotBlank)
+    ?: Regex("\\b(?:19|20)\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}\\b")
+        .find(title)
+        ?.value
+
 private fun String.seasonNumberFromTitle(): Int? {
     val patterns = listOf(
         Regex("(?i)S(?:EASON)?[ ._-]*(\\d+)"),
@@ -8997,13 +9002,30 @@ private fun ModernEpisodeCard(
                         epNumber != null -> "EP $epNumber"
                         else -> null
                     }
-                    if (badge != null) {
-                        Text(
-                            text = badge,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    val airDate = episode.displayAirDate()
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (badge != null) {
+                            Text(
+                                text = badge,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        if (airDate != null) {
+                            Surface(
+                                shape = RoundedCornerShape(5.dp),
+                                color = Color.White.copy(alpha = 0.10f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f))
+                            ) {
+                                Text(
+                                    text = airDate,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.LightGray,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     }
                     if (isCurrentResume && !mobileLayout) {
                         Surface(
