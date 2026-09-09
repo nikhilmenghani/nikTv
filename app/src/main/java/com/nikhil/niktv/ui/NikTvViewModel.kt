@@ -3735,7 +3735,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 listOf(item)
             } else when (type) {
             CatalogType.SERIES -> episodes.sortedWith(
-                compareBy<MediaItem>({ it.seasonNumber ?: Int.MAX_VALUE }, { it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE }, { it.title.lowercase() })
+                compareBy<MediaItem>(
+                    { it.seasonNumber ?: Int.MAX_VALUE },
+                    { it.episodeNumber ?: it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE },
+                    { it.title.lowercase() }
+                )
             )
             CatalogType.LIVE_TV,
             CatalogType.MOVIES,
