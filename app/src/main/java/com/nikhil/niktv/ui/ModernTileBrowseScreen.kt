@@ -864,10 +864,13 @@ private fun ModernNewEpisodesRow(
     clear: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
+    var focusedDetails by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    Column(Modifier.fillMaxWidth()) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp)
     ) {
         items(
             items = entries,
@@ -896,6 +899,7 @@ private fun ModernNewEpisodesRow(
             )
 
             ModernCompactMediaCard(
+                onFocusedDetails = { title, details -> focusedDetails = title to details },
                 item = displayMedia,
                 subtitle = listOf(watched.series.title, episodeLabel)
                     .filter { it.isNotBlank() }
@@ -907,6 +911,9 @@ private fun ModernNewEpisodesRow(
             )
         }
     }
+        HomeTileDetails(focusedDetails?.first.orEmpty(), focusedDetails?.second.orEmpty())
+    }
+
 }
 
 private fun NikTvState.modernVisibleIptvCategories(
@@ -1209,6 +1216,8 @@ private fun ModernContinueRow(
     clear: (RecentItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
+    var focusedDetails by remember { mutableStateOf<Pair<String, String>?>(null) }
+
     val listState = rememberLazyListState()
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val focusIds = remember(recents) {
@@ -1223,13 +1232,14 @@ private fun ModernContinueRow(
 
 
 
+    Column(Modifier.fillMaxWidth()) {
     LazyRow(
         state = listState,
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
         // Focus scales TV cards beyond their layout bounds. Horizontal inset
         // keeps the first and last cards from being clipped by the viewport.
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp)
     ) {
         items(
             items = recents,
@@ -1241,10 +1251,17 @@ private fun ModernContinueRow(
                 recent.media.id
             }
             ModernCompactMediaCard(
+                onFocusedDetails = { title, details -> focusedDetails = title to details },
                 item = recent.media,
                 subtitle =
                     if (recent.kind == FavoriteKind.SERIES) {
-                        recent.lastPlayed?.title ?: "Series"
+                        recent.lastPlayed?.let { episode ->
+                            listOfNotNull(
+                                episode.seasonNumber?.let { "Season $it" },
+                                episode.episodeNumber?.let { "Episode $it" },
+                                episode.title.takeIf { it.isNotBlank() }
+                            ).joinToString(" · ")
+                        } ?: "Series"
                     } else {
                         "Movie"
                     },
@@ -1267,6 +1284,9 @@ private fun ModernContinueRow(
             )
         }
     }
+        HomeTileDetails(focusedDetails?.first.orEmpty(), focusedDetails?.second.orEmpty())
+    }
+
 }
 
 @Composable
@@ -1277,6 +1297,7 @@ private fun ModernCompactMediaCard(
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     onClear: (() -> Unit)? = null,
+    onFocusedDetails: (String, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -1307,6 +1328,7 @@ private fun ModernCompactMediaCard(
         1f + (
             when {
                 isTv -> 0.08f
+                focused -> 0.08f
                 isTablet -> 0.035f
                 else -> 0.025f
             } * visualProgress
@@ -1331,9 +1353,9 @@ private fun ModernCompactMediaCard(
         modifier = modifier.then(returningTile.modifier)
             .width(
                 when {
-                    isTv -> 158.dp
-                    isTablet -> 168.dp
-                    else -> 148.dp
+                    isTv -> 184.dp
+                    isTablet -> 184.dp
+                    else -> 164.dp
                 }
             )
             .zIndex(visualProgress)
@@ -1361,6 +1383,7 @@ private fun ModernCompactMediaCard(
             )
             .onFocusChanged {
                 focused = it.isFocused
+                if (it.isFocused) onFocusedDetails(item.title, subtitle)
             }
             .remoteCombinedClickable(
                 interactionSource = interactionSource,
@@ -1401,17 +1424,20 @@ private fun ModernCompactMediaCard(
                     Column(Modifier.weight(1f)) {
                         Text(
                             item.title,
-                            maxLines = if (isTv) 1 else Int.MAX_VALUE,
-                            overflow = if (isTv) TextOverflow.Ellipsis else TextOverflow.Clip,
+                            style = MaterialTheme.typography.titleSmall,
+                            minLines = 2,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                             color = if (focused) Color.White else Color(0xFFD4D7DC)
                         )
                         Text(
                             subtitle,
-                            maxLines = if (isTv) 1 else Int.MAX_VALUE,
-                            overflow = if (isTv) TextOverflow.Ellipsis else TextOverflow.Clip,
+                            minLines = 2,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                             color = if (active) Color(0xFFBFC3CA) else Color(0xFF858B94),
-                            style = MaterialTheme.typography.labelSmall
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }

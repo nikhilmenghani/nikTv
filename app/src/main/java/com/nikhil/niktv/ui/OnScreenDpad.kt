@@ -5,10 +5,8 @@ import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
-import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,12 +23,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -38,6 +34,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import android.view.ViewConfiguration
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerEventPass
 import kotlin.math.roundToInt
 
 internal object OnScreenDpadPreferences {
@@ -68,103 +72,37 @@ internal fun rememberOnScreenDpadEnabled(): State<Boolean> {
 internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
-    val focusManager = LocalFocusManager.current
     val inputModeManager = LocalInputModeManager.current
     val virtualInputCommands = remember {
-        Channel<Pair<Int, FocusDirection?>>(Channel.UNLIMITED)
+        Channel<KeyEvent>(Channel.UNLIMITED)
     }
     var x by rememberSaveable { mutableFloatStateOf(0f) }
     var y by rememberSaveable { mutableFloatStateOf(0f) }
-    /*
-     * VIRTUAL_DPAD_ACTIVITY_DISPATCH_V40
-     *
-     * A hardware remote enters through Activity.dispatchKeyEvent(), which
-     * allows NikTV's explicit onPreviewKeyEvent routes, focusProperties and
-     * Compose's normal focus search to participate in the same event path.
-     *
-     * Dispatching directly to the Activity content child can report a key as
-     * handled inside one focus island without completing app-wide traversal.
-     */
-    fun send(keyCode: Int): Boolean {
-        val hostActivity = activity ?: return false
-        val pressedAt = SystemClock.uptimeMillis()
-        fun event(action: Int) = KeyEvent(
-            pressedAt,
-            SystemClock.uptimeMillis(),
-            action,
-            keyCode,
-            0,
-            0,
-            KeyCharacterMap.VIRTUAL_KEYBOARD,
-            0,
-            KeyEvent.FLAG_VIRTUAL_HARD_KEY,
-            InputDevice.SOURCE_DPAD
-        )
-        val handled =
-            hostActivity.dispatchKeyEvent(event(KeyEvent.ACTION_DOWN))
-        hostActivity.dispatchKeyEvent(event(KeyEvent.ACTION_UP))
-        return handled
-    }
-
-    /*
-     * VIRTUAL_DPAD_ORDERED_TOUCH_BRIDGE_V41
-     *
-     * Pointer taps put Android/Compose into touch mode while the gesture is
-     * still being delivered. Process virtual remote input on the next frame,
-     * after the tap has completed, so Keyboard mode and focus traversal are
-     * stable. A Channel preserves one command per tap and their exact order.
-     */
-    LaunchedEffect(virtualInputCommands) {
-        for ((keyCode, direction) in virtualInputCommands) {
-            // Finish the pointer/tap frame before switching input modes.
-            withFrameNanos { }
-            inputModeManager.requestInputMode(InputMode.Keyboard)
-
-            if (send(keyCode)) {
-                continue
+    // A single ordered stream follows the same Activity path as a remote.
+    // Unhandled keys must stay unhandled: no second focus search or Tab escape.
+    LaunchedEffect(activity, inputModeManager) {
+        val heldKeys = mutableMapOf<Int, KeyEvent>()
+        try {
+            for (event in virtualInputCommands) {
+                withFrameNanos { }
+                inputModeManager.requestInputMode(InputMode.Keyboard)
+                if (event.action == KeyEvent.ACTION_DOWN) heldKeys[event.keyCode] = event
+                else heldKeys.remove(event.keyCode)
+                activity?.dispatchKeyEvent(event)
             }
-
-            if (direction != null && focusManager.moveFocus(direction)) {
-                continue
-            }
-
-            /*
-             * VIRTUAL_DPAD_NO_HIDDEN_FOCUS_TARGET_V41
-             *
-             * Never bootstrap through an invisible focusable node inside the
-             * D-pad overlay. Such a node participates in spatial focus search
-             * and can hijack Right/Down navigation across the entire app.
-             *
-             * If a screen has no current focus owner yet, enter its natural
-             * traversal order directly from the Compose root. At a genuine
-             * directional dead-end this also provides a linear escape path
-             * instead of trapping the virtual remote in a small focus island.
-             */
-            if (direction != null) {
-                val escapeDirection =
-                    when (direction) {
-                        FocusDirection.Left,
-                        FocusDirection.Up -> FocusDirection.Previous
-
-                        else -> FocusDirection.Next
-                    }
-                focusManager.moveFocus(escapeDirection)
+        } finally {
+            // Hiding the overlay or leaving the Activity must release holds.
+            heldKeys.values.toList().forEach { down ->
+                activity?.dispatchKeyEvent(virtualRemoteEvent(
+                    down.keyCode, down.downTime, KeyEvent.ACTION_UP, cancelled = true
+                ))
             }
         }
     }
-
-    fun navigate(
-        keyCode: Int,
-        direction: FocusDirection
-    ) {
-        virtualInputCommands.trySend(keyCode to direction)
+    DisposableEffect(virtualInputCommands) {
+        onDispose { virtualInputCommands.close() }
     }
-
-    fun select() {
-        virtualInputCommands.trySend(
-            KeyEvent.KEYCODE_DPAD_CENTER to null
-        )
-    }
+    val send: (KeyEvent) -> Unit = { event -> virtualInputCommands.trySend(event) }
     Surface(
         modifier = modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) },
         shape = RoundedCornerShape(24.dp),
@@ -194,77 +132,89 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
                     .padding(3.dp),
                 tint = Color.LightGray
             )
-            DpadKey(Icons.Default.KeyboardArrowUp, "Up") {
-                navigate(
-                    KeyEvent.KEYCODE_DPAD_UP,
-                    FocusDirection.Up
-                )
-            }
+            DpadKey(Icons.Default.KeyboardArrowUp, "Up", KeyEvent.KEYCODE_DPAD_UP, send)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left") {
-                    navigate(
-                        KeyEvent.KEYCODE_DPAD_LEFT,
-                        FocusDirection.Left
-                    )
-                }
-                DpadKey(null, "Select") {
-                    select()
-                }
-                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right") {
-                    navigate(
-                        KeyEvent.KEYCODE_DPAD_RIGHT,
-                        FocusDirection.Right
-                    )
-                }
+                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left", KeyEvent.KEYCODE_DPAD_LEFT, send)
+                DpadKey(null, "Select", KeyEvent.KEYCODE_DPAD_CENTER, send)
+                DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right", KeyEvent.KEYCODE_DPAD_RIGHT, send)
             }
-            DpadKey(Icons.Default.KeyboardArrowDown, "Down") {
-                navigate(
-                    KeyEvent.KEYCODE_DPAD_DOWN,
-                    FocusDirection.Down
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .height(46.dp)
-                    .padding(horizontal = 12.dp)
-                    .pointerInput(activity) {
-                        detectTapGestures {
-                            (activity as? ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
-                        }
-                    }
-                    .semantics {
-                        contentDescription = "Back"
-                        onClick {
-                            (activity as? ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
-                            true
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Back")
-            }
+            DpadKey(Icons.Default.KeyboardArrowDown, "Down", KeyEvent.KEYCODE_DPAD_DOWN, send)
+            DpadKey(Icons.AutoMirrored.Filled.ArrowBack, "Back", KeyEvent.KEYCODE_BACK, send)
         }
     }
 }
 
+private fun virtualRemoteEvent(
+    keyCode: Int,
+    downTime: Long,
+    action: Int,
+    repeat: Int = 0,
+    cancelled: Boolean = false
+): KeyEvent = KeyEvent(
+    downTime, SystemClock.uptimeMillis(), action, keyCode, repeat, 0,
+    KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
+    KeyEvent.FLAG_VIRTUAL_HARD_KEY or
+        (if (repeat == 1) KeyEvent.FLAG_LONG_PRESS else 0) or
+        (if (cancelled) KeyEvent.FLAG_CANCELED else 0),
+    InputDevice.SOURCE_DPAD
+)
+
 @Composable
-private fun DpadKey(icon: androidx.compose.ui.graphics.vector.ImageVector?, label: String, onClick: () -> Unit) {
+private fun DpadKey(
+    icon: androidx.compose.ui.graphics.vector.ImageVector?,
+    label: String,
+    keyCode: Int,
+    send: (KeyEvent) -> Unit
+) {
+    val dispatch by rememberUpdatedState(send)
+    var pressed by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .size(46.dp)
-            .pointerInput(onClick) { detectTapGestures { onClick() } }
+            .background(if (pressed) Color.White.copy(alpha = .18f) else Color.Transparent, CircleShape)
+            // Stable key: focus changes/recomposition must not cancel a hold.
+            .pointerInput(keyCode) {
+                coroutineScope {
+                    val repeatScope = this
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val downTime = SystemClock.uptimeMillis()
+                        pressed = true
+                        dispatch(virtualRemoteEvent(keyCode, downTime, KeyEvent.ACTION_DOWN))
+                        val repeats = repeatScope.launch {
+                            delay(ViewConfiguration.getLongPressTimeout().toLong())
+                            var repeat = 1
+                            while (true) {
+                                dispatch(virtualRemoteEvent(keyCode, downTime, KeyEvent.ACTION_DOWN, repeat++))
+                                delay(ViewConfiguration.getKeyRepeatDelay().toLong())
+                            }
+                        }
+                        var cancelled = true
+                        try {
+                            val up = waitForUpOrCancellation(pass = PointerEventPass.Main)
+                            up?.consume()
+                            cancelled = up == null
+                        } finally {
+                            repeats.cancel()
+                            pressed = false
+                            dispatch(virtualRemoteEvent(keyCode, downTime, KeyEvent.ACTION_UP, cancelled = cancelled))
+                        }
+                    }
+                }
+            }
             .semantics {
                 contentDescription = label
                 onClick {
-                    onClick()
+                    val downTime = SystemClock.uptimeMillis()
+                    dispatch(virtualRemoteEvent(keyCode, downTime, KeyEvent.ACTION_DOWN))
+                    dispatch(virtualRemoteEvent(keyCode, downTime, KeyEvent.ACTION_UP))
                     true
                 }
             },
         contentAlignment = Alignment.Center
     ) {
-        if (icon != null) Icon(icon, label, Modifier.size(30.dp), tint = Color.White)
+        if (icon != null) Icon(icon, null, Modifier.size(30.dp), tint = Color.White)
         else Surface(Modifier.size(22.dp), CircleShape, color = Color(0xFFE50914)) { }
     }
 }

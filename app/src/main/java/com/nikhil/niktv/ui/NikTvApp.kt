@@ -251,12 +251,15 @@ internal fun Modifier.remoteCombinedClickable(
                     true
                 }
                 KeyEventType.KeyUp -> {
-                    val invokeLongClick = keyIsDown && longPressReached && onLongClick != null
+                    val activate = keyIsDown && !event.nativeKeyEvent.isCanceled
+                    val invokeLongClick = activate && longPressReached && onLongClick != null
                     longPressJob?.cancel()
                     longPressJob = null
                     keyIsDown = false
                     longPressReached = false
-                    if (invokeLongClick) onLongClick?.invoke() else onClick()
+                    if (activate) {
+                        if (invokeLongClick) onLongClick?.invoke() else onClick()
+                    }
                     true
                 }
                 else -> false
@@ -3920,6 +3923,7 @@ private fun <T> ModernRail(
     isFavorite: (T) -> Boolean = { false },
     toggleFavorite: ((T) -> Unit)? = null
 ) {
+    var focusedDetails by remember(title) { mutableStateOf<Pair<String, String>?>(null) }
     val maximum = maximumDisplayCount.coerceAtLeast(1)
     val cappedMaximum = minOf(entries.size, maximum)
     var visibleCount by remember(title, initialDisplayCount, maximumDisplayCount) {
@@ -3960,7 +3964,7 @@ private fun <T> ModernRail(
 
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
-        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             items(entries.take(visibleCount), key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry ->
                 val itemKey = "${media(entry).id}-${media(entry).title}"
                 ModernPosterCard(
@@ -3968,20 +3972,24 @@ private fun <T> ModernRail(
                     aspectRatio = aspectRatio(entry),
                     modifier = Modifier
                         .width(cardWidth)
+                        .onFocusChanged { if (it.hasFocus) focusedDetails = media(entry).title to subtitle(entry).orEmpty() }
                         .focusRequester(itemFocusRequesters.getOrPut(itemKey) { FocusRequester() }),
                     progress = progress(entry),
                     onClick = { open(entry) },
-                    titleMaxLines = titleMaxLines,
+                    titleMaxLines = 2,
+                    titleMinLines = 2,
+                    focusedScale = 1.08f,
                     isFavorite = isFavorite(entry),
                     toggleFavorite = toggleFavorite?.let { action -> { action(entry) } },
                     removeAction = remove?.let { action -> { action(entry) } }
                 ) {
-                    subtitle(entry)?.takeIf { it.isNotBlank() }?.let {
+                    subtitle(entry).orEmpty().let {
                         Text(
                             it,
                             color = Color.Gray,
                             style = MaterialTheme.typography.labelSmall,
-                            maxLines = subtitleMaxLines,
+                            minLines = 2,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -4031,6 +4039,7 @@ private fun <T> ModernRail(
                 }
             }
         }
+        HomeTileDetails(focusedDetails?.first.orEmpty(), focusedDetails?.second.orEmpty())
     }
 }
 
@@ -4120,6 +4129,7 @@ private fun ModernPosterCard(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     titleMaxLines: Int = 1,
+    titleMinLines: Int = 1,
     isFavorite: Boolean = false,
     toggleFavorite: (() -> Unit)? = null,
     removeAction: (() -> Unit)? = null,
@@ -4258,11 +4268,14 @@ private fun ModernPosterCard(
                 modifier = if (focused && titleMaxLines == 1) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                 color = Color.White,
                 style =
-                    if (isTv) {
+                    if (titleMinLines > 1) {
+                        MaterialTheme.typography.titleSmall
+                    } else if (isTv) {
                         MaterialTheme.typography.labelMedium
                     } else {
                         MaterialTheme.typography.labelLarge
                     },
+                minLines = titleMinLines,
                 maxLines = titleMaxLines,
                 overflow = TextOverflow.Ellipsis
             )
