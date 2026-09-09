@@ -8364,6 +8364,7 @@ private fun ModernSeriesDetailScreen(
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
     var searchQuery by rememberSaveable(series.id) { mutableStateOf("") }
     var episodeSearchEditing by rememberSaveable(series.id) { mutableStateOf(false) }
+    var handledPlaybackReturnFocusId by remember(series.id) { mutableStateOf<String?>(null) }
     var seasonDropdownExpanded by remember { mutableStateOf(false) }
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
     val returningEpisodeRequester = remember(series.id) { FocusRequester() }
@@ -8470,6 +8471,7 @@ private fun ModernSeriesDetailScreen(
 
     LaunchedEffect(state.playbackReturnFocusId, filteredEpisodes) {
         val returningId = state.playbackReturnFocusId ?: return@LaunchedEffect
+        if (handledPlaybackReturnFocusId == returningId) return@LaunchedEffect
         // Keep the filter and result position, but do not reopen the search editor or
         // keyboard after returning from playback.
         episodeSearchEditing = false
@@ -8479,6 +8481,7 @@ private fun ModernSeriesDetailScreen(
             episodeListState.scrollToItem(episodeIndex + 2)
             delay(120L)
             runCatching { returningEpisodeRequester.requestFocus() }
+            handledPlaybackReturnFocusId = returningId
         }
     }
 
