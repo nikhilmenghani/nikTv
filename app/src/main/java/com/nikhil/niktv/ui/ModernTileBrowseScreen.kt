@@ -1282,8 +1282,15 @@ private fun ModernContinueRow(
                 },
                 onClear = { clear(recent) },
                 progress = playbackProgress.firstOrNull { saved ->
-                    val target = recent.lastPlayed ?: recent.media
-                    saved.key.contains(target.id)
+                    val episode = recent.lastPlayed
+                    if (recent.kind == FavoriteKind.SERIES && episode != null) {
+                        saved.key.contains("series:${recent.media.id}|") &&
+                            saved.key.contains("|s:${episode.seasonNumber ?: -1}|") &&
+                            saved.key.contains("|e:${episode.episodeNumber ?: -1}|") ||
+                            saved.key == "SERIES:${episode.id}"
+                    } else {
+                        saved.key.contains(recent.media.id)
+                    }
                 },
                 modifier = Modifier.focusRequester(
                     requesters.getOrPut(focusId) { FocusRequester() }
@@ -1362,9 +1369,9 @@ private fun ModernCompactMediaCard(
         modifier = modifier.then(returningTile.modifier)
             .width(
                 when {
-                    isTv -> 184.dp
-                    isTablet -> 184.dp
-                    else -> 164.dp
+                    isTv -> 196.dp
+                    isTablet -> 192.dp
+                    else -> 172.dp
                 }
             )
             .zIndex(visualProgress)
@@ -1416,7 +1423,7 @@ private fun ModernCompactMediaCard(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .aspectRatio(1.65f)
                     .background(Color(0xFF222222))
             ) {
                 ModernPosterImage(

@@ -303,14 +303,19 @@ class StalkerPortalClient(private val context: Context) {
         }
         val cmd = item.command ?: error("This item has no playback command")
         val playbackCommands = if (type == CatalogType.SERIES) {
-            val movieId = item.id.substringBefore(':')
-            val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-                "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
-                "season_id" to item.portalSeasonId.orEmpty(), "episode_id" to item.portalEpisodeId.orEmpty(),
-                "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
-                "hd" to "0", "ended" to "0", "p" to "1"
-            ))).payload().arrayFromData().mapNotNull { it as? JsonObject }
-            listOf(details.firstOrNull()?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd)
+            val knownFileId = item.portalEpisodeId?.takeIf { it.isNotBlank() }
+            if (knownFileId != null) {
+                listOf("/media/file_$knownFileId.mpg", cmd)
+            } else {
+                val movieId = item.id.substringBefore(':')
+                val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+                    "type" to "vod", "action" to "get_ordered_list", "movie_id" to movieId,
+                    "season_id" to item.portalSeasonId.orEmpty(), "episode_id" to "",
+                    "category" to (item.portalCategoryId ?: movieId), "fav" to "0", "sortby" to "added",
+                    "hd" to "0", "ended" to "0", "p" to "1"
+                ))).payload().arrayFromData().mapNotNull { it as? JsonObject }
+                listOfNotNull(details.firstOrNull()?.string("id")?.let { "/media/file_$it.mpg" }, cmd)
+            }
         } else if (type == CatalogType.MOVIES) {
             val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
                 "type" to "vod", "action" to "get_ordered_list", "movie_id" to item.id,

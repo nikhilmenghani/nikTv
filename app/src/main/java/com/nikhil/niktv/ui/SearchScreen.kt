@@ -208,7 +208,7 @@ internal fun ModernSearchScreen(
                         }
                     }
                     FilledIconButton(
-                        onClick = { search(false) },
+                        onClick = { search(true) },
                         enabled =
                             state.searchQuery.isNotBlank() &&
                                 !state.searchServerLoading
@@ -226,7 +226,7 @@ internal fun ModernSearchScreen(
                 onSearch = {
                     searchEditing = false
                     keyboard?.hide()
-                    if (state.searchQuery.isNotBlank()) search(false)
+                    if (state.searchQuery.isNotBlank()) search(true)
                 }
             ),
             colors = OutlinedTextFieldDefaults.colors(
@@ -1080,11 +1080,9 @@ private fun SearchRecentRow(
                 )
             }
 
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = "Search ${recent.query}",
-                tint = Color(0xFFB8BCC4)
-            )
+            IconButton(onClick = onRemove, modifier = Modifier.remoteFocusFrame(CircleShape)) {
+                Icon(Icons.Default.Close, contentDescription = "Remove ${recent.query}", tint = Color(0xFFB8BCC4))
+            }
         }
     }
 }

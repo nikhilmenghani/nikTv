@@ -3204,27 +3204,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun setSearchQuery(query: String) {
         searchPreviewJob?.cancel()
 
-        val trimmed = query.trim()
-        val snapshot = _state.value
-
         _state.update {
             it.copy(
                 searchQuery = query,
                 searchResults = emptyList(),
-                searchLocalLoading = trimmed.isNotBlank(),
+                searchLocalLoading = false,
                 searchUsedServer = false,
                 searchPage = 0,
                 searchHasMore = false
             )
         }
-
-        if (trimmed.isBlank()) return
-
-        scheduleSearchPreview(
-            query = query,
-            type = snapshot.searchType,
-            categoryId = snapshot.searchCategoryId
-        )
     }
 
     private fun scheduleSearchPreview(
@@ -3428,7 +3417,39 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = session.profile.cacheKey()
 
         runCatching {
-            portal.search(session, type, query, page, categoryId)
+            val direct = portal.search(session, type, query, page, categoryId)
+            if (categoryId != "*" || direct.items.isNotEmpty()) {
+                direct
+            } else {
+                // Some Stalker portals accept the wildcard but silently return an
+                // empty page. Search each enabled category and publish matches as
+                // they arrive so All categories remains useful without a long blank wait.
+                var discovered = emptyList<MediaItem>()
+                var anyHasMore = false
+                val categories = _state.value.searchCategories.filter { it.id != "*" }
+                categories.forEach { category ->
+                    val categoryPage = runCatching {
+                        portal.search(session, type, query, page, category.id)
+                    }.getOrNull() ?: return@forEach
+                    anyHasMore = anyHasMore || categoryPage.hasMore
+                    val before = discovered.size
+                    discovered = (discovered + categoryPage.items).distinctBy { it.id }
+                    if (discovered.size > before) {
+                        _state.update { current ->
+                            if (current.searchType == type &&
+                                current.searchCategoryId == "*" &&
+                                current.searchQuery.trim().equals(query, true)
+                            ) {
+                                current.copy(
+                                    searchResults = (existing + discovered).distinctBy { it.id },
+                                    searchUsedServer = true
+                                )
+                            } else current
+                        }
+                    }
+                }
+                direct.copy(items = discovered, hasMore = anyHasMore)
+            }
         }.onSuccess { result ->
             val combined =
                 (existing + result.items)

@@ -251,8 +251,15 @@ private fun Modifier.mobileMainTabSwipe(
 ): Modifier {
     val latestOnPageSelected by rememberUpdatedState(onPageSelected)
     if (!enabled) return this
+    var swipeOffsetTarget by remember { mutableFloatStateOf(0f) }
+    val swipeOffset by animateFloatAsState(
+        targetValue = swipeOffsetTarget,
+        animationSpec = tween(70),
+        label = "mainTabSwipeOffset"
+    )
 
-    return pointerInput(enabled, currentPage) {
+    return graphicsLayer { translationX = swipeOffset }
+        .pointerInput(enabled, currentPage) {
         val distanceThreshold = 72.dp.toPx()
         val directionRatio = 1.25f
 
@@ -293,10 +300,20 @@ private fun Modifier.mobileMainTabSwipe(
                         childConsumedHorizontalDrag = true
                     }
 
+                    if (!childConsumedHorizontalDrag &&
+                        kotlin.math.abs(totalX) > 12.dp.toPx() &&
+                        kotlin.math.abs(totalX) > kotlin.math.abs(totalY) * directionRatio
+                    ) {
+                        swipeOffsetTarget = totalX.coerceIn(-size.width * 0.32f, size.width * 0.32f)
+                    }
+
                     if (!change.pressed) break
                 }
 
-                if (cancelled || childConsumedHorizontalDrag) continue
+                if (cancelled || childConsumedHorizontalDrag) {
+                    swipeOffsetTarget = 0f
+                    continue
+                }
 
                 val horizontalDistance = kotlin.math.abs(totalX)
                 val verticalDistance = kotlin.math.abs(totalY)
@@ -304,6 +321,7 @@ private fun Modifier.mobileMainTabSwipe(
                     horizontalDistance < distanceThreshold ||
                     horizontalDistance <= verticalDistance * directionRatio
                 ) {
+                    swipeOffsetTarget = 0f
                     continue
                 }
 
@@ -312,7 +330,12 @@ private fun Modifier.mobileMainTabSwipe(
                 val targetIndex =
                     if (totalX < 0f) currentIndex + 1
                     else currentIndex - 1
-                pages.getOrNull(targetIndex)?.let(latestOnPageSelected)
+                val target = pages.getOrNull(targetIndex)
+                if (target != null) {
+                    swipeOffsetTarget = if (totalX < 0f) -size.width * 0.32f else size.width * 0.32f
+                    latestOnPageSelected(target)
+                }
+                swipeOffsetTarget = 0f
             }
         }
     }
