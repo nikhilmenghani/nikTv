@@ -4572,13 +4572,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
             FavoriteKind.MOVIE -> play(recent.media, CatalogType.MOVIES)
             FavoriteKind.EPISODE -> task {
-                val episodes = recent.series?.let { portal.episodeSeason(requireNotNull(_state.value.session), it, _state.value.seriesStartSeason, recent.media.seasonNumber).episodes }.orEmpty()
+                val session = requireNotNull(_state.value.session)
+                val episodes = recent.series?.let { series ->
+                    episodeSeasonCaches.firstOrNull { cache ->
+                        cache.profileKey == session.profile.cacheKey() &&
+                            cache.seriesId == series.id &&
+                            (recent.media.seasonNumber == null || cache.season == recent.media.seasonNumber)
+                    }?.episodes
+                }.orEmpty().ifEmpty { listOf(recent.media) }
                 playInternal(recent.media, CatalogType.SERIES, recent.series, episodes)
             }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
-                val episodes = portal.episodeSeason(session, recent.media, _state.value.seriesStartSeason, recent.lastPlayed?.seasonNumber).episodes
-                val resumeEpisode = recent.lastPlayed?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
+                val savedEpisode = recent.lastPlayed
+                val episodes = episodeSeasonCaches.firstOrNull { cache ->
+                    cache.profileKey == session.profile.cacheKey() &&
+                        cache.seriesId == recent.media.id &&
+                        (savedEpisode?.seasonNumber == null || cache.season == savedEpisode.seasonNumber)
+                }?.episodes.orEmpty().ifEmpty { listOfNotNull(savedEpisode) }
+                val resumeEpisode = savedEpisode?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
                 if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes)
                 else {
                     _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = episodes) }

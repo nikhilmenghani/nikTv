@@ -604,7 +604,12 @@ class StalkerPortalClient(private val context: Context) {
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
     private suspend fun request(profile: PortalProfile, endpointUrl: String, session: PortalSession?, params: Map<String, String>): JsonElement = requestMutex.withLock {
-        awaitTrafficPermit()
+        // create_link is the immediate continuation of a user-selected playback
+        // lookup. Keep the rolling request budget, but do not add a full second
+        // of artificial latency after the preceding episode/movie detail call.
+        awaitTrafficPermit(
+            minimumSpacingMillis = if (params["action"] == "create_link") PLAYBACK_LINK_REQUEST_SPACING_MS else MIN_REQUEST_SPACING_MS
+        )
         val endpoint = endpointUrl.toHttpUrl().newBuilder().apply {
             params.forEach { (key, value) ->
                 // Cast4K's Retrofit declaration marks the Stalker `cmd` value as
@@ -743,7 +748,7 @@ class StalkerPortalClient(private val context: Context) {
         }.distinct()
     }
 
-    private suspend fun awaitTrafficPermit() {
+    private suspend fun awaitTrafficPermit(minimumSpacingMillis: Long = MIN_REQUEST_SPACING_MS) {
         val now = System.currentTimeMillis()
         val blockedUntil = trafficPrefs.getLong("blocked_until", 0L)
         if (blockedUntil > now) {
@@ -751,7 +756,7 @@ class StalkerPortalClient(private val context: Context) {
             throw PortalRateLimitCooldownException(seconds)
         }
         while (requestTimes.isNotEmpty() && now - requestTimes.first() >= REQUEST_WINDOW_MS) requestTimes.removeFirst()
-        val spacingWait = (lastRequestAt + MIN_REQUEST_SPACING_MS - now).coerceAtLeast(0L)
+        val spacingWait = (lastRequestAt + minimumSpacingMillis - now).coerceAtLeast(0L)
         val budgetWait = if (requestTimes.size >= MAX_REQUESTS_PER_WINDOW)
             (requestTimes.first() + REQUEST_WINDOW_MS - now).coerceAtLeast(0L) else 0L
         val wait = maxOf(spacingWait, budgetWait)
@@ -942,6 +947,7 @@ class StalkerPortalClient(private val context: Context) {
         private const val HW_VERSION = "1.7-BD-00"
         private const val API_SIGNATURE = "262"
         private const val MIN_REQUEST_SPACING_MS = 1_000L
+        private const val PLAYBACK_LINK_REQUEST_SPACING_MS = 150L
         private const val REQUEST_WINDOW_MS = 60_000L
         private const val MAX_REQUESTS_PER_WINDOW = 20
         private const val XTREAM_CATALOG_LIMIT = 120
