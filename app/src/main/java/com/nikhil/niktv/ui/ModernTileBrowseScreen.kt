@@ -24,12 +24,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -102,6 +104,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -117,6 +120,8 @@ import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.PlaybackProgress
+import com.nikhil.niktv.R
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.model.WatchedSeries
@@ -263,17 +268,11 @@ private fun ModernTilePhoneHeader(
                 .padding(horizontal = 14.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFFE50914)
-            ) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    null,
-                    Modifier.padding(5.dp).size(20.dp),
-                    tint = Color.White
-                )
-            }
+            Image(
+                painter = painterResource(R.drawable.niktv_logo_foreground),
+                contentDescription = "NikTV",
+                modifier = Modifier.size(34.dp)
+            )
             Spacer(Modifier.width(9.dp))
             Text(
                 "NikTV",
@@ -287,11 +286,14 @@ private fun ModernTilePhoneHeader(
             IconButton(onClick = openSettings) {
                 Icon(Icons.Default.Settings, "Settings")
             }
-            IconButton(onClick = openProfileSwitcher) {
-                Icon(
-                    Icons.Default.AccountCircle,
-                    state.savedProfile?.name ?: "Profile"
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!youtubeNavigation) {
+                    Text(state.savedProfile?.name.orEmpty(), style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.width(4.dp))
+                }
+                IconButton(onClick = openProfileSwitcher) {
+                    Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
+                }
             }
         }
 
@@ -708,6 +710,7 @@ private fun ModernDestinationHub(
                 item("continue-row", span = fullSpan) {
                     ModernContinueRow(
                         recents = recents,
+                        playbackProgress = state.playbackProgress,
                         favorites = state.favorites,
                         returnFocusId = state.playbackReturnFocusId,
                         open = openRecent,
@@ -1210,6 +1213,7 @@ private fun destinationPalette(
 @Composable
 private fun ModernContinueRow(
     recents: List<RecentItem>,
+    playbackProgress: List<PlaybackProgress>,
     favorites: List<FavoriteItem>,
     returnFocusId: String?,
     open: (RecentItem) -> Unit,
@@ -1257,9 +1261,8 @@ private fun ModernContinueRow(
                     if (recent.kind == FavoriteKind.SERIES) {
                         recent.lastPlayed?.let { episode ->
                             listOfNotNull(
-                                episode.seasonNumber?.let { "Season $it" },
-                                episode.episodeNumber?.let { "Episode $it" },
-                                episode.title.takeIf { it.isNotBlank() }
+                                episode.seasonNumber?.let { season -> episode.episodeNumber?.let { ep -> "S$season:E$ep" } },
+                                episode.compactEpisodeTitle().takeIf { it.isNotBlank() }
                             ).joinToString(" · ")
                         } ?: "Series"
                     } else {
@@ -1278,6 +1281,10 @@ private fun ModernContinueRow(
                     )
                 },
                 onClear = { clear(recent) },
+                progress = playbackProgress.firstOrNull { saved ->
+                    val target = recent.lastPlayed ?: recent.media
+                    saved.key.contains(target.id)
+                },
                 modifier = Modifier.focusRequester(
                     requesters.getOrPut(focusId) { FocusRequester() }
                 )
@@ -1297,6 +1304,7 @@ private fun ModernCompactMediaCard(
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     onClear: (() -> Unit)? = null,
+    progress: PlaybackProgress? = null,
     onFocusedDetails: (String, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1408,7 +1416,7 @@ private fun ModernCompactMediaCard(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .aspectRatio(2f / 3f)
+                    .aspectRatio(16f / 9f)
                     .background(Color(0xFF222222))
             ) {
                 ModernPosterImage(
@@ -1416,6 +1424,14 @@ private fun ModernCompactMediaCard(
                     context,
                     Modifier.fillMaxSize()
                 )
+                val watchedFraction = if (progress != null && progress.durationMillis > 0L) {
+                    (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f)
+                } else 0f
+                if (watchedFraction > 0f) {
+                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0xFF3A3A3A))) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(watchedFraction).background(Color(0xFFE50914)))
+                    }
+                }
             }
             Column(
                 Modifier.padding(if (isTv) 10.dp else 9.dp),
@@ -1454,6 +1470,10 @@ private fun ModernCompactMediaCard(
         )
     }
 }
+
+private fun MediaItem.compactEpisodeTitle(): String = title
+    .replaceFirst(Regex("^\\s*(?:S\\d+\\s*[:._-]?\\s*E(?:P(?:ISODE)?)?\\s*\\d+|(?:EPISODE|EP|E)\\s*#?\\s*\\d+)\\s*[. :|\\-–—]*\\s*", RegexOption.IGNORE_CASE), "")
+    .trim()
 
 @Composable
 private fun ModernTileActionsMenu(

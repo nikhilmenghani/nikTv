@@ -50,6 +50,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -628,7 +629,6 @@ fun PlayerScreen(
     ) {
         val canAutoHide =
             controlsVisible &&
-                !controlsFocused &&
                 isPlaying &&
                 playbackError == null &&
                 !startupTimedOut
@@ -1490,6 +1490,7 @@ fun PlayerScreen(
         if (countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter)
+                    .zIndex(20f)
                     .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
                     .padding(16.dp).widthIn(max = 560.dp),
                 shape = RoundedCornerShape(24.dp),

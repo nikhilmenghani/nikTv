@@ -692,6 +692,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         forceRefresh: Boolean = false
     ) {
         val profileKey = session.profile.cacheKey()
+        val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         var cachedBrowse = if (!forceRefresh) {
             _state.value.browseCachesByType[type]
                 ?.takeIf { it.profileKey == profileKey }
@@ -1675,12 +1676,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadSeriesEpisodes(series: MediaItem, requestedSeason: Int? = null, forceRefresh: Boolean = false) {
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
+        val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         // An explicit selection applies while navigating seasons. On a fresh series open,
         // honor the configured first/latest preference instead of an older remembered season.
         val desired = requestedSeason
         val cached = if (forceRefresh) null else episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
-                (desired == null || cache.season == desired)
+                (desired == null || cache.season == desired) &&
+                System.currentTimeMillis() - cache.cachedAtMillis < maxAge
         }
         var result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season, it.page, it.hasMore) }
             ?: portal.episodeSeason(session, series, _state.value.seriesStartSeason, desired).also { loaded ->
@@ -3992,24 +3995,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 ?: return
 
-        viewModelScope.launch {
-            runCatching {
-                playInternal(
-                    item = next,
-                    type = playing.catalogType,
-                    series = playing.series,
-                    episodes = queue,
-                    directFullscreen = playing.directFullscreen
-                )
-            }.onFailure { error ->
-                _state.update {
-                    it.copy(
-                        error =
-                            error.message
-                                ?: "Could not play the next item"
-                    )
-                }
-            }
+        task {
+            playInternal(
+                item = next,
+                type = playing.catalogType,
+                series = playing.series,
+                episodes = queue,
+                directFullscreen = playing.directFullscreen
+            )
         }
     }
 
@@ -4035,24 +4028,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 ?: return
 
-        viewModelScope.launch {
-            runCatching {
-                playInternal(
-                    item = previous,
-                    type = playing.catalogType,
-                    series = playing.series,
-                    episodes = queue,
-                    directFullscreen = playing.directFullscreen
-                )
-            }.onFailure { error ->
-                _state.update {
-                    it.copy(
-                        error =
-                            error.message
-                                ?: "Could not play the previous item"
-                    )
-                }
-            }
+        task {
+            playInternal(
+                item = previous,
+                type = playing.catalogType,
+                series = playing.series,
+                episodes = queue,
+                directFullscreen = playing.directFullscreen
+            )
         }
     }
 
@@ -4687,7 +4670,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = requireNotNull(_state.value.session)
         val queue = portal.episodeSeason(session, watched.series, _state.value.seriesStartSeason, episode.seasonNumber).episodes
         val updated = _state.value.watchedSeries.map {
-            if (it.key == watched.key) it.copy(newEpisodes = it.newEpisodes.filterNot { candidate -> candidate.id == episode.id }) else it
+            if (it.key == watched.key) it.copy(newEpisodes = it.newEpisodes.filter { candidate -> candidate.isAfter(episode) }) else it
         }
         val profileKey = session.profile.cacheKey()
         allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
@@ -4703,9 +4686,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val updated = _state.value.watchedSeries.map {
                 if (it.key == watched.key) {
                     it.copy(
-                        newEpisodes = it.newEpisodes.filterNot { candidate ->
-                            candidate.id == episode.id
-                        }
+                        newEpisodes = it.newEpisodes.filter { candidate -> candidate.isAfter(episode) }
                     )
                 } else {
                     it
@@ -4716,6 +4697,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(watchedSeries = updated) }
             store.saveWatchedSeries(allWatchedSeries)
         }
+
+    private fun MediaItem.isAfter(other: MediaItem): Boolean {
+        val thisSeason = seasonNumber ?: 0
+        val otherSeason = other.seasonNumber ?: 0
+        if (thisSeason != otherSeason) return thisSeason > otherSeason
+        val thisEpisode = episodeNumber ?: title.episodeOrderFromTitle() ?: 0
+        val otherEpisode = other.episodeNumber ?: other.title.episodeOrderFromTitle() ?: 0
+        return thisEpisode > otherEpisode
+    }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }
 

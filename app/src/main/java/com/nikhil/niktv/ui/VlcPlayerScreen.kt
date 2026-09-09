@@ -33,6 +33,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -99,6 +100,8 @@ internal fun VlcPlayerScreen(
     )
     var videoView by remember(media.progressKey) { mutableStateOf<View?>(null) }
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
+    var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
+    var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
@@ -146,6 +149,7 @@ internal fun VlcPlayerScreen(
     val playRequester = remember(media.progressKey) { FocusRequester() }
     val forwardRequester = remember(media.progressKey) { FocusRequester() }
     val nextRequester = remember(media.progressKey) { FocusRequester() }
+    val playNextNowRequester = remember(media.progressKey) { FocusRequester() }
     val progressRequester = remember(media.progressKey) { FocusRequester() }
     val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
 
@@ -237,7 +241,7 @@ internal fun VlcPlayerScreen(
         }
     }
     LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible) {
-        if (controlsVisible && !controlsFocused && playing && error == null && !queueVisible && !pictureEditorVisible) {
+        if (controlsVisible && playing && error == null && !queueVisible && !pictureEditorVisible) {
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
             controlsFocused = false
@@ -412,6 +416,32 @@ internal fun VlcPlayerScreen(
             }
 
             delay(500L)
+        }
+    }
+
+    LaunchedEffect(player, media.nextEpisode, autoPlayCancelled) {
+        if (media.catalogType != CatalogType.SERIES || media.nextEpisode == null || autoPlayCancelled) {
+            remainingSeconds = null
+            return@LaunchedEffect
+        }
+        while (true) {
+            val knownDuration = player.length.coerceAtLeast(0L)
+            if (knownDuration > 0L) {
+                val seconds = (((knownDuration - player.time).coerceAtLeast(0L) + 999L) / 1_000L).toInt()
+                remainingSeconds = seconds.takeIf { it <= 30 }
+                if (seconds == 0 && !advancing) {
+                    advancing = true
+                    onPlayNext()
+                    return@LaunchedEffect
+                }
+            }
+            delay(500L)
+        }
+    }
+    LaunchedEffect(remainingSeconds, autoPlayCancelled) {
+        if (remainingSeconds != null && !autoPlayCancelled) {
+            delay(120L)
+            runCatching { playNextNowRequester.requestFocus() }
         }
     }
 
@@ -968,5 +998,30 @@ internal fun VlcPlayerScreen(
             }
         }
         modeFeedback?.let { PlayerModeFeedback(it) }
+        val countdown = remainingSeconds
+        if (countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .zIndex(20f)
+                    .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
+                    .padding(16.dp).widthIn(max = 560.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
+                tonalElevation = 6.dp,
+                shadowElevation = 8.dp
+            ) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Up next in ${countdown}s", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        Text(media.nextEpisode.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    }
+                    TextButton(onClick = { autoPlayCancelled = true; videoView?.requestFocus() }) { Text("Cancel") }
+                    Button(
+                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                        modifier = Modifier.focusRequester(playNextNowRequester).playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
+                    ) { Text("Play now") }
+                }
+            }
+        }
     }
 }

@@ -65,6 +65,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -93,6 +94,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.BuildConfig
+import com.nikhil.niktv.R
 import com.nikhil.niktv.data.TrendingMovie
 import com.nikhil.niktv.data.TrendingSeries
 import com.nikhil.niktv.data.TmdbMovie
@@ -3510,9 +3512,7 @@ private fun YouTubeStyleTopBar(
         Modifier.fillMaxWidth().background(Color(0xFF090909)).padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFE50914)) {
-            Icon(Icons.Default.PlayArrow, null, Modifier.padding(5.dp).size(20.dp), tint = Color.White)
-        }
+        Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.size(34.dp))
         Spacer(Modifier.width(9.dp))
         Text("NikTV", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
         IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
