@@ -148,6 +148,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var browseLayouts: Map<String, BrowseLayout> = emptyMap()
     private var tmdbDashboardConfigs: Map<String, List<TmdbHomeSection>> = emptyMap()
     private val watchRefreshMutex = Mutex()
+    private val favoriteSeriesMetadataMutex = Mutex()
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
 
@@ -390,6 +391,123 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             (scopedRecent.map { it.media } + scopedFavorites.map { it.media }),
             limit = 12
         )
+    }
+
+    private fun String.cleanedIptvSeriesTitle(): String {
+        val original = trim()
+        if (original.isBlank()) return original
+
+        val cleaned = original
+            .replace(
+                Regex(
+                    "\\([^)]*(?:english|hindi|tamil|telugu|season|complete)[^)]*\\)",
+                    RegexOption.IGNORE_CASE
+                ),
+                " "
+            )
+            .replace(
+                Regex(
+                    "\\b(?:4k|uhd|hdr10?|2160p|1080p|720p|480p|bluray|blu\\s*ray|webrip|web\\s*dl|x264|x265|h264|h265|hevc|aac|atmos|english|multi|dubbed)\\b",
+                    RegexOption.IGNORE_CASE
+                ),
+                " "
+            )
+            .replace(Regex("\\b(?:19|20)\\d{2}\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim(' ', '-', '|', '·', ':', '.', '_')
+
+        return cleaned.ifBlank { original }
+    }
+
+    private fun MediaItem.withPreferredSeriesPresentation(
+        metadata: TmdbSeries?
+    ): MediaItem {
+        val fallbackTitle = title.cleanedIptvSeriesTitle()
+        if (metadata == null) {
+            return if (fallbackTitle == title) this else copy(title = fallbackTitle)
+        }
+
+        return copy(
+            title = metadata.name.ifBlank { fallbackTitle },
+            description = metadata.overview ?: description
+        )
+    }
+
+    private suspend fun enrichFavoriteSeriesPresentation(profileKey: String) {
+        if (_state.value.session?.profile?.cacheKey() != profileKey) return
+        if (!favoriteSeriesMetadataMutex.tryLock()) return
+
+        try {
+            val mappingsByMediaId = store.tmdbMappings.first()
+                .filter { mapping ->
+                    mapping.profileKey == profileKey &&
+                        mapping.type == CatalogType.SERIES
+                }
+                .associateBy { it.media.id }
+
+            val targets = _state.value.favorites
+                .filter { it.kind == FavoriteKind.SERIES }
+
+            var changed = false
+            for (chunk in targets.chunked(4)) {
+                if (_state.value.session?.profile?.cacheKey() != profileKey) return
+
+                val replacements = coroutineScope {
+                    chunk.map { favorite ->
+                        async {
+                            val mappedTmdbId = mappingsByMediaId[favorite.media.id]?.tmdbId
+                            val lookupMedia = mappedTmdbId
+                                ?.let { favorite.media.copy(externalTmdbId = it) }
+                                ?: favorite.media
+                            val metadata = if (tmdb.configured) {
+                                runCatching { tmdb.confidentlyMatchSeries(lookupMedia) }
+                                    .onFailure { error ->
+                                        Log.w(
+                                            "NikTvFavoriteMetadata",
+                                            "TMDB series favorite lookup failed for ${favorite.media.id}",
+                                            error
+                                        )
+                                    }
+                                    .getOrNull()
+                            } else {
+                                null
+                            }
+                            val updatedMedia =
+                                favorite.media.withPreferredSeriesPresentation(metadata)
+                            favorite.key to favorite.copy(media = updatedMedia)
+                        }
+                    }.awaitAll()
+                }.toMap()
+
+                val chunkChanged = replacements.any { (key, replacement) ->
+                    _state.value.favorites
+                        .firstOrNull { it.key == key }
+                        ?.media != replacement.media
+                }
+                if (!chunkChanged) continue
+
+                changed = true
+                _state.update { current ->
+                    current.copy(
+                        favorites = current.favorites.map { favorite ->
+                            replacements[favorite.key] ?: favorite
+                        }
+                    )
+                }
+                allFavorites = allFavorites.map { favorite ->
+                    replacements[favorite.key] ?: favorite
+                }
+            }
+
+            if (
+                changed &&
+                _state.value.session?.profile?.cacheKey() == profileKey
+            ) {
+                store.saveFavorites(allFavorites)
+            }
+        } finally {
+            favoriteSeriesMetadataMutex.unlock()
+        }
     }
 
     private suspend fun warmVisibleArtwork(progress: Float, message: String) {
@@ -2348,13 +2466,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val openedFromModernSection =
             _state.value.modernUiEnabled &&
                 _state.value.modernTmdbSection?.series == true
+        val displaySeries = resolved.withPreferredSeriesPresentation(series)
 
         store.saveTmdbMapping(
             TmdbIptvMapping(
                 session.profile.cacheKey(),
                 CatalogType.SERIES,
                 series.id,
-                resolved,
+                displaySeries,
                 confirmedByUser = confirmedByUser
             )
         )
@@ -2363,18 +2482,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             current.copy(
                 trendingSeries = current.trendingSeries.map { item ->
                     if (item.tmdb.id == series.id) {
-                        item.copy(iptv = resolved)
+                        item.copy(iptv = displaySeries)
                     } else item
                 },
                 modernTmdbSeries = current.modernTmdbSeries.map { item ->
                     if (item.tmdb.id == series.id) {
-                        item.copy(iptv = resolved)
+                        item.copy(iptv = displaySeries)
                     } else item
                 },
                 tmdbHomeSeriesRows = current.tmdbHomeSeriesRows.mapValues { (_, row) ->
                     row.map { item ->
                         if (item.tmdb.id == series.id) {
-                            item.copy(iptv = resolved)
+                            item.copy(iptv = displaySeries)
                         } else item
                     }
                 },
@@ -2383,7 +2502,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 settingsOpen = false,
                 searchOpen = false,
                 selectedType = CatalogType.SERIES,
-                selectedSeries = resolved,
+                selectedSeries = displaySeries,
                 seriesOpenedFromHome = !openedFromModernSection,
                 seriesOpenedFromModernSection = openedFromModernSection,
                 seriesOpenedFromFavorites = false,
@@ -2395,7 +2514,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        loadSeriesEpisodes(resolved)
+        loadSeriesEpisodes(displaySeries)
     }
 
     private fun returnToHomeAfterTrendingSeriesFailure() {
@@ -3773,7 +3892,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false) }
         }
     }
-    fun openFavorites() = _state.update { it.copy(favoritesOpen = true, homeOpen = false, settingsOpen = false, searchOpen = false) }
+    fun openFavorites() {
+        _state.update {
+            it.copy(
+                favoritesOpen = true,
+                homeOpen = false,
+                settingsOpen = false,
+                searchOpen = false
+            )
+        }
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return
+        viewModelScope.launch {
+            enrichFavoriteSeriesPresentation(profileKey)
+        }
+    }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
     fun openHome() {
         _state.update { it.copy(
