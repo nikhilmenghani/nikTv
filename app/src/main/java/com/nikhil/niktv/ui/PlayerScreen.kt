@@ -234,6 +234,7 @@ fun PlayerScreen(
             onPlayNext = onPlayNext,
             onPlayItem = onPlayItem,
             onProgress = onProgress,
+            onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
             onLoadMoreQueue = onLoadMoreQueue,

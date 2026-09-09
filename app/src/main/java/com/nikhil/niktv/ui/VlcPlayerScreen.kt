@@ -59,6 +59,7 @@ internal fun VlcPlayerScreen(
     onPlayNext: () -> Unit,
     onPlayItem: (MediaItem) -> Unit,
     onProgress: (String, Long, Long) -> Unit,
+    onPlaybackAuthorizationFailure: (Long) -> Unit,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
     onLoadMoreQueue: () -> Boolean = { false },
@@ -102,6 +103,7 @@ internal fun VlcPlayerScreen(
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
+    var authorizationRecoveryRequested by remember(media.progressKey) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
@@ -340,8 +342,17 @@ internal fun VlcPlayerScreen(
                 }
                 MediaPlayer.Event.EncounteredError -> {
                     buffering = false
-                    error = "VLC could not play this stream."
-                    controlsVisible = true
+                    if (media.authorizationRetryCount == 0 && !authorizationRecoveryRequested) {
+                        authorizationRecoveryRequested = true
+                        error = null
+                        scope.launch {
+                            delay(250L)
+                            onPlaybackAuthorizationFailure(player.time.coerceAtLeast(0L))
+                        }
+                    } else {
+                        error = "VLC could not play this stream after requesting a fresh playback link."
+                        controlsVisible = true
+                    }
                 }
             }
         }
