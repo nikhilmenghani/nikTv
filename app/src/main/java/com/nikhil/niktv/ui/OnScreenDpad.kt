@@ -26,20 +26,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import android.view.ViewConfiguration
+import android.view.View
+import android.view.ViewGroup
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -88,37 +88,28 @@ internal fun rememberOnScreenDpadEnabled(): State<Boolean> {
 internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
-    val inputModeManager = LocalInputModeManager.current
-    val virtualInputCommands = remember {
-        Channel<KeyEvent>(Channel.UNLIMITED)
+    val composeHost = remember(activity) {
+        activity?.findViewById<View>(android.R.id.content)?.let { content ->
+            (content as? ViewGroup)?.getChildAt(0) ?: content
+        }
     }
     var x by rememberSaveable { mutableFloatStateOf(0f) }
     var y by rememberSaveable { mutableFloatStateOf(0f) }
-    // A single ordered stream follows the same Activity path as a remote.
-    // Unhandled keys must stay unhandled: no second focus search or Tab escape.
-    LaunchedEffect(activity, inputModeManager) {
-        val heldKeys = mutableMapOf<Int, KeyEvent>()
-        try {
-            for (event in virtualInputCommands) {
-                withFrameNanos { }
-                inputModeManager.requestInputMode(InputMode.Keyboard)
-                if (event.action == KeyEvent.ACTION_DOWN) heldKeys[event.keyCode] = event
-                else heldKeys.remove(event.keyCode)
-                activity?.dispatchKeyEvent(event)
+    // requestFocusFromTouch exits Android touch mode at the existing Compose
+    // host instead of asking Compose to choose a new default focus target.
+    // The following key therefore starts from the same item as a remote key.
+    val send: (KeyEvent) -> Unit = send@ { event ->
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) {
+                (activity as? ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
             }
-        } finally {
-            // Hiding the overlay or leaving the Activity must release holds.
-            heldKeys.values.toList().forEach { down ->
-                activity?.dispatchKeyEvent(virtualRemoteEvent(
-                    down.keyCode, down.downTime, KeyEvent.ACTION_UP, cancelled = true
-                ))
-            }
+            return@send
         }
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            composeHost?.requestFocusFromTouch()
+        }
+        activity?.dispatchKeyEvent(event)
     }
-    DisposableEffect(virtualInputCommands) {
-        onDispose { virtualInputCommands.close() }
-    }
-    val send: (KeyEvent) -> Unit = { event -> virtualInputCommands.trySend(event) }
     Surface(
         modifier = modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) },
         shape = RoundedCornerShape(24.dp),
