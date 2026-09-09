@@ -8346,6 +8346,55 @@ private fun CategoryDialogActionButton(
     }
 }
 
+@Composable
+private fun SeriesHeroActionIcon(
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    tint: Color = Color.White
+) {
+    var focused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val showFocusHint = context.usesRemoteNavigation(configuration) && focused
+
+    Box(
+        modifier = Modifier
+            .wrapContentSize()
+            .zIndex(if (showFocusHint) 1f else 0f)
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .onFocusChanged { focused = it.isFocused }
+                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                .remoteFocusFrame(CircleShape)
+        ) {
+            Icon(icon, description, tint = tint)
+        }
+
+        if (showFocusHint) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .wrapContentWidth(unbounded = true)
+                    .offset(y = 52.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xF2111111),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
+            ) {
+                Text(
+                    text = description,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun ModernSeriesDetailScreen(
@@ -8538,39 +8587,34 @@ private fun ModernSeriesDetailScreen(
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(
-                            onClick = closeSeries,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to browse", tint = Color.White)
-                        }
+                        SeriesHeroActionIcon(
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            description = "Back to browse",
+                            onClick = closeSeries
+                        )
                         Spacer(Modifier.weight(1f))
-                        IconButton(
-                            onClick = { activateEpisodeSearch() },
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
-                        ) {
-                            Icon(Icons.Default.Search, "Search episodes", tint = Color.White)
-                        }
-                        run {
-                            IconButton(
-                                onClick = { toggleFavorite(series) },
-                                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
-                            ) {
-                                Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, if (isFavorite) "Remove from My List" else "Add to My List", tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White)
-                            }
-                            IconButton(
-                                onClick = toggleSeriesWatch,
-                                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
-                            ) {
-                                Icon(if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone, "Watch updates", tint = Color.White)
-                            }
-                            IconButton(
-                                onClick = refreshCatalog,
-                                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape).remoteFocusFrame(CircleShape)
-                            ) {
-                                Icon(Icons.Default.Refresh, "Refresh episodes", tint = Color.White)
-                            }
-                        }
+                        SeriesHeroActionIcon(
+                            icon = Icons.Default.Search,
+                            description = "Search episodes",
+                            onClick = { activateEpisodeSearch() }
+                        )
+                        SeriesHeroActionIcon(
+                            icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            description = if (isFavorite) "Remove series from My List" else "Add series to My List",
+                            onClick = { toggleFavorite(series) },
+                            tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White
+                        )
+                        SeriesHeroActionIcon(
+                            icon = if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
+                            description = if (isWatched) "Stop watching for new episodes" else "Watch for new episodes",
+                            onClick = toggleSeriesWatch,
+                            tint = if (isWatched) MaterialTheme.colorScheme.primary else Color.White
+                        )
+                        SeriesHeroActionIcon(
+                            icon = Icons.Default.Refresh,
+                            description = "Refresh episodes",
+                            onClick = refreshCatalog
+                        )
                     }
 
                     Column(

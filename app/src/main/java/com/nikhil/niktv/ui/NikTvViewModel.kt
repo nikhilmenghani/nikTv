@@ -3807,6 +3807,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val kind = when {
             snapshot.selectedType == CatalogType.LIVE_TV -> FavoriteKind.CHANNEL
             snapshot.selectedType == CatalogType.MOVIES -> FavoriteKind.MOVIE
+            snapshot.selectedSeries?.id == item.id -> FavoriteKind.SERIES
             snapshot.selectedSeries != null -> FavoriteKind.EPISODE
             else -> FavoriteKind.SERIES
         }
@@ -3908,20 +3909,49 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = snapshot.session ?: return@launch
         val profileKey = session.profile.cacheKey()
         val existing = snapshot.watchedSeries.firstOrNull { it.series.id == series.id }
-        val updated = if (existing != null) {
-            snapshot.watchedSeries.filterNot { it.key == existing.key }
-        } else {
-            val latest = runCatching { portal.episodeSeason(session, series, SeriesStartSeason.LAST) }.getOrNull()
-            snapshot.watchedSeries + WatchedSeries(
-                profileKey = profileKey,
-                series = series,
-                categoryTitle = snapshot.selectedCategory?.title,
-                knownEpisodeIds = latest?.episodes?.map { it.id }?.toSet().orEmpty(),
-                checkedAtMillis = System.currentTimeMillis()
-            )
+
+        if (existing != null) {
+            val updated = snapshot.watchedSeries.filterNot { it.key == existing.key }
+            _state.update { it.copy(watchedSeries = updated) }
+            allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
+            store.saveWatchedSeries(allWatchedSeries)
+            return@launch
         }
+
+        // Make the bell/watchlist state responsive immediately. The current
+        // episode list is a safe local baseline while the latest-season
+        // snapshot is refreshed from the provider in the background.
+        val now = System.currentTimeMillis()
+        val optimistic = WatchedSeries(
+            profileKey = profileKey,
+            series = series,
+            categoryTitle = snapshot.selectedCategory?.title,
+            knownEpisodeIds = snapshot.items.map { it.id }.toSet(),
+            checkedAtMillis = now
+        )
+        val updated = snapshot.watchedSeries + optimistic
         _state.update { it.copy(watchedSeries = updated) }
         allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
+        store.saveWatchedSeries(allWatchedSeries)
+
+        val latest = runCatching {
+            portal.episodeSeason(session, series, SeriesStartSeason.LAST)
+        }.getOrNull() ?: return@launch
+
+        // Do not revive the watch entry if the user toggled it off or changed
+        // profiles while the provider request was in flight.
+        if (_state.value.session?.profile?.cacheKey() != profileKey) return@launch
+        val current = _state.value.watchedSeries.firstOrNull { it.key == optimistic.key }
+            ?: return@launch
+        val refreshed = current.copy(
+            knownEpisodeIds = current.knownEpisodeIds + latest.episodes.map { it.id },
+            checkedAtMillis = System.currentTimeMillis()
+        )
+        val refreshedList = _state.value.watchedSeries.map { watched ->
+            if (watched.key == optimistic.key) refreshed else watched
+        }
+        _state.update { it.copy(watchedSeries = refreshedList) }
+        allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + refreshedList
         store.saveWatchedSeries(allWatchedSeries)
     }
 
