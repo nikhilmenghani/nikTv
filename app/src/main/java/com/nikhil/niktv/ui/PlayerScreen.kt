@@ -273,6 +273,7 @@ fun PlayerScreen(
     }
 
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
+    var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
     var position by remember(media.progressKey) { mutableLongStateOf(0L) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
@@ -351,6 +352,9 @@ fun PlayerScreen(
                 if (state == Player.STATE_READY) startupTimedOut = false
             }
             override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
+            override fun onPlayWhenReadyChanged(value: Boolean, reason: Int) {
+                playbackRequested = value
+            }
             override fun onPlayerError(error: PlaybackException) {
                 val failedDecoder =
                     FailedDecoderRegistry.record(
@@ -691,6 +695,12 @@ fun PlayerScreen(
             .playerActivityObserver {
                 dpadInteraction++
             }
+            .playerMediaKeys(playbackRequested) { requested ->
+                playbackRequested = requested
+                if (requested) player.play() else player.pause()
+                controlsVisible = true
+                dpadInteraction++
+            }
             .background(Color.Black)
             .then(if (focusMode || inPictureInPicture) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
             .clipToBounds()
@@ -798,6 +808,7 @@ fun PlayerScreen(
                     })
                     setOnKeyListener { _, keyCode, keyEvent ->
                         if (keyEvent.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && keyEvent.repeatCount > 0) return@setOnKeyListener true
                         if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER,
@@ -807,16 +818,18 @@ fun PlayerScreen(
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                                if (player.isPlaying) player.pause() else player.play()
+                                playbackRequested = !playbackRequested; if (playbackRequested) player.play() else player.pause()
                                 controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                playbackRequested = true
                                 player.play()
                                 controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                playbackRequested = false
                                 player.pause()
                                 controlsVisible = true
                                 true
@@ -1164,6 +1177,11 @@ fun PlayerScreen(
                             vertical = if (compactMobileControls) 8.dp else 16.dp
                         )
                 ) {
+                    PlayerDateTime(
+                        compact = compactMobileControls,
+                        modifier = Modifier.align(Alignment.End)
+                    )
+
                     val seekable = duration > 0L && media.catalogType != com.nikhil.niktv.model.CatalogType.LIVE_TV
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->
@@ -1194,7 +1212,7 @@ fun PlayerScreen(
                                     Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White)
                                 }
                                 FilledIconButton(
-                                    onClick = { if (player.isPlaying) player.pause() else player.play() },
+                                    onClick = { playbackRequested = !playbackRequested; if (playbackRequested) player.play() else player.pause() },
                                     modifier = Modifier.size(if (compactMobileControls) 44.dp else 52.dp).focusRequester(playPauseFocusRequester)
                                         .focusProperties {
                                             up = fullscreenFocusRequester
@@ -1206,7 +1224,7 @@ fun PlayerScreen(
                                         containerColor = MaterialTheme.colorScheme.primary,
                                         contentColor = MaterialTheme.colorScheme.onPrimary
                                     )
-                                ) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play") }
+                                ) { Icon(if (playbackRequested) Icons.Default.Pause else Icons.Default.PlayArrow, if (playbackRequested) "Pause" else "Play") }
                                 if (seekable) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }, modifier = Modifier.focusRequester(forwardFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
                                     Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White)
                                 }
@@ -1216,6 +1234,7 @@ fun PlayerScreen(
                             }
                             Spacer(Modifier.width(12.dp))
                             if (seekable) PlaybackProgressBar(
+                                mediaKey = media.progressKey,
                                 position = position,
                                 duration = duration,
                                 onSeek = { player.seekTo(it) },
@@ -1585,37 +1604,63 @@ internal fun PlaybackProgressBar(
     position: Long,
     duration: Long,
     onSeek: (Long) -> Unit,
+    mediaKey: String,
     compact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val safePosition = position.coerceIn(0L, duration)
-    val fraction = (safePosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+    val safeDuration = duration.coerceAtLeast(0L)
+    var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
+    var revision by remember(mediaKey) { mutableIntStateOf(0) }
+    var directionHeld by remember(mediaKey) { mutableStateOf(false) }
+    var dragging by remember(mediaKey) { mutableStateOf(false) }
+    val seek by rememberUpdatedState(onSeek)
+    LaunchedEffect(mediaKey, revision, directionHeld, dragging) {
+        val target = preview ?: return@LaunchedEffect
+        if (directionHeld || dragging) return@LaunchedEffect
+        delay(450L)
+        seek(target.coerceIn(0L, safeDuration))
+        // Keep the preview visible until the engine has had time to update its
+        // sampled position; don't flash the pre-seek position while buffering.
+        delay(1_000L)
+        preview = null
+    }
+    val safePosition = (preview ?: position).coerceIn(0L, safeDuration)
+    val fraction = if (safeDuration > 0L) safePosition.toFloat() / safeDuration else 0f
     val elapsed = formatPlayerTime(safePosition)
-    val remaining = formatPlayerTime(duration - safePosition)
-    val total = formatPlayerTime(duration)
+    val remaining = formatPlayerTime(safeDuration - safePosition)
+    val total = formatPlayerTime(safeDuration)
     Box(
         modifier.height(if (compact) 44.dp else 56.dp)
-            .focusable()
             .onPreviewKeyEvent { event ->
-                if (event.type != ComposeKeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (event.key) {
-                    ComposeKey.DirectionLeft -> {
-                        onSeek((safePosition - 10_000L).coerceAtLeast(0L))
-                        true
-                    }
-                    ComposeKey.DirectionRight -> {
-                        onSeek((safePosition + 10_000L).coerceAtMost(duration))
-                        true
-                    }
-                    else -> false
+                val direction = when (event.key) {
+                    ComposeKey.DirectionLeft, ComposeKey.MediaRewind -> -1
+                    ComposeKey.DirectionRight, ComposeKey.MediaFastForward -> 1
+                    else -> return@onPreviewKeyEvent false
                 }
-            },
+                if (event.type == ComposeKeyEventType.KeyDown) {
+                    directionHeld = true
+                    preview = seekPreviewPosition(preview ?: position, direction, safeDuration)
+                    revision++
+                } else if (event.type == ComposeKeyEventType.KeyUp) {
+                    directionHeld = false
+                    revision++
+                }
+                true
+            }
+            .onFocusChanged { if (!it.hasFocus) directionHeld = false }
+            .focusable(),
         contentAlignment = Alignment.Center
     ) {
         Slider(
             value = safePosition.toFloat(),
-            onValueChange = { onSeek(it.toLong()) },
-            valueRange = 0f..duration.toFloat(),
+            onValueChange = {
+                dragging = true
+                preview = it.toLong().coerceIn(0L, safeDuration)
+                revision++
+            },
+            onValueChangeFinished = { dragging = false; revision++ },
+            enabled = safeDuration > 0L,
+            valueRange = 0f..safeDuration.coerceAtLeast(1L).toFloat(),
             modifier = Modifier.fillMaxWidth().height(if (compact) 44.dp else 56.dp),
             thumb = {
                 Box(

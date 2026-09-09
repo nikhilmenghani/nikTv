@@ -78,6 +78,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
@@ -159,70 +161,74 @@ internal fun ModernTileBrowseScreen(
     val activeTmdb = state.modernTmdbSection
     val activeIptv = state.modernIptvCategory
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF090909)
-    ) {
-        when {
-            activeTmdb != null -> {
-                ModernTmdbCollection(
-                    state = state,
-                    section = activeTmdb,
-                    close = closeSection,
-                    openMovie = openTmdbMovie,
-                    openSeries = openTmdbSeries,
-                    toggleFavorite = toggleFavorite,
-                    loadMore = loadMoreTmdb,
-                    isTv = isTv
-                )
-            }
+    val destinationStateHolder = rememberSaveableStateHolder()
+    val destinationKey = "${dashboardSurface}:${activeTmdb}:${activeIptv?.id}"
+    destinationStateHolder.SaveableStateProvider(destinationKey) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color(0xFF090909)
+        ) {
+            when {
+                activeTmdb != null -> {
+                    ModernTmdbCollection(
+                        state = state,
+                        section = activeTmdb,
+                        close = closeSection,
+                        openMovie = openTmdbMovie,
+                        openSeries = openTmdbSeries,
+                        toggleFavorite = toggleFavorite,
+                        loadMore = loadMoreTmdb,
+                        isTv = isTv
+                    )
+                }
 
-            activeIptv != null -> {
-                ModernIptvCollection(
-                    state = state,
-                    category = activeIptv,
-                    close = closeSection,
-                    openItem = openIptvItem,
-                    toggleFavorite = toggleFavorite,
-                    loadMore = loadMoreIptv,
-                    refresh = refreshIptv,
-                    isTv = isTv
-                )
-            }
+                activeIptv != null -> {
+                    ModernIptvCollection(
+                        state = state,
+                        category = activeIptv,
+                        close = closeSection,
+                        openItem = openIptvItem,
+                        toggleFavorite = toggleFavorite,
+                        loadMore = loadMoreIptv,
+                        refresh = refreshIptv,
+                        isTv = isTv
+                    )
+                }
 
-            else -> {
-                Column(Modifier.fillMaxSize()) {
-                    if (!wide) {
-                        ModernTilePhoneHeader(
+                else -> {
+                    Column(Modifier.fillMaxSize()) {
+                        if (!wide) {
+                            ModernTilePhoneHeader(
+                                state = state,
+                                youtubeNavigation =
+                                    mobileUiDesign.usesYouTubeOn(configuration),
+                                openHome = openHome,
+                                selectType = selectType,
+                                openFavorites = openFavorites,
+                                openSearch = openSearch,
+                                openSettings = openSettings,
+                                openProfileSwitcher = openProfileSwitcher
+                            )
+                        }
+
+                        ModernDestinationHub(
                             state = state,
-                            youtubeNavigation =
-                                mobileUiDesign.usesYouTubeOn(configuration),
-                            openHome = openHome,
-                            selectType = selectType,
-                            openFavorites = openFavorites,
+                            dashboardSurface = dashboardSurface,
+                            openRecent = openRecent,
+                            removeRecent = removeRecent,
+                            openWatchedEpisode = openWatchedEpisode,
+                            dismissWatchedEpisode = dismissWatchedEpisode,
+                            toggleFavorite = toggleFavorite,
+                            openTmdbSection = openTmdbSection,
+                            openIptvCategory = openIptvCategory,
                             openSearch = openSearch,
-                            openSettings = openSettings,
-                            openProfileSwitcher = openProfileSwitcher
+                            configureTmdb = configureTmdb,
+                            configureIptv = configureIptv,
+                            resetSurface = resetSurface,
+                            isTv = isTv,
+                            modifier = Modifier.weight(1f)
                         )
                     }
-
-                    ModernDestinationHub(
-                        state = state,
-                        dashboardSurface = dashboardSurface,
-                        openRecent = openRecent,
-                        removeRecent = removeRecent,
-                        openWatchedEpisode = openWatchedEpisode,
-                        dismissWatchedEpisode = dismissWatchedEpisode,
-                        toggleFavorite = toggleFavorite,
-                        openTmdbSection = openTmdbSection,
-                        openIptvCategory = openIptvCategory,
-                        openSearch = openSearch,
-                        configureTmdb = configureTmdb,
-                        configureIptv = configureIptv,
-                        resetSurface = resetSurface,
-                        isTv = isTv,
-                        modifier = Modifier.weight(1f)
-                    )
                 }
             }
         }
@@ -962,6 +968,7 @@ private fun ModernDestinationTile(
     isTv: Boolean,
     onClick: () -> Unit
 ) {
+    val returningTile = rememberReturningTile(onClick)
     var focused by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val isTablet = !isTv && configuration.screenWidthDp >= 600
@@ -1013,9 +1020,9 @@ private fun ModernDestinationTile(
     }
 
     Surface(
-        onClick = onClick,
+        onClick = returningTile.open,
         interactionSource = interactionSource,
-        modifier = Modifier
+        modifier = returningTile.modifier
             .fillMaxWidth()
             .zIndex(visualProgress)
             .graphicsLayer {
@@ -1213,24 +1220,8 @@ private fun ModernContinueRow(
             }
         }
     }
-    val returnIndex = focusIds.indexOf(returnFocusId)
 
-    LaunchedEffect(returnFocusId, returnIndex) {
-        if (returnFocusId != null && returnIndex >= 0) {
-            listState.scrollToItem(returnIndex)
-            withFrameNanos { }
-            // Navigation and lazy content establish their initial focus in
-            // separate frames. Reassert briefly so a later nav request cannot
-            // steal focus from the tile that launched playback.
-            repeat(6) { attempt ->
-                runCatching {
-                    requesters.getOrPut(returnFocusId) { FocusRequester() }
-                        .requestFocus()
-                }
-                delay(70L + 25L * attempt)
-            }
-        }
-    }
+
 
     LazyRow(
         state = listState,
@@ -1288,6 +1279,8 @@ private fun ModernCompactMediaCard(
     onClear: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val returningTile = rememberReturningTile(onClick)
+
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1335,7 +1328,7 @@ private fun ModernCompactMediaCard(
     )
 
     Box(
-        modifier = modifier
+        modifier = modifier.then(returningTile.modifier)
             .width(
                 when {
                     isTv -> 158.dp
@@ -1371,7 +1364,7 @@ private fun ModernCompactMediaCard(
             }
             .remoteCombinedClickable(
                 interactionSource = interactionSource,
-                onClick = onClick,
+                onClick = returningTile.open,
                 onLongClick = { menuOpen = true }
             )
     ) {
@@ -1552,30 +1545,17 @@ private fun ModernTmdbCollection(
         mutableIntStateOf(-1)
     }
 
-    /*
-     * PLAYBACK_RETURN_FOCUS_V22
-     *
-     * Direct-fullscreen playback replaces this composition. When Back closes
-     * the player, rebuild the collection at the poster that launched playback
-     * instead of returning to the header/top-left item.
-     */
+    // The destination's saveable scope retains the viewport across playback
+    // and details; each tile remembers whether it launched the next screen.
     val gridState = rememberLazyGridState()
-    val returnFocusRequester = remember(
-        section,
-        state.playbackReturnFocusId
-    ) {
-        FocusRequester()
-    }
-    val returnFocusId = state.playbackReturnFocusId
-    val returnIndex = focusIds.indexOf(returnFocusId)
     val itemFocusRequesters =
         remember(section) {
             mutableMapOf<String, FocusRequester>()
         }
-    if (returnFocusId != null) {
-        itemFocusRequesters[returnFocusId] =
-            returnFocusRequester
-    }
+
+    val appendPage = rememberCollectionPagination(
+        focusIds, state.modernTmdbLoading, gridState, itemFocusRequesters, loadMore
+    )
     val focusScope = rememberCoroutineScope()
     val moveFocusToIndex: (Int) -> Unit = { targetIndex ->
         focusIds.getOrNull(targetIndex)?.let { targetId ->
@@ -1616,26 +1596,7 @@ private fun ModernTmdbCollection(
         }
     }
 
-    LaunchedEffect(
-        returnFocusId,
-        returnIndex,
-        section,
-        isTv
-    ) {
-        if (returnFocusId != null && returnIndex >= 0) {
-            // Header is lazy-grid item zero; posters begin at item one.
-            gridState.scrollToItem(returnIndex + 1)
-            // A tablet or touch device may still be controlled by a remote.
-            // Always restore the exact launching tile instead of leaving focus
-            // on the navigation rail when fullscreen playback closes.
-            withFrameNanos { }
-            delay(120L)
-            repeat(6) { attempt ->
-                runCatching { returnFocusRequester.requestFocus() }
-                delay(70L + 25L * attempt)
-            }
-        }
-    }
+
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -1834,15 +1795,12 @@ private fun ModernTmdbCollection(
             }
         }
 
-        if (
-            state.modernTmdbHasMore &&
-            !state.modernTmdbLoading
-        ) {
+        if (state.modernTmdbHasMore || state.modernTmdbLoading || appendPage.pending) {
             item("tmdb-load-more", span = fullSpan) {
                 ModernLoadMoreButton(
                     label = "Load 20 more",
-                    loading = false,
-                    onClick = loadMore
+                    loading = state.modernTmdbLoading || appendPage.pending,
+                    onClick = appendPage.load
                 )
             }
         }
@@ -1904,27 +1862,12 @@ private fun ModernIptvCollection(
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
-    var loadMoreStartCount by remember(category.id) {
-        mutableIntStateOf(-1)
-    }
-
     val gridState = rememberLazyGridState()
-    val returnFocusRequester = remember(
-        category.id,
-        state.playbackReturnFocusId
-    ) {
-        FocusRequester()
-    }
-    val returnFocusId = state.playbackReturnFocusId
-    val returnIndex = focusIds.indexOf(returnFocusId)
     val itemFocusRequesters =
         remember(category.id) {
             mutableMapOf<String, FocusRequester>()
         }
-    if (returnFocusId != null) {
-        itemFocusRequesters[returnFocusId] =
-            returnFocusRequester
-    }
+
     val focusScope = rememberCoroutineScope()
     val moveFocusToIndex: (Int) -> Unit = { targetIndex ->
         focusIds.getOrNull(targetIndex)?.let { targetId ->
@@ -1963,54 +1906,12 @@ private fun ModernIptvCollection(
         }
     }
 
-    LaunchedEffect(
-        returnFocusId,
-        returnIndex,
-        category.id,
-        isTv
-    ) {
-        if (returnFocusId != null && returnIndex >= 0) {
-            // Header is lazy-grid item zero; posters begin at item one.
-            gridState.scrollToItem(returnIndex + 1)
-            withFrameNanos { }
-            delay(120L)
-            repeat(6) { attempt ->
-                runCatching { returnFocusRequester.requestFocus() }
-                delay(70L + 25L * attempt)
-            }
-        }
-    }
 
-    LaunchedEffect(
-        state.items.size,
-        state.catalogLoadingMore,
-        loadMoreStartCount
-    ) {
-        if (loadMoreStartCount < 0) return@LaunchedEffect
 
-        if (state.items.size > loadMoreStartCount) {
-            val newIndex = loadMoreStartCount
-            val newItem = state.items[newIndex]
-            gridState.scrollToItem(newIndex + 1)
-            withFrameNanos { }
-            delay(120L)
-            repeat(5) { attempt ->
-                if (runCatching {
-                        itemFocusRequesters.getOrPut(newItem.id) {
-                            FocusRequester()
-                        }.requestFocus()
-                    }.getOrDefault(false)
-                ) {
-                    focusedPosterIndex = newIndex
-                    loadMoreStartCount = -1
-                    return@LaunchedEffect
-                }
-                delay(50L * (attempt + 1))
-            }
-        } else if (!state.catalogLoadingMore) {
-            loadMoreStartCount = -1
-        }
-    }
+    val appendPage = rememberCollectionPagination(
+        state.items.map { it.id }, state.catalogLoadingMore, gridState,
+        itemFocusRequesters, loadMore
+    )
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -2148,7 +2049,7 @@ private fun ModernIptvCollection(
             }
         }
 
-        if (state.catalogHasMore) {
+        if (state.catalogHasMore || state.catalogLoadingMore || appendPage.pending) {
             item("iptv-load-more", span = fullSpan) {
                 ModernLoadMoreButton(
                     label =
@@ -2157,13 +2058,8 @@ private fun ModernIptvCollection(
                         } else {
                             "Load more"
                         },
-                    loading = state.catalogLoadingMore,
-                    onClick = {
-                        if (!state.catalogLoadingMore) {
-                            loadMoreStartCount = state.items.size
-                            loadMore()
-                        }
-                    }
+                    loading = state.catalogLoadingMore || appendPage.pending,
+                    onClick = appendPage.load
                 )
             }
         }
@@ -2240,6 +2136,8 @@ private fun ModernLiveChannelTile(
     modifier: Modifier = Modifier,
     isTv: Boolean
 ) {
+    val returningTile = rememberReturningTile(onClick)
+
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -2298,13 +2196,13 @@ private fun ModernLiveChannelTile(
 
     Box(Modifier.fillMaxWidth()) {
         Surface(
-            modifier = modifier
+            modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
                 .heightIn(min = if (isPhone) 102.dp else 118.dp)
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
-                    onClick = onClick,
+                    onClick = returningTile.open,
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
@@ -2452,6 +2350,8 @@ private fun ModernCollectionPoster(
     compactLandscape: Boolean = false,
     isTv: Boolean
 ) {
+    val returningTile = rememberReturningTile(onClick)
+
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -2493,7 +2393,7 @@ private fun ModernCollectionPoster(
     )
 
     Column(
-        modifier
+        modifier.then(returningTile.modifier)
             .fillMaxWidth()
             .zIndex(visualProgress)
             .graphicsLayer {
@@ -2535,7 +2435,7 @@ private fun ModernCollectionPoster(
                 }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
-                    onClick = onClick,
+                    onClick = returningTile.open,
                     onLongClick = if (onFavorite != null) {
                         { menuOpen = true }
                     } else {

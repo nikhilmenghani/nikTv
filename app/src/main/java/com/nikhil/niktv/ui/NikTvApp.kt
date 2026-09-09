@@ -292,6 +292,7 @@ private tailrec fun android.content.Context.findHostActivity(): android.app.Acti
 
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
+    val catalogStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val orientationMode by rememberUiOrientationMode()
 
     // APP_WIDE_ORIENTATION_OWNER_V12
@@ -427,7 +428,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     openCategoryManager = vm::openCategoryManager
                 )
                 state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::openSettingsFromProfileChooser, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup)
-                else -> CatalogScreen(
+                else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { CatalogScreen(
                     state = state,
                     selectType = vm::openCatalogType,
                     selectCategory = vm::loadCategory,
@@ -493,6 +494,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,closeModernSection = vm::closeModernSection
                     ,loadMoreModernTmdbSection = vm::loadMoreModernTmdbSection
                 )
+            }
             }
             if (state.categoryManagerOpen) {
                 CategoryManagerDialog(
@@ -1509,6 +1511,16 @@ private fun CatalogScreen(
         }
     }
 
+    // Keep browse state when details/settings replace MainContent. Modern
+    // destinations have their own nested keys; category selection must not
+    // discard the Home hub's saved viewport.
+    val browseStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    val browseStateKey = when {
+        state.modernUiEnabled -> "modern"
+        state.homeOpen -> "home"
+        else -> "${state.selectedType}:${state.selectedCategory?.id}"
+    }
+
     // Determine the current content to show in the main pane
     @Composable
     fun MainContent(modifier: Modifier = Modifier) {
@@ -1584,7 +1596,7 @@ private fun CatalogScreen(
                     refreshCatalog = refreshCatalog,
                     loadMoreEpisodes = loadMoreEpisodes
                 )
-                else -> ModernBrowseScreen(
+                else -> browseStateHolder.SaveableStateProvider(browseStateKey) { ModernBrowseScreen(
                     state = state,
                     selectType = selectType,
                     selectCategory = selectCategory,
@@ -1616,6 +1628,7 @@ private fun CatalogScreen(
                     closeModernSection = closeModernSection,
                     loadMoreModernTmdbSection = loadMoreModernTmdbSection
                 )
+                }
             }
         }
     }
@@ -1922,8 +1935,10 @@ private fun ModernBrowseScreen(
         if (state.selectedType == CatalogType.MOVIES) 1f else 16f / 9f
     val gridSpan: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
 
+    var initialChannelFocused by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.selectedType, state.selectedCategory?.id, state.items.firstOrNull()?.id) {
-        if (!home && state.selectedType == CatalogType.LIVE_TV && state.items.isNotEmpty()) {
+        if (!initialChannelFocused && !home && state.selectedType == CatalogType.LIVE_TV && state.items.isNotEmpty()) {
+            initialChannelFocused = true
             delay(180L)
             runCatching { firstChannelRequester.requestFocus() }
         }
@@ -1947,7 +1962,7 @@ private fun ModernBrowseScreen(
             return@LaunchedEffect
         }
 
-        if (state.selectedType != CatalogType.MOVIES) {
+        if (state.selectedType !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
             movieLoadMorePending = false
             movieLoadMoreObservedLoading = false
             return@LaunchedEffect
@@ -2724,6 +2739,7 @@ private fun ModernBrowseScreen(
 
                             ModernMediaListCard(
                                 item = item,
+                                modifier = Modifier.focusRequester(movieFocusRequesters.getOrPut(item.id) { FocusRequester() }),
                                 onClick = {
                                     play(item)
                                 },
@@ -2741,6 +2757,7 @@ private fun ModernBrowseScreen(
 
                             ModernPosterCard(
                                 item = item,
+                                focusRequester = movieFocusRequesters.getOrPut(item.id) { FocusRequester() },
                                 aspectRatio = aspectRatio,
                                 modifier = Modifier.padding(horizontal = 4.dp),
                                 onClick = {
@@ -2766,7 +2783,7 @@ private fun ModernBrowseScreen(
                     (
                         state.catalogHasMore ||
                             (
-                                state.selectedType == CatalogType.MOVIES &&
+                                state.selectedType != CatalogType.LIVE_TV &&
                                     movieLoadMorePending
                             ) ||
                             (
@@ -2817,8 +2834,8 @@ private fun ModernBrowseScreen(
                                     }
 
                                     if (
-                                        state.selectedType ==
-                                            CatalogType.MOVIES
+                                        state.selectedType !=
+                                            CatalogType.LIVE_TV
                                     ) {
                                         if (movieLoadMorePending) {
                                             return@Button
@@ -4111,6 +4128,8 @@ private fun ModernPosterCard(
     focusedScale: Float = 1f,
     footer: (@Composable () -> Unit)? = null
 ) {
+    val returningTile = rememberReturningTile(onClick)
+
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -4149,7 +4168,7 @@ private fun ModernPosterCard(
     val posterShape = RoundedCornerShape(10.dp)
     val fraction = if (progress != null && progress.durationMillis > 0L)
         (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
-    Box(modifier) {
+    Box(modifier.then(returningTile.modifier)) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -4166,7 +4185,7 @@ private fun ModernPosterCard(
                 }
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
-                onClick = onClick,
+                onClick = returningTile.open,
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
                     { menuOpen = true }
                 } else onLongClick,
@@ -4287,6 +4306,8 @@ private fun ModernMediaListCard(
     isCurrentlyPlaying: Boolean = false,
     channelStyle: Boolean = false
 ) {
+    val returningTile = rememberReturningTile(onClick)
+
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -4349,7 +4370,7 @@ private fun ModernMediaListCard(
     }
 
     Surface(
-        modifier = modifier
+        modifier = modifier.then(returningTile.modifier)
             .fillMaxWidth()
             .padding(
                 horizontal = if (compact) 4.dp else 10.dp,
@@ -4380,7 +4401,7 @@ private fun ModernMediaListCard(
             )
             .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(
-                onClick = onClick,
+                onClick = returningTile.open,
                 onLongClick = { menuOpen = true },
                 interactionSource = interactionSource
             ),

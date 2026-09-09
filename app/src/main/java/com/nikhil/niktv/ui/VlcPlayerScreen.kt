@@ -159,6 +159,7 @@ internal fun VlcPlayerScreen(
     val libVlc = remember(media.progressKey) {
         LibVLC(context, arrayListOf("--network-caching=1500", "--clock-jitter=0"))
     }
+    var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     val player = remember(media.progressKey) { MediaPlayer(libVlc) }
     val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
     val activity = remember(context) { context.findActivity() }
@@ -322,11 +323,15 @@ internal fun VlcPlayerScreen(
                     buffering = event.buffering < 100f && !player.isPlaying
                 }
                 MediaPlayer.Event.Playing -> {
+                    playbackRequested = true
                     playing = true
                     buffering = false
                     advancing = false
                 }
-                MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> playing = false
+                MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> {
+                    playbackRequested = false
+                    playing = false
+                }
                 MediaPlayer.Event.EncounteredError -> {
                     buffering = false
                     error = "VLC could not play this stream."
@@ -411,6 +416,12 @@ internal fun VlcPlayerScreen(
     Box(
         modifier.fillMaxSize()
             .playerActivityObserver {
+                dpadInteraction++
+            }
+            .playerMediaKeys(playbackRequested) { requested ->
+                playbackRequested = requested
+                if (requested) player.play() else player.pause()
+                showControls()
                 dpadInteraction++
             }
             .background(Color.Black)
@@ -539,13 +550,22 @@ internal fun VlcPlayerScreen(
                     }
                     layout.setOnKeyListener { _, keyCode, event ->
                         if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && event.repeatCount > 0) return@setOnKeyListener true
                         if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_DPAD_LEFT,
                             KeyEvent.KEYCODE_DPAD_RIGHT -> { showControls(); true }
                             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                                if (player.isPlaying) player.pause() else player.play(); showControls(); true
+                                playbackRequested = !playbackRequested; if (playbackRequested) player.play() else player.pause(); showControls(); true
+                            }
+                            KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                playbackRequested = true
+                                player.play(); showControls(); true
+                            }
+                            KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                playbackRequested = false
+                                player.pause(); showControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
                                 if (seekable) player.time = (player.time - 10_000L).coerceAtLeast(0L); showControls(); true
@@ -748,6 +768,11 @@ internal fun VlcPlayerScreen(
                             vertical = if (compactMobileControls) 8.dp else 16.dp
                         )
                 ) {
+                    PlayerDateTime(
+                        compact = compactMobileControls,
+                        modifier = Modifier.align(Alignment.End)
+                    )
+
                     Row(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
@@ -777,7 +802,7 @@ internal fun VlcPlayerScreen(
                             modifier = Modifier.focusRequester(rewindRequester).playerControlFocus(CircleShape) { controlsFocused = it }
                         ) { Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White) }
                         FilledIconButton(
-                            onClick = { if (player.isPlaying) player.pause() else player.play() },
+                            onClick = { playbackRequested = !playbackRequested; if (playbackRequested) player.play() else player.pause() },
                             modifier = Modifier.size(if (compactMobileControls) 44.dp else 52.dp).focusRequester(playRequester)
                                 .focusProperties {
                                     up = fullscreenRequester
@@ -789,7 +814,7 @@ internal fun VlcPlayerScreen(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = MaterialTheme.colorScheme.onPrimary
                             )
-                        ) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause" else "Play") }
+                        ) { Icon(if (playbackRequested) Icons.Default.Pause else Icons.Default.PlayArrow, if (playbackRequested) "Pause" else "Play") }
                         if (seekable) IconButton(
                             onClick = { player.time = (player.time + 10_000L).coerceAtMost(duration) },
                             modifier = Modifier.focusRequester(forwardRequester).playerControlFocus(CircleShape) { controlsFocused = it }
@@ -800,6 +825,7 @@ internal fun VlcPlayerScreen(
                         ) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White) }
                         Spacer(Modifier.width(12.dp))
                         if (seekable) PlaybackProgressBar(
+                            mediaKey = media.progressKey,
                             position = position,
                             duration = duration,
                             onSeek = { player.time = it },
