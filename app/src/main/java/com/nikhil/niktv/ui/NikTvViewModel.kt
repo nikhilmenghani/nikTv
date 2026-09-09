@@ -85,6 +85,7 @@ data class NikTvState(
     val cacheIntervalMinutes: Int = 60,
     val playerControlsTimeoutSeconds: Int = 3,
     val keepAwakeOnlyDuringPlayback: Boolean = false,
+    val automaticReauthentication: Boolean = true,
     val modernUiEnabled: Boolean = true,
     val modernTmdbSection: TmdbHomeSection? = null,
     val modernIptvCategory: Category? = null,
@@ -166,6 +167,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { store.playerControlsTimeoutSeconds.collect { seconds -> _state.update { it.copy(playerControlsTimeoutSeconds = seconds) } } }
         viewModelScope.launch { store.keepAwakeOnlyDuringPlayback.collect { enabled ->
             _state.update { it.copy(keepAwakeOnlyDuringPlayback = enabled) }
+        } }
+        viewModelScope.launch { store.automaticReauthentication.collect { enabled ->
+            _state.update { it.copy(automaticReauthentication = enabled) }
         } }
         viewModelScope.launch { store.playbackEngine.collect { engine -> _state.update { it.copy(playbackEngine = engine) } } }
         viewModelScope.launch { store.seriesStartSeason.collect { value -> _state.update { it.copy(seriesStartSeason = value) } } }
@@ -944,6 +948,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = viewModelScope.launch {
         store.setKeepAwakeOnlyDuringPlayback(enabled)
+    }
+    fun setAutomaticReauthentication(enabled: Boolean) = viewModelScope.launch {
+        store.setAutomaticReauthentication(enabled)
     }
 
     fun setModernUiEnabled(enabled: Boolean) {
@@ -2931,7 +2938,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         resumePositionOverride: Long? = null,
         directFullscreen: Boolean = false
     ) {
-        var session = requireNotNull(_state.value.session)
+        val session = requireNotNull(_state.value.session)
         val urlKey = "${type.name}:${item.id}"
         // Stalker create_link results are signed/session-bound and can expire after playback.
         // Only Xtream VOD paths are stable enough to reuse. Retry always bypasses every cache.
@@ -2941,11 +2948,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val cachedUrl = if (mayReuseUrl) {
             _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
         } else null
-        val url = cachedUrl ?: runCatching { portal.playableUrl(session, item, type) }.getOrElse { firstError ->
-            if (session.profile.portalType != PortalType.STALKER || !firstError.isAuthenticationFailure()) throw firstError
-            session = refreshSession(session.profile)
-            portal.playableUrl(session, item, type)
-        }.also { resolved ->
+        val url = cachedUrl ?: portal.playableUrl(session, item, type).also { resolved ->
             if (type != CatalogType.LIVE_TV && session.profile.portalType == PortalType.XTREAM) {
                 val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
                     .take(MAX_PLAYBACK_URLS)
@@ -3444,9 +3447,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun retryPlaybackAfterAuthorizationFailure(positionMillis: Long) {
         val playing = _state.value.nowPlaying ?: return
         if (playing.authorizationRetryCount > 0) return
+        if (!_state.value.automaticReauthentication) {
+            _state.update { it.copy(error = "Authorization failed.") }
+            return
+        }
         viewModelScope.launch {
-            _state.update { it.copy(nowPlaying = null, error = null) }
+            _state.update { it.copy(nowPlaying = null, error = null, reauthenticating = true) }
             runCatching {
+                val profile = requireNotNull(_state.value.savedProfile)
+                if (profile.portalType == PortalType.STALKER) {
+                    refreshSession(profile)
+                }
                 playInternal(
                     item = playing.media,
                     type = playing.catalogType,
@@ -3459,6 +3470,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }.onFailure { error ->
                 _state.update { it.copy(error = error.message ?: "Could not refresh stream authorization") }
+            }.also {
+                _state.update { it.copy(reauthenticating = false) }
             }
         }
     }
@@ -3917,7 +3930,31 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             try {
-                withTimeout(90_000L) { block() }
+                withTimeout(90_000L) {
+                    try {
+                        block()
+                    } catch (firstError: Throwable) {
+                        val snapshot = _state.value
+                        val profile = snapshot.savedProfile
+                        if (!snapshot.automaticReauthentication ||
+                            profile?.portalType != PortalType.STALKER ||
+                            !firstError.isAuthenticationFailure()
+                        ) {
+                            throw firstError
+                        }
+
+                        // Refresh only the rejected portal session, then replay the interrupted
+                        // operation exactly once. A second rejection falls through to the existing
+                        // Session expired dialog rather than creating a retry loop.
+                        _state.update { it.copy(reauthenticating = true) }
+                        try {
+                            refreshSession(profile)
+                        } finally {
+                            _state.update { it.copy(reauthenticating = false) }
+                        }
+                        block()
+                    }
+                }
             } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
                 _state.update { it.copy(error = "The portal did not respond within 90 seconds. Please try again.") }
             } catch (error: Throwable) {

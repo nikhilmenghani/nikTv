@@ -56,6 +56,7 @@ class ProfileStore(private val context: Context) {
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
     private val playerControlsTimeoutKey = intPreferencesKey("player_controls_timeout_seconds")
     private val keepAwakeOnlyDuringPlaybackKey = intPreferencesKey("keep_awake_only_during_playback")
+    private val automaticReauthenticationKey = intPreferencesKey("automatic_reauthentication")
     private val modernUiEnabledKey = intPreferencesKey("modern_ui_enabled")
     private val playbackEngineKey = stringPreferencesKey("playback_engine")
     private val recentSearchesKey = stringPreferencesKey("recent_searches")
@@ -101,6 +102,9 @@ class ProfileStore(private val context: Context) {
     val playerControlsTimeoutSeconds: Flow<Int> = context.dataStore.data.map { it[playerControlsTimeoutKey] ?: 3 }
     val keepAwakeOnlyDuringPlayback: Flow<Boolean> = context.dataStore.data.map {
         (it[keepAwakeOnlyDuringPlaybackKey] ?: 0) == 1
+    }
+    val automaticReauthentication: Flow<Boolean> = context.dataStore.data.map {
+        (it[automaticReauthenticationKey] ?: 1) == 1
     }
     val modernUiEnabled: Flow<Boolean> = context.dataStore.data.map {
         // Existing and new installs both default to the tile-first interface.
@@ -254,6 +258,9 @@ class ProfileStore(private val context: Context) {
     suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = context.dataStore.edit {
         it[keepAwakeOnlyDuringPlaybackKey] = if (enabled) 1 else 0
     }
+    suspend fun setAutomaticReauthentication(enabled: Boolean) = context.dataStore.edit {
+        it[automaticReauthenticationKey] = if (enabled) 1 else 0
+    }
     suspend fun setModernUiEnabled(enabled: Boolean) = context.dataStore.edit {
         it[modernUiEnabledKey] = if (enabled) 1 else 0
     }
@@ -393,6 +400,7 @@ class ProfileStore(private val context: Context) {
         private val BACKUP_INT_KEYS = setOf(
             "catalog_cache_interval_minutes",
             "player_controls_timeout_seconds",
+            "automatic_reauthentication",
             "modern_ui_enabled"
         )
     }

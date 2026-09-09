@@ -425,6 +425,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds,
                     setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback,
+                    setAutomaticReauthentication = vm::setAutomaticReauthentication,
                     setModernUiEnabled = vm::setModernUiEnabled,
                     setPlaybackEngine = vm::setPlaybackEngine,
                     setSeriesStartSeason = vm::setSeriesStartSeason,
@@ -463,6 +464,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     setCacheIntervalMinutes = vm::setCacheIntervalMinutes
                     ,setPlayerControlsTimeoutSeconds = vm::setPlayerControlsTimeoutSeconds
                     ,setKeepAwakeOnlyDuringPlayback = vm::setKeepAwakeOnlyDuringPlayback
+                    ,setAutomaticReauthentication = vm::setAutomaticReauthentication
                     ,setModernUiEnabled = vm::setModernUiEnabled
                     ,setPlaybackEngine = vm::setPlaybackEngine
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
@@ -1429,6 +1431,7 @@ private fun CatalogScreen(
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
+    setAutomaticReauthentication: (Boolean) -> Unit,
     setModernUiEnabled: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
@@ -1561,6 +1564,7 @@ private fun CatalogScreen(
                     setCacheIntervalMinutes = setCacheIntervalMinutes,
                     setPlayerControlsTimeoutSeconds = setPlayerControlsTimeoutSeconds,
                     setKeepAwakeOnlyDuringPlayback = setKeepAwakeOnlyDuringPlayback,
+                    setAutomaticReauthentication = setAutomaticReauthentication,
                     setModernUiEnabled = setModernUiEnabled,
                     setPlaybackEngine = setPlaybackEngine,
                     setSeriesStartSeason = setSeriesStartSeason,
@@ -5141,6 +5145,7 @@ private fun ModernSettingsScreen(
     setCacheIntervalMinutes: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
+    setAutomaticReauthentication: (Boolean) -> Unit,
     setModernUiEnabled: (Boolean) -> Unit,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
@@ -5944,6 +5949,28 @@ private fun ModernSettingsScreen(
             SettingsValueRow(Icons.Default.Language, "Portal", profile.portalUrl)
             HorizontalDivider()
             SettingsValueRow(Icons.Default.Security, "Session", if (state.session != null) "Authenticated" else "Authentication required")
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Automatically re-authenticate expired sessions") },
+                supportingContent = {
+                    Text(
+                        if (state.automaticReauthentication) {
+                            "Retry the interrupted page load or playback once with a fresh session."
+                        } else {
+                            "Show the Session expired prompt and wait for confirmation."
+                        }
+                    )
+                },
+                leadingContent = { Icon(Icons.Default.Security, null) },
+                trailingContent = {
+                    Switch(
+                        checked = state.automaticReauthentication,
+                        onCheckedChange = setAutomaticReauthentication,
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(16.dp))
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
             HorizontalDivider()
             SettingsValueRow(Icons.Default.Wifi, "Device MAC Address", deviceMacAddress)
         }
