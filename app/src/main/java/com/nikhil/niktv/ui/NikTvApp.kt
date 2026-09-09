@@ -42,6 +42,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -7633,6 +7634,32 @@ private fun MediaItem.actionEpisodeLabel(): String {
     }
 }
 
+private fun MediaItem.displayTitle(series: MediaItem): String {
+    val original = title.trim()
+    var cleaned = original
+
+    val seriesNames = listOf(
+        series.title.trim(),
+        series.title.substringAfter(':').substringBefore(" - ").trim()
+    ).filter { it.length >= 5 }.distinct()
+    seriesNames.forEach { seriesName ->
+        cleaned = cleaned.replaceFirst(
+            Regex("^${Regex.escape(seriesName)}\\s*[-:|.]*\\s*", RegexOption.IGNORE_CASE),
+            ""
+        )
+    }
+
+    cleaned = cleaned
+        .replaceFirst(
+            Regex("^\\s*(?:S\\d+\\s*[:._-]?\\s*E(?:P(?:ISODE)?)?\\s*\\d+|(?:EPISODE|EP|E)\\s*#?\\s*\\d+)\\s*[. :|\\-–—]*\\s*", RegexOption.IGNORE_CASE),
+            ""
+        )
+        .replaceFirst(Regex("^\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}\\s*[. :|\\-–—]*\\s*"), "")
+        .trim(' ', '.', ':', '-', '–', '—', '|')
+
+    return cleaned.takeIf { it.isNotBlank() } ?: original
+}
+
 private fun String.seasonNumberFromTitle(): Int? {
     val patterns = listOf(
         Regex("(?i)S(?:EASON)?[ ._-]*(\\d+)"),
@@ -8350,6 +8377,11 @@ private fun ModernSeriesDetailScreen(
         episodeSearchEditing = true
     }
 
+    BackHandler(enabled = episodeSearchEditing) {
+        episodeSearchEditing = false
+        keyboardController?.hide()
+    }
+
     LaunchedEffect(episodeSearchEditing) {
         if (episodeSearchEditing) {
             delay(80L)
@@ -8673,8 +8705,8 @@ private fun ModernSeriesDetailScreen(
                                     ?.let { seasons -> loadSeriesSeason(if (latestFirst) seasons.last() else seasons.first()) }
                             },
                             shape = RoundedCornerShape(12.dp),
-                            color = if (episodeSortDescending) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color(0xFF1E2430),
-                            border = BorderStroke(1.dp, if (episodeSortDescending) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color.Transparent),
+                            color = Color(0xFF1E2430),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
                             contentColor = Color.White,
                             modifier = Modifier.height(42.dp).remoteFocusFrame()
                         ) {
@@ -8683,17 +8715,17 @@ private fun ModernSeriesDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    if (episodeSortDescending) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                                    Icons.AutoMirrored.Filled.Sort,
                                     null,
                                     Modifier.size(18.dp),
-                                    tint = if (episodeSortDescending) MaterialTheme.colorScheme.primary else Color.White
+                                    tint = Color.White.copy(alpha = 0.85f)
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
                                     text = if (episodeSortDescending) "Latest First" else "Oldest First",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (episodeSortDescending) MaterialTheme.colorScheme.primary else Color.White
+                                    color = Color.White
                                 )
                             }
                         }
@@ -9016,11 +9048,11 @@ private fun ModernEpisodeCard(
                 }
 
                 Text(
-                    text = episode.title,
-                    style = MaterialTheme.typography.titleMedium,
+                    text = episode.displayTitle(series),
+                    style = if (mobileLayout) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
-                    maxLines = if (mobileLayout) 2 else 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
 
