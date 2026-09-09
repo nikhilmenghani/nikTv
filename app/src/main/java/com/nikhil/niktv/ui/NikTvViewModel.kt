@@ -98,7 +98,7 @@ data class NikTvState(
     val modernTmdbError: String? = null,
     val seriesOpenedFromModernSection: Boolean = false,
     val playbackEngine: PlaybackEngine = PlaybackEngine.AUTO,
-    val seriesStartSeason: SeriesStartSeason = SeriesStartSeason.FIRST,
+    val seriesStartSeason: SeriesStartSeason = SeriesStartSeason.LAST,
     val availableSeriesSeasons: List<Int> = emptyList(),
     val selectedSeriesSeason: Int? = null,
     val watchedSeries: List<WatchedSeries> = emptyList(),
@@ -1551,19 +1551,46 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadSeriesEpisodes(series: MediaItem, requestedSeason: Int? = null, forceRefresh: Boolean = false) {
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
-        val remembered = rememberedSeriesSeasons["$profileKey|${series.id}"]
-        val desired = requestedSeason ?: remembered
+        // An explicit selection applies while navigating seasons. On a fresh series open,
+        // honor the configured first/latest preference instead of an older remembered season.
+        val desired = requestedSeason
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         val cached = if (forceRefresh) null else episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
                 (desired == null || cache.season == desired) && System.currentTimeMillis() - cache.cachedAtMillis < maxAge
         }
-        val result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season, it.page, it.hasMore) }
+        var result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season, it.page, it.hasMore) }
             ?: portal.episodeSeason(session, series, _state.value.seriesStartSeason, desired).also { loaded ->
                 val cache = EpisodeSeasonCache(profileKey, series.id, loaded.selectedSeason, loaded.availableSeasons, loaded.episodes, loaded.page, loaded.hasMore)
                 episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
                 store.saveEpisodeSeasonCache(cache)
             }
+        val portalPageSize = result.episodes.size
+        while (result.hasMore && portalPageSize > 0 && result.episodes.size + portalPageSize <= INITIAL_EPISODE_BATCH_LIMIT) {
+            val next = portal.episodeSeason(
+                session,
+                series,
+                _state.value.seriesStartSeason,
+                result.selectedSeason,
+                result.page + 1,
+                result.episodes.firstOrNull()?.portalSeasonId
+            )
+            val combined = (result.episodes + next.episodes).distinctBy { it.id }
+            if (combined.size == result.episodes.size) {
+                result = result.copy(hasMore = false)
+                break
+            }
+            result = EpisodeSeasonResult(
+                episodes = combined,
+                availableSeasons = (result.availableSeasons + next.availableSeasons).distinct().sorted(),
+                selectedSeason = next.selectedSeason ?: result.selectedSeason,
+                page = next.page,
+                hasMore = next.hasMore
+            )
+        }
+        val expandedCache = EpisodeSeasonCache(profileKey, series.id, result.selectedSeason, result.availableSeasons, result.episodes, result.page, result.hasMore)
+        episodeSeasonCaches = listOf(expandedCache) + episodeSeasonCaches.filterNot { it.key == expandedCache.key }
+        store.saveEpisodeSeasonCache(expandedCache)
         result.selectedSeason?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
         _state.update { it.copy(items = result.episodes, availableSeriesSeasons = result.availableSeasons, selectedSeriesSeason = result.selectedSeason,
             episodePage = result.page, episodeHasMore = result.hasMore, episodeLoadingMore = false) }
@@ -4024,6 +4051,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MODERN_TMDB_PAGE_SIZE = 20
         private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
+        private const val INITIAL_EPISODE_BATCH_LIMIT = 30
         private const val INITIAL_MOVIE_MATCH_LIMIT = 5
         private const val MAX_BACKGROUND_MATCH_REQUESTS = 8
     }

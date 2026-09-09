@@ -125,7 +125,7 @@ class ProfileStore(private val context: Context) {
     }
     val seriesStartSeason: Flow<SeriesStartSeason> = context.dataStore.data.map { prefs ->
         prefs[seriesStartSeasonKey]?.let { runCatching { SeriesStartSeason.valueOf(it) }.getOrNull() }
-            ?: SeriesStartSeason.FIRST
+            ?: SeriesStartSeason.LAST
     }
     val watchedSeries: Flow<List<WatchedSeries>> = context.dataStore.data.map { prefs ->
         prefs[watchedSeriesKey]?.let { runCatching { Json.decodeFromString<List<WatchedSeries>>(it) }.getOrNull() }.orEmpty()
