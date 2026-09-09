@@ -4831,7 +4831,6 @@ private fun ModernFavoritesScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModernFavoriteCard(
     favorite: FavoriteItem,
@@ -4839,49 +4838,87 @@ private fun ModernFavoriteCard(
     open: () -> Unit,
     remove: () -> Unit
 ) {
-    val dismissState = rememberSwipeToDismissBoxState()
-    var removed by remember(favorite.key) { mutableStateOf(false) }
-    LaunchedEffect(dismissState.currentValue) {
-        if (!removed && dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
-            removed = true
-            remove()
+    var removalConfirmationOpen by rememberSaveable(favorite.key) {
+        mutableStateOf(false)
+    }
+    val cancelRemovalRequester = remember(favorite.key) { FocusRequester() }
+
+    LaunchedEffect(removalConfirmationOpen) {
+        if (removalConfirmationOpen) {
+            withFrameNanos { }
+            runCatching { cancelRemovalRequester.requestFocus() }
         }
     }
-    SwipeToDismissBox(
-        state = dismissState,
-        backgroundContent = {
-            val removalArmed = dismissState.targetValue != SwipeToDismissBoxValue.Settled
-            Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp))
-                    .background(if (removalArmed) Color(0xFF7F1D1D) else Color(0xFF090909)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Delete, "Remove ${favorite.media.title}", tint = Color.White)
-            }
-        }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = Color(0xFF090909)
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            color = Color(0xFF090909)
+        ModernPosterCard(
+            item = favorite.media,
+            aspectRatio = aspectRatio,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+            onClick = open,
+            onLongClick = { removalConfirmationOpen = true },
+            titleMaxLines = Int.MAX_VALUE
         ) {
-            ModernPosterCard(
-                item = favorite.media,
-                aspectRatio = aspectRatio,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-                onClick = open,
-                onLongClick = remove,
-                titleMaxLines = Int.MAX_VALUE
-            ) {
-                Text(
-                    listOfNotNull(favorite.kind.mediaTypeLabel(), favorite.categoryTitle?.takeIf { it.isNotBlank() }).joinToString(" · "),
-                    color = Color(0xFFB3B3B3),
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                listOfNotNull(
+                    favorite.kind.mediaTypeLabel(),
+                    favorite.categoryTitle?.takeIf { it.isNotBlank() }
+                ).joinToString(" · "),
+                color = Color(0xFFB3B3B3),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
+    }
+
+    if (removalConfirmationOpen) {
+        AlertDialog(
+            onDismissRequest = { removalConfirmationOpen = false },
+            icon = {
+                Icon(
+                    Icons.Default.DeleteOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = { Text("Remove from My List?") },
+            text = {
+                Text(
+                    "Remove “${favorite.media.title}” from My List? " +
+                        "You can add it again later."
+                )
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { removalConfirmationOpen = false },
+                    modifier = Modifier
+                        .focusRequester(cancelRemovalRequester)
+                        .remoteFocusFrame(CircleShape)
+                ) {
+                    Text("Cancel")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        removalConfirmationOpen = false
+                        remove()
+                    },
+                    modifier = Modifier.remoteFocusFrame(CircleShape),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text("Remove")
+                }
+            }
+        )
     }
 }
 
