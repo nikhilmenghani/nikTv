@@ -70,6 +70,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
@@ -123,6 +124,14 @@ private val XtreamColors = NikColors
 private val visibleCatalogTypes = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
 private val menuActivationKeys = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
+private enum class MobileMainPage(val title: String, val icon: ImageVector) {
+    HOME("Home", Icons.Default.Home),
+    LIVE("Live", Icons.Default.LiveTv),
+    MOVIES("Movies", Icons.Default.Movie),
+    SERIES("Series", Icons.Default.VideoLibrary),
+    LIBRARY("Library", Icons.Default.VideoLibrary)
+}
+
 private enum class MobileSettingsPage(val title: String, val icon: ImageVector) {
     APPEARANCE("Appearance", Icons.Default.Palette),
     PLAYBACK("Playback", Icons.Default.PlayCircle),
@@ -139,6 +148,14 @@ private fun settingsPageFor(title: String): MobileSettingsPage = when (title) {
         MobileSettingsPage.PLAYBACK
     "Category Filters", "Catalog cache" -> MobileSettingsPage.CONTENT
     else -> MobileSettingsPage.ACCOUNT
+}
+
+private fun NikTvState.mobileMainPage(): MobileMainPage = when {
+    favoritesOpen -> MobileMainPage.LIBRARY
+    homeOpen -> MobileMainPage.HOME
+    selectedType == CatalogType.LIVE_TV -> MobileMainPage.LIVE
+    selectedType == CatalogType.MOVIES -> MobileMainPage.MOVIES
+    else -> MobileMainPage.SERIES
 }
 
 private fun Context.isTvLikeDevice(configuration: Configuration): Boolean =
@@ -222,6 +239,81 @@ private fun Modifier.remoteFocusFrame(
                 Modifier
             }
         )
+}
+
+@Composable
+private fun Modifier.mobileMainTabSwipe(
+    enabled: Boolean,
+    currentPage: MobileMainPage,
+    onPageSelected: (MobileMainPage) -> Unit
+): Modifier {
+    val latestOnPageSelected by rememberUpdatedState(onPageSelected)
+    if (!enabled) return this
+
+    return pointerInput(enabled, currentPage) {
+        val distanceThreshold = 72.dp.toPx()
+        val directionRatio = 1.25f
+
+        awaitPointerEventScope {
+            while (true) {
+                val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
+                val down = initialEvent.changes.firstOrNull {
+                    it.pressed && !it.previousPressed
+                } ?: continue
+
+                val pointerId = down.id
+                var lastX = down.position.x
+                var lastY = down.position.y
+                var totalX = 0f
+                var totalY = 0f
+                var childConsumedHorizontalDrag = false
+                var cancelled = false
+
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    if (event.changes.count { it.pressed } > 1) {
+                        cancelled = true
+                    }
+
+                    val change = event.changes.firstOrNull { it.id == pointerId }
+                        ?: break
+                    val deltaX = change.position.x - lastX
+                    val deltaY = change.position.y - lastY
+                    lastX = change.position.x
+                    lastY = change.position.y
+                    totalX += deltaX
+                    totalY += deltaY
+
+                    if (
+                        change.isConsumed &&
+                        kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY)
+                    ) {
+                        childConsumedHorizontalDrag = true
+                    }
+
+                    if (!change.pressed) break
+                }
+
+                if (cancelled || childConsumedHorizontalDrag) continue
+
+                val horizontalDistance = kotlin.math.abs(totalX)
+                val verticalDistance = kotlin.math.abs(totalY)
+                if (
+                    horizontalDistance < distanceThreshold ||
+                    horizontalDistance <= verticalDistance * directionRatio
+                ) {
+                    continue
+                }
+
+                val pages = MobileMainPage.entries
+                val currentIndex = pages.indexOf(currentPage)
+                val targetIndex =
+                    if (totalX < 0f) currentIndex + 1
+                    else currentIndex - 1
+                pages.getOrNull(targetIndex)?.let(latestOnPageSelected)
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1480,6 +1572,17 @@ private fun CatalogScreen(
     val modernSectionOpen =
         state.modernUiEnabled &&
             (state.modernTmdbSection != null || state.modernIptvCategory != null)
+    val mobileMainPage = state.mobileMainPage()
+
+    fun selectMobileMainPage(page: MobileMainPage) {
+        when (page) {
+            MobileMainPage.HOME -> openHome()
+            MobileMainPage.LIVE -> selectType(CatalogType.LIVE_TV)
+            MobileMainPage.MOVIES -> selectType(CatalogType.MOVIES)
+            MobileMainPage.SERIES -> selectType(CatalogType.SERIES)
+            MobileMainPage.LIBRARY -> openFavorites()
+        }
+    }
 
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
     BackHandler(enabled = state.movieMatchSelection != null, onBack = closeTmdbMovieMatches)
@@ -1669,15 +1772,26 @@ private fun CatalogScreen(
     } else {
         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             val showYouTubeNavigation = mobileUiDesign.usesYouTubeOn(configuration) && !state.settingsOpen && !state.searchOpen
+            val mainTabSwipeEnabled =
+                showYouTubeNavigation &&
+                    state.movieMatchSelection == null &&
+                    state.seriesMatchSelection == null &&
+                    state.selectedSeries == null &&
+                    !modernSectionOpen
             MainContent(
-                Modifier.fillMaxSize().padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
+                Modifier
+                    .fillMaxSize()
+                    .padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
+                    .mobileMainTabSwipe(
+                        enabled = mainTabSwipeEnabled,
+                        currentPage = mobileMainPage,
+                        onPageSelected = ::selectMobileMainPage
+                    )
             )
             if (showYouTubeNavigation) {
                 YouTubeStyleBottomBar(
-                    state = state,
-                    openHome = openHome,
-                    selectType = selectType,
-                    openFavorites = openFavorites,
+                    currentPage = mobileMainPage,
+                    selectPage = ::selectMobileMainPage,
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
@@ -3411,26 +3525,10 @@ private fun YouTubeStyleTopBar(
 
 @Composable
 private fun YouTubeStyleBottomBar(
-    state: NikTvState,
-    openHome: () -> Unit,
-    selectType: (CatalogType) -> Unit,
-    openFavorites: () -> Unit,
+    currentPage: MobileMainPage,
+    selectPage: (MobileMainPage) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val destinations = listOf(
-        Triple("Home", Icons.Default.Home, openHome),
-        Triple("Live", CatalogType.LIVE_TV.icon()) { selectType(CatalogType.LIVE_TV) },
-        Triple("Movies", CatalogType.MOVIES.icon()) { selectType(CatalogType.MOVIES) },
-        Triple("Series", CatalogType.SERIES.icon()) { selectType(CatalogType.SERIES) },
-        Triple("Library", Icons.Default.VideoLibrary, openFavorites)
-    )
-    val selectedLabel = when {
-        state.favoritesOpen -> "Library"
-        state.homeOpen -> "Home"
-        state.selectedType == CatalogType.LIVE_TV -> "Live"
-        state.selectedType == CatalogType.MOVIES -> "Movies"
-        else -> "Series"
-    }
     Surface(modifier = modifier.fillMaxWidth(), color = Color(0xFF101216), tonalElevation = 8.dp) {
         Row(
             Modifier
@@ -3439,12 +3537,12 @@ private fun YouTubeStyleBottomBar(
                 .animateContentSize(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            destinations.forEach { (label, icon, action) ->
+            MobileMainPage.entries.forEach { page ->
                 ExpressiveBottomNavigationItem(
-                    icon = icon,
-                    label = label,
-                    selected = selectedLabel == label,
-                    onClick = action,
+                    icon = page.icon,
+                    label = page.title,
+                    selected = currentPage == page,
+                    onClick = { selectPage(page) },
                     inactiveWidth = 48.dp
                 )
             }
