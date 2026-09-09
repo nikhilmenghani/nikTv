@@ -6,12 +6,15 @@ import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -300,9 +303,32 @@ internal fun ModernSearchScreen(
             }
         }
 
+        /*
+         * SEARCH_RECENTS_V4
+         *
+         * History is a navigation surface, not a chip cloud. A whole row is a
+         * comfortable touch/D-pad target; long-press removes the entry without
+         * introducing a tiny secondary focus target.
+         */
+        val activeProfileKey = state.session?.profile?.cacheKey()
+        val visibleRecentSearches = remember(
+            state.recentSearches,
+            activeProfileKey,
+            state.searchScopeLocked,
+            state.searchType
+        ) {
+            state.recentSearches
+                .filter {
+                    it.type in searchVisibleTypes &&
+                        it.profileKey == activeProfileKey &&
+                        (!state.searchScopeLocked || it.type == state.searchType)
+                }
+                .take(8)
+        }
+
         if (
             state.searchQuery.isBlank() &&
-            state.recentSearches.isNotEmpty() &&
+            visibleRecentSearches.isNotEmpty() &&
             state.searchResults.isEmpty()
         ) {
             Text(
@@ -311,62 +337,31 @@ internal fun ModernSearchScreen(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+            Text(
+                "Select to search again · long-press to remove",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF8E939C),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                val activeProfileKey = state.session?.profile?.cacheKey()
-                state.recentSearches
-                    .filter {
-                        it.type in searchVisibleTypes &&
-                            it.profileKey == activeProfileKey &&
-                            (!state.searchScopeLocked || it.type == state.searchType)
-                    }
-                    .forEach { recent ->
-                        val recentShape = RoundedCornerShape(12.dp)
-                        InputChip(
-                            selected = false,
-                            onClick = { useRecent(recent) },
-                            modifier = Modifier.remoteFocusFrame(recentShape),
-                            shape = recentShape,
-                            label = {
-                                Column {
-                                    Text(
-                                        recent.query,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        "${recent.type.title} · ${recent.categoryTitle}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color =
-                                            MaterialTheme.colorScheme
-                                                .onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            },
-                            colors = InputChipDefaults.inputChipColors(
-                                containerColor = Color(0xFF15181E),
-                                labelColor = Color.LightGray
-                            ),
-                            trailingIcon = {
-                                Icon(
-                                    Icons.Default.Close,
-                                    "Delete ${recent.query}",
-                                    Modifier
-                                        .size(18.dp)
-                                        .clickable {
-                                            deleteRecent(recent)
-                                        }
-                                )
-                            }
-                        )
-                    }
+                items(
+                    visibleRecentSearches,
+                    key = { "recent-${it.key}" }
+                ) { recent ->
+                    SearchRecentRow(
+                        recent = recent,
+                        onClick = { useRecent(recent) },
+                        onRemove = { deleteRecent(recent) }
+                    )
+                }
             }
         }
-
         if (
             state.searchQuery.isNotBlank() &&
             state.searchResults.isEmpty() &&
@@ -460,7 +455,9 @@ internal fun ModernSearchScreen(
 
         if (state.searchResults.isNotEmpty()) {
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -491,86 +488,22 @@ internal fun ModernSearchScreen(
                 }
             }
 
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(
-                    state.searchResults,
-                    key = { "search-${state.searchType}-${it.id}" }
-                ) { item ->
-                    val category =
-                        state.searchCategories
-                            .firstOrNull { it.id == item.portalCategoryId }
-                            ?.title
-                            ?: state.searchCategories
-                                .firstOrNull {
-                                    it.id == state.searchCategoryId
-                                }
-                                ?.title
-
-                    ModernSearchResultRow(
-                        item = item,
-                        type = state.searchType,
-                        categoryTitle = category,
-                        isFavorite = state.favorites.any { favorite ->
-                            favorite.media.id == item.id &&
-                                favorite.kind ==
-                                    state.searchType.searchFavoriteKind()
-                        },
-                        toggleFavorite = {
-                            toggleFavorite(
-                                FavoriteItem(
-                                    kind =
-                                        state.searchType
-                                            .searchFavoriteKind(),
-                                    media = item,
-                                    categoryTitle = category
-                                )
-                            )
-                        },
-                        onClick = { openResult(item) }
-                    )
-                }
-
-                if (state.searchHasMore) {
-                    item("load-more-${state.searchPage}") {
-                        OutlinedButton(
-                            onClick = loadMore,
-                            enabled = !state.searchServerLoading,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp)
-                                .remoteFocusFrame()
-                        ) {
-                            if (state.searchServerLoading) {
-                                CircularProgressIndicator(
-                                    Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(Icons.Default.ExpandMore, null)
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Text("Load more results")
-                        }
-                    }
-                } else if (state.searchUsedServer) {
-                    item("all-pages-loaded") {
-                        Text(
-                            "No more provider results",
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            textAlign =
-                                androidx.compose.ui.text.style.TextAlign.Center,
-                            color =
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
+            /*
+             * SEARCH_RESULTS_ADAPTIVE_V4
+             *
+             * Live TV remains row-based because logos, channel titles and
+             * programme context scan better vertically. Movies/Series switch
+             * to poster cards when the display has enough width.
+             */
+            SearchResultsContent(
+                state = state,
+                isTv = isTv,
+                screenWidthDp = configuration.screenWidthDp,
+                openResult = openResult,
+                loadMore = loadMore,
+                toggleFavorite = toggleFavorite,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 
@@ -1088,9 +1021,267 @@ private fun SearchCategoryPickerContent(
 }
 
 @Composable
-private fun ModernSearchResultRow(
+private fun SearchRecentRow(
+    recent: RecentSearch,
+    onClick: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val shape = RoundedCornerShape(14.dp)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .remoteFocusFrame(shape)
+            .remoteCombinedClickable(
+                onClick = onClick,
+                onLongClick = onRemove
+            ),
+        shape = shape,
+        color = Color(0xFF15181E),
+        border = BorderStroke(1.dp, Color(0xFF30343B))
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = Color(0xFF262A31)
+            ) {
+                Icon(
+                    Icons.Default.History,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(8.dp)
+                        .size(19.dp),
+                    tint = Color(0xFFB8BCC4)
+                )
+            }
+
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    recent.query,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "${recent.type.title} · ${recent.categoryTitle}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF8E939C),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = "Search ${recent.query}",
+                tint = Color(0xFFB8BCC4)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchResultsContent(
+    state: NikTvState,
+    isTv: Boolean,
+    screenWidthDp: Int,
+    openResult: (MediaItem) -> Unit,
+    loadMore: () -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val posterGrid =
+        state.searchType in setOf(
+            SearchContentType.MOVIES,
+            SearchContentType.SERIES
+        ) &&
+            (isTv || screenWidthDp >= 600)
+
+    if (posterGrid) {
+        val minimumCardWidth =
+            if (isTv) 180.dp else 164.dp
+
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = minimumCardWidth),
+            modifier = modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            gridItems(
+                items = state.searchResults,
+                key = { "search-${state.searchType}-${it.id}" }
+            ) { item ->
+                val category = state.searchCategoryTitle(item)
+                ModernSearchPosterResultCard(
+                    item = item,
+                    type = state.searchType,
+                    categoryTitle = category,
+                    isFavorite = state.isSearchFavorite(item),
+                    toggleFavorite = {
+                        toggleFavorite(
+                            state.searchFavoriteItem(item, category)
+                        )
+                    },
+                    onClick = { openResult(item) }
+                )
+            }
+
+            if (state.searchHasMore) {
+                item(
+                    key = "search-load-more",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
+                    SearchLoadMoreButton(
+                        loading = state.searchServerLoading,
+                        onClick = loadMore
+                    )
+                }
+            } else if (state.searchUsedServer) {
+                item(
+                    key = "search-provider-complete",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
+                    SearchProviderCompleteMessage()
+                }
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items(
+            state.searchResults,
+            key = { "search-${state.searchType}-${it.id}" }
+        ) { item ->
+            val category = state.searchCategoryTitle(item)
+            val favorite = state.isSearchFavorite(item)
+            val toggle = {
+                toggleFavorite(
+                    state.searchFavoriteItem(item, category)
+                )
+            }
+
+            if (state.searchType == SearchContentType.LIVE_TV) {
+                ModernSearchLiveResultRow(
+                    item = item,
+                    categoryTitle = category,
+                    isFavorite = favorite,
+                    toggleFavorite = toggle,
+                    onClick = { openResult(item) }
+                )
+            } else {
+                ModernSearchMediaResultRow(
+                    item = item,
+                    type = state.searchType,
+                    categoryTitle = category,
+                    isFavorite = favorite,
+                    toggleFavorite = toggle,
+                    onClick = { openResult(item) }
+                )
+            }
+        }
+
+        if (state.searchHasMore) {
+            /*
+             * SEARCH_STABLE_LOAD_MORE_FOCUS_V4
+             *
+             * Do not include searchPage in this key. The same logical button
+             * survives an appended page so D-pad focus is not discarded just
+             * because the page number changed.
+             */
+            item("search-load-more") {
+                SearchLoadMoreButton(
+                    loading = state.searchServerLoading,
+                    onClick = loadMore
+                )
+            }
+        } else if (state.searchUsedServer) {
+            item("search-provider-complete") {
+                SearchProviderCompleteMessage()
+            }
+        }
+    }
+}
+
+private fun NikTvState.searchCategoryTitle(item: MediaItem): String? =
+    searchCategories
+        .firstOrNull { it.id == item.portalCategoryId }
+        ?.title
+        ?: searchCategories
+            .firstOrNull { it.id == searchCategoryId }
+            ?.title
+
+private fun NikTvState.isSearchFavorite(item: MediaItem): Boolean =
+    favorites.any { favorite ->
+        favorite.media.id == item.id &&
+            favorite.kind == searchType.searchFavoriteKind()
+    }
+
+private fun NikTvState.searchFavoriteItem(
     item: MediaItem,
-    type: SearchContentType,
+    categoryTitle: String?
+): FavoriteItem =
+    FavoriteItem(
+        kind = searchType.searchFavoriteKind(),
+        media = item,
+        categoryTitle = categoryTitle
+    )
+
+@Composable
+private fun SearchLoadMoreButton(
+    loading: Boolean,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = !loading,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .remoteFocusFrame()
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                Modifier.size(20.dp),
+                strokeWidth = 2.dp
+            )
+        } else {
+            Icon(Icons.Default.ExpandMore, null)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text("Load more results")
+    }
+}
+
+@Composable
+private fun SearchProviderCompleteMessage() {
+    Text(
+        "No more provider results",
+        Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+@Composable
+private fun ModernSearchLiveResultRow(
+    item: MediaItem,
     categoryTitle: String?,
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
@@ -1101,17 +1292,10 @@ private fun ModernSearchResultRow(
     val artworkModel = remember(item.id, item.title, item.logo) {
         artworkRequest(context, item)
     }
-    val typeLabel = when (type) {
-        SearchContentType.LIVE_TV -> "Live TV"
-        SearchContentType.MOVIES -> "Movie"
-        SearchContentType.SERIES -> "Series"
-        SearchContentType.EPISODES -> "Episode"
-    }
-    val supportingText =
-        item.liveProgramme?.title?.takeIf { it.isNotBlank() }
-            ?: item.description?.takeIf { it.isNotBlank() }
     val compact = LocalConfiguration.current.screenWidthDp < 600
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(14.dp)
+    val programme =
+        item.liveProgramme?.title?.takeIf { it.isNotBlank() }
 
     Box {
         Surface(
@@ -1123,48 +1307,57 @@ private fun ModernSearchResultRow(
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
-            color = Color(0xFF171717)
+            color = Color(0xFF15181E),
+            border = BorderStroke(1.dp, Color(0xFF2E3239))
         ) {
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
+                Modifier.padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Box(
-                    Modifier
-                        .width(if (compact) 112.dp else 148.dp)
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF292929)),
-                    contentAlignment = Alignment.Center
+                /*
+                 * SEARCH_LIVE_FIT_V4
+                 *
+                 * Channel artwork is a logo, not a poster. Fit it inside a
+                 * bounded neutral canvas instead of cropping it to 16:9.
+                 */
+                Surface(
+                    modifier = Modifier
+                        .width(if (compact) 104.dp else 142.dp)
+                        .aspectRatio(16f / 9f),
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFFF0F1F3)
                 ) {
-                    if (item.logo.isNullOrBlank()) {
-                        Icon(
-                            Icons.Default.SmartDisplay,
-                            null,
-                            Modifier.size(36.dp),
-                            tint = Color.LightGray
-                        )
-                    } else {
-                        SubcomposeAsyncImage(
-                            artworkModel,
-                            item.title,
-                            Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        ) {
-                            when (painter.state.value) {
-                                is coil3.compose.AsyncImagePainter.State.Success ->
-                                    SubcomposeAsyncImageContent()
+                    Box(
+                        Modifier.padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (item.logo.isNullOrBlank()) {
+                            Icon(
+                                Icons.Default.LiveTv,
+                                null,
+                                Modifier.size(34.dp),
+                                tint = Color(0xFF454A52)
+                            )
+                        } else {
+                            SubcomposeAsyncImage(
+                                artworkModel,
+                                item.title,
+                                Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit
+                            ) {
+                                when (painter.state.value) {
+                                    is coil3.compose.AsyncImagePainter.State.Success ->
+                                        SubcomposeAsyncImageContent()
 
-                                else ->
-                                    Icon(
-                                        Icons.Default.SmartDisplay,
-                                        null,
-                                        Modifier.size(36.dp),
-                                        tint = Color.LightGray
-                                    )
+                                    else ->
+                                        Icon(
+                                            Icons.Default.LiveTv,
+                                            null,
+                                            Modifier.size(34.dp),
+                                            tint = Color(0xFF454A52)
+                                        )
+                                }
                             }
                         }
                     }
@@ -1183,37 +1376,37 @@ private fun ModernSearchResultRow(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SearchMetadataBadge(
-                            typeLabel,
-                            Color(0xFFE50914)
-                        )
-                        SearchMetadataBadge(
-                            categoryTitle
-                                ?.takeIf { it.isNotBlank() }
-                                ?: "Category unavailable",
-                            Color(0xFF343434),
-                            Modifier.widthIn(
-                                max = if (compact) 116.dp else 260.dp
+                    categoryTitle
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let {
+                            Text(
+                                it,
+                                color = Color(0xFF9DA2AB),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        )
-                    }
+                        }
 
-                    supportingText?.let {
-                        Text(
-                            if (item.liveProgramme != null) {
-                                "Now playing: $it"
-                            } else {
-                                it
-                            },
-                            color = Color(0xFFB8B8B8),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    programme?.let {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.FiberManualRecord,
+                                contentDescription = null,
+                                modifier = Modifier.size(9.dp),
+                                tint = Color(0xFFE50914)
+                            )
+                            Text(
+                                "Now playing: $it",
+                                color = Color(0xFFCACDD2),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
 
@@ -1226,39 +1419,301 @@ private fun ModernSearchResultRow(
             }
         }
 
-        DropdownMenu(
+        SearchFavoriteMenu(
             expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-            modifier = Modifier.align(Alignment.TopEnd),
-            containerColor = Color(0xFF202020),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        if (isFavorite) {
-                            "Remove from My List"
-                        } else {
-                            "Add to My List"
-                        }
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        if (isFavorite) {
-                            Icons.Default.HeartBroken
-                        } else {
-                            Icons.Default.FavoriteBorder
-                        },
-                        null
-                    )
-                },
-                onClick = {
-                    menuOpen = false
-                    toggleFavorite()
-                }
-            )
+            isFavorite = isFavorite,
+            onDismiss = { menuOpen = false },
+            onToggle = {
+                menuOpen = false
+                toggleFavorite()
+            }
+        )
+    }
+}
+
+@Composable
+private fun ModernSearchMediaResultRow(
+    item: MediaItem,
+    type: SearchContentType,
+    categoryTitle: String?,
+    isFavorite: Boolean,
+    toggleFavorite: () -> Unit,
+    onClick: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val artworkModel = remember(item.id, item.title, item.logo) {
+        artworkRequest(context, item)
+    }
+    val shape = RoundedCornerShape(14.dp)
+    val description = item.description?.takeIf { it.isNotBlank() }
+    val fallbackIcon =
+        if (type == SearchContentType.SERIES) {
+            Icons.Default.VideoLibrary
+        } else {
+            Icons.Default.Movie
         }
+
+    Box {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .remoteFocusFrame(shape)
+                .remoteCombinedClickable(
+                    onClick = onClick,
+                    onLongClick = { menuOpen = true }
+                ),
+            shape = shape,
+            color = Color(0xFF15181E),
+            border = BorderStroke(1.dp, Color(0xFF2E3239))
+        ) {
+            Row(
+                Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(13.dp)
+            ) {
+                Box(
+                    Modifier
+                        .width(78.dp)
+                        .aspectRatio(2f / 3f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF292D34)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (item.logo.isNullOrBlank()) {
+                        Icon(
+                            fallbackIcon,
+                            null,
+                            Modifier.size(34.dp),
+                            tint = Color.LightGray
+                        )
+                    } else {
+                        SubcomposeAsyncImage(
+                            artworkModel,
+                            item.title,
+                            Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        ) {
+                            when (painter.state.value) {
+                                is coil3.compose.AsyncImagePainter.State.Success ->
+                                    SubcomposeAsyncImageContent()
+
+                                else ->
+                                    Icon(
+                                        fallbackIcon,
+                                        null,
+                                        Modifier.size(34.dp),
+                                        tint = Color.LightGray
+                                    )
+                            }
+                        }
+                    }
+                }
+
+                Column(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        item.title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    categoryTitle
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let {
+                            SearchMetadataBadge(
+                                it,
+                                Color(0xFF34383F)
+                            )
+                        }
+
+                    description?.let {
+                        Text(
+                            it,
+                            color = Color(0xFFB8BCC4),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    "Open ${item.title}",
+                    tint = Color(0xFFB8BCC4)
+                )
+            }
+        }
+
+        SearchFavoriteMenu(
+            expanded = menuOpen,
+            isFavorite = isFavorite,
+            onDismiss = { menuOpen = false },
+            onToggle = {
+                menuOpen = false
+                toggleFavorite()
+            }
+        )
+    }
+}
+
+@Composable
+private fun ModernSearchPosterResultCard(
+    item: MediaItem,
+    type: SearchContentType,
+    categoryTitle: String?,
+    isFavorite: Boolean,
+    toggleFavorite: () -> Unit,
+    onClick: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val artworkModel = remember(item.id, item.title, item.logo) {
+        artworkRequest(context, item)
+    }
+    val shape = RoundedCornerShape(14.dp)
+    val fallbackIcon =
+        if (type == SearchContentType.SERIES) {
+            Icons.Default.VideoLibrary
+        } else {
+            Icons.Default.Movie
+        }
+
+    Box {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .remoteFocusFrame(shape)
+                .remoteCombinedClickable(
+                    onClick = onClick,
+                    onLongClick = { menuOpen = true }
+                ),
+            shape = shape,
+            color = Color(0xFF15181E),
+            border = BorderStroke(1.dp, Color(0xFF2E3239))
+        ) {
+            Column {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(2f / 3f)
+                        .background(Color(0xFF292D34)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (item.logo.isNullOrBlank()) {
+                        Icon(
+                            fallbackIcon,
+                            null,
+                            Modifier.size(44.dp),
+                            tint = Color.LightGray
+                        )
+                    } else {
+                        SubcomposeAsyncImage(
+                            artworkModel,
+                            item.title,
+                            Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        ) {
+                            when (painter.state.value) {
+                                is coil3.compose.AsyncImagePainter.State.Success ->
+                                    SubcomposeAsyncImageContent()
+
+                                else ->
+                                    Icon(
+                                        fallbackIcon,
+                                        null,
+                                        Modifier.size(44.dp),
+                                        tint = Color.LightGray
+                                    )
+                            }
+                        }
+                    }
+                }
+
+                Column(
+                    Modifier.padding(
+                        horizontal = 11.dp,
+                        vertical = 10.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        item.title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    categoryTitle
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let {
+                            Text(
+                                it,
+                                color = Color(0xFF9DA2AB),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                }
+            }
+        }
+
+        SearchFavoriteMenu(
+            expanded = menuOpen,
+            isFavorite = isFavorite,
+            onDismiss = { menuOpen = false },
+            onToggle = {
+                menuOpen = false
+                toggleFavorite()
+            }
+        )
+    }
+}
+
+@Composable
+private fun SearchFavoriteMenu(
+    expanded: Boolean,
+    isFavorite: Boolean,
+    onDismiss: () -> Unit,
+    onToggle: () -> Unit
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF202020),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        DropdownMenuItem(
+            text = {
+                Text(
+                    if (isFavorite) {
+                        "Remove from My List"
+                    } else {
+                        "Add to My List"
+                    }
+                )
+            },
+            leadingIcon = {
+                Icon(
+                    if (isFavorite) {
+                        Icons.Default.HeartBroken
+                    } else {
+                        Icons.Default.FavoriteBorder
+                    },
+                    null
+                )
+            },
+            onClick = onToggle
+        )
     }
 }
 
@@ -1270,12 +1725,12 @@ private fun SearchMetadataBadge(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(5.dp),
+        shape = RoundedCornerShape(6.dp),
         color = color
     ) {
         Text(
             text,
-            Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
             color = Color.White,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
