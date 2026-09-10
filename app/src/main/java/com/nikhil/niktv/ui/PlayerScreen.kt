@@ -63,6 +63,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -72,6 +73,7 @@ import com.nikhil.niktv.model.PlayingMedia
 import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.MediaItem as NikMediaItem
+import com.nikhil.niktv.data.OfflineMediaDownloads
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -221,7 +223,7 @@ fun PlayerScreen(
     var restorePlayerSwitchFocus by remember(media.progressKey) {
         mutableStateOf(false)
     }
-    val configuredEngine = when (playbackEngine) {
+    val configuredEngine = if (media.offlinePlayback) PlaybackEngine.MEDIA3 else when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.EXOPLAYER
@@ -411,7 +413,13 @@ fun PlayerScreen(
             // ExoPlayer compatibility mode intentionally retains the device's
             // native decoder order and default fallback behavior.
         }
-        ExoPlayer.Builder(context, renderersFactory).build().apply {
+        val builder = ExoPlayer.Builder(context, renderersFactory)
+        if (media.offlinePlayback) {
+            builder.setMediaSourceFactory(
+                DefaultMediaSourceFactory(OfflineMediaDownloads.cacheDataSourceFactory(context))
+            )
+        }
+        builder.build().apply {
             setMediaItem(MediaItem.fromUri(media.url))
             if (engineSwitchResumePosition > 0L) seekTo(engineSwitchResumePosition)
             prepare()

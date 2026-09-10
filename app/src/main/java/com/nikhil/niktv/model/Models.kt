@@ -276,7 +276,8 @@ data class PlayingMedia(
     val resumePositionMillis: Long = 0L,
     val progressKey: String = "",
     val authorizationRetryCount: Int = 0,
-    val directFullscreen: Boolean = false
+    val directFullscreen: Boolean = false,
+    val offlinePlayback: Boolean = false
 )
 
 @Serializable
@@ -299,7 +300,9 @@ data class PlaybackUrl(
 
 @Serializable
 data class OfflineMediaDownload(
-    val downloadId: Long,
+    val downloadId: Long = -1L,
+    val requestId: String = "",
+    val sourceUrl: String = "",
     val profileKey: String,
     val catalogType: CatalogType,
     val media: MediaItem,

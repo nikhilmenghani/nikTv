@@ -8815,7 +8815,7 @@ private fun ModernEpisodeCard(
     val episodeConfiguration = LocalConfiguration.current
     val isTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     val offlineStatus = remember(offlineDownload, offlineRevision) {
-        offlineDownload?.let { OfflineMediaDownloads.status(episodeContext, it.downloadId) }
+        offlineDownload?.let { OfflineMediaDownloads.status(episodeContext, it.requestId) }
     }
 
     /*

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="offline_download_channel">Offline downloads</string>
+    <string name="offline_download_progress">Saving media for offline playback</string>
+</resources>

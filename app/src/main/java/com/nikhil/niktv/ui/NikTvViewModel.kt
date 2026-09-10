@@ -218,7 +218,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive) {
                 delay(2_000L)
                 if (_state.value.offlineDownloads.any {
-                        OfflineMediaDownloads.status(getApplication(), it.downloadId) in setOf(
+                        OfflineMediaDownloads.status(getApplication(), it.requestId) in setOf(
                             OfflineDownloadStatus.QUEUED,
                             OfflineDownloadStatus.DOWNLOADING,
                             OfflineDownloadStatus.PAUSED
@@ -3781,12 +3781,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val session = requireNotNull(_state.value.session)
                 val key = "${session.profile.cacheKey()}:${type.name}:${item.id}"
                 val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
-                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.downloadId) !in
+                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId) !in
                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
-                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.downloadId) }
+                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId) }
                 val url = portal.playableUrl(session, item, type)
                 val id = OfflineMediaDownloads.enqueue(getApplication(), key, item.title, url)
-                val entry = OfflineMediaDownload(id, session.profile.cacheKey(), type, item, series)
+                val entry = OfflineMediaDownload(requestId = id, sourceUrl = url, profileKey = session.profile.cacheKey(), catalogType = type, media = item, series = series)
                 val updated = listOf(entry) + _state.value.offlineDownloads.filterNot { it.key == key }
                 _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
                 store.saveOfflineDownloads(updated)
@@ -3812,11 +3812,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 val key = existingKey
                 val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
-                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.downloadId) !in
+                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId) !in
                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
-                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.downloadId) }
+                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId) }
                 val id = OfflineMediaDownloads.enqueue(getApplication(), key, playing.media.title, playing.url)
-                val entry = OfflineMediaDownload(id, session.profile.cacheKey(), playing.catalogType, playing.media, playing.series)
+                val entry = OfflineMediaDownload(requestId = id, sourceUrl = playing.url, profileKey = session.profile.cacheKey(), catalogType = playing.catalogType, media = playing.media, series = playing.series)
                 val updated = listOf(entry) + _state.value.offlineDownloads.filterNot { it.key == key }
                 _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
                 store.saveOfflineDownloads(updated)
@@ -3830,7 +3830,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return
         val key = "$profileKey:${type.name}:${item.id}"
         val entry = _state.value.offlineDownloads.firstOrNull { it.key == key } ?: return
-        OfflineMediaDownloads.remove(getApplication(), entry.downloadId)
+        OfflineMediaDownloads.remove(getApplication(), entry.requestId)
         val updated = _state.value.offlineDownloads.filterNot { it.key == key }
         _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
         viewModelScope.launch { store.saveOfflineDownloads(updated) }
@@ -3858,7 +3858,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         } else null
         val offlineUrl = _state.value.offlineDownloads
             .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${item.id}" }
-            ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.downloadId) }
+            ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl) }
         val url = offlineUrl ?: cachedUrl ?: portal.playableUrl(session, item, type).also { resolved ->
             if (type != CatalogType.LIVE_TV && session.profile.portalType == PortalType.XTREAM) {
                 val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
@@ -4000,7 +4000,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     resumePositionMillis = resumePosition,
                     progressKey = progressKey,
                     authorizationRetryCount = authorizationRetryCount,
-                    directFullscreen = directFullscreen
+            directFullscreen = directFullscreen,
+            offlinePlayback = offlineUrl != null
                 ),
                 playbackReturnFocusId =
                     if (
