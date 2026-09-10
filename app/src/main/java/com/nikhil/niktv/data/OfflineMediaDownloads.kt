@@ -7,6 +7,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -50,9 +51,12 @@ object OfflineMediaDownloads {
     fun cacheDataSourceFactory(context: Context): CacheDataSource.Factory = CacheDataSource.Factory()
         .setCache(cache(context))
         .setUpstreamDataSourceFactory(
-            DefaultHttpDataSource.Factory()
-                .setAllowCrossProtocolRedirects(true)
-                .setUserAgent("NikTV/0.1 Android")
+            DefaultDataSource.Factory(
+                context.applicationContext,
+                DefaultHttpDataSource.Factory()
+                    .setAllowCrossProtocolRedirects(true)
+                    .setUserAgent("NikTV/0.1 Android")
+            )
         )
         .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 

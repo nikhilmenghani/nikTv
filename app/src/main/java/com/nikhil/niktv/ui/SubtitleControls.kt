@@ -40,6 +40,7 @@ import kotlinx.coroutines.launch
 import com.nikhil.niktv.data.OnlineSubtitle
 import com.nikhil.niktv.data.OpenSubtitlesClient
 import com.nikhil.niktv.data.SubtitleSearchRequest
+import com.nikhil.niktv.model.PlayingMedia
 import java.io.File
 
 internal data class SubtitleTrackOption(
@@ -47,6 +48,18 @@ internal data class SubtitleTrackOption(
     val label: String,
     val selected: Boolean
 )
+
+internal fun PlayingMedia.suggestedSubtitleSearchTitle(): String {
+    var title = (series?.title ?: media.title).trim()
+    val trailingLanguageOrEdition = Regex(
+        "\\s*[\\[(](?:english|hindi|french|spanish|german|italian|portuguese|arabic|turkish|urdu|tamil|telugu|korean|japanese|chinese|multi(?:[ -]?audio)?|dubbed|original|en|hi|fr|es|de|it|pt|ar)[\\])]\\s*$",
+        RegexOption.IGNORE_CASE
+    )
+    while (trailingLanguageOrEdition.containsMatchIn(title)) {
+        title = title.replace(trailingLanguageOrEdition, "").trim()
+    }
+    return title.ifBlank { series?.title ?: media.title }
+}
 
 @Composable
 internal fun SubtitleSelectionDialog(

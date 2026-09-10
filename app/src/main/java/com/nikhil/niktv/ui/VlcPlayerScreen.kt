@@ -1142,7 +1142,7 @@ internal fun VlcPlayerScreen(
                 },
                 onDismiss = { subtitleDialogOpen = false },
                 internetSearch = SubtitleSearchRequest(
-                    query = media.series?.title ?: media.media.title,
+                    query = media.suggestedSubtitleSearchTitle(),
                     seasonNumber = media.media.seasonNumber,
                     episodeNumber = media.media.episodeNumber
                 ),

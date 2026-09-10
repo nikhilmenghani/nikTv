@@ -1694,7 +1694,7 @@ fun PlayerScreen(
                 onDismiss = { subtitleDialogOpen = false },
                 timingRequiresVlc = true,
                 internetSearch = SubtitleSearchRequest(
-                    query = media.series?.title ?: media.media.title,
+                    query = media.suggestedSubtitleSearchTitle(),
                     seasonNumber = media.media.seasonNumber,
                     episodeNumber = media.media.episodeNumber
                 ),
