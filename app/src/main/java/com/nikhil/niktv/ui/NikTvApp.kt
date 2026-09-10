@@ -302,16 +302,21 @@ internal fun Modifier.mobileMainTabSwipe(
                 var cancelled = false
 
                 while (true) {
-                    // Observe before nested LazyRows/pagers. Reading at Final made
-                    // the child scroll, its overscroll spring, and this translated
-                    // parent all compete while a partial swipe was held.
-                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    // Let nested LazyRows and other horizontal content claim the
+                    // gesture first. The page swipe only handles movement left
+                    // unconsumed after child dispatch, which makes blank-space
+                    // swipes navigate while tile drags continue scrolling.
+                    val event = awaitPointerEvent(PointerEventPass.Final)
                     if (event.changes.count { it.pressed } > 1) {
                         cancelled = true
                     }
 
                     val change = event.changes.firstOrNull { it.id == pointerId }
                         ?: break
+                    if (change.isConsumed && !horizontalDragLocked) {
+                        cancelled = true
+                        break
+                    }
                     val movement = change.positionChange()
                     totalX += movement.x
                     totalY += movement.y
