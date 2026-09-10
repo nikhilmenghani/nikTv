@@ -374,6 +374,19 @@ internal fun VlcPlayerScreen(
                     playbackRequested = false
                     playing = false
                 }
+                MediaPlayer.Event.EndReached -> {
+                    playing = false
+                    if (
+                        media.catalogType == CatalogType.SERIES &&
+                        media.nextEpisode != null &&
+                        !autoPlayCancelled &&
+                        !advancing
+                    ) {
+                        advancing = true
+                        subtitleDialogOpen = false
+                        onPlayNext()
+                    }
+                }
                 MediaPlayer.Event.EncounteredError -> {
                     buffering = false
                     if (media.authorizationRetryCount == 0 && !authorizationRecoveryRequested) {
@@ -474,8 +487,10 @@ internal fun VlcPlayerScreen(
             if (knownDuration > 0L) {
                 val seconds = (((knownDuration - player.time).coerceAtLeast(0L) + 999L) / 1_000L).toInt()
                 remainingSeconds = seconds.takeIf { it <= 30 }
-                if (seconds == 0 && !advancing) {
+                val remainingMillis = (knownDuration - player.time).coerceAtLeast(0L)
+                if (remainingMillis <= 750L && !advancing) {
                     advancing = true
+                    subtitleDialogOpen = false
                     onPlayNext()
                     return@LaunchedEffect
                 }

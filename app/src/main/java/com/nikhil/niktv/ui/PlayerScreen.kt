@@ -484,6 +484,17 @@ fun PlayerScreen(
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 if (state == Player.STATE_READY) startupTimedOut = false
+                if (
+                    state == Player.STATE_ENDED &&
+                    media.catalogType == CatalogType.SERIES &&
+                    media.nextEpisode != null &&
+                    !autoPlayCancelled &&
+                    !advancing
+                ) {
+                    advancing = true
+                    subtitleDialogOpen = false
+                    onPlayNext()
+                }
             }
             override fun onTracksChanged(tracks: Tracks) {
                 subtitleTracks = tracks.groups
@@ -652,8 +663,9 @@ fun PlayerScreen(
                 val remainingMillis = (duration - player.currentPosition).coerceAtLeast(0L)
                 val seconds = ((remainingMillis + 999L) / 1000L).toInt()
                 remainingSeconds = seconds.takeIf { it <= 30 }
-                if (seconds == 0 && !advancing) {
+                if ((remainingMillis <= 750L || player.playbackState == Player.STATE_ENDED) && !advancing) {
                     advancing = true
+                    subtitleDialogOpen = false
                     onPlayNext()
                     return@LaunchedEffect
                 }
