@@ -59,6 +59,8 @@ internal fun VlcPlayerScreen(
     onPlayNext: () -> Unit,
     onPlayItem: (MediaItem) -> Unit,
     onProgress: (String, Long, Long) -> Unit,
+    onDownload: () -> Unit = {},
+    offlineDownloadPresent: Boolean = false,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -139,6 +141,7 @@ internal fun VlcPlayerScreen(
     }
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
+    val downloadRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
@@ -716,11 +719,13 @@ internal fun VlcPlayerScreen(
                         onClick = onBack,
                         modifier = Modifier.focusRequester(backRequester)
                             .focusProperties {
-                                right = if (pipAvailable) pipRequester else playerSwitchRequester
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester
+                                else if (pipAvailable) pipRequester else playerSwitchRequester
                                 down = playRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (pipAvailable) pipRequester else playerSwitchRequester,
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester
+                                else if (pipAvailable) pipRequester else playerSwitchRequester,
                                 down = playRequester
                             )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -736,6 +741,19 @@ internal fun VlcPlayerScreen(
                         PlayerDateTime(compact = compactMobileControls)
                         Text("Player: VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
+                    if (media.catalogType != CatalogType.LIVE_TV) IconButton(
+                        onClick = onDownload,
+                        modifier = Modifier.focusRequester(downloadRequester)
+                            .focusProperties { left = backRequester; right = if (pipAvailable) pipRequester else playerSwitchRequester; down = playRequester }
+                            .playerDpadFocusRoutes(backRequester, if (pipAvailable) pipRequester else playerSwitchRequester, playRequester)
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
+                    ) {
+                        Icon(
+                            if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                            if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
+                            tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White
+                        )
+                    }
                     if (pipAvailable) IconButton(
                         onClick = {
                             controlsVisible = false
@@ -743,8 +761,8 @@ internal fun VlcPlayerScreen(
                             pipActivity?.enterPlayerPictureInPicture()
                         },
                         modifier = Modifier.focusRequester(pipRequester)
-                            .focusProperties { left = backRequester; right = playerSwitchRequester; down = playRequester }
-                            .playerDpadFocusRoutes(backRequester, playerSwitchRequester, playRequester)
+                            .focusProperties { left = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester; right = playerSwitchRequester; down = playRequester }
+                            .playerDpadFocusRoutes(if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester, playerSwitchRequester, playRequester)
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     IconButton(
@@ -757,12 +775,14 @@ internal fun VlcPlayerScreen(
                         },
                         modifier = Modifier.focusRequester(playerSwitchRequester)
                             .focusProperties {
-                                left = if (pipAvailable) pipRequester else backRequester
+                                left = if (pipAvailable) pipRequester
+                                else if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester
                                 right = resizeRequester
                                 down = playRequester
                             }
                             .playerDpadFocusRoutes(
-                                left = if (pipAvailable) pipRequester else backRequester,
+                                left = if (pipAvailable) pipRequester
+                                else if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester,
                                 right = resizeRequester,
                                 down = playRequester
                             )

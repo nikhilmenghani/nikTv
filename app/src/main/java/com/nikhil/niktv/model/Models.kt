@@ -298,6 +298,18 @@ data class PlaybackUrl(
 )
 
 @Serializable
+data class OfflineMediaDownload(
+    val downloadId: Long,
+    val profileKey: String,
+    val catalogType: CatalogType,
+    val media: MediaItem,
+    val series: MediaItem? = null,
+    val queuedAtMillis: Long = System.currentTimeMillis()
+) {
+    val key: String get() = "$profileKey:${catalogType.name}:${media.id}"
+}
+
+@Serializable
 data class PortalSession(
     val profile: PortalProfile,
     val token: String,

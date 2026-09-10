@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
@@ -37,8 +38,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import android.view.ViewConfiguration
-import android.view.View
-import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -88,25 +87,17 @@ internal fun rememberOnScreenDpadEnabled(): State<Boolean> {
 internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
-    val composeHost = remember(activity) {
-        activity?.findViewById<View>(android.R.id.content)?.let { content ->
-            (content as? ViewGroup)?.getChildAt(0) ?: content
-        }
-    }
     var x by rememberSaveable { mutableFloatStateOf(0f) }
     var y by rememberSaveable { mutableFloatStateOf(0f) }
-    // requestFocusFromTouch exits Android touch mode at the existing Compose
-    // host instead of asking Compose to choose a new default focus target.
-    // The following key therefore starts from the same item as a remote key.
+    // Dispatch the event exactly as a hardware remote would. Requesting focus
+    // on the Android Compose host before every key clears Compose's focused
+    // child, which made each virtual direction restart from a root/default item.
     val send: (KeyEvent) -> Unit = send@ { event ->
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) {
                 (activity as? ComponentActivity)?.onBackPressedDispatcher?.onBackPressed()
             }
             return@send
-        }
-        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            composeHost?.requestFocusFromTouch()
         }
         activity?.dispatchKeyEvent(event)
     }
@@ -121,24 +112,32 @@ internal fun MovableOnScreenDpad(modifier: Modifier = Modifier) {
             Modifier.padding(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(
-                Icons.Default.DragHandle,
-                "Move on-screen D-pad",
-                Modifier
-                    .width(72.dp)
-                    .height(24.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = .08f))
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            x += drag.x
-                            y += drag.y
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.DragHandle,
+                    "Move on-screen D-pad",
+                    Modifier
+                        .width(72.dp)
+                        .height(24.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = .08f))
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, drag ->
+                                change.consume()
+                                x += drag.x
+                                y += drag.y
+                            }
                         }
-                    }
-                    .padding(3.dp),
-                tint = Color.LightGray
-            )
+                        .padding(3.dp),
+                    tint = Color.LightGray
+                )
+                IconButton(
+                    onClick = { OnScreenDpadPreferences.setEnabled(context, false) },
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(Icons.Default.Close, "Close and disable on-screen D-pad", Modifier.size(18.dp), tint = Color.White)
+                }
+            }
             DpadKey(Icons.Default.KeyboardArrowUp, "Up", KeyEvent.KEYCODE_DPAD_UP, send)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 DpadKey(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left", KeyEvent.KEYCODE_DPAD_LEFT, send)

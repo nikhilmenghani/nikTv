@@ -106,6 +106,8 @@ import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
 import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
+import com.nikhil.niktv.data.OfflineMediaDownloads
+import com.nikhil.niktv.data.OfflineDownloadStatus
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -512,6 +514,12 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
+                    onDownload = vm::downloadNowPlaying,
+                    offlineDownloadPresent = state.offlineDownloads.any { download ->
+                        download.profileKey == state.session?.profile?.cacheKey() &&
+                            download.catalogType == state.nowPlaying?.catalogType &&
+                            download.media.id == state.nowPlaying?.media?.id
+                    },
                     onPlayItem = vm::openMedia,
                     queueHasMore = state.playbackQueueHasMore,
                     queueLoadingMore = state.playbackQueueLoadingMore,
@@ -588,6 +596,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,setPlaybackEngine = vm::setPlaybackEngine
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
                     ,loadSeriesSeason = vm::loadSeriesSeason
+                    ,setUseTmdbEpisodeMetadata = vm::setUseTmdbEpisodeMetadata
+                    ,downloadForOffline = vm::downloadForOffline
+                    ,removeOfflineDownload = vm::removeOfflineDownload
                     ,toggleSeriesWatch = vm::toggleSeriesWatch
                     ,openWatchedEpisode = vm::openWatchedEpisode
                     ,setBrowseLayout = vm::setBrowseLayout
@@ -1555,6 +1566,9 @@ private fun CatalogScreen(
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     setSeriesStartSeason: (SeriesStartSeason) -> Unit,
     loadSeriesSeason: (Int) -> Unit,
+    setUseTmdbEpisodeMetadata: (Boolean) -> Unit,
+    downloadForOffline: (MediaItem, CatalogType, MediaItem?) -> Unit,
+    removeOfflineDownload: (MediaItem, CatalogType) -> Unit,
     toggleSeriesWatch: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     setBrowseLayout: (BrowseLayout) -> Unit,
@@ -1729,6 +1743,9 @@ private fun CatalogScreen(
                     toggleFavorite = toggleFavorite,
                     toggleSeriesWatch = toggleSeriesWatch,
                     loadSeriesSeason = loadSeriesSeason,
+                    setUseTmdbEpisodeMetadata = setUseTmdbEpisodeMetadata,
+                    downloadForOffline = downloadForOffline,
+                    removeOfflineDownload = removeOfflineDownload,
                     openSearch = openSearch,
                     openSettings = openSettings,
                     refreshCatalog = refreshCatalog,
@@ -8238,6 +8255,9 @@ private fun ModernSeriesDetailScreen(
     toggleFavorite: (MediaItem) -> Unit,
     toggleSeriesWatch: () -> Unit,
     loadSeriesSeason: (Int) -> Unit,
+    setUseTmdbEpisodeMetadata: (Boolean) -> Unit,
+    downloadForOffline: (MediaItem, CatalogType, MediaItem?) -> Unit,
+    removeOfflineDownload: (MediaItem, CatalogType) -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
     refreshCatalog: () -> Unit,
@@ -8616,6 +8636,28 @@ private fun ModernSeriesDetailScreen(
                             }
                         }
 
+                        Surface(
+                            onClick = { setUseTmdbEpisodeMetadata(!state.useTmdbEpisodeMetadata) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF1E2430),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                            contentColor = Color.White,
+                            modifier = Modifier.height(42.dp).remoteFocusFrame()
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text("Use TMDB", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                Switch(
+                                    checked = state.useTmdbEpisodeMetadata,
+                                    onCheckedChange = null,
+                                    modifier = Modifier.focusProperties { canFocus = false }
+                                )
+                            }
+                        }
+
                     }
 
                     if (!mobileEpisodeLayout) Text(
@@ -8675,6 +8717,12 @@ private fun ModernSeriesDetailScreen(
                         progress = progress,
                         isCurrentResume = isRecent,
                         onClick = { play(episode) },
+                        offlineDownload = state.offlineDownloads.firstOrNull { download ->
+                            download.catalogType == CatalogType.SERIES && download.media.id == episode.id
+                        },
+                        offlineRevision = state.offlineDownloadRevision,
+                        onDownload = { downloadForOffline(episode, CatalogType.SERIES, series) },
+                        onRemoveDownload = { removeOfflineDownload(episode, CatalogType.SERIES) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .then(if (state.playbackReturnFocusId == episode.id) Modifier.focusRequester(returningEpisodeRequester) else Modifier)
@@ -8756,12 +8804,19 @@ private fun ModernEpisodeCard(
     progress: PlaybackProgress?,
     isCurrentResume: Boolean,
     onClick: () -> Unit,
+    offlineDownload: OfflineMediaDownload?,
+    offlineRevision: Long,
+    onDownload: () -> Unit,
+    onRemoveDownload: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
     val episodeContext = LocalContext.current
     val episodeConfiguration = LocalConfiguration.current
     val isTv = episodeContext.isTvLikeDevice(episodeConfiguration)
+    val offlineStatus = remember(offlineDownload, offlineRevision) {
+        offlineDownload?.let { OfflineMediaDownloads.status(episodeContext, it.downloadId) }
+    }
 
     /*
      * MOBILE_SERIES_EPISODE_CARD_V36
@@ -8968,6 +9023,32 @@ private fun ModernEpisodeCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            IconButton(
+                onClick = if (offlineDownload == null || offlineStatus in setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) {
+                    onDownload
+                } else {
+                    onRemoveDownload
+                }
+            ) {
+                Icon(
+                    when (offlineStatus) {
+                        OfflineDownloadStatus.COMPLETE -> Icons.Default.DownloadDone
+                        OfflineDownloadStatus.QUEUED,
+                        OfflineDownloadStatus.DOWNLOADING,
+                        OfflineDownloadStatus.PAUSED -> Icons.Default.Downloading
+                        else -> Icons.Default.DownloadForOffline
+                    },
+                    contentDescription = when (offlineStatus) {
+                        OfflineDownloadStatus.COMPLETE -> "Remove offline download"
+                        OfflineDownloadStatus.QUEUED,
+                        OfflineDownloadStatus.DOWNLOADING,
+                        OfflineDownloadStatus.PAUSED -> "Cancel offline download"
+                        else -> "Download episode for offline playback"
+                    },
+                    tint = if (offlineStatus == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.White
+                )
             }
 
             if (!mobileLayout) {

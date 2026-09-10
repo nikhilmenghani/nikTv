@@ -450,7 +450,8 @@ class StalkerPortalClient(private val context: Context) {
                 listOf(MediaItem(
                     "${series.id}:$season:$explicitEpisode", item.string("name") ?: episodeTitle(season, explicitEpisode),
                     series.logo, command, item.string("description"), season, explicitEpisode, portalSeasonId ?: item.string("season_id"),
-                    series.portalCategoryId, item.string("id") ?: item.string("episode_id")
+                    series.portalCategoryId, item.string("id") ?: item.string("episode_id"),
+                    episodeAirDate = item.providerEpisodeAirDate()
                 ))
             } else if (numbered.isNotEmpty() && command != null) numbered.map { episode ->
                 // This response shape contains only episode numbers. The parent description
@@ -463,10 +464,41 @@ class StalkerPortalClient(private val context: Context) {
                 val id = item.string("id") ?: item.string("episode_id")
                 if (id != null && command != null && (episode != null || season != null)) listOf(
                     MediaItem(id, item.string("name") ?: item.string("title") ?: episodeTitle(season, episode), item.string("screenshot_uri") ?: series.logo, command, item.string("description"), season, episode,
-                        portalSeasonId ?: item.string("season_id"), series.portalCategoryId, id)
+                        portalSeasonId ?: item.string("season_id"), series.portalCategoryId, id,
+                        episodeAirDate = item.providerEpisodeAirDate())
                 ) else emptyList()
             }
-        }.distinctBy { it.id }
+        }
+            .map { it.correctKnownProviderEpisodeMapping(series) }
+            .distinctBy { it.id }
+
+    /*
+     * The provider currently has these two playable records crossed. Keep this
+     * repair keyed by series, season, ordinal, and both observed immutable IDs;
+     * any catalog replacement automatically falls back to untouched IPTV data.
+     */
+    private fun MediaItem.correctKnownProviderEpisodeMapping(series: MediaItem): MediaItem {
+        val normalizedSeriesTitle = series.title
+            .replace(Regex("(?i)\\blatest\\b"), "Latent")
+            .substringBefore(" - ")
+            .trim()
+        if (!normalizedSeriesTitle.equals("India's Got Latent (Hindi)", ignoreCase = true) || seasonNumber != 1) {
+            return this
+        }
+        return when {
+            episodeNumber == 5 && portalEpisodeId == "2931155" -> copy(portalEpisodeId = "2931153")
+            episodeNumber == 7 && portalEpisodeId == "2931153" -> copy(portalEpisodeId = "2931155")
+            else -> this
+        }
+    }
+
+    private fun JsonObject.providerEpisodeAirDate(): String? =
+        listOf("air_date", "release_date", "releasedate")
+            .firstNotNullOfOrNull { key ->
+                string(key)?.trim()?.takeIf { value ->
+                    value.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))
+                }
+            }
 
     private fun episodeTitle(season: Int?, episode: Int?): String = when {
         season != null && episode != null -> "Season $season · Episode $episode"

@@ -160,7 +160,12 @@ internal fun ModernSearchScreen(
     LaunchedEffect(remoteNavigationActive) {
         if (remoteNavigationActive) {
             withFrameNanos { }
-            runCatching { searchRequester.requestFocus() }
+            repeat(4) { attempt ->
+                if (runCatching { searchRequester.requestFocus() }.getOrDefault(false)) {
+                    return@LaunchedEffect
+                }
+                kotlinx.coroutines.delay(40L * (attempt + 1))
+            }
         }
     }
 
@@ -208,7 +213,10 @@ internal fun ModernSearchScreen(
                     }
                 }
                 .onPreviewKeyEvent { event ->
-                    if (
+                    if (!searchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                        typeBelowSearch.requestFocus()
+                        true
+                    } else if (
                         !searchEditing &&
                         event.type == KeyEventType.KeyUp &&
                         event.key in listOf(
@@ -892,7 +900,12 @@ private fun SearchCategoryPickerContent(
                     }
                 }
                 .onPreviewKeyEvent { event ->
-                    if (
+                    if (!categorySearchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                        filteredOptions.firstOrNull()?.let { option ->
+                            optionRequesters.getValue(option.id).requestFocus()
+                        }
+                        true
+                    } else if (
                         !categorySearchEditing &&
                         event.type == KeyEventType.KeyUp &&
                         event.key in listOf(

@@ -24,6 +24,7 @@ import com.nikhil.niktv.model.TmdbIptvMapping
 import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.PlaybackEngine
+import com.nikhil.niktv.model.OfflineMediaDownload
 import com.nikhil.niktv.model.canonicalSearchQuery
 import com.nikhil.niktv.model.deduplicatedRecentSearches
 import kotlinx.coroutines.flow.Flow
@@ -69,6 +70,7 @@ class ProfileStore(private val context: Context) {
     private val browseLayoutsKey = stringPreferencesKey("browse_layouts")
     private val tmdbDashboardSectionsKey = stringPreferencesKey("tmdb_dashboard_sections")
     private val tmdbMappingsKey = stringPreferencesKey("tmdb_iptv_mappings")
+    private val offlineDownloadsKey = stringPreferencesKey("offline_media_downloads")
     val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         val identity = prefs[activeProfileKey]
@@ -258,6 +260,11 @@ class ProfileStore(private val context: Context) {
     suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = context.dataStore.edit {
         it[keepAwakeOnlyDuringPlaybackKey] = if (enabled) 1 else 0
     }
+    val offlineDownloads: Flow<List<OfflineMediaDownload>> = context.dataStore.data.map { prefs ->
+        prefs[offlineDownloadsKey]
+            ?.let { runCatching { Json.decodeFromString<List<OfflineMediaDownload>>(it) }.getOrNull() }
+            .orEmpty()
+    }
     suspend fun setAutomaticReauthentication(enabled: Boolean) = context.dataStore.edit {
         it[automaticReauthenticationKey] = if (enabled) 1 else 0
     }
@@ -278,6 +285,9 @@ class ProfileStore(private val context: Context) {
     suspend fun saveEpisodeSeasonCache(cache: EpisodeSeasonCache) = context.dataStore.edit { prefs ->
         val current = prefs[episodeSeasonCachesKey]?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
         prefs[episodeSeasonCachesKey] = Json.encodeToString((listOf(cache) + current.filterNot { it.key == cache.key }).take(40))
+    }
+    suspend fun saveOfflineDownloads(items: List<OfflineMediaDownload>) = context.dataStore.edit { prefs ->
+        prefs[offlineDownloadsKey] = Json.encodeToString(items)
     }
     suspend fun setBrowseLayout(profileKey: String, layout: BrowseLayout) = context.dataStore.edit { prefs ->
         val current = prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()

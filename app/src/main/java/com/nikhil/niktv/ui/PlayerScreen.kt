@@ -70,6 +70,7 @@ import com.nikhil.niktv.R
 import com.nikhil.niktv.MainActivity
 import com.nikhil.niktv.model.PlayingMedia
 import com.nikhil.niktv.model.PlaybackEngine
+import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.MediaItem as NikMediaItem
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -192,6 +193,8 @@ fun PlayerScreen(
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
+    onDownload: () -> Unit = {},
+    offlineDownloadPresent: Boolean = false,
     onPlayItem: (NikMediaItem) -> Unit = {},
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -234,6 +237,8 @@ fun PlayerScreen(
             onPlayNext = onPlayNext,
             onPlayItem = onPlayItem,
             onProgress = onProgress,
+            onDownload = onDownload,
+            offlineDownloadPresent = offlineDownloadPresent,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
@@ -363,6 +368,7 @@ fun PlayerScreen(
     var inPictureInPicture by remember { mutableStateOf(false) }
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1130,15 +1136,13 @@ fun PlayerScreen(
                         onClick = onBack,
                         modifier = Modifier.focusRequester(backFocusRequester)
                             .focusProperties {
-                                right = if (pipAvailable) {
-                                    pipFocusRequester
-                                } else {
-                                    playerSwitchFocusRequester
-                                }
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester
+                                else if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
                                 down = playPauseFocusRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester
+                                else if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
                                 down = playPauseFocusRequester
                             )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -1157,6 +1161,29 @@ fun PlayerScreen(
                         }
                         Text("Player: ${effectiveEngine.playerEngineLabel()} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
+                    if (media.catalogType != CatalogType.LIVE_TV) {
+                        IconButton(
+                            onClick = onDownload,
+                            modifier = Modifier.focusRequester(downloadFocusRequester)
+                                .focusProperties {
+                                    left = backFocusRequester
+                                    right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
+                                    down = playPauseFocusRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    backFocusRequester,
+                                    if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
+                                    playPauseFocusRequester
+                                )
+                                .playerControlFocus(CircleShape) { controlsFocused = it }
+                        ) {
+                            Icon(
+                                if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                                if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
+                                tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White
+                            )
+                        }
+                    }
                     // PLAYER_GLOBAL_ORIENTATION_NO_ROTATE_V12
                     if (pipAvailable) {
                         IconButton(
@@ -1167,11 +1194,15 @@ fun PlayerScreen(
                             },
                             modifier = Modifier.focusRequester(pipFocusRequester)
                                 .focusProperties {
-                                    left = backFocusRequester
+                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
                                     right = playerSwitchFocusRequester
                                     down = playPauseFocusRequester
                                 }
-                                .playerDpadFocusRoutes(backFocusRequester, playerSwitchFocusRequester, playPauseFocusRequester)
+                                .playerDpadFocusRoutes(
+                                    if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester,
+                                    playerSwitchFocusRequester,
+                                    playPauseFocusRequester
+                                )
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     }
@@ -1189,12 +1220,14 @@ fun PlayerScreen(
                         },
                         modifier = Modifier.focusRequester(playerSwitchFocusRequester)
                             .focusProperties {
-                                left = if (pipAvailable) pipFocusRequester else backFocusRequester
+                                left = if (pipAvailable) pipFocusRequester
+                                else if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
                                 right = resizeFocusRequester
                                 down = playPauseFocusRequester
                             }
                             .playerDpadFocusRoutes(
-                                left = if (pipAvailable) pipFocusRequester else backFocusRequester,
+                                left = if (pipAvailable) pipFocusRequester
+                                else if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester,
                                 right = resizeFocusRequester,
                                 down = playPauseFocusRequester
                             )

@@ -18,6 +18,8 @@ import com.nikhil.niktv.data.rankTmdbSeriesMatches
 import com.nikhil.niktv.data.TmdbMovie
 import com.nikhil.niktv.data.TmdbSeries
 import com.nikhil.niktv.data.prefetchArtwork
+import com.nikhil.niktv.data.OfflineMediaDownloads
+import com.nikhil.niktv.data.OfflineDownloadStatus
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -71,6 +73,7 @@ data class NikTvState(
     val restoring: Boolean = true,
     val settingsOpen: Boolean = false,
     val selectedSeries: MediaItem? = null,
+    val useTmdbEpisodeMetadata: Boolean = true,
     val fullSearchItems: List<MediaItem>? = null,
     val fullSearchLoading: Boolean = false,
     val fullSearchCachedAtMillis: Long? = null,
@@ -82,6 +85,8 @@ data class NikTvState(
     val seriesOpenedFromHome: Boolean = false,
     val playbackProgress: List<PlaybackProgress> = emptyList(),
     val playbackUrls: List<PlaybackUrl> = emptyList(),
+    val offlineDownloads: List<OfflineMediaDownload> = emptyList(),
+    val offlineDownloadRevision: Long = 0L,
     val cacheIntervalMinutes: Int = 60,
     val playerControlsTimeoutSeconds: Int = 3,
     val keepAwakeOnlyDuringPlayback: Boolean = false,
@@ -166,6 +171,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         } }
         viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
+        viewModelScope.launch { store.offlineDownloads.collect { downloads ->
+            _state.update { it.copy(offlineDownloads = downloads) }
+        } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
         viewModelScope.launch { store.playerControlsTimeoutSeconds.collect { seconds -> _state.update { it.copy(playerControlsTimeoutSeconds = seconds) } } }
         viewModelScope.launch { store.keepAwakeOnlyDuringPlayback.collect { enabled ->
@@ -204,6 +212,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive) {
                 delay(60_000L)
                 runCatching { refreshWatchedSeriesIfDue() }
+            }
+        }
+        viewModelScope.launch {
+            while (isActive) {
+                delay(2_000L)
+                if (_state.value.offlineDownloads.any {
+                        OfflineMediaDownloads.status(getApplication(), it.downloadId) in setOf(
+                            OfflineDownloadStatus.QUEUED,
+                            OfflineDownloadStatus.DOWNLOADING,
+                            OfflineDownloadStatus.PAUSED
+                        )
+                    }) {
+                    _state.update { it.copy(offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
+                }
             }
         }
         viewModelScope.launch {
@@ -1674,6 +1696,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         loadSeriesEpisodes(series, season)
     }
 
+    fun setUseTmdbEpisodeMetadata(enabled: Boolean) {
+        if (_state.value.useTmdbEpisodeMetadata == enabled) return
+        _state.update { it.copy(useTmdbEpisodeMetadata = enabled, items = emptyList()) }
+        task {
+            val series = requireNotNull(_state.value.selectedSeries)
+            loadSeriesEpisodes(series, _state.value.selectedSeriesSeason, forceRefresh = true)
+        }
+    }
+
     private suspend fun loadSeriesEpisodes(series: MediaItem, requestedSeason: Int? = null, forceRefresh: Boolean = false) {
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
@@ -1716,19 +1747,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 hasMore = next.hasMore
             )
         }
-        val favoriteSeries = allFavorites.any { favorite ->
-            (favorite.profileKey.isBlank() || favorite.profileKey == profileKey) &&
-                favorite.kind == FavoriteKind.SERIES && favorite.media.id == series.id
-        }
-        if (favoriteSeries && tmdb.configured && result.episodes.isNotEmpty() && result.episodes.none { it.externalTmdbId != null }) {
+        if (_state.value.useTmdbEpisodeMetadata && tmdb.configured && result.episodes.isNotEmpty() && result.episodes.none { it.externalTmdbId != null }) {
             val savedTmdbId = store.tmdbMappings.first().firstOrNull { mapping ->
                 mapping.profileKey == profileKey && mapping.type == CatalogType.SERIES && mapping.media.id == series.id
             }?.tmdbId
             val tmdbSeries = savedTmdbId?.let { series.copy(externalTmdbId = it) } ?: series
             val matched = runCatching { tmdb.confidentlyMatchSeries(tmdbSeries) }
-                .onFailure { Log.w("NikTvEpisodeMetadata", "TMDB favorite-series lookup failed", it) }
+                .onFailure { Log.w("NikTvEpisodeMetadata", "TMDB series lookup failed", it) }
                 .getOrNull()
-            Log.i("NikTvEpisodeMetadata", "Favorite series TMDB match: ${matched?.id ?: "none"}; season=${result.selectedSeason}")
+            Log.i("NikTvEpisodeMetadata", "TMDB series match: ${matched?.id ?: "none"}; season=${result.selectedSeason}")
             if (matched != null) {
                 val requestedNumbers = result.episodes.mapNotNull { it.episodeNumber }.toSet()
                 val selectedSeason = result.selectedSeason ?: result.episodes.firstNotNullOfOrNull { it.seasonNumber }
@@ -1743,7 +1770,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     // season with absolute episode numbers while IPTV groups them by year.
                     runCatching { tmdb.seasonEpisodes(matched.id, 1) }.getOrDefault(emptyList())
                 }
-                val metadataByNumber = tmdbEpisodes.associateBy { it.episodeNumber }
+                val metadataByAirDate = tmdbEpisodes
+                    .mapNotNull { metadata -> metadata.airDate?.let { it to metadata } }
+                    .groupBy({ it.first }, { it.second })
+                    .mapNotNull { (date, matches) -> matches.singleOrNull()?.let { date to it } }
+                    .toMap()
                 val specialKeys = result.episodes.mapNotNull { it.title.specialEpisodeKey() }.toSet()
                 val specialMetadataByKey = if (specialKeys.isNotEmpty()) {
                     runCatching { tmdb.seasonEpisodes(matched.id, 0) }.getOrDefault(emptyList())
@@ -1757,16 +1788,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 result = result.copy(episodes = result.episodes.map { episode ->
                     val providerHasSpecificTitle = episode.title.hasSpecificEpisodeTitle()
                     val specialKey = episode.title.specialEpisodeKey()
-                    val titleKey = episode.title.episodeMetadataTitleKey()
+                    val titleKey = episode.title.episodeSpecificTitleKey()
+                    val dateMetadata = episode.episodeAirDate?.let(metadataByAirDate::get)
                     val metadata = when {
                         specialKey != null -> specialMetadataByKey[specialKey]
                         providerHasSpecificTitle -> metadataByTitle[titleKey]
-                        else -> episode.episodeNumber?.let(metadataByNumber::get)
+                        dateMetadata != null -> dateMetadata
+                        else -> null
                     } ?: return@map episode
                     episode.copy(
                         title = if (providerHasSpecificTitle) episode.title else metadata.name ?: episode.title,
                         logo = metadata.stillUrl ?: episode.logo,
                         description = metadata.overview ?: episode.description,
+                        seasonNumber = metadata.seasonNumber,
+                        episodeNumber = metadata.episodeNumber,
                         externalTmdbId = matched.id,
                         episodeAirDate = metadata.airDate ?: episode.episodeAirDate
                     )
@@ -1782,14 +1817,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun String.hasSpecificEpisodeTitle(): Boolean {
+        return episodeSpecificTitleKey().isNotBlank()
+    }
+
+    private fun String.episodeSpecificTitleKey(): String {
         val remainder = trim()
             .replaceFirst(
                 Regex("^\\s*(?:S\\d+\\s*[:._-]?\\s*E(?:P(?:ISODE)?)?\\s*\\d+|(?:EPISODE|EP|E)\\s*#?\\s*\\d+)\\s*[. :|\\-–—]*\\s*", RegexOption.IGNORE_CASE),
                 ""
             )
+            .trim(' ', '.', ':', '-', '–', '—', '|')
             .replaceFirst(Regex("^\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}\\s*[. :|\\-–—]*\\s*"), "")
             .trim(' ', '.', ':', '-', '–', '—', '|')
-        return remainder.isNotBlank()
+        return remainder.episodeMetadataTitleKey()
     }
 
     private fun String.specialEpisodeKey(): String? {
@@ -3731,6 +3771,71 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         playInternal(item, type, series, episodes)
     }
 
+    fun downloadForOffline(item: MediaItem, type: CatalogType, series: MediaItem? = null) {
+        if (type == CatalogType.LIVE_TV) {
+            _state.update { it.copy(error = "Live channels require a timed recording and cannot be saved as an offline download.") }
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                val session = requireNotNull(_state.value.session)
+                val key = "${session.profile.cacheKey()}:${type.name}:${item.id}"
+                val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
+                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.downloadId) !in
+                    setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
+                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.downloadId) }
+                val url = portal.playableUrl(session, item, type)
+                val id = OfflineMediaDownloads.enqueue(getApplication(), key, item.title, url)
+                val entry = OfflineMediaDownload(id, session.profile.cacheKey(), type, item, series)
+                val updated = listOf(entry) + _state.value.offlineDownloads.filterNot { it.key == key }
+                _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
+                store.saveOfflineDownloads(updated)
+            }.onFailure { failure ->
+                _state.update { it.copy(error = failure.message ?: "Unable to start offline download") }
+            }
+        }
+    }
+
+    fun downloadNowPlaying() {
+        val playing = _state.value.nowPlaying ?: return
+        if (playing.catalogType == CatalogType.LIVE_TV) {
+            _state.update { it.copy(error = "Live recording needs a start/stop or duration and is not available as an offline download.") }
+            return
+        }
+        val session = _state.value.session ?: return
+        val existingKey = "${session.profile.cacheKey()}:${playing.catalogType.name}:${playing.media.id}"
+        _state.value.offlineDownloads.firstOrNull { it.key == existingKey }?.let {
+            removeOfflineDownload(playing.media, playing.catalogType)
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                val key = existingKey
+                val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
+                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.downloadId) !in
+                    setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
+                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.downloadId) }
+                val id = OfflineMediaDownloads.enqueue(getApplication(), key, playing.media.title, playing.url)
+                val entry = OfflineMediaDownload(id, session.profile.cacheKey(), playing.catalogType, playing.media, playing.series)
+                val updated = listOf(entry) + _state.value.offlineDownloads.filterNot { it.key == key }
+                _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
+                store.saveOfflineDownloads(updated)
+            }.onFailure { failure ->
+                _state.update { it.copy(error = failure.message ?: "Unable to start offline download") }
+            }
+        }
+    }
+
+    fun removeOfflineDownload(item: MediaItem, type: CatalogType) {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return
+        val key = "$profileKey:${type.name}:${item.id}"
+        val entry = _state.value.offlineDownloads.firstOrNull { it.key == key } ?: return
+        OfflineMediaDownloads.remove(getApplication(), entry.downloadId)
+        val updated = _state.value.offlineDownloads.filterNot { it.key == key }
+        _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
+        viewModelScope.launch { store.saveOfflineDownloads(updated) }
+    }
+
     private suspend fun playInternal(
         item: MediaItem,
         type: CatalogType,
@@ -3751,7 +3856,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val cachedUrl = if (mayReuseUrl) {
             _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
         } else null
-        val url = cachedUrl ?: portal.playableUrl(session, item, type).also { resolved ->
+        val offlineUrl = _state.value.offlineDownloads
+            .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${item.id}" }
+            ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.downloadId) }
+        val url = offlineUrl ?: cachedUrl ?: portal.playableUrl(session, item, type).also { resolved ->
             if (type != CatalogType.LIVE_TV && session.profile.portalType == PortalType.XTREAM) {
                 val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
                     .take(MAX_PLAYBACK_URLS)
@@ -4123,6 +4231,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }.orEmpty()
                 current.copy(
                     selectedSeries = null,
+                    useTmdbEpisodeMetadata = true,
                     seriesOpenedFromModernSection = false,
                     homeOpen = current.modernSectionOriginHome,
                     items = restoredItems,
@@ -4133,16 +4242,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return@task
         }
         if (_state.value.seriesOpenedFromHome) {
-            _state.update { it.copy(selectedSeries = null, seriesOpenedFromHome = false, homeOpen = true) }
+            _state.update { it.copy(selectedSeries = null, useTmdbEpisodeMetadata = true, seriesOpenedFromHome = false, homeOpen = true) }
             return@task
         }
         if (_state.value.seriesOpenedFromFavorites) {
-            _state.update { it.copy(selectedSeries = null, seriesOpenedFromFavorites = false, favoritesOpen = true) }
+            _state.update { it.copy(selectedSeries = null, useTmdbEpisodeMetadata = true, seriesOpenedFromFavorites = false, favoritesOpen = true) }
             return@task
         }
         val category = requireNotNull(_state.value.selectedCategory)
         val session = requireNotNull(_state.value.session)
-        _state.update { it.copy(selectedSeries = null, items = emptyList()) }
+        _state.update { it.copy(selectedSeries = null, useTmdbEpisodeMetadata = true, items = emptyList()) }
         _state.update { it.copy(items = portal.catalog(session, category)) }
     }
 
@@ -4871,7 +4980,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_PLAYBACK_URLS = 500
         private const val DASHBOARD_CATEGORY_LIMIT = 10
         private const val MODERN_TMDB_PAGE_SIZE = 20
-        private const val EPISODE_METADATA_VERSION = 1
+        private const val EPISODE_METADATA_VERSION = 3
         private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30
