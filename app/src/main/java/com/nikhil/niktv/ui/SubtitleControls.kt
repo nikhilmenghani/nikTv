@@ -81,6 +81,17 @@ internal fun SubtitleSelectionDialog(
         title = { Text("Subtitles") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (internetSearch != null && onExternalSubtitle != null) {
+                    TextButton(
+                        onClick = { searchMode = !searchMode },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (!searchMode) Modifier.focusRequester(firstActionFocusRequester) else Modifier)
+                    ) {
+                        Icon(if (searchMode) Icons.Default.Subtitles else Icons.Default.Search, null)
+                        Text(if (searchMode) " Available tracks" else " Search OpenSubtitles")
+                    }
+                }
                 if (searchMode) {
                     OutlinedTextField(
                         value = query,
@@ -144,8 +155,7 @@ internal fun SubtitleSelectionDialog(
                     item {
                         SubtitleTrackRow(
                             "Off",
-                            tracks.none { it.selected },
-                            Modifier.focusRequester(firstActionFocusRequester)
+                            tracks.none { it.selected }
                         ) { onSelect(null) }
                     }
                     items(tracks, key = { it.id }) { track ->
@@ -172,12 +182,6 @@ internal fun SubtitleSelectionDialog(
                 if (!searchMode) Button(onClick = { onDelayChange(0L) }, enabled = delayMs != 0L) { Text("Reset timing") }
                 if (!searchMode && timingRequiresVlc) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")
-                }
-                if (internetSearch != null && onExternalSubtitle != null) {
-                    TextButton(onClick = { searchMode = !searchMode }) {
-                        Icon(if (searchMode) Icons.Default.Subtitles else Icons.Default.Search, null)
-                        Text(if (searchMode) " Available tracks" else " Search online")
-                    }
                 }
             }
         },
