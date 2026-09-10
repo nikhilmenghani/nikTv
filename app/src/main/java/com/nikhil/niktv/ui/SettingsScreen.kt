@@ -164,6 +164,19 @@ internal fun ModernSettingsScreen(
         )
     }
     val scope = rememberCoroutineScope()
+
+    // GITHUB_BACKUP_V1
+    val githubBackupManager = remember(context) {
+        com.nikhil.niktv.data.GitHubBackupManager(context)
+    }
+    var githubBackupConfig by remember {
+        mutableStateOf(githubBackupManager.loadConfig())
+    }
+    var githubBackupDialogOpen by remember { mutableStateOf(false) }
+    var githubBackupUploading by remember { mutableStateOf(false) }
+    var githubBackupMessage by remember { mutableStateOf<String?>(null) }
+    var githubBackupSucceeded by remember { mutableStateOf<Boolean?>(null) }
+
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri?.let(exportBackup)
     }
@@ -991,6 +1004,52 @@ internal fun ModernSettingsScreen(
             )
             HorizontalDivider()
             ListItem(
+                headlineContent = { Text("Back up to GitHub") },
+                supportingContent = {
+                    Column {
+                        Text(
+                            "${githubBackupConfig.username.ifBlank { "nikhilmenghani" }}/" +
+                                githubBackupConfig.repository.ifBlank { "tracker" } +
+                                " · private repository required"
+                        )
+                        githubBackupMessage?.let { message ->
+                            Text(
+                                message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when (githubBackupSucceeded) {
+                                    true -> MaterialTheme.colorScheme.primary
+                                    false -> MaterialTheme.colorScheme.error
+                                    null -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                    }
+                },
+                leadingContent = { Icon(Icons.Default.CloudUpload, null) },
+                trailingContent = {
+                    if (githubBackupUploading) {
+                        CircularProgressIndicator(
+                            Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.ChevronRight,
+                            "Configure GitHub backup"
+                        )
+                    }
+                },
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(enabled = !githubBackupUploading) {
+                        githubBackupDialogOpen = true
+                    },
+                colors = ListItemDefaults.colors(
+                    containerColor = Color.Transparent
+                )
+            )
+            HorizontalDivider()
+            ListItem(
                 headlineContent = { Text("Import NikTV setup") },
                 supportingContent = { Text("Restore a backup from another TV; profiles authenticate with fresh sessions") },
                 leadingContent = { Icon(Icons.Default.FileDownload, null) },
@@ -1000,6 +1059,144 @@ internal fun ModernSettingsScreen(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
+
+        if (githubBackupDialogOpen) {
+            AlertDialog(
+                onDismissRequest = {
+                    if (!githubBackupUploading) {
+                        githubBackupDialogOpen = false
+                    }
+                },
+                icon = {
+                    Icon(
+                        Icons.Default.CloudUpload,
+                        contentDescription = null
+                    )
+                },
+                title = { Text("GitHub backup") },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "Upload the current NikTV JSON backup to a private GitHub repository.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        OutlinedTextField(
+                            value = githubBackupConfig.username,
+                            onValueChange = {
+                                githubBackupConfig =
+                                    githubBackupConfig.copy(username = it)
+                            },
+                            label = { Text("GitHub username") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = githubBackupConfig.repository,
+                            onValueChange = {
+                                githubBackupConfig =
+                                    githubBackupConfig.copy(repository = it)
+                            },
+                            label = { Text("Repository") },
+                            placeholder = { Text("tracker") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = githubBackupConfig.token,
+                            onValueChange = {
+                                githubBackupConfig =
+                                    githubBackupConfig.copy(token = it)
+                            },
+                            label = { Text("GitHub personal access token") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            "Use a fine-grained token with access to this repository, " +
+                                "Metadata read, and Contents read/write. The token is " +
+                                "encrypted with Android Keystore and is never included " +
+                                "in the backup JSON.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "For safety, NikTV refuses plaintext backup uploads to " +
+                                "public repositories because backups contain portal credentials.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val config =
+                                githubBackupConfig.copy(
+                                    username =
+                                        githubBackupConfig.username.trim(),
+                                    repository =
+                                        githubBackupConfig.repository
+                                            .trim()
+                                            .removeSuffix(".git"),
+                                    token =
+                                        githubBackupConfig.token.trim()
+                                )
+                            githubBackupConfig = config
+                            githubBackupManager.saveConfig(config)
+                            githubBackupDialogOpen = false
+                            githubBackupUploading = true
+                            githubBackupSucceeded = null
+                            githubBackupMessage = "Preparing backup…"
+
+                            scope.launch {
+                                runCatching {
+                                    val content =
+                                        com.nikhil.niktv.data.ProfileStore(
+                                            context.applicationContext
+                                        ).exportBackup()
+                                    githubBackupManager.uploadBackup(
+                                        content,
+                                        config
+                                    )
+                                }.onSuccess { upload ->
+                                    githubBackupSucceeded = true
+                                    githubBackupMessage =
+                                        "Uploaded ${upload.path}"
+                                }.onFailure { error ->
+                                    githubBackupSucceeded = false
+                                    githubBackupMessage =
+                                        error.message
+                                            ?: "Could not upload GitHub backup"
+                                }
+                                githubBackupUploading = false
+                            }
+                        },
+                        enabled =
+                            githubBackupConfig.username.isNotBlank() &&
+                                githubBackupConfig.repository.isNotBlank() &&
+                                githubBackupConfig.token.isNotBlank()
+                    ) {
+                        Text("Upload now")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            githubBackupManager.saveConfig(
+                                githubBackupConfig
+                            )
+                            githubBackupDialogOpen = false
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                }
+            )
+        }
+
         SettingsSection("Account actions") {
             ListItem(
                 headlineContent = { Text("Re-authenticate") },
