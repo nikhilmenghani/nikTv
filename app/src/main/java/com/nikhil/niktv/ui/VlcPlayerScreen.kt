@@ -61,6 +61,7 @@ internal fun VlcPlayerScreen(
     onProgress: (String, Long, Long) -> Unit,
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
+    offlineDownloadInProgress: Boolean = false,
     offlineDownloadProgress: Float? = null,
     offlineDownloadProgressText: String? = null,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
@@ -81,6 +82,16 @@ internal fun VlcPlayerScreen(
     onPlayerSwitchFocusRestored: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
+    LaunchedEffect(downloadRequested, offlineDownloadInProgress) {
+        if (offlineDownloadInProgress) {
+            downloadRequested = false
+        } else if (downloadRequested) {
+            delay(5_000L)
+            downloadRequested = false
+        }
+    }
+    val displayedDownloadInProgress = offlineDownloadInProgress || downloadRequested
     val playerConfiguration = LocalConfiguration.current
     val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
     val scope = rememberCoroutineScope()
@@ -745,20 +756,28 @@ internal fun VlcPlayerScreen(
                         offlineDownloadProgressText?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
                     }
                     if (media.catalogType != CatalogType.LIVE_TV) IconButton(
-                        onClick = onDownload,
+                        onClick = {
+                            if (!offlineDownloadPresent) downloadRequested = true
+                            onDownload()
+                        },
                         modifier = Modifier.focusRequester(downloadRequester)
                             .focusProperties { left = backRequester; right = if (pipAvailable) pipRequester else playerSwitchRequester; down = playRequester }
                             .playerDpadFocusRoutes(backRequester, if (pipAvailable) pipRequester else playerSwitchRequester, playRequester)
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            if (offlineDownloadProgress != null) CircularProgressIndicator(
-                                progress = { offlineDownloadProgress.coerceIn(0f, 1f) },
-                                modifier = Modifier.size(34.dp),
-                                strokeWidth = 3.dp
-                            )
+                            if (displayedDownloadInProgress) {
+                                if (offlineDownloadProgress != null) CircularProgressIndicator(
+                                    progress = { offlineDownloadProgress.coerceIn(0f, 1f) },
+                                    modifier = Modifier.size(34.dp),
+                                    strokeWidth = 3.dp
+                                ) else CircularProgressIndicator(
+                                    modifier = Modifier.size(34.dp),
+                                    strokeWidth = 3.dp
+                                )
+                            }
                             Icon(
-                                if (offlineDownloadProgress != null) Icons.Default.Downloading else if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                                if (displayedDownloadInProgress) Icons.Default.Downloading else if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                 if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
                                 modifier = Modifier.size(22.dp),
                                 tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White

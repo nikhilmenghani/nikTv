@@ -562,6 +562,12 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
                     },
+                    offlineDownloadInProgress = state.offlineDownloads.firstOrNull { download ->
+                        download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
+                            download.catalogType == state.nowPlaying?.catalogType &&
+                            download.media.id == state.nowPlaying?.media?.id
+                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId).status }
+                        ?.let { it == OfflineDownloadStatus.DOWNLOADING || it == OfflineDownloadStatus.QUEUED } == true,
                     offlineDownloadProgress = state.offlineDownloads.firstOrNull { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&

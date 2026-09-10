@@ -1749,7 +1749,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 hasMore = next.hasMore
             )
         }
-        if (_state.value.useTmdbEpisodeMetadata && tmdb.configured && result.episodes.isNotEmpty() && result.episodes.none { it.externalTmdbId != null }) {
+        if (_state.value.useTmdbEpisodeMetadata && tmdb.configured && result.episodes.isNotEmpty()) {
             val savedTmdbId = store.tmdbMappings.first().firstOrNull { mapping ->
                 mapping.profileKey == profileKey && mapping.type == CatalogType.SERIES && mapping.media.id == series.id
             }?.tmdbId
@@ -1786,20 +1786,26 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val metadataByTitle = tmdbEpisodes.mapNotNull { metadata ->
                     metadata.name?.episodeMetadataTitleKey()?.takeIf { it.isNotBlank() }?.let { it to metadata }
                 }.toMap()
+                val metadataByEpisodeNumber = tmdbEpisodes
+                    .groupBy { it.episodeNumber }
+                    .mapNotNull { (number, matches) ->
+                        number?.let { matches.singleOrNull()?.let { metadata -> number to metadata } }
+                    }
+                    .toMap()
                 Log.i("NikTvEpisodeMetadata", "TMDB episode metadata candidates=${tmdbEpisodes.size}; IPTV episodes=${result.episodes.size}")
                 result = result.copy(episodes = result.episodes.map { episode ->
-                    val providerHasSpecificTitle = episode.title.hasSpecificEpisodeTitle()
                     val specialKey = episode.title.specialEpisodeKey()
                     val titleKey = episode.title.episodeSpecificTitleKey()
                     val dateMetadata = episode.episodeAirDate?.let(metadataByAirDate::get)
                     val metadata = when {
                         specialKey != null -> specialMetadataByKey[specialKey]
-                        providerHasSpecificTitle -> metadataByTitle[titleKey]
+                        episode.episodeNumber != null -> metadataByEpisodeNumber[episode.episodeNumber]
                         dateMetadata != null -> dateMetadata
+                        titleKey.isNotBlank() -> metadataByTitle[titleKey]
                         else -> null
                     } ?: return@map episode
                     episode.copy(
-                        title = if (providerHasSpecificTitle) episode.title else metadata.name ?: episode.title,
+                        title = metadata.name ?: episode.title,
                         logo = metadata.stillUrl ?: episode.logo,
                         description = metadata.overview ?: episode.description,
                         seasonNumber = metadata.seasonNumber,

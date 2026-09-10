@@ -197,6 +197,7 @@ fun PlayerScreen(
     onProgress: (String, Long, Long) -> Unit,
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
+    offlineDownloadInProgress: Boolean = false,
     offlineDownloadProgress: Float? = null,
     offlineDownloadProgressText: String? = null,
     onPlayItem: (NikMediaItem) -> Unit = {},
@@ -217,6 +218,16 @@ fun PlayerScreen(
     val context = LocalContext.current
     val playerConfiguration = LocalConfiguration.current
     val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
+    var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
+    LaunchedEffect(downloadRequested, offlineDownloadInProgress) {
+        if (offlineDownloadInProgress) {
+            downloadRequested = false
+        } else if (downloadRequested) {
+            delay(5_000L)
+            downloadRequested = false
+        }
+    }
+    val displayedDownloadInProgress = offlineDownloadInProgress || downloadRequested
     val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
     var sessionEngineOverride by remember { mutableStateOf<PlaybackEngine?>(null) }
     var engineSwitchResumePosition by remember(media.progressKey) {
@@ -243,6 +254,7 @@ fun PlayerScreen(
             onProgress = onProgress,
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
+            offlineDownloadInProgress = offlineDownloadInProgress,
             offlineDownloadProgress = offlineDownloadProgress,
             offlineDownloadProgressText = offlineDownloadProgressText,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
@@ -1176,7 +1188,10 @@ fun PlayerScreen(
                     }
                     if (media.catalogType != CatalogType.LIVE_TV) {
                         IconButton(
-                            onClick = onDownload,
+                            onClick = {
+                                if (!offlineDownloadPresent) downloadRequested = true
+                                onDownload()
+                            },
                             modifier = Modifier.focusRequester(downloadFocusRequester)
                                 .focusProperties {
                                     left = backFocusRequester
@@ -1191,13 +1206,18 @@ fun PlayerScreen(
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                if (offlineDownloadProgress != null) CircularProgressIndicator(
-                                    progress = { offlineDownloadProgress.coerceIn(0f, 1f) },
-                                    modifier = Modifier.size(34.dp),
-                                    strokeWidth = 3.dp
-                                )
+                                if (displayedDownloadInProgress) {
+                                    if (offlineDownloadProgress != null) CircularProgressIndicator(
+                                        progress = { offlineDownloadProgress.coerceIn(0f, 1f) },
+                                        modifier = Modifier.size(34.dp),
+                                        strokeWidth = 3.dp
+                                    ) else CircularProgressIndicator(
+                                        modifier = Modifier.size(34.dp),
+                                        strokeWidth = 3.dp
+                                    )
+                                }
                                 Icon(
-                                    if (offlineDownloadProgress != null) Icons.Default.Downloading else if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                                    if (displayedDownloadInProgress) Icons.Default.Downloading else if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                     if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
                                     modifier = Modifier.size(22.dp),
                                     tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White
