@@ -4496,6 +4496,28 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(backupMessage = "Could not import backup: ${error.message}") }
         }
     }
+    fun importBackupContent(content: String) = viewModelScope.launch {
+        runCatching {
+            store.importBackup(content)
+        }.onSuccess {
+            val profiles = store.profiles.first()
+            _state.update {
+                NikTvState(
+                    profiles = profiles,
+                    savedProfile = profiles.firstOrNull(),
+                    profileEditorOpen = profiles.isEmpty(),
+                    restoring = false,
+                    backupMessage = "Backup imported. Choose a profile to authenticate."
+                )
+            }
+        }.onFailure { error ->
+            _state.update {
+                it.copy(
+                    backupMessage = "Could not import backup: ${error.message}"
+                )
+            }
+        }
+    }
     fun dismissBackupMessage() = _state.update { it.copy(backupMessage = null) }
     fun cancelProfileEditor() = _state.update { current ->
         val fallback = current.profiles.firstOrNull()
