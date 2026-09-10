@@ -198,6 +198,7 @@ fun PlayerScreen(
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
     offlineDownloadProgress: Float? = null,
+    offlineDownloadProgressText: String? = null,
     onPlayItem: (NikMediaItem) -> Unit = {},
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -243,6 +244,7 @@ fun PlayerScreen(
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
             offlineDownloadProgress = offlineDownloadProgress,
+            offlineDownloadProgressText = offlineDownloadProgressText,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
@@ -1170,6 +1172,7 @@ fun PlayerScreen(
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
                         Text("${if (media.offlinePlayback) "OFFLINE" else "IPTV STREAM"} · Player: ${effectiveEngine.playerEngineLabel()} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = if (media.offlinePlayback) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        offlineDownloadProgressText?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
                     }
                     if (media.catalogType != CatalogType.LIVE_TV) {
                         IconButton(

@@ -62,6 +62,7 @@ internal fun VlcPlayerScreen(
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
     offlineDownloadProgress: Float? = null,
+    offlineDownloadProgressText: String? = null,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -741,6 +742,7 @@ internal fun VlcPlayerScreen(
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                         PlayerDateTime(compact = compactMobileControls)
                         Text("${if (media.offlinePlayback) "OFFLINE" else "IPTV STREAM"} · Player: VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = if (media.offlinePlayback) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        offlineDownloadProgressText?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
                     }
                     if (media.catalogType != CatalogType.LIVE_TV) IconButton(
                         onClick = onDownload,

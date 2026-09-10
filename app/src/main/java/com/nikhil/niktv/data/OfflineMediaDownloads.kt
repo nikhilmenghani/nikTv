@@ -12,10 +12,10 @@ import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
-import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Scheduler
+import androidx.core.app.NotificationCompat
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -23,7 +23,8 @@ enum class OfflineDownloadStatus { QUEUED, DOWNLOADING, PAUSED, COMPLETE, FAILED
 data class OfflineDownloadInfo(
     val status: OfflineDownloadStatus,
     val percent: Float? = null,
-    val bytesDownloaded: Long = 0L
+    val bytesDownloaded: Long = 0L,
+    val totalBytes: Long? = null
 )
 
 @UnstableApi
@@ -112,7 +113,8 @@ object OfflineMediaDownloads {
         return OfflineDownloadInfo(
             status = status,
             percent = download.percentDownloaded.takeIf { it >= 0f }?.coerceIn(0f, 100f),
-            bytesDownloaded = download.bytesDownloaded
+            bytesDownloaded = download.bytesDownloaded,
+            totalBytes = download.contentLength.takeIf { it > 0L }
         )
     }
 
@@ -134,18 +136,45 @@ class NikTvDownloadService : DownloadService(
     com.nikhil.niktv.R.string.offline_download_channel,
     0
 ) {
-    private val notificationHelper by lazy { DownloadNotificationHelper(this, OfflineMediaDownloads.CHANNEL_ID) }
-
     override fun getDownloadManager(): DownloadManager = OfflineMediaDownloads.manager(this)
     override fun getScheduler(): Scheduler? = null
 
-    override fun getForegroundNotification(downloads: MutableList<Download>, notMetRequirements: Int): Notification =
-        notificationHelper.buildProgressNotification(
-            this,
-            android.R.drawable.stat_sys_download,
-            null,
-            getString(com.nikhil.niktv.R.string.offline_download_progress),
-            downloads,
-            notMetRequirements
-        )
+    override fun getForegroundNotification(downloads: MutableList<Download>, notMetRequirements: Int): Notification {
+        val active = downloads.filter { it.state == Download.STATE_DOWNLOADING || it.state == Download.STATE_QUEUED }
+        val downloadedBytes = active.sumOf { it.bytesDownloaded }
+        val knownTotals = active.mapNotNull { it.contentLength.takeIf { length -> length > 0L } }
+        val totalBytes = knownTotals.sum().takeIf { knownTotals.size == active.size && active.isNotEmpty() }
+        val percent = totalBytes?.takeIf { it > 0L }
+            ?.let { ((downloadedBytes * 100L) / it).toInt().coerceIn(0, 100) }
+            ?: active.firstOrNull()?.percentDownloaded?.takeIf { it >= 0f }?.toInt()?.coerceIn(0, 100)
+        val title = active.singleOrNull()?.request?.data?.toString(Charsets.UTF_8)?.takeIf { it.isNotBlank() }
+            ?.let { "Downloading $it" }
+            ?: if (active.isNotEmpty()) "Downloading ${active.size} items" else "Preparing offline download"
+        val sizes = buildString {
+            percent?.let { append("$it% · ") }
+            append(formatBytes(downloadedBytes))
+            totalBytes?.let { append(" / ${formatBytes(it)}") }
+        }
+        return NotificationCompat.Builder(this, OfflineMediaDownloads.CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(title)
+            .setContentText(sizes)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(sizes))
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setProgress(100, percent ?: 0, percent == null)
+            .build()
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024L) return "$bytes B"
+        val units = arrayOf("KB", "MB", "GB", "TB")
+        var value = bytes.toDouble() / 1024.0
+        var unit = 0
+        while (value >= 1024.0 && unit < units.lastIndex) {
+            value /= 1024.0
+            unit++
+        }
+        return if (value >= 100.0) "${value.toInt()} ${units[unit]}" else "%.1f %s".format(value, units[unit])
+    }
 }

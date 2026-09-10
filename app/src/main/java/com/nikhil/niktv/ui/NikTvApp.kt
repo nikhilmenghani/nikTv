@@ -172,6 +172,22 @@ private fun Context.isTvLikeDevice(configuration: Configuration): Boolean =
         !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
 private val visibleSearchTypes = listOf(SearchContentType.LIVE_TV, SearchContentType.SERIES, SearchContentType.MOVIES)
 
+private fun formatOfflineBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val units = arrayOf("KB", "MB", "GB", "TB")
+    var value = bytes.toDouble() / 1024.0
+    var unit = 0
+    while (value >= 1024.0 && unit < units.lastIndex) { value /= 1024.0; unit++ }
+    return if (value >= 100.0) "${value.toInt()} ${units[unit]}" else "%.1f %s".format(value, units[unit])
+}
+
+private fun com.nikhil.niktv.data.OfflineDownloadInfo.progressLabel(): String {
+    val percentage = percent?.let { "${it.toInt()}%" }
+    val size = totalBytes?.let { "${formatOfflineBytes(bytesDownloaded)} / ${formatOfflineBytes(it)}" }
+        ?: formatOfflineBytes(bytesDownloaded)
+    return listOfNotNull("Downloading", percentage, size).joinToString(" · ")
+}
+
 private fun UpdateDownloadState.updateInfoOrNull(): UpdateInfo? = when (this) {
     is UpdateDownloadState.Queued -> UpdateInfo(version, downloadUrl)
     is UpdateDownloadState.Downloading -> UpdateInfo(version, downloadUrl)
@@ -553,6 +569,13 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     }?.let { OfflineMediaDownloads.info(appContext, it.requestId) }
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.percent?.div(100f),
+                    offlineDownloadProgressText = state.offlineDownloads.firstOrNull { download ->
+                        download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
+                            download.catalogType == state.nowPlaying?.catalogType &&
+                            download.media.id == state.nowPlaying?.media?.id
+                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId) }
+                        ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
+                        ?.progressLabel(),
                     onPlayItem = vm::openMedia,
                     queueHasMore = state.playbackQueueHasMore,
                     queueLoadingMore = state.playbackQueueLoadingMore,
@@ -7607,7 +7630,7 @@ private fun OfflineDownloadsScreen(
                                     entry.series?.let { Text(it.title, color = Color.Gray, style = MaterialTheme.typography.bodySmall) }
                                     val statusText = when (info.status) {
                                         OfflineDownloadStatus.COMPLETE -> "Available offline"
-                                        OfflineDownloadStatus.DOWNLOADING -> "Downloading${info.percent?.let { " · ${it.toInt()}%" } ?: ""}"
+                                        OfflineDownloadStatus.DOWNLOADING -> info.progressLabel()
                                         OfflineDownloadStatus.QUEUED -> "Queued"
                                         OfflineDownloadStatus.PAUSED -> "Paused"
                                         OfflineDownloadStatus.FAILED -> "Download failed"
