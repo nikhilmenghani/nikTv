@@ -1696,7 +1696,8 @@ fun PlayerScreen(
                 internetSearch = SubtitleSearchRequest(
                     query = media.suggestedSubtitleSearchTitle(),
                     seasonNumber = media.media.seasonNumber,
-                    episodeNumber = media.media.episodeNumber
+                    episodeNumber = media.media.episodeNumber,
+                    episodeTitle = media.media.title
                 ),
                 onExternalSubtitle = { file ->
                     engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)

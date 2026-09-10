@@ -2,6 +2,7 @@ package com.nikhil.niktv.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -61,6 +63,7 @@ internal fun PlayingMedia.suggestedSubtitleSearchTitle(): String {
     return title.ifBlank { series?.title ?: media.title }
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun SubtitleSelectionDialog(
     tracks: List<SubtitleTrackOption>,
@@ -129,7 +132,10 @@ internal fun SubtitleSelectionDialog(
             shadowElevation = if (compact) 8.dp else 14.dp
         ) {
             Column(
-                Modifier.padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 8.dp else 14.dp),
+                Modifier
+                    .focusGroup()
+                    .focusProperties { exit = { FocusRequester.Cancel } }
+                    .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 8.dp else 14.dp),
                 verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -141,13 +147,17 @@ internal fun SubtitleSelectionDialog(
                     if (internetSearch != null && onExternalSubtitle != null) {
                         TextButton(
                             onClick = { searchMode = !searchMode },
-                            modifier = if (!searchMode) Modifier.focusRequester(firstActionFocusRequester) else Modifier
+                            modifier = (if (!searchMode) Modifier.focusRequester(firstActionFocusRequester) else Modifier)
+                                .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                         ) {
                             Icon(if (searchMode) Icons.Default.Subtitles else Icons.Default.Search, null)
                             if (!compact) Text(if (searchMode) " Tracks" else " Online")
                         }
                     }
-                    TextButton(onClick = onDismiss) { Text("Close") }
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    ) { Text("Close") }
                 }
                 if (internetSearch != null && onExternalSubtitle != null) {
                     if (!searchMode && !compact) Text("Embedded and downloaded tracks", style = MaterialTheme.typography.labelSmall)
@@ -156,11 +166,26 @@ internal fun SubtitleSelectionDialog(
                     OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
-                        label = { Text("Movie or series title") },
+                        label = {
+                            Text(if (internetSearch?.seasonNumber != null || internetSearch?.episodeNumber != null) "Series title" else "Movie title")
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().focusRequester(firstActionFocusRequester),
                         textStyle = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
                     )
+                    internetSearch?.episodeTitle?.takeIf { it.isNotBlank() }?.let { episodeTitle ->
+                        Text(
+                            buildString {
+                                internetSearch.seasonNumber?.let { append("S").append(it.toString().padStart(2, '0')) }
+                                internetSearch.episodeNumber?.let { append("E").append(it.toString().padStart(2, '0')) }
+                                if (isNotEmpty()) append(" · ")
+                                append(episodeTitle)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFB8BBC3),
+                            maxLines = 1
+                        )
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
                             value = language,
@@ -182,7 +207,8 @@ internal fun SubtitleSelectionDialog(
                                     searching = false
                                 }
                             },
-                            enabled = query.isNotBlank() && !searching
+                            enabled = query.isNotBlank() && !searching,
+                            modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                         ) { Icon(Icons.Default.Search, "Search") }
                     }
                     if (searching) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
@@ -201,7 +227,9 @@ internal fun SubtitleSelectionDialog(
                                     }
                                 },
                                 enabled = downloadingId == null,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                             ) {
                                 Text(subtitle.displayName, Modifier.weight(1f))
                                 if (downloadingId == subtitle.id) CircularProgressIndicator(Modifier.padding(4.dp))
@@ -231,15 +259,24 @@ internal fun SubtitleSelectionDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { onDelayChange((delayMs - 250L).coerceAtLeast(-10_000L)) }) {
+                    IconButton(
+                        onClick = { onDelayChange((delayMs - 250L).coerceAtLeast(-10_000L)) },
+                        modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                    ) {
                         Icon(Icons.Default.Remove, "Show subtitles earlier")
                     }
                     Text(if (delayMs == 0L) "0 ms" else "%+d ms".format(delayMs))
-                    IconButton(onClick = { onDelayChange((delayMs + 250L).coerceAtMost(10_000L)) }) {
+                    IconButton(
+                        onClick = { onDelayChange((delayMs + 250L).coerceAtMost(10_000L)) },
+                        modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                    ) {
                         Icon(Icons.Default.Add, "Show subtitles later")
                     }
                 }
-                if (!searchMode && delayMs != 0L) TextButton(onClick = { onDelayChange(0L) }) { Text("Reset timing") }
+                if (!searchMode && delayMs != 0L) TextButton(
+                    onClick = { onDelayChange(0L) },
+                    modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                ) { Text("Reset timing") }
                 if (!searchMode && timingRequiresVlc && !compact) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")
                 }
@@ -255,7 +292,10 @@ private fun SubtitleTrackRow(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    TextButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth().remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+    ) {
         RadioButton(selected = selected, onClick = null)
         Text(label, Modifier.weight(1f).padding(start = 8.dp))
     }

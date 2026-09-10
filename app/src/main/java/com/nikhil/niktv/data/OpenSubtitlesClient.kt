@@ -43,6 +43,7 @@ data class SubtitleSearchRequest(
     val query: String,
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
+    val episodeTitle: String? = null,
     val languages: String = "en"
 )
 

@@ -1144,7 +1144,8 @@ internal fun VlcPlayerScreen(
                 internetSearch = SubtitleSearchRequest(
                     query = media.suggestedSubtitleSearchTitle(),
                     seasonNumber = media.media.seasonNumber,
-                    episodeNumber = media.media.episodeNumber
+                    episodeNumber = media.media.episodeNumber,
+                    episodeTitle = media.media.title
                 ),
                 onExternalSubtitle = { file ->
                     player.addSlave(IMedia.Slave.Type.Subtitle, android.net.Uri.fromFile(file), true)
