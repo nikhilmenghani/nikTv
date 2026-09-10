@@ -689,6 +689,20 @@ internal fun ModernEpisodeCard(
         offlineDownload?.let { OfflineMediaDownloads.info(episodeContext, it.requestId) }
     }
     val offlineStatus = offlineInfo?.status
+    var downloadRequested by remember(episode.id) { mutableStateOf(false) }
+    LaunchedEffect(downloadRequested, offlineDownload?.requestId) {
+        when {
+            offlineDownload != null -> downloadRequested = false
+            downloadRequested -> {
+                // URL resolution and persistence happen asynchronously. Keep the
+                // row responsive immediately, but allow another attempt if they fail.
+                delay(5_000L)
+                downloadRequested = false
+            }
+        }
+    }
+    val displayedOfflineStatus =
+        if (downloadRequested && offlineDownload == null) OfflineDownloadStatus.QUEUED else offlineStatus
 
     /*
      * MOBILE_SERIES_EPISODE_CARD_V36
@@ -898,29 +912,33 @@ internal fun ModernEpisodeCard(
             }
 
             IconButton(
-                onClick = if (offlineDownload == null || offlineStatus in setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) {
-                    onDownload
+                onClick = if (offlineDownload == null || displayedOfflineStatus in setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) {
+                    {
+                        downloadRequested = true
+                        onDownload()
+                    }
                 } else {
                     { confirmRemoval = true }
-                }
+                },
+                enabled = !downloadRequested || offlineDownload != null
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    offlineInfo?.percent?.takeIf { offlineStatus == OfflineDownloadStatus.DOWNLOADING }?.let {
+                    offlineInfo?.percent?.takeIf { displayedOfflineStatus == OfflineDownloadStatus.DOWNLOADING }?.let {
                         CircularProgressIndicator(progress = { it / 100f }, Modifier.size(38.dp), strokeWidth = 3.dp)
                     }
                     Icon(
-                        when (offlineStatus) {
+                        when (displayedOfflineStatus) {
                             OfflineDownloadStatus.COMPLETE -> Icons.Default.DownloadDone
                             OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED -> Icons.Default.Downloading
                             else -> Icons.Default.DownloadForOffline
                         },
-                        contentDescription = when (offlineStatus) {
+                        contentDescription = when (displayedOfflineStatus) {
                             OfflineDownloadStatus.COMPLETE -> "Remove offline download"
                             OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED -> "Cancel offline download"
                             else -> "Download episode for offline playback"
                         },
                         modifier = Modifier.size(22.dp),
-                        tint = if (offlineStatus == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.White
+                        tint = if (displayedOfflineStatus == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.White
                     )
                 }
             }
