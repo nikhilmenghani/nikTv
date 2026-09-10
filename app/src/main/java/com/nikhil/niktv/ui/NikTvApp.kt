@@ -17,6 +17,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
@@ -261,7 +262,7 @@ private fun Modifier.mobileMainTabSwipe(
     var swipeDragging by remember { mutableStateOf(false) }
     val swipeOffset by animateFloatAsState(
         targetValue = swipeOffsetTarget,
-        animationSpec = if (swipeDragging) snap() else tween(190),
+        animationSpec = if (swipeDragging) snap() else tween(260, easing = FastOutSlowInEasing),
         label = "mainTabSwipeOffset"
     )
 
@@ -339,12 +340,17 @@ private fun Modifier.mobileMainTabSwipe(
                     else currentIndex - 1
                 val target = pages.getOrNull(targetIndex)
                 if (target != null) {
-                    swipeDragging = false
-                    swipeOffsetTarget = if (totalX < 0f) -size.width.toFloat() else size.width.toFloat()
+                    // Replace the outgoing page at the opposite edge, then
+                    // animate the destination into place. A leftward gesture
+                    // therefore visibly brings the right-hand tab in from
+                    // the right, matching a conventional pager.
+                    swipeDragging = true
+                    swipeOffsetTarget = if (totalX < 0f) size.width.toFloat() else -size.width.toFloat()
+                    latestOnPageSelected(target)
                     swipeScope.launch {
-                        delay(190L)
+                        delay(16L)
+                        swipeDragging = false
                         swipeOffsetTarget = 0f
-                        latestOnPageSelected(target)
                     }
                 } else {
                     swipeDragging = false
