@@ -326,6 +326,48 @@ class ProfileStore(private val context: Context) {
         val filterKey = "$profileKey|${type.name}"
         prefs[categoryFiltersKey] = Json.encodeToString(existing - filterKey)
     }
+
+    suspend fun backupFingerprint(): String {
+        val values = context.dataStore.data.first().asMap()
+        val canonical = buildString {
+            BACKUP_STRING_KEYS.sorted().forEach { name ->
+                val value =
+                    values.entries
+                        .firstOrNull { it.key.name == name }
+                        ?.value as? String
+                append("S:")
+                append(name.length)
+                append(':')
+                append(name)
+                append(':')
+                if (value == null) {
+                    append("-1:")
+                } else {
+                    append(value.length)
+                    append(':')
+                    append(value)
+                }
+                append('\n')
+            }
+            BACKUP_INT_KEYS.sorted().forEach { name ->
+                val value =
+                    values.entries
+                        .firstOrNull { it.key.name == name }
+                        ?.value as? Int
+                append("I:")
+                append(name.length)
+                append(':')
+                append(name)
+                append(':')
+                append(value?.toString() ?: "<missing>")
+                append('\n')
+            }
+        }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
     suspend fun exportBackup(): String {
         val values = context.dataStore.data.first().asMap()
         val strings = values.mapNotNull { (key, value) ->

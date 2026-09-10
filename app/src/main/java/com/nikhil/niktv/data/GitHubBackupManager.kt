@@ -1,12 +1,14 @@
 package com.nikhil.niktv.data
 
-// GITHUB_BACKUP_V2
+// GITHUB_BACKUP_V3
 //
-// Public-repository-safe GitHub backups:
-// - full NikTV JSON is encrypted locally with AES-256-GCM
-// - password key is PBKDF2-HMAC-SHA256 (600,000 iterations)
-// - device/app/profile metadata stays inside ciphertext
-// - PAT and optionally remembered backup password use Android Keystore
+// GitHub/device backup configuration:
+// - GitHub is the default backup mode.
+// - Backup password is optional.
+// - blank password -> plain NikTV JSON uploaded as-is.
+// - 12+ character password -> AES-256-GCM encrypted .niktv backup.
+// - GitHub PAT and backup password are protected locally with Android Keystore.
+// - build-time BuildConfig.G_TOKEN is the default PAT when no device override exists.
 
 import android.content.Context
 import android.os.Build
@@ -38,12 +40,19 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+enum class BackupMode {
+    GITHUB,
+    DEVICE
+}
+
 data class GitHubBackupConfig(
     val username: String = "nikhilmenghani",
     val repository: String = "tracker",
     val token: String = "",
     val passphrase: String = "",
-    val rememberPassphrase: Boolean = false
+    val rememberPassphrase: Boolean = false,
+    val backupMode: BackupMode = BackupMode.GITHUB,
+    val autoBackupIntervalHours: Int = 0
 )
 
 data class GitHubBackupUpload(
@@ -54,7 +63,8 @@ data class GitHubBackupUpload(
 data class GitHubBackupFile(
     val name: String,
     val path: String,
-    val size: Long
+    val size: Long,
+    val encrypted: Boolean = name.endsWith(".niktv", ignoreCase = true)
 )
 
 data class GitHubBackupPreview(
@@ -83,8 +93,21 @@ class GitHubBackupManager(context: Context) {
         .build()
 
     fun loadConfig(): GitHubBackupConfig {
-        val remember =
-            prefs.getBoolean(KEY_REMEMBER_PASSPHRASE, false)
+        val storedPassphrase =
+            loadSecret(KEY_PASSPHRASE_CIPHERTEXT, KEY_PASSPHRASE_IV)
+        val mode =
+            runCatching {
+                BackupMode.valueOf(
+                    prefs.getString(
+                        KEY_BACKUP_MODE,
+                        BackupMode.GITHUB.name
+                    ) ?: BackupMode.GITHUB.name
+                )
+            }.getOrDefault(BackupMode.GITHUB)
+        val interval =
+            prefs.getInt(KEY_AUTO_BACKUP_INTERVAL_HOURS, 0)
+                .takeIf { it in AUTO_BACKUP_INTERVALS }
+                ?: 0
 
         return GitHubBackupConfig(
             username =
@@ -95,43 +118,41 @@ class GitHubBackupManager(context: Context) {
                 prefs.getString(KEY_REPOSITORY, DEFAULT_REPOSITORY)
                     ?.trim().orEmpty()
                     .ifBlank { DEFAULT_REPOSITORY },
-            token = loadSecret(KEY_TOKEN_CIPHERTEXT, KEY_TOKEN_IV)
-                .ifBlank { BuildConfig.G_TOKEN.trim() },
-            passphrase =
-                if (remember) {
-                    loadSecret(
-                        KEY_PASSPHRASE_CIPHERTEXT,
-                        KEY_PASSPHRASE_IV
-                    )
-                } else {
-                    ""
-                },
-            rememberPassphrase = remember
+            token =
+                loadSecret(KEY_TOKEN_CIPHERTEXT, KEY_TOKEN_IV)
+                    .ifBlank { BuildConfig.G_TOKEN.trim() },
+            passphrase = storedPassphrase,
+            rememberPassphrase = storedPassphrase.isNotBlank(),
+            backupMode = mode,
+            autoBackupIntervalHours = interval
         )
     }
 
     fun saveConfig(config: GitHubBackupConfig) {
-        val names = normalizedNames(config)
+        val normalized = normalizedNames(config)
+        val interval =
+            config.autoBackupIntervalHours
+                .takeIf { it in AUTO_BACKUP_INTERVALS }
+                ?: 0
+
         prefs.edit()
-            .putString(KEY_USERNAME, names.username)
-            .putString(KEY_REPOSITORY, names.repository)
+            .putString(KEY_USERNAME, normalized.username)
+            .putString(KEY_REPOSITORY, normalized.repository)
+            .putString(KEY_BACKUP_MODE, config.backupMode.name)
+            .putInt(KEY_AUTO_BACKUP_INTERVAL_HOURS, interval)
             .putBoolean(
                 KEY_REMEMBER_PASSPHRASE,
-                config.rememberPassphrase
+                config.passphrase.isNotBlank()
             )
             .apply()
 
         val configuredToken = config.token.trim()
         val buildToken = BuildConfig.G_TOKEN.trim()
-
         if (
             configuredToken.isBlank() ||
             configuredToken == buildToken
         ) {
-            clearSecret(
-                KEY_TOKEN_CIPHERTEXT,
-                KEY_TOKEN_IV
-            )
+            clearSecret(KEY_TOKEN_CIPHERTEXT, KEY_TOKEN_IV)
         } else {
             saveSecret(
                 configuredToken,
@@ -140,46 +161,73 @@ class GitHubBackupManager(context: Context) {
             )
         }
 
-        if (config.rememberPassphrase) {
+        if (config.passphrase.isBlank()) {
+            clearSecret(
+                KEY_PASSPHRASE_CIPHERTEXT,
+                KEY_PASSPHRASE_IV
+            )
+        } else {
             saveSecret(
                 config.passphrase,
                 KEY_PASSPHRASE_CIPHERTEXT,
                 KEY_PASSPHRASE_IV
             )
-        } else {
-            clearSecret(
-                KEY_PASSPHRASE_CIPHERTEXT,
-                KEY_PASSPHRASE_IV
-            )
         }
+
+        GitHubBackupScheduler.configure(
+            appContext,
+            normalized.copy(
+                autoBackupIntervalHours = interval
+            )
+        )
     }
 
     suspend fun uploadBackup(
         rawBackup: String,
         config: GitHubBackupConfig
     ): GitHubBackupUpload = withContext(Dispatchers.IO) {
-        val cfg = validated(config, requirePassphrase = true)
+        val cfg = validated(config)
         val branch = defaultBranch(cfg)
-        val decorated = decorateBackup(rawBackup)
-        val settingsVersion =
-            JSONObject(decorated)
-                .getJSONObject(BACKUP_METADATA_KEY)
-                .optInt("settingsVersion", 1)
-        val encrypted = encryptBackup(decorated, cfg.passphrase)
+        val root =
+            runCatching { JSONObject(rawBackup) }
+                .getOrElse {
+                    throw IllegalArgumentException(
+                        "NikTV backup is not valid JSON."
+                    )
+                }
+        val settingsVersion = root.optInt("formatVersion", 1)
+        val encrypted = cfg.passphrase.isNotBlank()
         val timestamp = publicTimestamp()
+        val extension = if (encrypted) "niktv" else "json"
         val name =
-            "NikTV-settings-v$settingsVersion-$timestamp.niktv"
+            "NikTV-settings-v$settingsVersion-$timestamp.$extension"
         val path = "$BACKUP_DIRECTORY/$name"
+
+        // Plain mode is intentionally the ProfileStore JSON exactly as exported.
+        // Encryption mode adds private preview metadata inside the ciphertext.
+        val uploadContent =
+            if (encrypted) {
+                encryptBackup(
+                    decorateBackup(rawBackup),
+                    cfg.passphrase
+                )
+            } else {
+                rawBackup
+            }
 
         val payload = JSONObject()
             .put(
                 "message",
-                "NikTV encrypted backup · settings v$settingsVersion · $timestamp"
+                if (encrypted) {
+                    "NikTV encrypted backup · settings v$settingsVersion · $timestamp"
+                } else {
+                    "NikTV backup · settings v$settingsVersion · $timestamp"
+                }
             )
             .put(
                 "content",
                 Base64.encodeToString(
-                    encrypted.toByteArray(Charsets.UTF_8),
+                    uploadContent.toByteArray(Charsets.UTF_8),
                     Base64.NO_WRAP
                 )
             )
@@ -189,10 +237,7 @@ class GitHubBackupManager(context: Context) {
             cfg,
             "https://api.github.com/repos/${cfg.username}/${cfg.repository}/contents/$path"
         )
-            .put(
-                payload.toString()
-                    .toRequestBody(JSON_MEDIA_TYPE)
-            )
+            .put(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()
 
         http.newCall(request).execute().use { response ->
@@ -213,7 +258,7 @@ class GitHubBackupManager(context: Context) {
     suspend fun listBackups(
         config: GitHubBackupConfig
     ): List<GitHubBackupFile> = withContext(Dispatchers.IO) {
-        val cfg = validated(config, requirePassphrase = false)
+        val cfg = validated(config)
         val branch = defaultBranch(cfg)
         val url =
             "https://api.github.com/repos/${cfg.username}/${cfg.repository}/contents/" +
@@ -235,16 +280,21 @@ class GitHubBackupManager(context: Context) {
                     val item = items.optJSONObject(index) ?: continue
                     val name = item.optString("name")
                     val path = item.optString("path")
+                    val encrypted =
+                        name.endsWith(".niktv", ignoreCase = true)
+                    val plain =
+                        name.endsWith(".json", ignoreCase = true)
                     if (
                         item.optString("type") == "file" &&
-                        name.endsWith(".niktv", ignoreCase = true) &&
+                        (encrypted || plain) &&
                         path.startsWith("$BACKUP_DIRECTORY/")
                     ) {
                         add(
                             GitHubBackupFile(
                                 name = name,
                                 path = path,
-                                size = item.optLong("size", 0L)
+                                size = item.optLong("size", 0L),
+                                encrypted = encrypted
                             )
                         )
                     }
@@ -253,6 +303,10 @@ class GitHubBackupManager(context: Context) {
         }
     }
 
+    /**
+     * Kept under the existing method name for source compatibility.
+     * It now supports both encrypted .niktv and plain .json GitHub backups.
+     */
     suspend fun downloadAndDecryptBackup(
         file: GitHubBackupFile,
         config: GitHubBackupConfig
@@ -260,14 +314,21 @@ class GitHubBackupManager(context: Context) {
         require(file.path.startsWith("$BACKUP_DIRECTORY/")) {
             "Invalid backup path."
         }
-        require(file.name.endsWith(".niktv", ignoreCase = true)) {
-            "Only encrypted NikTV backups can be restored here."
+        require(
+            file.name.endsWith(".niktv", ignoreCase = true) ||
+                file.name.endsWith(".json", ignoreCase = true)
+        ) {
+            "Unsupported NikTV backup file."
         }
         require(file.size <= MAX_BACKUP_BYTES) {
             "Backup is too large to restore safely."
         }
 
-        val cfg = validated(config, requirePassphrase = true)
+        val cfg = validated(config)
+        if (file.encrypted) {
+            requireStrongPassphrase(cfg.passphrase)
+        }
+
         val branch = defaultBranch(cfg)
         val url =
             "https://api.github.com/repos/${cfg.username}/${cfg.repository}/contents/" +
@@ -282,14 +343,24 @@ class GitHubBackupManager(context: Context) {
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val body = response.body?.string().orEmpty()
-                throw githubFailure("download backup", response.code, body)
+                throw githubFailure(
+                    "download backup",
+                    response.code,
+                    body
+                )
             }
-            val encrypted =
+
+            val content =
                 response.body?.string()
                     ?: throw IllegalStateException(
                         "GitHub returned an empty backup."
                     )
-            decryptBackup(encrypted, cfg.passphrase)
+
+            if (file.encrypted) {
+                decryptBackup(content, cfg.passphrase)
+            } else {
+                decodePlainBackup(content)
+            }
         }
     }
 
@@ -330,7 +401,7 @@ class GitHubBackupManager(context: Context) {
         }
         require(
             ciphertext.isNotEmpty() &&
-                ciphertext.size <= MAX_BACKUP_BYTES
+                ciphertext.size.toLong() <= MAX_BACKUP_BYTES
         ) { "Invalid encrypted backup payload size." }
 
         val key = deriveKey(passphrase, salt)
@@ -355,18 +426,52 @@ class GitHubBackupManager(context: Context) {
 
         val rawBackup = plaintext.toString(Charsets.UTF_8)
         plaintext.fill(0)
+        return decodedBackup(rawBackup)
+    }
 
+    fun isBackupCurrent(
+        fingerprint: String,
+        config: GitHubBackupConfig
+    ): Boolean =
+        prefs.getString(KEY_LAST_BACKUP_SIGNATURE, null) ==
+            backupSignature(fingerprint, config)
+
+    fun recordSuccessfulBackupFingerprint(
+        fingerprint: String,
+        config: GitHubBackupConfig
+    ) {
+        prefs.edit()
+            .putString(
+                KEY_LAST_BACKUP_SIGNATURE,
+                backupSignature(fingerprint, config)
+            )
+            .apply()
+    }
+
+    private fun backupSignature(
+        fingerprint: String,
+        config: GitHubBackupConfig
+    ): String {
+        val names = normalizedNames(config)
+        val protection =
+            if (config.passphrase.isBlank()) "plain" else "encrypted"
+        return "${names.username}/${names.repository}|$protection|$fingerprint"
+    }
+
+    private fun decodePlainBackup(content: String): GitHubBackupDecoded =
+        decodedBackup(content)
+
+    private fun decodedBackup(rawBackup: String): GitHubBackupDecoded {
         val root =
             runCatching { JSONObject(rawBackup) }
                 .getOrElse {
                     throw IllegalArgumentException(
-                        "Decrypted data is not valid NikTV JSON."
+                        "Backup is not valid NikTV JSON."
                     )
                 }
         require(root.has("formatVersion")) {
-            "Decrypted data is not a NikTV settings backup."
+            "Backup is not a NikTV settings backup."
         }
-
         return GitHubBackupDecoded(
             rawBackup = rawBackup,
             preview = preview(root)
@@ -483,8 +588,6 @@ class GitHubBackupManager(context: Context) {
                     .put("sdkInt", Build.VERSION.SDK_INT)
             )
 
-        // ProfileStore ignores unknown fields, so this remains import-compatible.
-        // This metadata exists only inside the encrypted plaintext.
         root.put(BACKUP_METADATA_KEY, metadata)
         return root.toString(2)
     }
@@ -500,24 +603,31 @@ class GitHubBackupManager(context: Context) {
                 if (encoded.isBlank()) 0 else JSONArray(encoded).length()
             }.getOrDefault(0)
 
+        val rawExportedAt = root.optLong("exportedAtMillis", 0L)
+        val exportedAt =
+            metadata?.optString("exportedAt")
+                ?.takeIf { it.isNotBlank() }
+                ?: if (rawExportedAt > 0L) {
+                    readableTimestamp(Date(rawExportedAt))
+                } else {
+                    "Unknown"
+                }
+
         return GitHubBackupPreview(
             deviceName =
                 device?.optString("displayName")
                     ?.takeIf { it.isNotBlank() }
-                    ?: "Unknown device",
+                    ?: "Not recorded",
             appVersion =
                 metadata?.optString("appVersion")
                     ?.takeIf { it.isNotBlank() }
-                    ?: "Unknown",
+                    ?: "Not recorded",
             settingsVersion =
                 metadata?.optInt(
                     "settingsVersion",
                     root.optInt("formatVersion", 1)
                 ) ?: root.optInt("formatVersion", 1),
-            exportedAt =
-                metadata?.optString("exportedAt")
-                    ?.takeIf { it.isNotBlank() }
-                    ?: "Unknown",
+            exportedAt = exportedAt,
             profileCount = profileCount
         )
     }
@@ -555,8 +665,7 @@ class GitHubBackupManager(context: Context) {
             .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
 
     private fun validated(
-        config: GitHubBackupConfig,
-        requirePassphrase: Boolean
+        config: GitHubBackupConfig
     ): GitHubBackupConfig {
         val names = normalizedNames(config)
         require(GITHUB_NAME.matches(names.username)) {
@@ -565,16 +674,14 @@ class GitHubBackupManager(context: Context) {
         require(GITHUB_NAME.matches(names.repository)) {
             "Invalid GitHub repository."
         }
+
         val effectiveToken =
             config.token.trim()
                 .ifBlank { BuildConfig.G_TOKEN.trim() }
-
         require(effectiveToken.isNotBlank()) {
             "GitHub token is required. Configure G_TOKEN at build time or enter a token in Settings."
         }
-        if (requirePassphrase) {
-            requireStrongPassphrase(config.passphrase)
-        }
+
         return names.copy(
             token = effectiveToken,
             passphrase = config.passphrase
@@ -594,7 +701,7 @@ class GitHubBackupManager(context: Context) {
 
     private fun requireStrongPassphrase(passphrase: String) {
         require(passphrase.length >= MIN_PASSPHRASE_LENGTH) {
-            "Backup password must be at least $MIN_PASSPHRASE_LENGTH characters."
+            "Backup password must be blank or at least $MIN_PASSPHRASE_LENGTH characters."
         }
     }
 
@@ -776,13 +883,18 @@ class GitHubBackupManager(context: Context) {
         private const val PREFS_NAME = "github_backup_config"
         private const val KEY_USERNAME = "username"
         private const val KEY_REPOSITORY = "repository"
+        private const val KEY_BACKUP_MODE = "backup_mode"
+        private const val KEY_AUTO_BACKUP_INTERVAL_HOURS =
+            "auto_backup_interval_hours"
+        private const val KEY_LAST_BACKUP_SIGNATURE =
+            "last_successful_backup_signature"
 
-        // Reuse V1 token storage so an already configured PAT survives upgrade.
         private const val KEY_TOKEN_CIPHERTEXT = "token_ciphertext"
         private const val KEY_TOKEN_IV = "token_iv"
         private const val KEYSTORE_ALIAS =
             "niktv_github_backup_token_v1"
 
+        // Kept for compatibility with V2 preferences.
         private const val KEY_REMEMBER_PASSPHRASE =
             "remember_backup_passphrase"
         private const val KEY_PASSPHRASE_CIPHERTEXT =
@@ -794,6 +906,8 @@ class GitHubBackupManager(context: Context) {
         private const val DEFAULT_REPOSITORY = "tracker"
         private const val BACKUP_DIRECTORY = "backups"
         private const val BACKUP_METADATA_KEY = "backupMetadata"
+
+        private val AUTO_BACKUP_INTERVALS = setOf(0, 6, 12, 24)
 
         private const val GITHUB_API_VERSION = "2026-03-10"
         private const val CONTAINER_VERSION = 1

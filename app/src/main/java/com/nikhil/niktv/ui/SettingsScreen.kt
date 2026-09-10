@@ -229,6 +229,55 @@ internal fun ModernSettingsScreen(
         }
     }
 
+
+    fun performGitHubExport() {
+        val config = normalizedGitHubBackupConfig()
+        githubBackupConfig = config
+        githubBackupManager.saveConfig(config)
+        githubBackupUploading = true
+        githubBackupSucceeded = null
+        githubBackupMessage =
+            if (config.passphrase.isBlank()) {
+                "Uploading backup to GitHub…"
+            } else {
+                "Encrypting backup locally…"
+            }
+
+        scope.launch {
+            runCatching {
+                val store =
+                    com.nikhil.niktv.data.ProfileStore(
+                        context.applicationContext
+                    )
+                val content = store.exportBackup()
+                val fingerprint = store.backupFingerprint()
+                val upload =
+                    githubBackupManager.uploadBackup(
+                        content,
+                        config
+                    )
+                githubBackupManager.recordSuccessfulBackupFingerprint(
+                    fingerprint,
+                    config
+                )
+                upload
+            }.onSuccess { upload ->
+                githubBackupSucceeded = true
+                githubBackupMessage =
+                    if (config.passphrase.isBlank()) {
+                        "Backup uploaded: ${upload.path}"
+                    } else {
+                        "Encrypted backup uploaded: ${upload.path}"
+                    }
+            }.onFailure { error ->
+                githubBackupSucceeded = false
+                githubBackupMessage =
+                    error.message ?: "Could not upload GitHub backup"
+            }
+            githubBackupUploading = false
+        }
+    }
+
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri?.let(exportBackup)
     }
@@ -1035,54 +1084,278 @@ internal fun ModernSettingsScreen(
         TmdbCredentialSettingsSection()
         SettingsSection("Backup and restore") {
             Text(
-                "Backup files contain your portal addresses and credentials. Store them securely.",
+                "Backup files contain portal addresses and credentials. " +
+                    "Use a backup password when storing sensitive backups in a public repository.",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Export NikTV setup") },
-                supportingContent = { Text("Save profiles, credentials, filters, preferences, favorites, and viewing progress") },
-                leadingContent = { Icon(Icons.Default.FileUpload, null) },
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable {
-                    val timestamp = java.text.SimpleDateFormat(
-                        "yyyyMMdd-HHmmss",
-                        java.util.Locale.getDefault()
-                    ).format(java.util.Date())
-                    exportLauncher.launch("NikTV-${BuildConfig.VERSION_NAME}-$timestamp-backup.json")
-                },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Encrypted GitHub backup") },
-                supportingContent = {
-                    Column {
-                        Text(
-                            "${githubBackupConfig.username.ifBlank { "nikhilmenghani" }}/" +
-                                githubBackupConfig.repository.ifBlank { "tracker" } +
-                                " · public repositories supported"
-                        )
-                        Text(
-                            "Backup contents and device details are encrypted before upload.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        githubBackupMessage?.let { message ->
-                            Text(
-                                message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = when (githubBackupSucceeded) {
-                                    true -> MaterialTheme.colorScheme.primary
-                                    false -> MaterialTheme.colorScheme.error
-                                    null -> MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
+
+            Column(
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Backup mode",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                val backupModes =
+                    listOf(
+                        com.nikhil.niktv.data.BackupMode.GITHUB to "GitHub",
+                        com.nikhil.niktv.data.BackupMode.DEVICE to "Device"
+                    )
+                SingleChoiceSegmentedButtonRow(
+                    Modifier.fillMaxWidth()
+                ) {
+                    backupModes.forEachIndexed { index, (mode, label) ->
+                        val shape =
+                            uniformSegmentShape(index, backupModes.size)
+                        SegmentedButton(
+                            selected =
+                                githubBackupConfig.backupMode == mode,
+                            onClick = {
+                                val updated =
+                                    githubBackupConfig.copy(
+                                        backupMode = mode
+                                    )
+                                githubBackupConfig = updated
+                                githubBackupManager.saveConfig(updated)
+                            },
+                            modifier =
+                                Modifier.remoteFocusFrame(shape),
+                            shape = shape
+                        ) {
+                            Text(label)
                         }
                     }
+                }
+
+                if (
+                    githubBackupConfig.backupMode ==
+                    com.nikhil.niktv.data.BackupMode.GITHUB
+                ) {
+                    OutlinedTextField(
+                        value = githubBackupConfig.username,
+                        onValueChange = {
+                            githubBackupConfig =
+                                githubBackupConfig.copy(username = it)
+                        },
+                        label = { Text("GitHub username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = githubBackupConfig.repository,
+                        onValueChange = {
+                            githubBackupConfig =
+                                githubBackupConfig.copy(repository = it)
+                        },
+                        label = { Text("Repository") },
+                        placeholder = { Text("tracker") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = githubBackupConfig.token,
+                        onValueChange = {
+                            githubBackupConfig =
+                                githubBackupConfig.copy(token = it)
+                        },
+                        label = { Text("GitHub personal access token") },
+                        supportingText = {
+                            Text(
+                                "Defaults to the build-time G_TOKEN. " +
+                                    "A changed value is stored encrypted on this device."
+                            )
+                        },
+                        visualTransformation =
+                            PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = githubBackupConfig.passphrase,
+                        onValueChange = {
+                            githubBackupConfig =
+                                githubBackupConfig.copy(
+                                    passphrase = it,
+                                    rememberPassphrase = it.isNotBlank()
+                                )
+                        },
+                        label = { Text("Backup password (optional)") },
+                        supportingText = {
+                            Text(
+                                "Leave blank for plain JSON. Use 12+ characters " +
+                                    "to encrypt GitHub backups."
+                            )
+                        },
+                        visualTransformation =
+                            PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (githubBackupConfig.passphrase.isBlank()) {
+                        Text(
+                            "No password: the backup is uploaded as readable JSON. " +
+                                "Anyone who can read the repository can read the backed-up credentials.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    } else if (githubBackupConfig.passphrase.length < 12) {
+                        Text(
+                            "Finish the password to at least 12 characters, or clear it " +
+                                "to use plain JSON. Automatic backup is paused while it is incomplete.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    Text(
+                        "Automatic GitHub backup",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    val scheduleOptions =
+                        listOf(
+                            0 to "Off",
+                            6 to "6h",
+                            12 to "12h",
+                            24 to "24h"
+                        )
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier.fillMaxWidth()
+                    ) {
+                        scheduleOptions.forEachIndexed {
+                                index,
+                                (hours, label) ->
+                            val shape =
+                                uniformSegmentShape(
+                                    index,
+                                    scheduleOptions.size
+                                )
+                            SegmentedButton(
+                                selected =
+                                    githubBackupConfig
+                                        .autoBackupIntervalHours == hours,
+                                onClick = {
+                                    val updated =
+                                        githubBackupConfig.copy(
+                                            autoBackupIntervalHours = hours
+                                        )
+                                    githubBackupConfig = updated
+                                    githubBackupManager.saveConfig(updated)
+                                },
+                                modifier =
+                                    Modifier.remoteFocusFrame(shape),
+                                shape = shape
+                            ) {
+                                Text(label)
+                            }
+                        }
+                    }
+                    Text(
+                        if (
+                            githubBackupConfig.autoBackupIntervalHours == 0
+                        ) {
+                            "Automatic backup is off."
+                        } else {
+                            "NikTV checks every " +
+                                "${githubBackupConfig.autoBackupIntervalHours} hours " +
+                                "and uploads only when backed-up data has changed."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color =
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    FilledTonalButton(
+                        onClick = {
+                            val config =
+                                normalizedGitHubBackupConfig()
+                            githubBackupManager.saveConfig(config)
+                            githubBackupConfig =
+                                githubBackupManager.loadConfig()
+                            githubBackupSucceeded = true
+                            githubBackupMessage =
+                                "GitHub backup settings saved"
+                        },
+                        enabled =
+                            githubBackupConfig.username.isNotBlank() &&
+                                githubBackupConfig.repository.isNotBlank() &&
+                                (
+                                    githubBackupConfig.token.isNotBlank() ||
+                                        BuildConfig.G_TOKEN.isNotBlank()
+                                    ) &&
+                                (
+                                    githubBackupConfig.passphrase.isBlank() ||
+                                        githubBackupConfig.passphrase.length >= 12
+                                    )
+                    ) {
+                        Icon(Icons.Default.Save, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Save GitHub settings")
+                    }
+
+                    githubBackupMessage?.let { message ->
+                        Text(
+                            message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                when (githubBackupSucceeded) {
+                                    true ->
+                                        MaterialTheme.colorScheme.primary
+                                    false ->
+                                        MaterialTheme.colorScheme.error
+                                    null ->
+                                        MaterialTheme.colorScheme
+                                            .onSurfaceVariant
+                                }
+                        )
+                    }
+                } else {
+                    Text(
+                        "Export opens Android's document picker. Import lets you " +
+                            "choose a local NikTV JSON backup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Export backup") },
+                supportingContent = {
+                    Text(
+                        if (
+                            githubBackupConfig.backupMode ==
+                            com.nikhil.niktv.data.BackupMode.GITHUB
+                        ) {
+                            if (githubBackupConfig.passphrase.isBlank()) {
+                                "Upload the current NikTV setup to GitHub as JSON"
+                            } else {
+                                "Encrypt and upload the current NikTV setup to GitHub"
+                            }
+                        } else {
+                            "Save the current NikTV setup to this device"
+                        }
+                    )
                 },
-                leadingContent = { Icon(Icons.Default.CloudUpload, null) },
+                leadingContent = {
+                    Icon(
+                        if (
+                            githubBackupConfig.backupMode ==
+                            com.nikhil.niktv.data.BackupMode.GITHUB
+                        ) {
+                            Icons.Default.CloudUpload
+                        } else {
+                            Icons.Default.FileUpload
+                        },
+                        null
+                    )
+                },
                 trailingContent = {
                     if (githubBackupUploading) {
                         CircularProgressIndicator(
@@ -1090,201 +1363,89 @@ internal fun ModernSettingsScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Icon(
-                            Icons.Default.ChevronRight,
-                            "Configure encrypted GitHub backup"
-                        )
+                        Icon(Icons.Default.ChevronRight, null)
                     }
                 },
-                modifier = Modifier
-                    .remoteFocusFrame(RoundedCornerShape(14.dp))
-                    .clickable(enabled = !githubBackupUploading) {
-                        githubBackupDialogOpen = true
-                    },
-                colors = ListItemDefaults.colors(
-                    containerColor = Color.Transparent
-                )
-            )
-            HorizontalDivider()
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Import NikTV setup") },
-                supportingContent = { Text("Restore a backup from another TV; profiles authenticate with fresh sessions") },
-                leadingContent = { Icon(Icons.Default.FileDownload, null) },
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable {
-                    importLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
-                },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
-        }
-
-        if (githubBackupDialogOpen) {
-            AlertDialog(
-                onDismissRequest = {
-                    if (!githubBackupUploading) {
-                        githubBackupDialogOpen = false
-                    }
-                },
-                icon = {
-                    Icon(
-                        Icons.Default.EnhancedEncryption,
-                        contentDescription = null
-                    )
-                },
-                title = { Text("Encrypted GitHub backup") },
-                text = {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            "NikTV encrypts the complete settings backup locally before " +
-                                "uploading it. Public GitHub repositories are supported."
-                        )
-                        OutlinedTextField(
-                            value = githubBackupConfig.username,
-                            onValueChange = {
-                                githubBackupConfig =
-                                    githubBackupConfig.copy(username = it)
-                            },
-                            label = { Text("GitHub username") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = githubBackupConfig.repository,
-                            onValueChange = {
-                                githubBackupConfig =
-                                    githubBackupConfig.copy(repository = it)
-                            },
-                            label = { Text("Repository") },
-                            placeholder = { Text("tracker") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = githubBackupConfig.token,
-                            onValueChange = {
-                                githubBackupConfig =
-                                    githubBackupConfig.copy(token = it)
-                            },
-                            label = { Text("GitHub personal access token") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = githubBackupConfig.passphrase,
-                            onValueChange = {
-                                githubBackupConfig =
-                                    githubBackupConfig.copy(passphrase = it)
-                            },
-                            label = { Text("Backup password") },
-                            supportingText = {
-                                Text(
-                                    "At least 12 characters. You need this password " +
-                                        "to restore on another device."
+                modifier =
+                    Modifier
+                        .remoteFocusFrame(RoundedCornerShape(14.dp))
+                        .clickable(enabled = !githubBackupUploading) {
+                            if (
+                                githubBackupConfig.backupMode ==
+                                com.nikhil.niktv.data.BackupMode.GITHUB
+                            ) {
+                                performGitHubExport()
+                            } else {
+                                val timestamp =
+                                    java.text.SimpleDateFormat(
+                                        "yyyyMMdd-HHmmss",
+                                        java.util.Locale.getDefault()
+                                    ).format(java.util.Date())
+                                exportLauncher.launch(
+                                    "NikTV-${BuildConfig.VERSION_NAME}-$timestamp-backup.json"
                                 )
-                            },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = githubBackupConfig.rememberPassphrase,
-                                onCheckedChange = { checked ->
-                                    githubBackupConfig =
-                                        githubBackupConfig.copy(
-                                            rememberPassphrase = checked
-                                        )
-                                }
-                            )
-                            Text("Remember backup password on this device")
-                        }
-                        Text(
-                            "The GitHub token is encrypted with Android Keystore. " +
-                                "The backup password is stored only when Remember is enabled.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "GitHub sees only an encrypted .niktv file. The filename " +
-                                "contains the settings version and date, but no device or profile data.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        OutlinedButton(
-                            onClick = { openGitHubRestoreBrowser() },
-                            enabled =
-                                !githubBackupUploading &&
-                                    githubBackupConfig.username.isNotBlank() &&
-                                    githubBackupConfig.repository.isNotBlank() &&
-                                    githubBackupConfig.token.isNotBlank()
-                        ) {
-                            Icon(Icons.Default.Restore, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Browse / restore backups")
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            val config = normalizedGitHubBackupConfig()
-                            githubBackupConfig = config
-                            githubBackupManager.saveConfig(config)
-                            githubBackupDialogOpen = false
-                            githubBackupUploading = true
-                            githubBackupSucceeded = null
-                            githubBackupMessage = "Encrypting backup locally…"
-
-                            scope.launch {
-                                runCatching {
-                                    val content =
-                                        com.nikhil.niktv.data.ProfileStore(
-                                            context.applicationContext
-                                        ).exportBackup()
-                                    githubBackupManager.uploadBackup(
-                                        content,
-                                        config
-                                    )
-                                }.onSuccess { upload ->
-                                    githubBackupSucceeded = true
-                                    githubBackupMessage =
-                                        "Encrypted backup uploaded: ${upload.path}"
-                                }.onFailure { error ->
-                                    githubBackupSucceeded = false
-                                    githubBackupMessage =
-                                        error.message
-                                            ?: "Could not upload encrypted GitHub backup"
-                                }
-                                githubBackupUploading = false
                             }
                         },
-                        enabled =
-                            !githubBackupUploading &&
-                                githubBackupConfig.username.isNotBlank() &&
-                                githubBackupConfig.repository.isNotBlank() &&
-                                githubBackupConfig.token.isNotBlank() &&
-                                githubBackupConfig.passphrase.length >= 12
-                    ) {
-                        Text("Encrypt & upload")
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = {
-                            val config = normalizedGitHubBackupConfig()
-                            githubBackupConfig = config
-                            githubBackupManager.saveConfig(config)
-                            githubBackupDialogOpen = false
+                colors =
+                    ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
+            )
+
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Import backup") },
+                supportingContent = {
+                    Text(
+                        if (
+                            githubBackupConfig.backupMode ==
+                            com.nikhil.niktv.data.BackupMode.GITHUB
+                        ) {
+                            "Choose one of the backups stored in GitHub"
+                        } else {
+                            "Choose a NikTV JSON backup from this device"
                         }
-                    ) {
-                        Text("Save")
-                    }
-                }
+                    )
+                },
+                leadingContent = {
+                    Icon(
+                        if (
+                            githubBackupConfig.backupMode ==
+                            com.nikhil.niktv.data.BackupMode.GITHUB
+                        ) {
+                            Icons.Default.CloudDownload
+                        } else {
+                            Icons.Default.FileDownload
+                        },
+                        null
+                    )
+                },
+                modifier =
+                    Modifier
+                        .remoteFocusFrame(RoundedCornerShape(14.dp))
+                        .clickable {
+                            if (
+                                githubBackupConfig.backupMode ==
+                                com.nikhil.niktv.data.BackupMode.GITHUB
+                            ) {
+                                openGitHubRestoreBrowser()
+                            } else {
+                                importLauncher.launch(
+                                    arrayOf(
+                                        "application/json",
+                                        "text/json",
+                                        "text/plain"
+                                    )
+                                )
+                            }
+                        },
+                colors =
+                    ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
             )
         }
+
 
         if (githubRestoreDialogOpen) {
             AlertDialog(
@@ -1312,7 +1473,7 @@ internal fun ModernSettingsScreen(
                                     )
                                     Text(
                                         githubRestoreMessage
-                                            ?: "Decrypting backup locally…"
+                                            ?: "Loading backup…"
                                     )
                                 }
                             }
@@ -1380,16 +1541,16 @@ internal fun ModernSettingsScreen(
                                                 },
                                                 supportingContent = {
                                                     Text(
-                                                        "${formatOfflineBytes(backup.size)} · encrypted"
+                                                        "${formatOfflineBytes(backup.size)} · " + if (backup.encrypted) "encrypted" else "plain JSON"
                                                     )
                                                 },
                                                 leadingContent = {
-                                                    Icon(Icons.Default.Lock, null)
+                                                    Icon(if (backup.encrypted) Icons.Default.Lock else Icons.Default.Description, null)
                                                 },
                                                 trailingContent = {
                                                     Icon(
                                                         Icons.Default.ChevronRight,
-                                                        "Decrypt ${backup.name}"
+                                                        "Open ${backup.name}"
                                                     )
                                                 },
                                                 modifier = Modifier
@@ -1399,7 +1560,7 @@ internal fun ModernSettingsScreen(
                                                             normalizedGitHubBackupConfig()
                                                         githubRestoreLoading = true
                                                         githubRestoreMessage =
-                                                            "Decrypting ${backup.name}…"
+                                                            "Loading ${backup.name}…"
                                                         githubSelectedBackupName =
                                                             backup.name
 
@@ -1420,7 +1581,7 @@ internal fun ModernSettingsScreen(
                                                                     null
                                                                 githubRestoreMessage =
                                                                     error.message
-                                                                        ?: "Could not decrypt backup"
+                                                                        ?: "Could not open backup"
                                                             }
                                                             githubRestoreLoading = false
                                                         }
@@ -1435,14 +1596,6 @@ internal fun ModernSettingsScreen(
                                     }
                                 }
 
-                                if (githubBackupConfig.passphrase.length < 12) {
-                                    Text(
-                                        "Enter the backup password in GitHub backup settings " +
-                                            "before decrypting.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
                             }
                         }
                     }
@@ -1460,7 +1613,7 @@ internal fun ModernSettingsScreen(
                                 githubRestoreDialogOpen = false
                                 githubPendingRestore = null
                                 githubBackupMessage =
-                                    "Encrypted GitHub backup restored"
+                                    "GitHub backup restored"
                                 githubBackupSucceeded = true
                             }
                         ) {
