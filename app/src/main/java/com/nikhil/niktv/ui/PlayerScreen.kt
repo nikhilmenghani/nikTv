@@ -59,6 +59,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -77,6 +79,13 @@ import com.nikhil.niktv.data.OfflineMediaDownloads
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+private data class Media3SubtitleTrack(
+    val id: String,
+    val label: String,
+    val group: Tracks.Group,
+    val trackIndex: Int
+)
 
 internal fun Modifier.playerActivityObserver(onActivity: () -> Unit): Modifier =
     onPreviewKeyEvent { event ->
@@ -230,6 +239,7 @@ fun PlayerScreen(
     val displayedDownloadInProgress = offlineDownloadInProgress || downloadRequested
     val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
     var sessionEngineOverride by remember { mutableStateOf<PlaybackEngine?>(null) }
+    var subtitleDelayMs by remember(media.progressKey) { mutableLongStateOf(0L) }
     var engineSwitchResumePosition by remember(media.progressKey) {
         mutableLongStateOf(media.resumePositionMillis)
     }
@@ -257,6 +267,7 @@ fun PlayerScreen(
             offlineDownloadInProgress = offlineDownloadInProgress,
             offlineDownloadProgress = offlineDownloadProgress,
             offlineDownloadProgressText = offlineDownloadProgressText,
+            initialSubtitleDelayMs = subtitleDelayMs,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
@@ -369,6 +380,8 @@ fun PlayerScreen(
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var videoDetails by remember(media.progressKey) { mutableStateOf("") }
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
+    var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
+    var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Media3SubtitleTrack>>(emptyList()) }
 
     /*
      * MTK_AVC_SEAMLESS_RECOVERY_V14
@@ -387,6 +400,7 @@ fun PlayerScreen(
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
     val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val subtitleFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -448,6 +462,23 @@ fun PlayerScreen(
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 if (state == Player.STATE_READY) startupTimedOut = false
+            }
+            override fun onTracksChanged(tracks: Tracks) {
+                subtitleTracks = tracks.groups
+                    .filter { it.type == C.TRACK_TYPE_TEXT }
+                    .flatMap { group ->
+                        (0 until group.length).map { index ->
+                            val format = group.getTrackFormat(index)
+                            Media3SubtitleTrack(
+                                id = "${group.mediaTrackGroup.id}:$index",
+                                label = format.label
+                                    ?: format.language?.let { language -> Locale.forLanguageTag(language).displayName }
+                                    ?: "Subtitle ${index + 1}",
+                                group = group,
+                                trackIndex = index
+                            )
+                        }
+                    }
             }
             override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
             override fun onPlayWhenReadyChanged(value: Boolean, reason: Int) {
@@ -1160,13 +1191,11 @@ fun PlayerScreen(
                         onClick = onBack,
                         modifier = Modifier.focusRequester(backFocusRequester)
                             .focusProperties {
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester
-                                else if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester
                                 down = playPauseFocusRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester
-                                else if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester,
                                 down = playPauseFocusRequester
                             )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -1195,12 +1224,12 @@ fun PlayerScreen(
                             modifier = Modifier.focusRequester(downloadFocusRequester)
                                 .focusProperties {
                                     left = backFocusRequester
-                                    right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
+                                    right = subtitleFocusRequester
                                     down = playPauseFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     backFocusRequester,
-                                    if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
+                                    subtitleFocusRequester,
                                     playPauseFocusRequester
                                 )
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -1225,6 +1254,18 @@ fun PlayerScreen(
                             }
                         }
                     }
+                    IconButton(
+                        onClick = { subtitleDialogOpen = true },
+                        modifier = Modifier.focusRequester(subtitleFocusRequester)
+                            .focusProperties {
+                                left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
+                                right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
+                                down = playPauseFocusRequester
+                            }
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
+                    ) {
+                        Icon(Icons.Default.Subtitles, "Subtitles", tint = Color.White)
+                    }
                     // PLAYER_GLOBAL_ORIENTATION_NO_ROTATE_V12
                     if (pipAvailable) {
                         IconButton(
@@ -1235,12 +1276,12 @@ fun PlayerScreen(
                             },
                             modifier = Modifier.focusRequester(pipFocusRequester)
                                 .focusProperties {
-                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
+                                    left = subtitleFocusRequester
                                     right = playerSwitchFocusRequester
                                     down = playPauseFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester,
+                                    subtitleFocusRequester,
                                     playerSwitchFocusRequester,
                                     playPauseFocusRequester
                                 )
@@ -1588,6 +1629,37 @@ fun PlayerScreen(
                     ) { Text("Play now") }
                 }
             }
+        }
+        if (subtitleDialogOpen) {
+            SubtitleSelectionDialog(
+                tracks = subtitleTracks.map { track ->
+                    SubtitleTrackOption(track.id, track.label, track.group.isTrackSelected(track.trackIndex))
+                },
+                delayMs = subtitleDelayMs,
+                onSelect = { id ->
+                    val builder = player.trackSelectionParameters.buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    if (id == null) {
+                        builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    } else {
+                        subtitleTracks.firstOrNull { it.id == id }?.let { track ->
+                            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .setOverrideForType(
+                                    TrackSelectionOverride(track.group.mediaTrackGroup, listOf(track.trackIndex))
+                                )
+                        }
+                    }
+                    player.trackSelectionParameters = builder.build()
+                },
+                onDelayChange = { delay ->
+                    subtitleDelayMs = delay
+                    engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                    sessionEngineOverride = PlaybackEngine.VLC
+                    subtitleDialogOpen = false
+                },
+                onDismiss = { subtitleDialogOpen = false },
+                timingRequiresVlc = true
+            )
         }
     }
 }

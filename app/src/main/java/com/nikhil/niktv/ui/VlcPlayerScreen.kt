@@ -64,6 +64,7 @@ internal fun VlcPlayerScreen(
     offlineDownloadInProgress: Boolean = false,
     offlineDownloadProgress: Float? = null,
     offlineDownloadProgressText: String? = null,
+    initialSubtitleDelayMs: Long = 0L,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -132,6 +133,10 @@ internal fun VlcPlayerScreen(
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
+    var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
+    var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
+    var selectedSubtitleTrackId by remember(media.progressKey) { mutableStateOf<Int?>(null) }
+    var subtitleDelayMs by remember(media.progressKey) { mutableLongStateOf(initialSubtitleDelayMs) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -155,6 +160,7 @@ internal fun VlcPlayerScreen(
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
     val downloadRequester = remember(media.progressKey) { FocusRequester() }
+    val subtitleRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
@@ -185,6 +191,15 @@ internal fun VlcPlayerScreen(
     }
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     val player = remember(media.progressKey) { MediaPlayer(libVlc) }
+    fun refreshSubtitleTracks() {
+        subtitleTracks = player.spuTracks.orEmpty()
+            .filter { it.id >= 0 }
+            .map { it.id to (it.name?.takeIf(String::isNotBlank) ?: "Subtitle ${it.id}") }
+        selectedSubtitleTrackId = player.spuTrack.takeIf { it >= 0 }
+    }
+    LaunchedEffect(player, subtitleDelayMs) {
+        player.setSpuDelay(subtitleDelayMs * 1_000L)
+    }
     val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
     val activity = remember(context) { context.findActivity() }
     val audioManager = remember(context) {
@@ -351,6 +366,7 @@ internal fun VlcPlayerScreen(
                     playing = true
                     buffering = false
                     advancing = false
+                    refreshSubtitleTracks()
                 }
                 MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> {
                     playbackRequested = false
@@ -732,13 +748,11 @@ internal fun VlcPlayerScreen(
                         onClick = onBack,
                         modifier = Modifier.focusRequester(backRequester)
                             .focusProperties {
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester
-                                else if (pipAvailable) pipRequester else playerSwitchRequester
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else subtitleRequester
                                 down = playRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester
-                                else if (pipAvailable) pipRequester else playerSwitchRequester,
+                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else subtitleRequester,
                                 down = playRequester
                             )
                             .playerControlFocus(CircleShape) { controlsFocused = it }
@@ -761,8 +775,8 @@ internal fun VlcPlayerScreen(
                             onDownload()
                         },
                         modifier = Modifier.focusRequester(downloadRequester)
-                            .focusProperties { left = backRequester; right = if (pipAvailable) pipRequester else playerSwitchRequester; down = playRequester }
-                            .playerDpadFocusRoutes(backRequester, if (pipAvailable) pipRequester else playerSwitchRequester, playRequester)
+                            .focusProperties { left = backRequester; right = subtitleRequester; down = playRequester }
+                            .playerDpadFocusRoutes(backRequester, subtitleRequester, playRequester)
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -784,6 +798,16 @@ internal fun VlcPlayerScreen(
                             )
                         }
                     }
+                    IconButton(
+                        onClick = { refreshSubtitleTracks(); subtitleDialogOpen = true },
+                        modifier = Modifier.focusRequester(subtitleRequester)
+                            .focusProperties {
+                                left = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester
+                                right = if (pipAvailable) pipRequester else playerSwitchRequester
+                                down = playRequester
+                            }
+                            .playerControlFocus(CircleShape) { controlsFocused = it }
+                    ) { Icon(Icons.Default.Subtitles, "Subtitles", tint = Color.White) }
                     if (pipAvailable) IconButton(
                         onClick = {
                             controlsVisible = false
@@ -791,8 +815,8 @@ internal fun VlcPlayerScreen(
                             pipActivity?.enterPlayerPictureInPicture()
                         },
                         modifier = Modifier.focusRequester(pipRequester)
-                            .focusProperties { left = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester; right = playerSwitchRequester; down = playRequester }
-                            .playerDpadFocusRoutes(if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester, playerSwitchRequester, playRequester)
+                            .focusProperties { left = subtitleRequester; right = playerSwitchRequester; down = playRequester }
+                            .playerDpadFocusRoutes(subtitleRequester, playerSwitchRequester, playRequester)
                             .playerControlFocus(CircleShape) { controlsFocused = it }
                     ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
                     IconButton(
@@ -1083,6 +1107,24 @@ internal fun VlcPlayerScreen(
                     ) { Text("Play now") }
                 }
             }
+        }
+        if (subtitleDialogOpen) {
+            SubtitleSelectionDialog(
+                tracks = subtitleTracks.map { (id, label) ->
+                    SubtitleTrackOption(id.toString(), label, selectedSubtitleTrackId == id)
+                },
+                delayMs = subtitleDelayMs,
+                onSelect = { id ->
+                    val trackId = id?.toIntOrNull() ?: -1
+                    player.setSpuTrack(trackId)
+                    selectedSubtitleTrackId = trackId.takeIf { it >= 0 }
+                },
+                onDelayChange = { delay ->
+                    subtitleDelayMs = delay
+                    player.setSpuDelay(delay * 1_000L)
+                },
+                onDismiss = { subtitleDialogOpen = false }
+            )
         }
     }
 }
