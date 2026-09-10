@@ -135,7 +135,7 @@ private enum class MobileMainPage(val title: String, val icon: ImageVector) {
     LIVE("Live", Icons.Default.LiveTv),
     MOVIES("Movies", Icons.Default.Movie),
     SERIES("Series", Icons.Default.VideoLibrary),
-    LIBRARY("Library", Icons.Default.CollectionsBookmark),
+    LIBRARY("Library", Icons.Default.FavoriteBorder),
     DOWNLOADS("Offline", Icons.Default.DownloadDone)
 }
 
