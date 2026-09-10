@@ -62,10 +62,15 @@ jobs:
           NIKTV_XTREAM_PASSWORD: ${{ secrets.NIKTV_XTREAM_PASSWORD }}
           NIKTV_TMDB_API_KEY: ${{ secrets.NIKTV_TMDB_API_KEY }}
           NIKTV_TMDB_READ_ACCESS_TOKEN: ${{ secrets.NIKTV_TMDB_READ_ACCESS_TOKEN }}
+          OPEN_SUBTITLES_KEY: ${{ secrets.OPEN_SUBTITLES_KEY }}
           G_TOKEN: ${{ secrets.G_TOKEN }}
         run: |
           if [ -z "$NIKTV_TMDB_API_KEY" ] && [ -z "$NIKTV_TMDB_READ_ACCESS_TOKEN" ]; then
             echo "::error::Neither NIKTV_TMDB_API_KEY nor NIKTV_TMDB_READ_ACCESS_TOKEN is configured"
+            exit 1
+          fi
+          if [ -z "$OPEN_SUBTITLES_KEY" ]; then
+            echo "::error::OPEN_SUBTITLES_KEY is not configured"
             exit 1
           fi
           chmod +x ./gradlew

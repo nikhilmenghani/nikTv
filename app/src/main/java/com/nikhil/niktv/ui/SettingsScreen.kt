@@ -3166,8 +3166,9 @@ internal fun TmdbCredentialSettingsSection() {
     var revealCredentials by rememberSaveable { mutableStateOf(false) }
     val apiKey = BuildConfig.TMDB_API_KEY.trim()
     val readAccessToken = BuildConfig.TMDB_READ_ACCESS_TOKEN.trim()
+    val openSubtitlesKey = BuildConfig.OPEN_SUBTITLES_KEY.trim()
 
-    SettingsSection("TMDB diagnostics") {
+    SettingsSection("Metadata and subtitle diagnostics") {
         ListItem(
             headlineContent = { Text("Reveal embedded credentials") },
             supportingContent = {
@@ -3198,6 +3199,12 @@ internal fun TmdbCredentialSettingsSection() {
                     Icons.Default.VpnKey,
                     "TMDB read access token",
                     readAccessToken.credentialDiagnosticValue(revealCredentials)
+                )
+                HorizontalDivider()
+                SettingsValueRow(
+                    Icons.Default.Subtitles,
+                    "OpenSubtitles API key",
+                    openSubtitlesKey.credentialDiagnosticValue(revealCredentials)
                 )
             }
         }

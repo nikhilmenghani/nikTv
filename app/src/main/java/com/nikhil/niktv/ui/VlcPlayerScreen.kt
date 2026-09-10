@@ -43,12 +43,14 @@ import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.PlayingMedia
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.PlaybackEngine
+import com.nikhil.niktv.data.SubtitleSearchRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
+import org.videolan.libvlc.interfaces.IMedia
 
 @Composable
 internal fun VlcPlayerScreen(
@@ -1123,7 +1125,16 @@ internal fun VlcPlayerScreen(
                     subtitleDelayMs = delay
                     player.setSpuDelay(delay * 1_000L)
                 },
-                onDismiss = { subtitleDialogOpen = false }
+                onDismiss = { subtitleDialogOpen = false },
+                internetSearch = SubtitleSearchRequest(
+                    query = media.series?.title ?: media.media.title,
+                    seasonNumber = media.media.seasonNumber,
+                    episodeNumber = media.media.episodeNumber
+                ),
+                onExternalSubtitle = { file ->
+                    player.addSlave(IMedia.Slave.Type.Subtitle, android.net.Uri.fromFile(file), true)
+                    refreshSubtitleTracks()
+                }
             )
         }
     }

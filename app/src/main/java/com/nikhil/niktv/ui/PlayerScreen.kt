@@ -59,6 +59,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
@@ -76,9 +77,11 @@ import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.MediaItem as NikMediaItem
 import com.nikhil.niktv.data.OfflineMediaDownloads
+import com.nikhil.niktv.data.SubtitleSearchRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.io.File
 
 private data class Media3SubtitleTrack(
     val id: String,
@@ -382,6 +385,7 @@ fun PlayerScreen(
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
     var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Media3SubtitleTrack>>(emptyList()) }
+    var externalSubtitleFile by remember(media.progressKey) { mutableStateOf<File?>(null) }
 
     /*
      * MTK_AVC_SEAMLESS_RECOVERY_V14
@@ -433,7 +437,7 @@ fun PlayerScreen(
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
-    val player = remember(media.progressKey, effectiveEngine, media.url) {
+    val player = remember(media.progressKey, effectiveEngine, media.url, externalSubtitleFile?.absolutePath) {
         val renderersFactory = DefaultRenderersFactory(context).apply {
             if (effectiveEngine == PlaybackEngine.MEDIA3) {
                 // Media3 mode applies NikTV's learned decoder policy.
@@ -450,7 +454,25 @@ fun PlayerScreen(
             )
         }
         builder.build().apply {
-            setMediaItem(MediaItem.fromUri(media.url))
+            val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
+            externalSubtitleFile?.let { file ->
+                val mimeType = when (file.extension.lowercase()) {
+                    "vtt" -> MimeTypes.TEXT_VTT
+                    "ssa", "ass" -> MimeTypes.TEXT_SSA
+                    "ttml", "xml" -> MimeTypes.APPLICATION_TTML
+                    else -> MimeTypes.APPLICATION_SUBRIP
+                }
+                mediaItemBuilder.setSubtitleConfigurations(
+                    listOf(
+                        MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
+                            .setMimeType(mimeType)
+                            .setLabel("OpenSubtitles")
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                            .build()
+                    )
+                )
+            }
+            setMediaItem(mediaItemBuilder.build())
             if (engineSwitchResumePosition > 0L) seekTo(engineSwitchResumePosition)
             prepare()
             playWhenReady = true
@@ -1658,7 +1680,16 @@ fun PlayerScreen(
                     subtitleDialogOpen = false
                 },
                 onDismiss = { subtitleDialogOpen = false },
-                timingRequiresVlc = true
+                timingRequiresVlc = true,
+                internetSearch = SubtitleSearchRequest(
+                    query = media.series?.title ?: media.media.title,
+                    seasonNumber = media.media.seasonNumber,
+                    episodeNumber = media.media.episodeNumber
+                ),
+                onExternalSubtitle = { file ->
+                    engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                    externalSubtitleFile = file
+                }
             )
         }
     }

@@ -32,6 +32,11 @@ val tmdbApiKey = providers.gradleProperty("NIKTV_TMDB_API_KEY")
     .orElse(providers.environmentVariable("NIKTV_TMDB_API_KEY")).orElse("")
 val tmdbReadAccessToken = providers.gradleProperty("NIKTV_TMDB_READ_ACCESS_TOKEN")
     .orElse(providers.environmentVariable("NIKTV_TMDB_READ_ACCESS_TOKEN")).orElse("")
+val openSubtitlesKey = providers.gradleProperty("OPEN_SUBTITLES_KEY")
+    .orElse(providers.gradleProperty("OPENSUBTITLES"))
+    .orElse(providers.environmentVariable("OPEN_SUBTITLES_KEY"))
+    .orElse(providers.environmentVariable("OPENSUBTITLES"))
+    .orElse("")
 val githubToken = providers.gradleProperty("G_TOKEN")
     .orElse(providers.environmentVariable("G_TOKEN")).orElse("")
 
@@ -60,6 +65,7 @@ android {
         buildConfigField("String", "XTREAM_PASSWORD", xtreamPassword.get().asBuildConfigString())
         buildConfigField("String", "TMDB_API_KEY", tmdbApiKey.get().asBuildConfigString())
         buildConfigField("String", "TMDB_READ_ACCESS_TOKEN", tmdbReadAccessToken.get().asBuildConfigString())
+        buildConfigField("String", "OPEN_SUBTITLES_KEY", openSubtitlesKey.get().asBuildConfigString())
         buildConfigField("String", "G_TOKEN", githubToken.get().asBuildConfigString())
     }
     signingConfigs {

@@ -75,6 +75,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -295,27 +296,25 @@ internal fun Modifier.mobileMainTabSwipe(
                 } ?: continue
 
                 val pointerId = down.id
-                var lastX = down.position.x
-                var lastY = down.position.y
                 var totalX = 0f
                 var totalY = 0f
                 var horizontalDragLocked = false
                 var cancelled = false
 
                 while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    // Observe before nested LazyRows/pagers. Reading at Final made
+                    // the child scroll, its overscroll spring, and this translated
+                    // parent all compete while a partial swipe was held.
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
                     if (event.changes.count { it.pressed } > 1) {
                         cancelled = true
                     }
 
                     val change = event.changes.firstOrNull { it.id == pointerId }
                         ?: break
-                    val deltaX = change.position.x - lastX
-                    val deltaY = change.position.y - lastY
-                    lastX = change.position.x
-                    lastY = change.position.y
-                    totalX += deltaX
-                    totalY += deltaY
+                    val movement = change.positionChange()
+                    totalX += movement.x
+                    totalY += movement.y
 
                     if (!horizontalDragLocked &&
                         kotlin.math.abs(totalX) > 12.dp.toPx() &&
