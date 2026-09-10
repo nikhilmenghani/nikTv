@@ -3834,10 +3834,46 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey() ?: return
         val key = "$profileKey:${type.name}:${item.id}"
         val entry = _state.value.offlineDownloads.firstOrNull { it.key == key } ?: return
-        OfflineMediaDownloads.remove(getApplication(), entry.requestId)
-        val updated = _state.value.offlineDownloads.filterNot { it.key == key }
-        _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
-        viewModelScope.launch { store.saveOfflineDownloads(updated) }
+        val playing = _state.value.nowPlaying
+        val removingActiveOfflinePlayback =
+            playing?.offlinePlayback == true && playing.catalogType == type && playing.media.id == item.id
+
+        viewModelScope.launch {
+            var onlineUrl: String? = null
+            if (removingActiveOfflinePlayback) {
+                val session = _state.value.session
+                if (session == null) {
+                    _state.update { it.copy(error = "Connect to the IPTV provider before deleting a download that is currently playing.") }
+                    return@launch
+                }
+                onlineUrl = runCatching { portal.playableUrl(session, item, type) }
+                    .getOrElse { failure ->
+                        _state.update { it.copy(error = failure.message ?: "Could not switch playback to the IPTV stream. The offline download was kept.") }
+                        return@launch
+                    }
+            }
+
+            val updated = _state.value.offlineDownloads.filterNot { it.key == key }
+            val resumePosition = playing?.let { current ->
+                _state.value.playbackProgress.firstOrNull { it.key == current.progressKey }?.positionMillis
+                    ?: current.resumePositionMillis
+            } ?: 0L
+            _state.update { current ->
+                current.copy(
+                    offlineDownloads = updated,
+                    offlineDownloadRevision = current.offlineDownloadRevision + 1L,
+                    nowPlaying = if (removingActiveOfflinePlayback && onlineUrl != null) {
+                        playing.copy(
+                            url = onlineUrl,
+                            resumePositionMillis = resumePosition,
+                            offlinePlayback = false
+                        )
+                    } else current.nowPlaying
+                )
+            }
+            store.saveOfflineDownloads(updated)
+            OfflineMediaDownloads.remove(getApplication(), entry.requestId)
+        }
     }
 
     private suspend fun playInternal(

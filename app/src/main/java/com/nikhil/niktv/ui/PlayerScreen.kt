@@ -407,7 +407,7 @@ fun PlayerScreen(
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
-    val player = remember(media.progressKey, effectiveEngine) {
+    val player = remember(media.progressKey, effectiveEngine, media.url) {
         val renderersFactory = DefaultRenderersFactory(context).apply {
             if (effectiveEngine == PlaybackEngine.MEDIA3) {
                 // Media3 mode applies NikTV's learned decoder policy.
