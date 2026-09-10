@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -19,9 +20,15 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.delay
 
 internal data class SubtitleTrackOption(
     val id: String,
@@ -38,14 +45,24 @@ internal fun SubtitleSelectionDialog(
     onDismiss: () -> Unit,
     timingRequiresVlc: Boolean = false
 ) {
+    val firstActionFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(100L)
+        runCatching { firstActionFocusRequester.requestFocus() }
+    }
     AlertDialog(
+        modifier = Modifier.widthIn(min = 360.dp, max = 520.dp),
         onDismissRequest = onDismiss,
         title = { Text("Subtitles") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 260.dp)) {
                     item {
-                        SubtitleTrackRow("Off", tracks.none { it.selected }) { onSelect(null) }
+                        SubtitleTrackRow(
+                            "Off",
+                            tracks.none { it.selected },
+                            Modifier.focusRequester(firstActionFocusRequester)
+                        ) { onSelect(null) }
                     }
                     items(tracks, key = { it.id }) { track ->
                         SubtitleTrackRow(track.label, track.selected) { onSelect(track.id) }
@@ -74,13 +91,19 @@ internal fun SubtitleSelectionDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        properties = DialogProperties(usePlatformDefaultWidth = true)
     )
 }
 
 @Composable
-private fun SubtitleTrackRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+private fun SubtitleTrackRow(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    TextButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         RadioButton(selected = selected, onClick = null)
         Text(label, Modifier.weight(1f).padding(start = 8.dp))
     }
