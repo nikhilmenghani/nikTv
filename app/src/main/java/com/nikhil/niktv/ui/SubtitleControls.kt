@@ -108,10 +108,26 @@ internal fun SubtitleSelectionDialog(
         searchMode -> 230.dp
         else -> 190.dp
     }
-    val firstActionFocusRequester = remember { FocusRequester() }
+    val modeFocusRequester = remember { FocusRequester() }
+    val closeFocusRequester = remember { FocusRequester() }
+    val queryFocusRequester = remember { FocusRequester() }
+    val languageFocusRequester = remember { FocusRequester() }
+    val searchFocusRequester = remember { FocusRequester() }
+    val earlierFocusRequester = remember { FocusRequester() }
+    val laterFocusRequester = remember { FocusRequester() }
+    val resetFocusRequester = remember { FocusRequester() }
+    val trackFocusRequesters = remember(tracks.map { it.id }) {
+        List(tracks.size + 1) { FocusRequester() }
+    }
+    val resultFocusRequesters = remember(results.map { it.id }) {
+        List(results.size) { FocusRequester() }
+    }
     LaunchedEffect(searchMode) {
         delay(100L)
-        runCatching { firstActionFocusRequester.requestFocus() }
+        runCatching {
+            if (searchMode) searchFocusRequester.requestFocus()
+            else modeFocusRequester.requestFocus()
+        }
     }
     BackHandler(onBack = onDismiss)
     Box(
@@ -147,7 +163,13 @@ internal fun SubtitleSelectionDialog(
                     if (internetSearch != null && onExternalSubtitle != null) {
                         TextButton(
                             onClick = { searchMode = !searchMode },
-                            modifier = (if (!searchMode) Modifier.focusRequester(firstActionFocusRequester) else Modifier)
+                            modifier = Modifier
+                                .focusRequester(modeFocusRequester)
+                                .focusProperties {
+                                    left = modeFocusRequester
+                                    right = closeFocusRequester
+                                    down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
+                                }
                                 .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                         ) {
                             Icon(if (searchMode) Icons.Default.Subtitles else Icons.Default.Search, null)
@@ -156,7 +178,14 @@ internal fun SubtitleSelectionDialog(
                     }
                     TextButton(
                         onClick = onDismiss,
-                        modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        modifier = Modifier
+                            .focusRequester(closeFocusRequester)
+                            .focusProperties {
+                                left = if (internetSearch != null && onExternalSubtitle != null) modeFocusRequester else closeFocusRequester
+                                right = closeFocusRequester
+                                down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
+                            }
+                            .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                     ) { Text("Close") }
                 }
                 if (internetSearch != null && onExternalSubtitle != null) {
@@ -170,7 +199,13 @@ internal fun SubtitleSelectionDialog(
                             Text(if (internetSearch?.seasonNumber != null || internetSearch?.episodeNumber != null) "Series title" else "Movie title")
                         },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(queryFocusRequester)
+                            .focusProperties {
+                                up = modeFocusRequester
+                                down = languageFocusRequester
+                            },
                         textStyle = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
                     )
                     internetSearch?.episodeTitle?.takeIf { it.isNotBlank() }?.let { episodeTitle ->
@@ -192,7 +227,14 @@ internal fun SubtitleSelectionDialog(
                             onValueChange = { language = it.take(12) },
                             label = { Text("Languages") },
                             singleLine = true,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(languageFocusRequester)
+                                .focusProperties {
+                                    up = queryFocusRequester
+                                    right = searchFocusRequester
+                                    down = resultFocusRequesters.firstOrNull() ?: languageFocusRequester
+                                }
                         )
                         Button(
                             onClick = {
@@ -209,14 +251,21 @@ internal fun SubtitleSelectionDialog(
                             },
                             enabled = query.isNotBlank() && !searching,
                             modifier = Modifier
-                                .focusRequester(firstActionFocusRequester)
+                                .focusRequester(searchFocusRequester)
+                                .focusProperties {
+                                    up = queryFocusRequester
+                                    left = languageFocusRequester
+                                    right = searchFocusRequester
+                                    down = resultFocusRequesters.firstOrNull() ?: searchFocusRequester
+                                }
                                 .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                         ) { Icon(Icons.Default.Search, "Search") }
                     }
                     if (searching) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
                     searchError?.let { Text(it) }
                     LazyColumn(Modifier.fillMaxWidth().heightIn(max = listHeight)) {
-                        items(results, key = { it.id }) { subtitle ->
+                        items(results.size, key = { results[it].id }) { index ->
+                            val subtitle = results[index]
                             TextButton(
                                 onClick = {
                                     scope.launch {
@@ -231,6 +280,13 @@ internal fun SubtitleSelectionDialog(
                                 enabled = downloadingId == null,
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .focusRequester(resultFocusRequesters[index])
+                                    .focusProperties {
+                                        up = resultFocusRequesters.getOrNull(index - 1) ?: searchFocusRequester
+                                        down = resultFocusRequesters.getOrNull(index + 1) ?: resultFocusRequesters[index]
+                                        left = resultFocusRequesters[index]
+                                        right = resultFocusRequesters[index]
+                                    }
                                     .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                             ) {
                                 Text(subtitle.displayName, Modifier.weight(1f))
@@ -245,11 +301,28 @@ internal fun SubtitleSelectionDialog(
                     item {
                         SubtitleTrackRow(
                             "Off",
-                            tracks.none { it.selected }
+                            tracks.none { it.selected },
+                            Modifier
+                                .focusRequester(trackFocusRequesters[0])
+                                .focusProperties {
+                                    up = modeFocusRequester
+                                    down = trackFocusRequesters.getOrNull(1) ?: earlierFocusRequester
+                                }
                         ) { onSelect(null) }
                     }
-                    items(tracks, key = { it.id }) { track ->
-                        SubtitleTrackRow(track.label, track.selected) { onSelect(track.id) }
+                    items(tracks.size, key = { tracks[it].id }) { index ->
+                        val track = tracks[index]
+                        val requesterIndex = index + 1
+                        SubtitleTrackRow(
+                            track.label,
+                            track.selected,
+                            Modifier
+                                .focusRequester(trackFocusRequesters[requesterIndex])
+                                .focusProperties {
+                                    up = trackFocusRequesters[requesterIndex - 1]
+                                    down = trackFocusRequesters.getOrNull(requesterIndex + 1) ?: earlierFocusRequester
+                                }
+                        ) { onSelect(track.id) }
                     }
                     if (tracks.isEmpty()) {
                         item { Text("No subtitle tracks are available in this stream.", Modifier.padding(12.dp)) }
@@ -263,21 +336,43 @@ internal fun SubtitleSelectionDialog(
                 ) {
                     IconButton(
                         onClick = { onDelayChange((delayMs - 250L).coerceAtLeast(-10_000L)) },
-                        modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                        modifier = Modifier
+                            .focusRequester(earlierFocusRequester)
+                            .focusProperties {
+                                up = trackFocusRequesters.last()
+                                left = earlierFocusRequester
+                                right = laterFocusRequester
+                                down = if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
+                            }
+                            .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
                     ) {
                         Icon(Icons.Default.Remove, "Show subtitles earlier")
                     }
                     Text(if (delayMs == 0L) "0 ms" else "%+d ms".format(delayMs))
                     IconButton(
                         onClick = { onDelayChange((delayMs + 250L).coerceAtMost(10_000L)) },
-                        modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                        modifier = Modifier
+                            .focusRequester(laterFocusRequester)
+                            .focusProperties {
+                                up = trackFocusRequesters.last()
+                                left = earlierFocusRequester
+                                right = laterFocusRequester
+                                down = if (delayMs != 0L) resetFocusRequester else laterFocusRequester
+                            }
+                            .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
                     ) {
                         Icon(Icons.Default.Add, "Show subtitles later")
                     }
                 }
                 if (!searchMode && delayMs != 0L) TextButton(
                     onClick = { onDelayChange(0L) },
-                    modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    modifier = Modifier
+                        .focusRequester(resetFocusRequester)
+                        .focusProperties {
+                            up = earlierFocusRequester
+                            down = resetFocusRequester
+                        }
+                        .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Reset timing") }
                 if (!searchMode && timingRequiresVlc && !compact) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")

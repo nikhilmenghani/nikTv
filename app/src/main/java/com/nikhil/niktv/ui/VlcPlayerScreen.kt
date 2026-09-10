@@ -847,13 +847,13 @@ internal fun VlcPlayerScreen(
                         modifier = Modifier.focusRequester(playerSwitchRequester)
                             .focusProperties {
                                 left = if (pipAvailable) pipRequester
-                                else if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester
+                                else subtitleRequester
                                 right = resizeRequester
                                 down = playRequester
                             }
                             .playerDpadFocusRoutes(
                                 left = if (pipAvailable) pipRequester
-                                else if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester,
+                                else subtitleRequester,
                                 right = resizeRequester,
                                 down = playRequester
                             )

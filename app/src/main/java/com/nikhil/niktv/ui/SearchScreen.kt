@@ -1181,7 +1181,7 @@ private fun SearchResultsContent(
             SearchContentType.MOVIES,
             SearchContentType.SERIES
         ) &&
-            (isTv || screenWidthDp >= 600)
+            !isTv && screenWidthDp >= 600
 
     if (posterGrid) {
         val minimumCardWidth =
@@ -1260,6 +1260,7 @@ private fun SearchResultsContent(
                     isFavorite = favorite,
                     toggleFavorite = toggle,
                     onClick = { openResult(item) },
+                    isTv = isTv,
                     modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
                 )
             } else {
@@ -1270,6 +1271,7 @@ private fun SearchResultsContent(
                     isFavorite = favorite,
                     toggleFavorite = toggle,
                     onClick = { openResult(item) },
+                    isTv = isTv,
                     modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
                 )
             }
@@ -1366,6 +1368,7 @@ private fun ModernSearchLiveResultRow(
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
     onClick: () -> Unit,
+    isTv: Boolean,
     modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -1392,7 +1395,7 @@ private fun ModernSearchLiveResultRow(
             border = BorderStroke(1.dp, Color(0xFF2E3239))
         ) {
             Row(
-                Modifier.padding(10.dp),
+                Modifier.padding(if (isTv) 7.dp else 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -1404,7 +1407,7 @@ private fun ModernSearchLiveResultRow(
                  */
                 Surface(
                     modifier = Modifier
-                        .width(if (compact) 104.dp else 142.dp)
+                        .width(if (isTv) 104.dp else if (compact) 104.dp else 142.dp)
                         .aspectRatio(16f / 9f),
                     shape = RoundedCornerShape(10.dp),
                     color = Color(0xFFF0F1F3)
@@ -1417,7 +1420,7 @@ private fun ModernSearchLiveResultRow(
                             Icon(
                                 Icons.Default.LiveTv,
                                 null,
-                                Modifier.size(34.dp),
+                                Modifier.size(if (isTv) 28.dp else 34.dp),
                                 tint = Color(0xFF454A52)
                             )
                         } else {
@@ -1520,6 +1523,7 @@ private fun ModernSearchMediaResultRow(
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
     onClick: () -> Unit,
+    isTv: Boolean,
     modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -1550,13 +1554,13 @@ private fun ModernSearchMediaResultRow(
             border = BorderStroke(1.dp, Color(0xFF2E3239))
         ) {
             Row(
-                Modifier.padding(10.dp),
+                Modifier.padding(if (isTv) 7.dp else 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(13.dp)
             ) {
                 Box(
                     Modifier
-                        .width(78.dp)
+                        .width(if (isTv) 54.dp else 78.dp)
                         .aspectRatio(2f / 3f)
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xFF292D34)),
@@ -1619,7 +1623,7 @@ private fun ModernSearchMediaResultRow(
                             it,
                             color = Color(0xFFB8BCC4),
                             style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
+                            maxLines = if (isTv) 1 else 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

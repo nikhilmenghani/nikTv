@@ -1337,13 +1337,13 @@ fun PlayerScreen(
                         modifier = Modifier.focusRequester(playerSwitchFocusRequester)
                             .focusProperties {
                                 left = if (pipAvailable) pipFocusRequester
-                                else if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
+                                else subtitleFocusRequester
                                 right = resizeFocusRequester
                                 down = playPauseFocusRequester
                             }
                             .playerDpadFocusRoutes(
                                 left = if (pipAvailable) pipFocusRequester
-                                else if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester,
+                                else subtitleFocusRequester,
                                 right = resizeFocusRequester,
                                 down = playPauseFocusRequester
                             )

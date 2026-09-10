@@ -79,6 +79,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.semantics.Role
@@ -115,6 +116,59 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+
+@Composable
+private fun TvSafeSettingsTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    supportingText: String? = null,
+    password: Boolean = false,
+    singleLine: Boolean = true
+) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION ||
+        !context.packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+    var editing by remember { mutableStateOf(!isTv) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
+
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        placeholder = placeholder?.let { text -> ({ Text(text) }) },
+        supportingText = supportingText?.let { text -> ({ Text(text) }) },
+        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
+        readOnly = isTv && !editing,
+        singleLine = singleLine,
+        modifier = modifier
+            .onFocusChanged {
+                if (!it.isFocused && isTv) {
+                    editing = false
+                    keyboard?.hide()
+                }
+            }
+            .onPreviewKeyEvent { event ->
+                if (
+                    isTv && !editing && event.type == KeyEventType.KeyDown &&
+                    event.key in setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                ) {
+                    editing = true
+                    scope.launch {
+                        delay(50L)
+                        keyboard?.show()
+                    }
+                    true
+                } else false
+            }
+            .remoteFocusFrame(RoundedCornerShape(12.dp))
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1135,46 +1189,41 @@ internal fun ModernSettingsScreen(
                     githubBackupConfig.backupMode ==
                     com.nikhil.niktv.data.BackupMode.GITHUB
                 ) {
-                    OutlinedTextField(
+                    TvSafeSettingsTextField(
                         value = githubBackupConfig.username,
                         onValueChange = {
                             githubBackupConfig =
                                 githubBackupConfig.copy(username = it)
                         },
-                        label = { Text("GitHub username") },
+                        label = "GitHub username",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
+                    TvSafeSettingsTextField(
                         value = githubBackupConfig.repository,
                         onValueChange = {
                             githubBackupConfig =
                                 githubBackupConfig.copy(repository = it)
                         },
-                        label = { Text("Repository") },
-                        placeholder = { Text("tracker") },
+                        label = "Repository",
+                        placeholder = "tracker",
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
+                    TvSafeSettingsTextField(
                         value = githubBackupConfig.token,
                         onValueChange = {
                             githubBackupConfig =
                                 githubBackupConfig.copy(token = it)
                         },
-                        label = { Text("GitHub personal access token") },
-                        supportingText = {
-                            Text(
-                                "Defaults to the build-time G_TOKEN. " +
-                                    "A changed value is stored encrypted on this device."
-                            )
-                        },
-                        visualTransformation =
-                            PasswordVisualTransformation(),
+                        label = "GitHub personal access token",
+                        supportingText = "Defaults to the build-time G_TOKEN. " +
+                            "A changed value is stored encrypted on this device.",
+                        password = true,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
+                    TvSafeSettingsTextField(
                         value = githubBackupConfig.passphrase,
                         onValueChange = {
                             githubBackupConfig =
@@ -1183,15 +1232,10 @@ internal fun ModernSettingsScreen(
                                     rememberPassphrase = it.isNotBlank()
                                 )
                         },
-                        label = { Text("Backup password (optional)") },
-                        supportingText = {
-                            Text(
-                                "Leave blank for plain JSON. Use 12+ characters " +
-                                    "to encrypt GitHub backups."
-                            )
-                        },
-                        visualTransformation =
-                            PasswordVisualTransformation(),
+                        label = "Backup password (optional)",
+                        supportingText = "Leave blank for plain JSON. Use 12+ characters " +
+                            "to encrypt GitHub backups.",
+                        password = true,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
