@@ -133,7 +133,8 @@ private enum class MobileMainPage(val title: String, val icon: ImageVector) {
     LIVE("Live", Icons.Default.LiveTv),
     MOVIES("Movies", Icons.Default.Movie),
     SERIES("Series", Icons.Default.VideoLibrary),
-    LIBRARY("Library", Icons.Default.VideoLibrary)
+    LIBRARY("Library", Icons.Default.VideoLibrary),
+    DOWNLOADS("Offline", Icons.Default.DownloadDone)
 }
 
 private enum class MobileSettingsPage(val title: String, val icon: ImageVector) {
@@ -155,6 +156,7 @@ private fun settingsPageFor(title: String): MobileSettingsPage = when (title) {
 }
 
 private fun NikTvState.mobileMainPage(): MobileMainPage = when {
+    offlineDownloadsOpen -> MobileMainPage.DOWNLOADS
     favoritesOpen -> MobileMainPage.LIBRARY
     homeOpen -> MobileMainPage.HOME
     selectedType == CatalogType.LIVE_TV -> MobileMainPage.LIVE
@@ -423,6 +425,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     ApplyUiOrientation(orientationMode)
 
     val state by vm.state.collectAsStateWithLifecycle()
+    var confirmPlayerDownloadRemoval by remember { mutableStateOf(false) }
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
     val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
@@ -514,12 +517,26 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
-                    onDownload = vm::downloadNowPlaying,
+                    onDownload = {
+                        val present = state.offlineDownloads.any { download ->
+                            download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
+                                download.catalogType == state.nowPlaying?.catalogType &&
+                                download.media.id == state.nowPlaying?.media?.id
+                        }
+                        if (present) confirmPlayerDownloadRemoval = true else vm.downloadNowPlaying()
+                    },
                     offlineDownloadPresent = state.offlineDownloads.any { download ->
-                        download.profileKey == state.session?.profile?.cacheKey() &&
+                        download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
                     },
+                    offlineDownloadProgress = state.offlineDownloads.firstOrNull { download ->
+                        download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
+                            download.catalogType == state.nowPlaying?.catalogType &&
+                            download.media.id == state.nowPlaying?.media?.id
+                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId) }
+                        ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
+                        ?.percent?.div(100f),
                     onPlayItem = vm::openMedia,
                     queueHasMore = state.playbackQueueHasMore,
                     queueLoadingMore = state.playbackQueueLoadingMore,
@@ -559,7 +576,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     setBrowseLayout = vm::setBrowseLayout,
                     openCategoryManager = vm::openCategoryManager
                 )
-                state.session == null -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::openSettingsFromProfileChooser, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup)
+                state.session == null && !state.offlineDownloadsOpen -> ProfileScreen(state.savedProfile, state.profiles, state.profileEditorOpen, state.loading, vm::openSettingsFromProfileChooser, vm::connect, vm::switchProfile, vm::addProfile, vm::cancelProfileEditor, vm::importBackup, vm::openOfflineDownloads)
                 else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { CatalogScreen(
                     state = state,
                     selectType = vm::openCatalogType,
@@ -629,6 +646,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,openModernIptvCategory = vm::openModernIptvCategory
                     ,closeModernSection = vm::closeModernSection
                     ,loadMoreModernTmdbSection = vm::loadMoreModernTmdbSection
+                    ,openOfflineDownloads = vm::openOfflineDownloads
+                    ,closeOfflineDownloads = vm::closeOfflineDownloads
+                    ,playOfflineDownload = vm::playOfflineDownload
                 )
             }
             }
@@ -637,6 +657,15 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     state = state,
                     close = vm::closeCategoryManager,
                     applyFilters = vm::applyCategoryFilters
+                )
+            }
+            if (confirmPlayerDownloadRemoval) {
+                AlertDialog(
+                    onDismissRequest = { confirmPlayerDownloadRemoval = false },
+                    title = { Text("Remove offline download?") },
+                    text = { Text("Cancel or delete “${state.nowPlaying?.media?.title.orEmpty()}” from offline downloads?") },
+                    dismissButton = { TextButton(onClick = { confirmPlayerDownloadRemoval = false }) { Text("Keep") } },
+                    confirmButton = { Button(onClick = { confirmPlayerDownloadRemoval = false; vm.downloadNowPlaying() }) { Text("Remove") } }
                 )
             }
             if (state.feedRefreshing) {
@@ -1013,7 +1042,7 @@ private fun ProfileLoadingScreen(profileName: String?, message: String, progress
 }
 
 @Composable
-private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile?) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit) {
+private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, editorOpen: Boolean, loading: Boolean, openSettings: (PortalProfile?) -> Unit, connect: (PortalProfile) -> Unit, selectProfile: (PortalProfile) -> Unit, addProfile: () -> Unit, cancelEditor: () -> Unit, importBackup: (android.net.Uri) -> Unit, openOfflineDownloads: () -> Unit) {
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(importBackup)
     }
@@ -1170,6 +1199,13 @@ private fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>, 
                         selectProfile(profile)
                     }
                 }
+
+                ProfileChooserTile(
+                    title = "Offline",
+                    subtitle = "Downloaded movies & episodes",
+                    icon = Icons.Default.DownloadDone,
+                    compact = compactLandscape
+                ) { openOfflineDownloads() }
 
                 ProfileChooserTile(
                     title = "Settings",
@@ -1598,7 +1634,10 @@ private fun CatalogScreen(
     openModernTmdbSection: (TmdbHomeSection) -> Unit,
     openModernIptvCategory: (Category) -> Unit,
     closeModernSection: () -> Unit,
-    loadMoreModernTmdbSection: () -> Unit
+    loadMoreModernTmdbSection: () -> Unit,
+    openOfflineDownloads: () -> Unit,
+    closeOfflineDownloads: () -> Unit,
+    playOfflineDownload: (OfflineMediaDownload) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -1620,6 +1659,7 @@ private fun CatalogScreen(
             MobileMainPage.MOVIES -> selectType(CatalogType.MOVIES)
             MobileMainPage.SERIES -> selectType(CatalogType.SERIES)
             MobileMainPage.LIBRARY -> openFavorites()
+            MobileMainPage.DOWNLOADS -> openOfflineDownloads()
         }
     }
 
@@ -1628,6 +1668,7 @@ private fun CatalogScreen(
     BackHandler(enabled = state.seriesMatchSelection != null, onBack = closeTmdbSeriesMatches)
     BackHandler(enabled = !state.settingsOpen && state.searchOpen, onBack = closeSearch)
     BackHandler(enabled = !state.settingsOpen && !state.searchOpen && state.favoritesOpen, onBack = closeFavorites)
+    BackHandler(enabled = !state.settingsOpen && state.offlineDownloadsOpen, onBack = closeOfflineDownloads)
     BackHandler(
         enabled = !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries != null,
         onBack = closeSeries
@@ -1692,6 +1733,12 @@ private fun CatalogScreen(
                     loadingMore = false,
                     select = selectTmdbSeriesMatch,
                     close = closeTmdbSeriesMatches
+                )
+                state.offlineDownloadsOpen -> OfflineDownloadsScreen(
+                    state = state,
+                    play = playOfflineDownload,
+                    remove = removeOfflineDownload,
+                    close = closeOfflineDownloads
                 )
                 state.settingsOpen -> ModernSettingsScreen(
                     state = state,
@@ -1800,6 +1847,7 @@ private fun CatalogScreen(
                 selectType = selectType,
                 openHome = openHome,
                 openFavorites = openFavorites,
+                openOfflineDownloads = openOfflineDownloads,
                 openSearch = openSearch,
                 openSettings = openSettings,
                 openProfileSwitcher = openProfileSwitcher,
@@ -1921,7 +1969,7 @@ private fun ModernBrowseScreen(
             dashboardSurface = dashboardSurface,
             openHome = openHome,
             selectType = selectType,
-            openFavorites = openFavorites,
+                    openFavorites = openFavorites,
             openSearch = openSearch,
             openSettings = openSettings,
             openProfileSwitcher = openProfileSwitcher,
@@ -3442,6 +3490,7 @@ private fun ModernSideRail(
     selectType: (CatalogType) -> Unit,
     openHome: () -> Unit,
     openFavorites: () -> Unit,
+    openOfflineDownloads: () -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
     openProfileSwitcher: () -> Unit,
@@ -3477,6 +3526,7 @@ private fun ModernSideRail(
                 ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && !state.searchOpen && !state.settingsOpen && state.selectedType == type, expanded) { selectType(type) }
             }
             ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen && !state.searchOpen && !state.settingsOpen, expanded, openFavorites)
+            ModernRailButton(Icons.Default.DownloadDone, "Offline", state.offlineDownloadsOpen, expanded, openOfflineDownloads)
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Search, "Search", state.searchOpen, expanded, openSearch)
             ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
@@ -7485,6 +7535,94 @@ private fun MediaItem.actionEpisodeLabel(): String {
     }
 }
 
+@Composable
+private fun OfflineDownloadsScreen(
+    state: NikTvState,
+    play: (OfflineMediaDownload) -> Unit,
+    remove: (MediaItem, CatalogType) -> Unit,
+    close: () -> Unit
+) {
+    val context = LocalContext.current
+    val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
+    val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
+    var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
+    Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+        ModernScreenTopBar("Offline downloads", close)
+        if (entries.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(Icons.Default.DownloadDone, null, Modifier.size(54.dp), tint = Color.Gray)
+                    Text("No offline downloads", style = MaterialTheme.typography.titleLarge)
+                    Text("Downloaded movies and episodes remain available without internet.", color = Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach { type ->
+                    val group = entries.filter { it.catalogType == type }
+                    item("offline-header-${type.name}") {
+                        Text(type.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+                    }
+                    if (group.isEmpty()) {
+                        item("offline-empty-${type.name}") { Text("No downloads", color = Color.DarkGray) }
+                    } else items(group, key = { it.key }) { entry ->
+                        val info = remember(entry.requestId, state.offlineDownloadRevision) {
+                            OfflineMediaDownloads.info(context, entry.requestId)
+                        }
+                        Surface(
+                            onClick = { play(entry) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xFF151820),
+                            modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(14.dp))
+                        ) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                SubcomposeAsyncImage(
+                                    model = artworkRequest(context, entry.media),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(112.dp, 64.dp).clip(RoundedCornerShape(9.dp)).background(Color.DarkGray)
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(entry.media.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                    entry.series?.let { Text(it.title, color = Color.Gray, style = MaterialTheme.typography.bodySmall) }
+                                    val statusText = when (info.status) {
+                                        OfflineDownloadStatus.COMPLETE -> "Available offline"
+                                        OfflineDownloadStatus.DOWNLOADING -> "Downloading${info.percent?.let { " · ${it.toInt()}%" } ?: ""}"
+                                        OfflineDownloadStatus.QUEUED -> "Queued"
+                                        OfflineDownloadStatus.PAUSED -> "Paused"
+                                        OfflineDownloadStatus.FAILED -> "Download failed"
+                                        OfflineDownloadStatus.MISSING -> "Not downloaded"
+                                    }
+                                    Text(statusText, color = if (info.status == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.LightGray, style = MaterialTheme.typography.labelMedium)
+                                    info.percent?.takeIf { info.status == OfflineDownloadStatus.DOWNLOADING }?.let {
+                                        LinearProgressIndicator(progress = { it / 100f }, Modifier.fillMaxWidth().padding(top = 5.dp))
+                                    }
+                                }
+                                IconButton(onClick = { pendingRemoval = entry }) {
+                                    Icon(Icons.Default.Delete, "Delete offline download")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    pendingRemoval?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text(if (OfflineMediaDownloads.status(context, entry.requestId) == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
+            text = { Text("Remove “${entry.media.title}” from offline downloads?") },
+            dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Keep") } },
+            confirmButton = { Button(onClick = { remove(entry.media, entry.catalogType); pendingRemoval = null }) { Text("Remove") } }
+        )
+    }
+}
+
 private fun MediaItem.displayTitle(series: MediaItem): String {
     val original = title.trim()
     var cleaned = original
@@ -8814,9 +8952,11 @@ private fun ModernEpisodeCard(
     val episodeContext = LocalContext.current
     val episodeConfiguration = LocalConfiguration.current
     val isTv = episodeContext.isTvLikeDevice(episodeConfiguration)
-    val offlineStatus = remember(offlineDownload, offlineRevision) {
-        offlineDownload?.let { OfflineMediaDownloads.status(episodeContext, it.requestId) }
+    var confirmRemoval by remember { mutableStateOf(false) }
+    val offlineInfo = remember(offlineDownload, offlineRevision) {
+        offlineDownload?.let { OfflineMediaDownloads.info(episodeContext, it.requestId) }
     }
+    val offlineStatus = offlineInfo?.status
 
     /*
      * MOBILE_SERIES_EPISODE_CARD_V36
@@ -9029,26 +9169,28 @@ private fun ModernEpisodeCard(
                 onClick = if (offlineDownload == null || offlineStatus in setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) {
                     onDownload
                 } else {
-                    onRemoveDownload
+                    { confirmRemoval = true }
                 }
             ) {
-                Icon(
-                    when (offlineStatus) {
-                        OfflineDownloadStatus.COMPLETE -> Icons.Default.DownloadDone
-                        OfflineDownloadStatus.QUEUED,
-                        OfflineDownloadStatus.DOWNLOADING,
-                        OfflineDownloadStatus.PAUSED -> Icons.Default.Downloading
-                        else -> Icons.Default.DownloadForOffline
-                    },
-                    contentDescription = when (offlineStatus) {
-                        OfflineDownloadStatus.COMPLETE -> "Remove offline download"
-                        OfflineDownloadStatus.QUEUED,
-                        OfflineDownloadStatus.DOWNLOADING,
-                        OfflineDownloadStatus.PAUSED -> "Cancel offline download"
-                        else -> "Download episode for offline playback"
-                    },
-                    tint = if (offlineStatus == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.White
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    offlineInfo?.percent?.takeIf { offlineStatus == OfflineDownloadStatus.DOWNLOADING }?.let {
+                        CircularProgressIndicator(progress = { it / 100f }, Modifier.size(38.dp), strokeWidth = 3.dp)
+                    }
+                    Icon(
+                        when (offlineStatus) {
+                            OfflineDownloadStatus.COMPLETE -> Icons.Default.DownloadDone
+                            OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED -> Icons.Default.Downloading
+                            else -> Icons.Default.DownloadForOffline
+                        },
+                        contentDescription = when (offlineStatus) {
+                            OfflineDownloadStatus.COMPLETE -> "Remove offline download"
+                            OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED -> "Cancel offline download"
+                            else -> "Download episode for offline playback"
+                        },
+                        modifier = Modifier.size(22.dp),
+                        tint = if (offlineStatus == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.White
+                    )
+                }
             }
 
             if (!mobileLayout) {
@@ -9061,4 +9203,11 @@ private fun ModernEpisodeCard(
             }
         }
     }
+    if (confirmRemoval) AlertDialog(
+        onDismissRequest = { confirmRemoval = false },
+        title = { Text(if (offlineStatus == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
+        text = { Text("Remove “${episode.displayTitle(series)}” from offline downloads?") },
+        dismissButton = { TextButton(onClick = { confirmRemoval = false }) { Text("Keep") } },
+        confirmButton = { Button(onClick = { confirmRemoval = false; onRemoveDownload() }) { Text("Remove") } }
+    )
 }

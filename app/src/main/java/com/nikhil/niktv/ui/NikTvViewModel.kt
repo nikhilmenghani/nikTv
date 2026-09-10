@@ -87,6 +87,7 @@ data class NikTvState(
     val playbackUrls: List<PlaybackUrl> = emptyList(),
     val offlineDownloads: List<OfflineMediaDownload> = emptyList(),
     val offlineDownloadRevision: Long = 0L,
+    val offlineDownloadsOpen: Boolean = false,
     val cacheIntervalMinutes: Int = 60,
     val playerControlsTimeoutSeconds: Int = 3,
     val keepAwakeOnlyDuringPlayback: Boolean = false,
@@ -590,7 +591,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 modernTmdbPage = 0,
                 modernTmdbHasMore = false,
                 modernTmdbError = null,
-                seriesOpenedFromModernSection = false
+                seriesOpenedFromModernSection = false,
+                offlineDownloadsOpen = false
             )
         }
 
@@ -3060,6 +3062,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSearch() {
         searchPreviewJob?.cancel()
+        _state.update { it.copy(offlineDownloadsOpen = false) }
 
         val snapshot = _state.value
         val tabType =
@@ -3802,12 +3805,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(error = "Live recording needs a start/stop or duration and is not available as an offline download.") }
             return
         }
-        val session = _state.value.session ?: return
-        val existingKey = "${session.profile.cacheKey()}:${playing.catalogType.name}:${playing.media.id}"
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey() ?: return
+        val existingKey = "$profileKey:${playing.catalogType.name}:${playing.media.id}"
         _state.value.offlineDownloads.firstOrNull { it.key == existingKey }?.let {
             removeOfflineDownload(playing.media, playing.catalogType)
             return
         }
+        val session = _state.value.session ?: return
         viewModelScope.launch {
             runCatching {
                 val key = existingKey
@@ -3827,7 +3831,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeOfflineDownload(item: MediaItem, type: CatalogType) {
-        val profileKey = _state.value.session?.profile?.cacheKey() ?: return
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey() ?: return
         val key = "$profileKey:${type.name}:${item.id}"
         val entry = _state.value.offlineDownloads.firstOrNull { it.key == key } ?: return
         OfflineMediaDownloads.remove(getApplication(), entry.requestId)
@@ -4372,7 +4376,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun openSettings() = _state.update { it.copy(settingsOpen = true) }
+    fun openSettings() = _state.update { it.copy(settingsOpen = true, offlineDownloadsOpen = false) }
     fun openSettingsFromProfileChooser(profile: PortalProfile? = null) =
         _state.update { it.copy(savedProfile = profile, settingsOpen = true, profileEditorOpen = false) }
 
@@ -4608,6 +4612,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 homeOpen = false,
                 settingsOpen = false,
                 searchOpen = false
+                ,offlineDownloadsOpen = false
             )
         }
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return
@@ -4616,12 +4621,48 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
+    fun openOfflineDownloads() = _state.update {
+        it.copy(
+            offlineDownloadsOpen = true,
+            favoritesOpen = false,
+            homeOpen = false,
+            settingsOpen = false,
+            searchOpen = false,
+            selectedSeries = null
+        )
+    }
+    fun closeOfflineDownloads() = _state.update { it.copy(offlineDownloadsOpen = false) }
+
+    fun playOfflineDownload(entry: OfflineMediaDownload) {
+        val uri = OfflineMediaDownloads.playableUri(getApplication(), entry.requestId, entry.sourceUrl)
+        if (uri == null) {
+            _state.update { it.copy(error = "This download is not complete yet.") }
+            return
+        }
+        val progressKey = "${entry.catalogType.name}:${entry.media.id}"
+        val savedProgress = _state.value.playbackProgress.firstOrNull { it.key == progressKey }
+        _state.update {
+            it.copy(
+                nowPlaying = PlayingMedia(
+                    media = entry.media,
+                    url = uri,
+                    catalogType = entry.catalogType,
+                    series = entry.series,
+                    resumePositionMillis = savedProgress?.positionMillis ?: 0L,
+                    progressKey = progressKey,
+                    directFullscreen = true,
+                    offlinePlayback = true
+                )
+            )
+        }
+    }
     fun openHome() {
         _state.update { it.copy(
             homeOpen = true,
             favoritesOpen = false,
             settingsOpen = false,
             searchOpen = false,
+            offlineDownloadsOpen = false,
             selectedSeries = null,
             seriesOpenedFromFavorites = false,
             seriesOpenedFromHome = false,

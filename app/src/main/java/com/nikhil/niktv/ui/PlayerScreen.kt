@@ -197,6 +197,7 @@ fun PlayerScreen(
     onProgress: (String, Long, Long) -> Unit,
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
+    offlineDownloadProgress: Float? = null,
     onPlayItem: (NikMediaItem) -> Unit = {},
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -241,6 +242,7 @@ fun PlayerScreen(
             onProgress = onProgress,
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
+            offlineDownloadProgress = offlineDownloadProgress,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
@@ -1167,7 +1169,7 @@ fun PlayerScreen(
                         videoDetails.takeIf { it.isNotBlank() }?.let {
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
-                        Text("Player: ${effectiveEngine.playerEngineLabel()} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        Text("${if (media.offlinePlayback) "OFFLINE" else "IPTV STREAM"} · Player: ${effectiveEngine.playerEngineLabel()} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = if (media.offlinePlayback) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                     if (media.catalogType != CatalogType.LIVE_TV) {
                         IconButton(
@@ -1185,11 +1187,19 @@ fun PlayerScreen(
                                 )
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) {
-                            Icon(
-                                if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
-                                if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
-                                tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                if (offlineDownloadProgress != null) CircularProgressIndicator(
+                                    progress = { offlineDownloadProgress.coerceIn(0f, 1f) },
+                                    modifier = Modifier.size(34.dp),
+                                    strokeWidth = 3.dp
+                                )
+                                Icon(
+                                    if (offlineDownloadProgress != null) Icons.Default.Downloading else if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                                    if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
+                                    modifier = Modifier.size(22.dp),
+                                    tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White
+                                )
+                            }
                         }
                     }
                     // PLAYER_GLOBAL_ORIENTATION_NO_ROTATE_V12

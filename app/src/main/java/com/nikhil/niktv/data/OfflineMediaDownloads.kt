@@ -20,6 +20,11 @@ import java.io.File
 import java.util.concurrent.Executors
 
 enum class OfflineDownloadStatus { QUEUED, DOWNLOADING, PAUSED, COMPLETE, FAILED, MISSING }
+data class OfflineDownloadInfo(
+    val status: OfflineDownloadStatus,
+    val percent: Float? = null,
+    val bytesDownloaded: Long = 0L
+)
 
 @UnstableApi
 object OfflineMediaDownloads {
@@ -90,6 +95,25 @@ object OfflineMediaDownloads {
             Download.STATE_FAILED, Download.STATE_REMOVING -> OfflineDownloadStatus.FAILED
             else -> OfflineDownloadStatus.MISSING
         }
+    }
+
+    fun info(context: Context, requestId: String): OfflineDownloadInfo {
+        if (requestId.isBlank()) return OfflineDownloadInfo(OfflineDownloadStatus.MISSING)
+        val download = runCatching { manager(context).downloadIndex.getDownload(requestId) }.getOrNull()
+            ?: return OfflineDownloadInfo(OfflineDownloadStatus.MISSING)
+        val status = when (download.state) {
+            Download.STATE_QUEUED, Download.STATE_RESTARTING -> OfflineDownloadStatus.QUEUED
+            Download.STATE_DOWNLOADING -> OfflineDownloadStatus.DOWNLOADING
+            Download.STATE_STOPPED -> OfflineDownloadStatus.PAUSED
+            Download.STATE_COMPLETED -> OfflineDownloadStatus.COMPLETE
+            Download.STATE_FAILED, Download.STATE_REMOVING -> OfflineDownloadStatus.FAILED
+            else -> OfflineDownloadStatus.MISSING
+        }
+        return OfflineDownloadInfo(
+            status = status,
+            percent = download.percentDownloaded.takeIf { it >= 0f }?.coerceIn(0f, 100f),
+            bytesDownloaded = download.bytesDownloaded
+        )
     }
 
     fun playableUri(context: Context, requestId: String, sourceUrl: String): String? =
