@@ -170,7 +170,7 @@ internal fun SubtitleSelectionDialog(
                             Text(if (internetSearch?.seasonNumber != null || internetSearch?.episodeNumber != null) "Series title" else "Movie title")
                         },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().focusRequester(firstActionFocusRequester),
+                        modifier = Modifier.fillMaxWidth(),
                         textStyle = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
                     )
                     internetSearch?.episodeTitle?.takeIf { it.isNotBlank() }?.let { episodeTitle ->
@@ -208,7 +208,9 @@ internal fun SubtitleSelectionDialog(
                                 }
                             },
                             enabled = query.isNotBlank() && !searching,
-                            modifier = Modifier.remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                            modifier = Modifier
+                                .focusRequester(firstActionFocusRequester)
+                                .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                         ) { Icon(Icons.Default.Search, "Search") }
                     }
                     if (searching) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
