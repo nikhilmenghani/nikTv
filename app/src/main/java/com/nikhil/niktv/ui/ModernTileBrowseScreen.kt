@@ -873,7 +873,10 @@ private fun ModernNewEpisodesRow(
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp)
+        // This row already inherits the dashboard grid's leading inset. Adding
+        // another horizontal inset made it start farther right than Live TV.
+        // Keep trailing scroll room and extra bottom clearance for focused cards.
+        contentPadding = PaddingValues(start = 0.dp, top = 18.dp, end = 18.dp, bottom = 26.dp)
     ) {
         items(
             items = entries,
@@ -1241,9 +1244,9 @@ private fun ModernContinueRow(
         state = listState,
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
-        // Focus scales TV cards beyond their layout bounds. Horizontal inset
-        // keeps the first and last cards from being clipped by the viewport.
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp)
+        // The dashboard grid supplies the leading inset, matching Live TV.
+        // Preserve trailing scroll room and enough bottom space for focus scale.
+        contentPadding = PaddingValues(start = 0.dp, top = 18.dp, end = 18.dp, bottom = 26.dp)
     ) {
         items(
             items = recents,

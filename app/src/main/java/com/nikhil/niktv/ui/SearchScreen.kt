@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -102,13 +103,20 @@ internal fun ModernSearchScreen(
     var categoryPickerOpen by rememberSaveable(state.searchType) {
         mutableStateOf(false)
     }
+    var restoreCategoryFocus by rememberSaveable(state.searchType) {
+        mutableStateOf(false)
+    }
     var searchEditing by rememberSaveable { mutableStateOf(false) }
 
     val searchRequester = remember { FocusRequester() }
+    val categoryRequester = remember { FocusRequester() }
+    val contentRequester = remember { FocusRequester() }
+    val typeRequesters = remember { searchVisibleTypes.associateWith { FocusRequester() } }
     val keyboard = LocalSoftwareKeyboardController.current
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isSearchTvLikeDevice(configuration)
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
 
     val selectedCategoryTitle =
         state.searchCategories
@@ -116,6 +124,26 @@ internal fun ModernSearchScreen(
             ?.title
             ?: "All categories"
     val searchingSpecificCategory = state.searchCategoryId != "*"
+    val typeBelowSearch = if (state.searchScopeLocked) categoryRequester else typeRequesters.getValue(searchVisibleTypes.first())
+    val activeProfileKey = state.session?.profile?.cacheKey()
+    val visibleRecentSearches = remember(
+        state.recentSearches,
+        activeProfileKey,
+        state.searchScopeLocked,
+        state.searchType
+    ) {
+        state.recentSearches
+            .filter {
+                it.type in searchVisibleTypes &&
+                    it.profileKey == activeProfileKey &&
+                    (!state.searchScopeLocked || it.type == state.searchType)
+            }
+            .take(8)
+    }
+    val hasContentFocusTarget =
+        state.searchResults.isNotEmpty() ||
+            (state.searchQuery.isBlank() && visibleRecentSearches.isNotEmpty()) ||
+            (state.searchQuery.isNotBlank() && !state.searchLocalLoading && !state.searchServerLoading)
 
     fun activateSearchField() {
         searchEditing = true
@@ -129,10 +157,18 @@ internal fun ModernSearchScreen(
         searchRequester.requestFocus()
     }
 
-    LaunchedEffect(isTv) {
-        if (isTv) {
+    LaunchedEffect(remoteNavigationActive) {
+        if (remoteNavigationActive) {
             withFrameNanos { }
             runCatching { searchRequester.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(categoryPickerOpen) {
+        if (!categoryPickerOpen && restoreCategoryFocus && remoteNavigationActive) {
+            withFrameNanos { }
+            runCatching { categoryRequester.requestFocus() }
+            restoreCategoryFocus = false
         }
     }
 
@@ -163,8 +199,9 @@ internal fun ModernSearchScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(searchRequester)
+                .focusProperties { down = typeBelowSearch }
                 .onFocusChanged {
-                    if (it.isFocused && !isTv) searchEditing = true
+                    if (it.isFocused && !remoteNavigationActive) searchEditing = true
                     if (!it.isFocused && searchEditing) {
                         searchEditing = false
                         keyboard?.hide()
@@ -186,8 +223,8 @@ internal fun ModernSearchScreen(
                         false
                     }
                 }
-                .pointerInput(searchEditing, isTv) {
-                    if (isTv && !searchEditing) {
+                .pointerInput(searchEditing, remoteNavigationActive) {
+                    if (remoteNavigationActive && !searchEditing) {
                         detectTapGestures { activateSearchField() }
                     }
                 }
@@ -203,12 +240,13 @@ internal fun ModernSearchScreen(
             trailingIcon = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (state.searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { setQuery("") }) {
+                        IconButton(onClick = { setQuery("") }, modifier = Modifier.focusProperties { canFocus = false }) {
                             Icon(Icons.Default.Close, "Clear search")
                         }
                     }
                     FilledIconButton(
                         onClick = { search(true) },
+                        modifier = Modifier.focusProperties { canFocus = false },
                         enabled =
                             state.searchQuery.isNotBlank() &&
                                 !state.searchServerLoading
@@ -220,7 +258,7 @@ internal fun ModernSearchScreen(
                     }
                 }
             },
-            readOnly = isTv && !searchEditing,
+            readOnly = remoteNavigationActive && !searchEditing,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = {
@@ -251,7 +289,15 @@ internal fun ModernSearchScreen(
                         selected = state.searchType == type,
                         onClick = { setType(type) },
                         shape = shape,
-                        modifier = Modifier.remoteFocusFrame(shape)
+                        modifier = Modifier
+                            .focusRequester(typeRequesters.getValue(type))
+                            .focusProperties {
+                                up = searchRequester
+                                down = categoryRequester
+                                left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: FocusRequester.Cancel
+                                right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)] ?: FocusRequester.Cancel
+                            }
+                            .remoteFocusFrame(shape)
                     ) {
                         Text(type.title, maxLines = 1)
                     }
@@ -264,7 +310,16 @@ internal fun ModernSearchScreen(
         SearchCategoryButton(
             title = selectedCategoryTitle,
             availableCount = state.searchCategories.count { it.id != "*" },
-            onClick = { categoryPickerOpen = true }
+            onClick = {
+                restoreCategoryFocus = true
+                categoryPickerOpen = true
+            },
+            modifier = Modifier
+                .focusRequester(categoryRequester)
+                .focusProperties {
+                    up = if (state.searchScopeLocked) searchRequester else typeRequesters.getValue(state.searchType)
+                    down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                }
         )
 
         if (state.searchScopeLocked) {
@@ -310,22 +365,6 @@ internal fun ModernSearchScreen(
          * comfortable touch/D-pad target; long-press removes the entry without
          * introducing a tiny secondary focus target.
          */
-        val activeProfileKey = state.session?.profile?.cacheKey()
-        val visibleRecentSearches = remember(
-            state.recentSearches,
-            activeProfileKey,
-            state.searchScopeLocked,
-            state.searchType
-        ) {
-            state.recentSearches
-                .filter {
-                    it.type in searchVisibleTypes &&
-                        it.profileKey == activeProfileKey &&
-                        (!state.searchScopeLocked || it.type == state.searchType)
-                }
-                .take(8)
-        }
-
         if (
             state.searchQuery.isBlank() &&
             visibleRecentSearches.isNotEmpty() &&
@@ -357,7 +396,8 @@ internal fun ModernSearchScreen(
                     SearchRecentRow(
                         recent = recent,
                         onClick = { useRecent(recent) },
-                        onRemove = { deleteRecent(recent) }
+                        onRemove = { deleteRecent(recent) },
+                        modifier = if (recent == visibleRecentSearches.first()) Modifier.focusRequester(contentRequester) else Modifier
                     )
                 }
             }
@@ -410,7 +450,7 @@ internal fun ModernSearchScreen(
                     !state.searchUsedServer -> {
                         OutlinedButton(
                             onClick = { search(true) },
-                            modifier = Modifier.remoteFocusFrame(),
+                            modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
                             enabled = !state.searchServerLoading,
                             border = BorderStroke(1.dp, Color.Gray)
                         ) {
@@ -440,7 +480,7 @@ internal fun ModernSearchScreen(
                                 setCategory("*")
                                 search(true)
                             },
-                            modifier = Modifier.remoteFocusFrame(),
+                            modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
                             enabled = !state.searchServerLoading,
                             border = BorderStroke(1.dp, Color.Gray)
                         ) {
@@ -502,6 +542,7 @@ internal fun ModernSearchScreen(
                 openResult = openResult,
                 loadMore = loadMore,
                 toggleFavorite = toggleFavorite,
+                firstItemRequester = contentRequester,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -573,13 +614,14 @@ private fun SearchScreenHeader(
 private fun SearchCategoryButton(
     title: String,
     availableCount: Int,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(16.dp)
 
     Surface(
         onClick = onClick,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 58.dp)
             .remoteFocusFrame(shape),
@@ -653,6 +695,7 @@ private fun SearchCategoryPicker(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isSearchTvLikeDevice(configuration)
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
 
     val options = remember(categories) {
         buildList {
@@ -688,6 +731,7 @@ private fun SearchCategoryPicker(
                     selectedCategoryId = selectedCategoryId,
                     contentType = contentType,
                     isTv = true,
+                    remoteNavigationActive = true,
                     onSelect = onSelect,
                     close = close
                 )
@@ -710,6 +754,7 @@ private fun SearchCategoryPicker(
                     selectedCategoryId = selectedCategoryId,
                     contentType = contentType,
                     isTv = false,
+                    remoteNavigationActive = remoteNavigationActive,
                     onSelect = onSelect,
                     close = close
                 )
@@ -724,6 +769,7 @@ private fun SearchCategoryPickerContent(
     selectedCategoryId: String,
     contentType: SearchContentType,
     isTv: Boolean,
+    remoteNavigationActive: Boolean,
     onSelect: (String) -> Unit,
     close: () -> Unit
 ) {
@@ -768,8 +814,8 @@ private fun SearchCategoryPickerContent(
         searchRequester.requestFocus()
     }
 
-    LaunchedEffect(isTv) {
-        if (!isTv || filteredOptions.isEmpty()) {
+    LaunchedEffect(remoteNavigationActive) {
+        if (!remoteNavigationActive || filteredOptions.isEmpty()) {
             return@LaunchedEffect
         }
 
@@ -781,10 +827,12 @@ private fun SearchCategoryPickerContent(
 
         listState.scrollToItem(selectedIndex)
         withFrameNanos { }
-        runCatching {
-            optionRequesters
-                .getValue(filteredOptions[selectedIndex].id)
-                .requestFocus()
+        val selectedRequester = optionRequesters.getValue(filteredOptions[selectedIndex].id)
+        repeat(4) { attempt ->
+            if (runCatching { selectedRequester.requestFocus() }.getOrDefault(false)) {
+                return@LaunchedEffect
+            }
+            kotlinx.coroutines.delay(40L * (attempt + 1))
         }
     }
 
@@ -820,7 +868,7 @@ private fun SearchCategoryPickerContent(
 
             IconButton(
                 onClick = close,
-                modifier = Modifier.remoteFocusFrame(CircleShape)
+                modifier = Modifier.focusProperties { canFocus = false }
             ) {
                 Icon(Icons.Default.Close, "Close category picker")
             }
@@ -835,7 +883,7 @@ private fun SearchCategoryPickerContent(
                 .fillMaxWidth()
                 .focusRequester(searchRequester)
                 .onFocusChanged {
-                    if (it.isFocused && !isTv) {
+                    if (it.isFocused && !remoteNavigationActive) {
                         categorySearchEditing = true
                     }
                     if (!it.isFocused && categorySearchEditing) {
@@ -859,8 +907,8 @@ private fun SearchCategoryPickerContent(
                         false
                     }
                 }
-                .pointerInput(categorySearchEditing, isTv) {
-                    if (isTv && !categorySearchEditing) {
+                .pointerInput(categorySearchEditing, remoteNavigationActive) {
+                    if (remoteNavigationActive && !categorySearchEditing) {
                         detectTapGestures {
                             activateCategorySearch()
                         }
@@ -868,7 +916,7 @@ private fun SearchCategoryPickerContent(
                 }
                 .remoteFocusFrame(RoundedCornerShape(14.dp)),
             singleLine = true,
-            readOnly = isTv && !categorySearchEditing,
+            readOnly = remoteNavigationActive && !categorySearchEditing,
             shape = RoundedCornerShape(14.dp),
             placeholder = { Text("Find a category") },
             leadingIcon = {
@@ -878,7 +926,8 @@ private fun SearchCategoryPickerContent(
                 if (categoryQuery.isNotEmpty()) {
                     {
                         IconButton(
-                            onClick = { categoryQuery = "" }
+                            onClick = { categoryQuery = "" },
+                            modifier = Modifier.focusProperties { canFocus = false }
                         ) {
                             Icon(
                                 Icons.Default.Close,
@@ -940,6 +989,7 @@ private fun SearchCategoryPickerContent(
                 ) { option ->
                     val selected = option.id == selectedCategoryId
                     val shape = RoundedCornerShape(14.dp)
+                    val optionIndex = filteredOptions.indexOf(option)
 
                     Surface(
                         onClick = { onSelect(option.id) },
@@ -948,6 +998,20 @@ private fun SearchCategoryPickerContent(
                             .focusRequester(
                                 optionRequesters.getValue(option.id)
                             )
+                            .focusProperties {
+                                up = if (optionIndex > 0) {
+                                    optionRequesters.getValue(filteredOptions[optionIndex - 1].id)
+                                } else {
+                                    searchRequester
+                                }
+                                down = if (optionIndex < filteredOptions.lastIndex) {
+                                    optionRequesters.getValue(filteredOptions[optionIndex + 1].id)
+                                } else {
+                                    FocusRequester.Cancel
+                                }
+                                left = FocusRequester.Cancel
+                                right = FocusRequester.Cancel
+                            }
                             .remoteFocusFrame(shape),
                         shape = shape,
                         color =
@@ -1024,12 +1088,13 @@ private fun SearchCategoryPickerContent(
 private fun SearchRecentRow(
     recent: RecentSearch,
     onClick: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(14.dp)
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .remoteFocusFrame(shape)
             .remoteCombinedClickable(
@@ -1080,7 +1145,7 @@ private fun SearchRecentRow(
                 )
             }
 
-            IconButton(onClick = onRemove, modifier = Modifier.remoteFocusFrame(CircleShape)) {
+            IconButton(onClick = onRemove, modifier = Modifier.focusProperties { canFocus = false }) {
                 Icon(Icons.Default.Close, contentDescription = "Remove ${recent.query}", tint = Color(0xFFB8BCC4))
             }
         }
@@ -1095,6 +1160,7 @@ private fun SearchResultsContent(
     openResult: (MediaItem) -> Unit,
     loadMore: () -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
+    firstItemRequester: FocusRequester,
     modifier: Modifier = Modifier
 ) {
     val posterGrid =
@@ -1130,7 +1196,8 @@ private fun SearchResultsContent(
                             state.searchFavoriteItem(item, category)
                         )
                     },
-                    onClick = { openResult(item) }
+                    onClick = { openResult(item) },
+                    modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
                 )
             }
 
@@ -1179,7 +1246,8 @@ private fun SearchResultsContent(
                     categoryTitle = category,
                     isFavorite = favorite,
                     toggleFavorite = toggle,
-                    onClick = { openResult(item) }
+                    onClick = { openResult(item) },
+                    modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
                 )
             } else {
                 ModernSearchMediaResultRow(
@@ -1188,7 +1256,8 @@ private fun SearchResultsContent(
                     categoryTitle = category,
                     isFavorite = favorite,
                     toggleFavorite = toggle,
-                    onClick = { openResult(item) }
+                    onClick = { openResult(item) },
+                    modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
                 )
             }
         }
@@ -1283,7 +1352,8 @@ private fun ModernSearchLiveResultRow(
     categoryTitle: String?,
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1297,7 +1367,7 @@ private fun ModernSearchLiveResultRow(
 
     Box {
         Surface(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .remoteFocusFrame(shape)
                 .remoteCombinedClickable(
@@ -1436,7 +1506,8 @@ private fun ModernSearchMediaResultRow(
     categoryTitle: String?,
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1454,7 +1525,7 @@ private fun ModernSearchMediaResultRow(
 
     Box {
         Surface(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .remoteFocusFrame(shape)
                 .remoteCombinedClickable(
@@ -1568,7 +1639,8 @@ private fun ModernSearchPosterResultCard(
     categoryTitle: String?,
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1585,7 +1657,7 @@ private fun ModernSearchPosterResultCard(
 
     Box {
         Surface(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .remoteFocusFrame(shape)
                 .remoteCombinedClickable(

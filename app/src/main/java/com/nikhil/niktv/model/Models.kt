@@ -247,6 +247,7 @@ data class EpisodeSeasonCache(
     val episodes: List<MediaItem>,
     val page: Int = 1,
     val hasMore: Boolean = false,
+    val metadataVersion: Int = 0,
     val cachedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "$profileKey|$seriesId|${season ?: -1}"

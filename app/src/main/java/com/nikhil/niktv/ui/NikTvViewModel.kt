@@ -1206,7 +1206,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             },
                             mergedQueue,
                             next.page,
-                            hasMore
+                            hasMore,
+                            EPISODE_METADATA_VERSION
                         )
 
                     episodeSeasonCaches =
@@ -1682,12 +1683,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val desired = requestedSeason
         val cached = if (forceRefresh) null else episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
+                cache.metadataVersion == EPISODE_METADATA_VERSION &&
                 (desired == null || cache.season == desired) &&
                 System.currentTimeMillis() - cache.cachedAtMillis < maxAge
         }
         var result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season, it.page, it.hasMore) }
             ?: portal.episodeSeason(session, series, _state.value.seriesStartSeason, desired).also { loaded ->
-                val cache = EpisodeSeasonCache(profileKey, series.id, loaded.selectedSeason, loaded.availableSeasons, loaded.episodes, loaded.page, loaded.hasMore)
+                val cache = EpisodeSeasonCache(profileKey, series.id, loaded.selectedSeason, loaded.availableSeasons, loaded.episodes, loaded.page, loaded.hasMore, EPISODE_METADATA_VERSION)
                 episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
                 store.saveEpisodeSeasonCache(cache)
             }
@@ -1742,10 +1744,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     runCatching { tmdb.seasonEpisodes(matched.id, 1) }.getOrDefault(emptyList())
                 }
                 val metadataByNumber = tmdbEpisodes.associateBy { it.episodeNumber }
+                val specialKeys = result.episodes.mapNotNull { it.title.specialEpisodeKey() }.toSet()
+                val specialMetadataByKey = if (specialKeys.isNotEmpty()) {
+                    runCatching { tmdb.seasonEpisodes(matched.id, 0) }.getOrDefault(emptyList())
+                        .mapNotNull { metadata -> metadata.name?.specialEpisodeKey()?.let { it to metadata } }
+                        .toMap()
+                } else emptyMap()
+                val metadataByTitle = tmdbEpisodes.mapNotNull { metadata ->
+                    metadata.name?.episodeMetadataTitleKey()?.takeIf { it.isNotBlank() }?.let { it to metadata }
+                }.toMap()
                 Log.i("NikTvEpisodeMetadata", "TMDB episode metadata candidates=${tmdbEpisodes.size}; IPTV episodes=${result.episodes.size}")
                 result = result.copy(episodes = result.episodes.map { episode ->
-                    val metadata = episode.episodeNumber?.let(metadataByNumber::get) ?: return@map episode
                     val providerHasSpecificTitle = episode.title.hasSpecificEpisodeTitle()
+                    val specialKey = episode.title.specialEpisodeKey()
+                    val titleKey = episode.title.episodeMetadataTitleKey()
+                    val metadata = when {
+                        specialKey != null -> specialMetadataByKey[specialKey]
+                        providerHasSpecificTitle -> metadataByTitle[titleKey]
+                        else -> episode.episodeNumber?.let(metadataByNumber::get)
+                    } ?: return@map episode
                     episode.copy(
                         title = if (providerHasSpecificTitle) episode.title else metadata.name ?: episode.title,
                         logo = metadata.stillUrl ?: episode.logo,
@@ -1756,7 +1773,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 })
             }
         }
-        val expandedCache = EpisodeSeasonCache(profileKey, series.id, result.selectedSeason, result.availableSeasons, result.episodes, result.page, result.hasMore)
+        val expandedCache = EpisodeSeasonCache(profileKey, series.id, result.selectedSeason, result.availableSeasons, result.episodes, result.page, result.hasMore, EPISODE_METADATA_VERSION)
         episodeSeasonCaches = listOf(expandedCache) + episodeSeasonCaches.filterNot { it.key == expandedCache.key }
         store.saveEpisodeSeasonCache(expandedCache)
         result.selectedSeason?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
@@ -1774,6 +1791,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             .trim(' ', '.', ':', '-', '–', '—', '|')
         return remainder.isNotBlank()
     }
+
+    private fun String.specialEpisodeKey(): String? {
+        val match = Regex(
+            "(?i)\\b(bonus|discarded|deleted(?: moments)?|special)[ ._:#-]*(?:ep(?:isode)?)?[ ._:#-]*(\\d+)\\b"
+        ).find(this) ?: return null
+        return "${match.groupValues[1].lowercase().replace(" ", "-")}:${match.groupValues[2].toIntOrNull() ?: return null}"
+    }
+
+    private fun String.episodeMetadataTitleKey(): String = lowercase()
+        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .trim()
 
     fun loadMoreEpisodes() {
         val snapshot = _state.value
@@ -1815,7 +1843,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 val cache = EpisodeSeasonCache(session.profile.cacheKey(), series.id, next.selectedSeason,
-                    next.availableSeasons.ifEmpty { snapshot.availableSeriesSeasons }, combined, next.page, next.hasMore && actuallyAdded)
+                    next.availableSeasons.ifEmpty { snapshot.availableSeriesSeasons }, combined, next.page, next.hasMore && actuallyAdded,
+                    EPISODE_METADATA_VERSION)
                 episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
                 store.saveEpisodeSeasonCache(cache)
             }.onFailure { error ->
@@ -4842,6 +4871,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_PLAYBACK_URLS = 500
         private const val DASHBOARD_CATEGORY_LIMIT = 10
         private const val MODERN_TMDB_PAGE_SIZE = 20
+        private const val EPISODE_METADATA_VERSION = 1
         private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30

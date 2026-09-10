@@ -438,7 +438,14 @@ class StalkerPortalClient(private val context: Context) {
             val season = item.string("season_number")?.toIntOrNull() ?: item.string("season")?.toIntOrNull() ?: fallbackSeason
             val command = item.string("cmd") ?: series.command
             val numbered = (item["series"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }.orEmpty()
-            val explicitEpisode = item.string("series_number")?.toIntOrNull() ?: item.string("episode")?.toIntOrNull() ?: item.string("episode_id")?.toIntOrNull()
+            // episode_id identifies the provider's playable media record on many
+            // Stalker portals; it is not the episode's ordinal number. Mixing the
+            // two caused unrelated TMDB titles/artwork to be attached by number.
+            val providerTitle = item.string("name") ?: item.string("title")
+            val explicitEpisode = item.string("series_number")?.toIntOrNull()
+                ?: item.string("episode_number")?.toIntOrNull()
+                ?: item.string("episode")?.toIntOrNull()
+                ?: providerTitle?.episodeNumberFromProviderTitle()
             if (item.boolish("is_episode") && command != null && explicitEpisode != null) {
                 listOf(MediaItem(
                     "${series.id}:$season:$explicitEpisode", item.string("name") ?: episodeTitle(season, explicitEpisode),
@@ -465,6 +472,13 @@ class StalkerPortalClient(private val context: Context) {
         season != null && episode != null -> "Season $season · Episode $episode"
         episode != null -> "Episode $episode"
         else -> "Episode"
+    }
+
+    private fun String.episodeNumberFromProviderTitle(): Int? = listOf(
+        Regex("(?i)S\\d+[ ._:-]*E(?:P(?:ISODE)?)?[ ._:-]*(\\d+)"),
+        Regex("(?i)\\b(?:EPISODE|EP|BONUS)[ ._:#-]*(?:EP)?[ ._:#-]*(\\d+)\\b")
+    ).firstNotNullOfOrNull { pattern ->
+        pattern.find(this)?.groupValues?.getOrNull(1)?.toIntOrNull()
     }
 
     private fun authenticateXtream(profile: PortalProfile): PortalSession {

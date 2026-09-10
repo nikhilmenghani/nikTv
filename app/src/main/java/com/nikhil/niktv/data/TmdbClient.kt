@@ -268,7 +268,11 @@ class TmdbClient {
         val queries = listOf(
             item.title.substringAfter(':').substringBefore(" - ").trim(),
             item.title.substringBefore(" - ").trim(),
-            item.title.trim()
+            item.title.trim(),
+            // Some IPTV catalogs publish India's Got Latent as "Latest".
+            // Search the intended title, but still require an exact normalized
+            // TMDB title match below before accepting it.
+            item.title.replace(Regex("(?i)\\blatest\\b"), "Latent").trim()
         ).filter { it.isNotBlank() }.distinct()
         for (query in queries) {
             val wanted = query.tmdbLookupTitle()
