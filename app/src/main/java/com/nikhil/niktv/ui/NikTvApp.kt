@@ -255,10 +255,11 @@ private fun Modifier.mobileMainTabSwipe(
 ): Modifier {
     val latestOnPageSelected by rememberUpdatedState(onPageSelected)
     if (!enabled) return this
+    val swipeScope = rememberCoroutineScope()
     var swipeOffsetTarget by remember { mutableFloatStateOf(0f) }
     val swipeOffset by animateFloatAsState(
         targetValue = swipeOffsetTarget,
-        animationSpec = tween(70),
+        animationSpec = tween(180),
         label = "mainTabSwipeOffset"
     )
 
@@ -279,7 +280,7 @@ private fun Modifier.mobileMainTabSwipe(
                 var lastY = down.position.y
                 var totalX = 0f
                 var totalY = 0f
-                var childConsumedHorizontalDrag = false
+                var horizontalDragLocked = false
                 var cancelled = false
 
                 while (true) {
@@ -297,24 +298,21 @@ private fun Modifier.mobileMainTabSwipe(
                     totalX += deltaX
                     totalY += deltaY
 
-                    if (
-                        change.isConsumed &&
-                        kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY)
-                    ) {
-                        childConsumedHorizontalDrag = true
-                    }
-
-                    if (!childConsumedHorizontalDrag &&
+                    if (!horizontalDragLocked &&
                         kotlin.math.abs(totalX) > 12.dp.toPx() &&
                         kotlin.math.abs(totalX) > kotlin.math.abs(totalY) * directionRatio
                     ) {
+                        horizontalDragLocked = true
+                    }
+                    if (horizontalDragLocked) {
+                        change.consume()
                         swipeOffsetTarget = totalX.coerceIn(-size.width * 0.32f, size.width * 0.32f)
                     }
 
                     if (!change.pressed) break
                 }
 
-                if (cancelled || childConsumedHorizontalDrag) {
+                if (cancelled) {
                     swipeOffsetTarget = 0f
                     continue
                 }
@@ -332,14 +330,19 @@ private fun Modifier.mobileMainTabSwipe(
                 val pages = MobileMainPage.entries
                 val currentIndex = pages.indexOf(currentPage)
                 val targetIndex =
-                    if (totalX < 0f) currentIndex + 1
+                    if (totalX > 0f) currentIndex + 1
                     else currentIndex - 1
                 val target = pages.getOrNull(targetIndex)
                 if (target != null) {
-                    swipeOffsetTarget = if (totalX < 0f) -size.width * 0.32f else size.width * 0.32f
-                    latestOnPageSelected(target)
+                    swipeOffsetTarget = if (totalX > 0f) size.width.toFloat() else -size.width.toFloat()
+                    swipeScope.launch {
+                        delay(150L)
+                        latestOnPageSelected(target)
+                        swipeOffsetTarget = 0f
+                    }
+                } else {
+                    swipeOffsetTarget = 0f
                 }
-                swipeOffsetTarget = 0f
             }
         }
     }
