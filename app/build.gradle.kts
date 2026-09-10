@@ -32,6 +32,8 @@ val tmdbApiKey = providers.gradleProperty("NIKTV_TMDB_API_KEY")
     .orElse(providers.environmentVariable("NIKTV_TMDB_API_KEY")).orElse("")
 val tmdbReadAccessToken = providers.gradleProperty("NIKTV_TMDB_READ_ACCESS_TOKEN")
     .orElse(providers.environmentVariable("NIKTV_TMDB_READ_ACCESS_TOKEN")).orElse("")
+val githubToken = providers.gradleProperty("G_TOKEN")
+    .orElse(providers.environmentVariable("G_TOKEN")).orElse("")
 
 plugins {
     id("com.android.application")
@@ -58,6 +60,7 @@ android {
         buildConfigField("String", "XTREAM_PASSWORD", xtreamPassword.get().asBuildConfigString())
         buildConfigField("String", "TMDB_API_KEY", tmdbApiKey.get().asBuildConfigString())
         buildConfigField("String", "TMDB_READ_ACCESS_TOKEN", tmdbReadAccessToken.get().asBuildConfigString())
+        buildConfigField("String", "G_TOKEN", githubToken.get().asBuildConfigString())
     }
     signingConfigs {
         create("automation") {

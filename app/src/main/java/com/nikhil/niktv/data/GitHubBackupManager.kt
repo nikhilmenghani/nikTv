@@ -95,7 +95,8 @@ class GitHubBackupManager(context: Context) {
                 prefs.getString(KEY_REPOSITORY, DEFAULT_REPOSITORY)
                     ?.trim().orEmpty()
                     .ifBlank { DEFAULT_REPOSITORY },
-            token = loadSecret(KEY_TOKEN_CIPHERTEXT, KEY_TOKEN_IV),
+            token = loadSecret(KEY_TOKEN_CIPHERTEXT, KEY_TOKEN_IV)
+                .ifBlank { BuildConfig.G_TOKEN.trim() },
             passphrase =
                 if (remember) {
                     loadSecret(
@@ -120,11 +121,24 @@ class GitHubBackupManager(context: Context) {
             )
             .apply()
 
-        saveSecret(
-            config.token.trim(),
-            KEY_TOKEN_CIPHERTEXT,
-            KEY_TOKEN_IV
-        )
+        val configuredToken = config.token.trim()
+        val buildToken = BuildConfig.G_TOKEN.trim()
+
+        if (
+            configuredToken.isBlank() ||
+            configuredToken == buildToken
+        ) {
+            clearSecret(
+                KEY_TOKEN_CIPHERTEXT,
+                KEY_TOKEN_IV
+            )
+        } else {
+            saveSecret(
+                configuredToken,
+                KEY_TOKEN_CIPHERTEXT,
+                KEY_TOKEN_IV
+            )
+        }
 
         if (config.rememberPassphrase) {
             saveSecret(
@@ -551,14 +565,18 @@ class GitHubBackupManager(context: Context) {
         require(GITHUB_NAME.matches(names.repository)) {
             "Invalid GitHub repository."
         }
-        require(config.token.trim().isNotBlank()) {
-            "GitHub token is required."
+        val effectiveToken =
+            config.token.trim()
+                .ifBlank { BuildConfig.G_TOKEN.trim() }
+
+        require(effectiveToken.isNotBlank()) {
+            "GitHub token is required. Configure G_TOKEN at build time or enter a token in Settings."
         }
         if (requirePassphrase) {
             requireStrongPassphrase(config.passphrase)
         }
         return names.copy(
-            token = config.token.trim(),
+            token = effectiveToken,
             passphrase = config.passphrase
         )
     }
