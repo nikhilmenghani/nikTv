@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
@@ -133,7 +134,7 @@ private enum class MobileMainPage(val title: String, val icon: ImageVector) {
     LIVE("Live", Icons.Default.LiveTv),
     MOVIES("Movies", Icons.Default.Movie),
     SERIES("Series", Icons.Default.VideoLibrary),
-    LIBRARY("Library", Icons.Default.VideoLibrary),
+    LIBRARY("Library", Icons.Default.CollectionsBookmark),
     DOWNLOADS("Offline", Icons.Default.DownloadDone)
 }
 
@@ -257,9 +258,10 @@ private fun Modifier.mobileMainTabSwipe(
     if (!enabled) return this
     val swipeScope = rememberCoroutineScope()
     var swipeOffsetTarget by remember { mutableFloatStateOf(0f) }
+    var swipeDragging by remember { mutableStateOf(false) }
     val swipeOffset by animateFloatAsState(
         targetValue = swipeOffsetTarget,
-        animationSpec = tween(180),
+        animationSpec = if (swipeDragging) snap() else tween(190),
         label = "mainTabSwipeOffset"
     )
 
@@ -306,13 +308,15 @@ private fun Modifier.mobileMainTabSwipe(
                     }
                     if (horizontalDragLocked) {
                         change.consume()
-                        swipeOffsetTarget = totalX.coerceIn(-size.width * 0.32f, size.width * 0.32f)
+                        swipeDragging = true
+                        swipeOffsetTarget = totalX.coerceIn(-size.width * 0.42f, size.width * 0.42f)
                     }
 
                     if (!change.pressed) break
                 }
 
                 if (cancelled) {
+                    swipeDragging = false
                     swipeOffsetTarget = 0f
                     continue
                 }
@@ -323,6 +327,7 @@ private fun Modifier.mobileMainTabSwipe(
                     horizontalDistance < distanceThreshold ||
                     horizontalDistance <= verticalDistance * directionRatio
                 ) {
+                    swipeDragging = false
                     swipeOffsetTarget = 0f
                     continue
                 }
@@ -330,17 +335,19 @@ private fun Modifier.mobileMainTabSwipe(
                 val pages = MobileMainPage.entries
                 val currentIndex = pages.indexOf(currentPage)
                 val targetIndex =
-                    if (totalX > 0f) currentIndex + 1
+                    if (totalX < 0f) currentIndex + 1
                     else currentIndex - 1
                 val target = pages.getOrNull(targetIndex)
                 if (target != null) {
-                    swipeOffsetTarget = if (totalX > 0f) size.width.toFloat() else -size.width.toFloat()
+                    swipeDragging = false
+                    swipeOffsetTarget = if (totalX < 0f) -size.width.toFloat() else size.width.toFloat()
                     swipeScope.launch {
-                        delay(150L)
-                        latestOnPageSelected(target)
+                        delay(190L)
                         swipeOffsetTarget = 0f
+                        latestOnPageSelected(target)
                     }
                 } else {
+                    swipeDragging = false
                     swipeOffsetTarget = 0f
                 }
             }
