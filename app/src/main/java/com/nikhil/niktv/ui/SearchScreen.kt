@@ -191,6 +191,21 @@ internal fun ModernSearchScreen(
         }
     }
 
+    LaunchedEffect(
+        state.searchResults.firstOrNull()?.id,
+        state.searchLocalLoading,
+        state.searchServerLoading,
+        searchEditing
+    ) {
+        if (remoteNavigationActive && !searchEditing &&
+            !state.searchLocalLoading && !state.searchServerLoading &&
+            state.searchResults.isNotEmpty()
+        ) {
+            withFrameNanos { }
+            runCatching { contentRequester.requestFocus() }
+        }
+    }
+
     Column(
         Modifier
             .fillMaxSize()

@@ -350,6 +350,7 @@ internal fun CategoryManagerDialog(
             Column(
                 Modifier.fillMaxSize()
                     .then(if (!categoryIsTv) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
+                    .then(if (!categoryIsTv) Modifier.imePadding() else Modifier)
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
                 if (categoryIsCompact) {
@@ -403,6 +404,10 @@ internal fun CategoryManagerDialog(
                             .fillMaxWidth()
                             .height(46.dp)
                             .focusRequester(applyRequester)
+                            .focusProperties {
+                                down = firstCategoryRequester ?: searchRequester
+                                up = searchRequester
+                            }
                             .onFocusChanged { applyFocused = it.isFocused },
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
