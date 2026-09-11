@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -82,7 +83,9 @@ internal fun SubtitleSelectionDialog(
     onDismiss: () -> Unit,
     timingRequiresVlc: Boolean = false,
     internetSearch: SubtitleSearchRequest? = null,
-    onExternalSubtitle: ((File) -> Unit)? = null
+    onExternalSubtitle: ((File) -> Unit)? = null,
+    downloadedSubtitleName: String? = null,
+    onDeleteDownloadedSubtitle: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -113,15 +116,15 @@ internal fun SubtitleSelectionDialog(
     val compact = !isTv && (configuration.smallestScreenWidthDp < 600 || configuration.screenHeightDp < 600)
     val landscape = configuration.screenWidthDp > configuration.screenHeightDp
     val panelWidthFraction = when {
-        isTv -> .42f
-        compact && landscape -> .62f
+        isTv -> .36f
+        compact && landscape -> .54f
         compact -> .94f
-        else -> .62f
+        else -> .48f
     }
     val panelMaxWidth = when {
-        isTv -> 720.dp
-        compact -> 560.dp
-        else -> 660.dp
+        isTv -> 620.dp
+        compact -> 520.dp
+        else -> 540.dp
     }
     val listHeight = when {
         compact && searchMode -> 132.dp
@@ -137,6 +140,7 @@ internal fun SubtitleSelectionDialog(
     val earlierFocusRequester = remember { FocusRequester() }
     val laterFocusRequester = remember { FocusRequester() }
     val resetFocusRequester = remember { FocusRequester() }
+    val deleteFocusRequester = remember { FocusRequester() }
     val trackFocusRequesters = remember(tracks.map { it.id }) {
         List(tracks.size + 1) { FocusRequester() }
     }
@@ -565,7 +569,11 @@ internal fun SubtitleSelectionDialog(
                                 up = trackFocusRequesters.last()
                                 left = earlierFocusRequester
                                 right = laterFocusRequester
-                                down = if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
+                                down = when {
+                                    delayMs != 0L -> resetFocusRequester
+                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
+                                    else -> earlierFocusRequester
+                                }
                             }
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) {
@@ -586,10 +594,10 @@ internal fun SubtitleSelectionDialog(
                                             )
                                         Key.DirectionDown ->
                                             requestSubtitleFocus(
-                                                if (delayMs != 0L) {
-                                                    resetFocusRequester
-                                                } else {
-                                                    earlierFocusRequester
+                                                when {
+                                                    delayMs != 0L -> resetFocusRequester
+                                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
+                                                    else -> earlierFocusRequester
                                                 }
                                             )
                                         else -> false
@@ -609,7 +617,11 @@ internal fun SubtitleSelectionDialog(
                                 up = trackFocusRequesters.last()
                                 left = earlierFocusRequester
                                 right = laterFocusRequester
-                                down = if (delayMs != 0L) resetFocusRequester else laterFocusRequester
+                                down = when {
+                                    delayMs != 0L -> resetFocusRequester
+                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
+                                    else -> laterFocusRequester
+                                }
                             }
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) {
@@ -630,10 +642,10 @@ internal fun SubtitleSelectionDialog(
                                             )
                                         Key.DirectionDown ->
                                             requestSubtitleFocus(
-                                                if (delayMs != 0L) {
-                                                    resetFocusRequester
-                                                } else {
-                                                    laterFocusRequester
+                                                when {
+                                                    delayMs != 0L -> resetFocusRequester
+                                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
+                                                    else -> laterFocusRequester
                                                 }
                                             )
                                         else -> false
@@ -651,7 +663,7 @@ internal fun SubtitleSelectionDialog(
                         .focusRequester(resetFocusRequester)
                         .focusProperties {
                             up = earlierFocusRequester
-                            down = resetFocusRequester
+                            down = if (onDeleteDownloadedSubtitle != null) deleteFocusRequester else resetFocusRequester
                         }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) {
@@ -664,7 +676,11 @@ internal fun SubtitleSelectionDialog(
                                         )
                                     Key.DirectionDown ->
                                         requestSubtitleFocus(
-                                            resetFocusRequester
+                                            if (onDeleteDownloadedSubtitle != null) {
+                                                deleteFocusRequester
+                                            } else {
+                                                resetFocusRequester
+                                            }
                                         )
                                     else -> false
                                 }
@@ -672,6 +688,22 @@ internal fun SubtitleSelectionDialog(
                         }
                         .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Reset timing") }
+                if (!searchMode && onDeleteDownloadedSubtitle != null) TextButton(
+                    onClick = onDeleteDownloadedSubtitle,
+                    modifier = Modifier
+                        .focusRequester(deleteFocusRequester)
+                        .focusProperties {
+                            up = if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
+                            down = deleteFocusRequester
+                        }
+                        .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                ) {
+                    Icon(Icons.Default.Delete, null)
+                    Text(
+                        downloadedSubtitleName?.let { " Delete downloaded · $it" }
+                            ?: " Delete downloaded"
+                    )
+                }
                 if (!searchMode && hasSubtitleTracks && timingRequiresVlc && !compact) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")
                 }

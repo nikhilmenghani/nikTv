@@ -51,6 +51,7 @@ import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import org.videolan.libvlc.interfaces.IMedia
+import java.io.File
 
 @Composable
 internal fun VlcPlayerScreen(
@@ -67,6 +68,7 @@ internal fun VlcPlayerScreen(
     offlineDownloadProgress: Float? = null,
     offlineDownloadProgressText: String? = null,
     initialSubtitleDelayMs: Long = 0L,
+    initialExternalSubtitleFile: File? = null,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -139,6 +141,8 @@ internal fun VlcPlayerScreen(
     var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
     var selectedSubtitleTrackId by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var subtitleDelayMs by remember(media.progressKey) { mutableLongStateOf(initialSubtitleDelayMs) }
+    var externalSubtitleFile by remember(media.progressKey) { mutableStateOf(initialExternalSubtitleFile) }
+    var externalSubtitleAttached by remember(media.progressKey) { mutableStateOf(false) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -369,6 +373,15 @@ internal fun VlcPlayerScreen(
                     buffering = false
                     advancing = false
                     refreshSubtitleTracks()
+                    externalSubtitleFile?.takeIf { !externalSubtitleAttached && it.exists() }?.let { file ->
+                        externalSubtitleAttached = player.addSlave(
+                            IMedia.Slave.Type.Subtitle,
+                            android.net.Uri.fromFile(file),
+                            true
+                        )
+                        refreshSubtitleTracks()
+                        player.setSpuDelay(subtitleDelayMs * 1_000L)
+                    }
                 }
                 MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> {
                     playbackRequested = false
@@ -1148,8 +1161,23 @@ internal fun VlcPlayerScreen(
                     episodeTitle = media.media.title
                 ),
                 onExternalSubtitle = { file ->
+                    externalSubtitleFile?.takeIf { it != file }?.delete()
+                    externalSubtitleFile = file
                     player.addSlave(IMedia.Slave.Type.Subtitle, android.net.Uri.fromFile(file), true)
+                    externalSubtitleAttached = true
                     refreshSubtitleTracks()
+                    player.setSpuDelay(subtitleDelayMs * 1_000L)
+                },
+                downloadedSubtitleName = externalSubtitleFile?.name,
+                onDeleteDownloadedSubtitle = externalSubtitleFile?.let { file ->
+                    {
+                        player.setSpuTrack(-1)
+                        selectedSubtitleTrackId = null
+                        file.delete()
+                        externalSubtitleFile = null
+                        externalSubtitleAttached = false
+                        refreshSubtitleTracks()
+                    }
                 }
             )
         }

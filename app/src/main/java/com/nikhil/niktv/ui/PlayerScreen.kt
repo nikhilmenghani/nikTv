@@ -243,6 +243,7 @@ fun PlayerScreen(
     val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
     var sessionEngineOverride by remember { mutableStateOf<PlaybackEngine?>(null) }
     var subtitleDelayMs by remember(media.progressKey) { mutableLongStateOf(0L) }
+    var externalSubtitleFile by remember(media.progressKey) { mutableStateOf<File?>(null) }
     var engineSwitchResumePosition by remember(media.progressKey) {
         mutableLongStateOf(media.resumePositionMillis)
     }
@@ -271,6 +272,7 @@ fun PlayerScreen(
             offlineDownloadProgress = offlineDownloadProgress,
             offlineDownloadProgressText = offlineDownloadProgressText,
             initialSubtitleDelayMs = subtitleDelayMs,
+            initialExternalSubtitleFile = externalSubtitleFile,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
@@ -385,7 +387,6 @@ fun PlayerScreen(
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
     var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Media3SubtitleTrack>>(emptyList()) }
-    var externalSubtitleFile by remember(media.progressKey) { mutableStateOf<File?>(null) }
 
     /*
      * MTK_AVC_SEAMLESS_RECOVERY_V14
@@ -1702,6 +1703,19 @@ fun PlayerScreen(
                 onExternalSubtitle = { file ->
                     engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
                     externalSubtitleFile = file
+                    sessionEngineOverride = PlaybackEngine.VLC
+                },
+                downloadedSubtitleName = externalSubtitleFile?.name,
+                onDeleteDownloadedSubtitle = externalSubtitleFile?.let { file ->
+                    {
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .build()
+                        file.delete()
+                        externalSubtitleFile = null
+                        subtitleDialogOpen = false
+                    }
                 }
             )
         }
