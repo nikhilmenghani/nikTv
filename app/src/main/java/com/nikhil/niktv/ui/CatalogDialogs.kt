@@ -67,6 +67,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -90,6 +91,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
@@ -336,6 +338,12 @@ internal fun CategoryManagerDialog(
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val dialogView = LocalView.current
+        DisposableEffect(dialogView) {
+            val window = (dialogView.parent as? DialogWindowProvider)?.window
+            window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            onDispose { window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_UNSPECIFIED) }
+        }
         val categoryPanelModifier = if (categoryIsTv) {
             Modifier.fillMaxWidth(0.97f).fillMaxHeight(0.96f).widthIn(max = 1280.dp)
         } else {
@@ -404,6 +412,12 @@ internal fun CategoryManagerDialog(
                             .fillMaxWidth()
                             .height(46.dp)
                             .focusRequester(applyRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                    (firstCategoryRequester ?: searchRequester).requestFocus()
+                                    true
+                                } else false
+                            }
                             .focusProperties {
                                 down = firstCategoryRequester ?: searchRequester
                                 up = searchRequester
@@ -449,6 +463,12 @@ internal fun CategoryManagerDialog(
                         modifier = Modifier
                             .height(48.dp)
                             .focusRequester(applyRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                    (firstCategoryRequester ?: searchRequester).requestFocus()
+                                    true
+                                } else false
+                            }
                             .focusProperties {
                                 left = focusedCategoryId
                                     ?.let(categoryRequesters::get)
@@ -579,6 +599,46 @@ internal fun CategoryManagerDialog(
                                     .fillMaxWidth()
                                     .height(56.dp)
                                     .focusRequester(rowRequester)
+                                    .onPreviewKeyEvent { event ->
+                                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                        val targetIndex = when (event.key) {
+                                            Key.DirectionUp -> index - categoryColumns
+                                            Key.DirectionDown -> index + categoryColumns
+                                            Key.DirectionLeft -> index - 1
+                                            Key.DirectionRight -> index + 1
+                                            else -> return@onPreviewKeyEvent false
+                                        }
+                                        when {
+                                            event.key == Key.DirectionUp && targetIndex < 0 -> {
+                                                applyRequester.requestFocus(); true
+                                            }
+                                            event.key == Key.DirectionDown && targetIndex >= filteredRaw.size -> {
+                                                searchRequester.requestFocus(); true
+                                            }
+                                            event.key == Key.DirectionRight &&
+                                                ((index + 1) % categoryColumns == 0 || index == filteredRaw.lastIndex) -> {
+                                                applyRequester.requestFocus(); true
+                                            }
+                                            targetIndex in filteredRaw.indices -> {
+                                                val target = filteredRaw[targetIndex]
+                                                val targetRequester = categoryRequesters.getValue(target.id)
+                                                if (!runCatching { targetRequester.requestFocus() }.getOrDefault(false)) {
+                                                    scope.launch {
+                                                        gridState.scrollToItem((targetIndex - categoryColumns).coerceAtLeast(0))
+                                                        repeat(5) { attempt ->
+                                                            withFrameNanos { }
+                                                            if (runCatching { targetRequester.requestFocus() }.getOrDefault(false)) {
+                                                                return@launch
+                                                            }
+                                                            kotlinx.coroutines.delay(30L * (attempt + 1))
+                                                        }
+                                                    }
+                                                }
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    }
                                     .focusProperties {
                                         if (index < categoryColumns) up = applyRequester
                                         if (index >= filteredRaw.size - categoryColumns) down = searchRequester

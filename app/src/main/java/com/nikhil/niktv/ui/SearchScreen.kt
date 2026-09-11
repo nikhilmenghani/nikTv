@@ -195,14 +195,22 @@ internal fun ModernSearchScreen(
         state.searchResults.firstOrNull()?.id,
         state.searchLocalLoading,
         state.searchServerLoading,
+        state.searchUsedServer,
         searchEditing
     ) {
-        if (remoteNavigationActive && !searchEditing &&
+        if (remoteNavigationActive && (!searchEditing || state.searchUsedServer) &&
             !state.searchLocalLoading && !state.searchServerLoading &&
             state.searchResults.isNotEmpty()
         ) {
-            withFrameNanos { }
-            runCatching { contentRequester.requestFocus() }
+            searchEditing = false
+            keyboard?.hide()
+            repeat(6) { attempt ->
+                withFrameNanos { }
+                if (runCatching { contentRequester.requestFocus() }.getOrDefault(false)) {
+                    return@LaunchedEffect
+                }
+                kotlinx.coroutines.delay(40L * (attempt + 1))
+            }
         }
     }
 
@@ -282,7 +290,11 @@ internal fun ModernSearchScreen(
                         }
                     }
                     FilledIconButton(
-                        onClick = { search(true) },
+                        onClick = {
+                            searchEditing = false
+                            keyboard?.hide()
+                            search(true)
+                        },
                         modifier = Modifier.focusProperties { canFocus = false },
                         enabled =
                             state.searchQuery.isNotBlank() &&
@@ -573,9 +585,10 @@ internal fun ModernSearchScreen(
                 screenWidthDp = configuration.screenWidthDp,
                 openResult = openResult,
                 loadMore = loadMore,
-                toggleFavorite = toggleFavorite,
-                firstItemRequester = contentRequester,
-                modifier = Modifier.weight(1f)
+            toggleFavorite = toggleFavorite,
+            firstItemRequester = contentRequester,
+            autoFocusFirst = !searchEditing || state.searchUsedServer,
+            modifier = Modifier.weight(1f)
             )
         }
     }
@@ -1259,6 +1272,7 @@ private fun SearchResultsContent(
     loadMore: () -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     firstItemRequester: FocusRequester,
+    autoFocusFirst: Boolean,
     modifier: Modifier = Modifier
 ) {
     val posterGrid =
@@ -1283,6 +1297,9 @@ private fun SearchResultsContent(
                 items = state.searchResults,
                 key = { "search-${state.searchType}-${it.id}" }
             ) { item ->
+                if (item == state.searchResults.first()) {
+                    SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
+                }
                 val category = state.searchCategoryTitle(item)
                 ModernSearchPosterResultCard(
                     item = item,
@@ -1330,6 +1347,9 @@ private fun SearchResultsContent(
             state.searchResults,
             key = { "search-${state.searchType}-${it.id}" }
         ) { item ->
+            if (item == state.searchResults.first()) {
+                SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
+            }
             val category = state.searchCategoryTitle(item)
             val favorite = state.isSearchFavorite(item)
             val toggle = {
@@ -1380,6 +1400,22 @@ private fun SearchResultsContent(
             item("search-provider-complete") {
                 SearchProviderCompleteMessage()
             }
+        }
+    }
+}
+
+@Composable
+private fun SearchFirstResultFocusEffect(
+    requester: FocusRequester,
+    enabled: Boolean,
+    resultId: String
+) {
+    LaunchedEffect(enabled, resultId) {
+        if (!enabled) return@LaunchedEffect
+        repeat(6) { attempt ->
+            withFrameNanos { }
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            kotlinx.coroutines.delay(35L * (attempt + 1))
         }
     }
 }
