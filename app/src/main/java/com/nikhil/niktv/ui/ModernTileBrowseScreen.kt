@@ -1086,7 +1086,13 @@ private fun ModernQuickActionTile(
             horizontalArrangement = Arrangement.spacedBy(11.dp)
         ) {
             Surface(
-                modifier = Modifier.size(if (isPhone) 38.dp else 42.dp),
+                modifier = Modifier.size(
+                    when {
+                        isTv -> 46.dp
+                        isPhone -> 38.dp
+                        else -> 42.dp
+                    }
+                ),
                 shape = RoundedCornerShape(12.dp),
                 color = accent.copy(alpha = 0.16f)
             ) {
@@ -1094,7 +1100,13 @@ private fun ModernQuickActionTile(
                     Icon(
                         icon,
                         null,
-                        Modifier.size(if (isPhone) 20.dp else 22.dp),
+                        Modifier.size(
+                            when {
+                                isTv -> 25.dp
+                                isPhone -> 20.dp
+                                else -> 22.dp
+                            }
+                        ),
                         tint = accent
                     )
                 }
@@ -1105,7 +1117,11 @@ private fun ModernQuickActionTile(
             ) {
                 Text(
                     title,
-                    style = if (isPhone) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
+                    style = when {
+                        isTv -> MaterialTheme.typography.titleMedium
+                        isPhone -> MaterialTheme.typography.bodyMedium
+                        else -> MaterialTheme.typography.titleSmall
+                    },
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White,
                     maxLines = 2,
@@ -1113,7 +1129,9 @@ private fun ModernQuickActionTile(
                 )
                 Text(
                     subtitle,
-                    style = MaterialTheme.typography.labelSmall,
+                    style =
+                        if (isTv) MaterialTheme.typography.labelMedium
+                        else MaterialTheme.typography.labelSmall,
                     color = Color(0xFFA7ABB5),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1303,10 +1321,10 @@ private fun ModernDestinationTile(
                 ) {
                     Text(
                         title,
-                        style = if (isPhone) {
-                            MaterialTheme.typography.bodyLarge
-                        } else {
-                            MaterialTheme.typography.titleMedium
+                        style = when {
+                            isTv -> MaterialTheme.typography.titleLarge
+                            isPhone -> MaterialTheme.typography.bodyLarge
+                            else -> MaterialTheme.typography.titleMedium
                         },
                         fontWeight =
                             if (active) FontWeight.Black
@@ -1317,10 +1335,10 @@ private fun ModernDestinationTile(
                     )
                     Text(
                         subtitle,
-                        style = if (isPhone) {
-                            MaterialTheme.typography.labelSmall
-                        } else {
-                            MaterialTheme.typography.labelMedium
+                        style = when {
+                            isTv -> MaterialTheme.typography.bodySmall
+                            isPhone -> MaterialTheme.typography.labelSmall
+                            else -> MaterialTheme.typography.labelMedium
                         },
                         color =
                             if (active) {
@@ -1618,7 +1636,11 @@ private fun ModernCompactMediaCard(
                 ) {
                     Text(
                         item.title,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = if (isTv) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.titleSmall
+                        },
                         fontWeight =
                             if (active) FontWeight.Bold
                             else FontWeight.SemiBold,
@@ -1630,7 +1652,11 @@ private fun ModernCompactMediaCard(
                         Text(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = if (isTv) {
+                                MaterialTheme.typography.labelMedium
+                            } else {
+                                MaterialTheme.typography.labelSmall
+                            },
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
