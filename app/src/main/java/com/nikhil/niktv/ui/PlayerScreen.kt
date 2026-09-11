@@ -120,6 +120,13 @@ internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
     PlaybackEngine.EXOPLAYER -> "ExoPlayer"
 }
 
+internal val PLAYER_ENGINE_OPTIONS = listOf(
+    PlaybackEngine.AUTO,
+    PlaybackEngine.MEDIA3,
+    PlaybackEngine.VLC,
+    PlaybackEngine.EXOPLAYER
+)
+
 internal val PLAYER_CONTROLS_TIMEOUT_OPTIONS = listOf(3, 5, 10, 15)
 
 internal fun nextPlayerControlsTimeoutSeconds(current: Int): Int {
@@ -261,6 +268,11 @@ fun PlayerScreen(
     var restorePlayerSwitchFocus by remember(media.progressKey) {
         mutableStateOf(false)
     }
+    var moreOptionsOpen by remember(media.progressKey) { mutableStateOf(false) }
+    var selectedPlayerChoice by remember(media.progressKey) { mutableStateOf(playbackEngine) }
+    LaunchedEffect(playbackEngine) {
+        selectedPlayerChoice = playbackEngine
+    }
     val configuredEngine = if (media.offlinePlayback) PlaybackEngine.MEDIA3 else when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
@@ -296,15 +308,16 @@ fun PlayerScreen(
             startFullscreen = startFullscreen,
             fullscreenOverride = fullscreenOverride,
             onFullscreenChanged = onFullscreenChanged,
-            onSwitchPlayer = { position ->
-                val nextEngine = playbackEngine.nextPlayerChoice()
+            moreOptionsOpen = moreOptionsOpen,
+            onMoreOptionsOpenChanged = { moreOptionsOpen = it },
+            onSelectPlayer = { selectedEngine, position ->
+                selectedPlayerChoice = selectedEngine
                 engineSwitchResumePosition = position
-                restorePlayerSwitchFocus = true
-                onPlaybackEngineChanged(nextEngine)
-                sessionEngineOverride = nextEngine.resolvePlayerEngine(context, playbackScope)
+                onPlaybackEngineChanged(selectedEngine)
+                sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
             },
-            configuredEngine = playbackEngine,
-            focusPlayerSwitchOnEnter = restorePlayerSwitchFocus,
+            configuredEngine = selectedPlayerChoice,
+            focusPlayerSwitchOnEnter = false,
             onPlayerSwitchFocusRestored = { restorePlayerSwitchFocus = false }
         )
         return
@@ -335,7 +348,6 @@ fun PlayerScreen(
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
-    var moreOptionsOpen by remember(media.progressKey) { mutableStateOf(false) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -1510,17 +1522,14 @@ fun PlayerScreen(
             if (moreOptionsOpen) {
                 PlayerMoreOptionsDialog(
                     detailLines = playbackDetailLines,
-                    currentPlayer = effectiveEngine.playerEngineLabel(),
-                    onSwitchPlayer = {
-                        moreOptionsOpen = false
-                        val nextEngine = playbackEngine.nextPlayerChoice()
-                        modeFeedback = "Player · ${nextEngine.playerChoiceLabel()}"
-                        coroutineScope.launch {
-                            delay(700L)
+                    selectedPlayer = selectedPlayerChoice,
+                    onSelectPlayer = { selectedEngine ->
+                        if (selectedEngine != selectedPlayerChoice) {
+                            selectedPlayerChoice = selectedEngine
+                            modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
                             engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
-                            restorePlayerSwitchFocus = true
-                            onPlaybackEngineChanged(nextEngine)
-                            sessionEngineOverride = nextEngine.resolvePlayerEngine(context, playbackScope)
+                            onPlaybackEngineChanged(selectedEngine)
+                            sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
                         }
                     },
                     pictureMode = activeAppearanceProfile,
@@ -1989,6 +1998,13 @@ private object PlayerEngineFallback {
  * - an inset transport dock with a slim scrubber and separate time readout;
  * - TV-only focus chrome so touch devices do not retain a TV-style focus ring.
  */
+/*
+ * PLAYER_FOCUS_AND_ENGINE_SELECTOR_V49
+ *
+ * The visible player control surface and the TV focus surface intentionally
+ * share one exact size and RoundedCornerShape. This avoids a 48dp button
+ * receiving a 56dp focus ring. Surface owns both the click target and shape.
+ */
 @Composable
 internal fun PlayerChromeIconButton(
     icon: ImageVector,
@@ -2003,17 +2019,27 @@ internal fun PlayerChromeIconButton(
     iconSize: Dp = if (primaryAction) 28.dp else 23.dp,
     onFocused: (Boolean) -> Unit = {}
 ) {
-    val shape = RoundedCornerShape(if (primaryAction) 18.dp else 14.dp)
-    IconButton(
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val minimumFocusSize = when {
+        context.isTvLikeDevice(configuration) -> 56.dp
+        configuration.smallestScreenWidthDp < 600 -> 44.dp
+        else -> 48.dp
+    }
+    val controlSize = if (size < minimumFocusSize) minimumFocusSize else size
+    val shape = RoundedCornerShape(if (primaryAction) 16.dp else 12.dp)
+    Surface(
         onClick = onClick,
         modifier = modifier
-            .size(size)
-            .background(
-                if (primaryAction) Color.Black.copy(alpha = 0.64f)
-                else Color.Black.copy(alpha = 0.46f),
-                shape
-            )
-            .playerControlFocus(shape, onFocused)
+            .size(controlSize)
+            .playerControlFocus(shape, onFocused),
+        shape = shape,
+        color = if (primaryAction) {
+            Color.Black.copy(alpha = 0.64f)
+        } else {
+            Color.Black.copy(alpha = 0.46f)
+        },
+        contentColor = Color.White
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             if (indeterminateProgress) {
@@ -2114,10 +2140,67 @@ private fun PlayerMoreOptionRow(
 }
 
 @Composable
+private fun PlayerEngineChoiceButton(
+    engine: PlaybackEngine,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .playerControlFocus(shape) {},
+        shape = shape,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
+        } else {
+            Color.White.copy(alpha = 0.055f)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
+            } else {
+                Color.White.copy(alpha = 0.10f)
+            }
+        ),
+        contentColor = Color.White
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (selected) {
+                Icon(
+                    Icons.Default.CheckCircle,
+                    null,
+                    Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                engine.playerChoiceLabel(),
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    Color.White.copy(alpha = 0.90f)
+                },
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
 internal fun PlayerMoreOptionsDialog(
     detailLines: List<String>,
-    currentPlayer: String,
-    onSwitchPlayer: () -> Unit,
+    selectedPlayer: PlaybackEngine,
+    onSelectPlayer: (PlaybackEngine) -> Unit,
     pictureMode: VideoAppearanceProfile,
     onNextPictureMode: () -> Unit,
     onEditPictureMode: () -> Unit,
@@ -2129,11 +2212,16 @@ internal fun PlayerMoreOptionsDialog(
     onToggleFullscreen: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val firstOptionRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
+    val playerRequesters = remember { PLAYER_ENGINE_OPTIONS.map { FocusRequester() } }
+    val finalOptionRequester = remember { FocusRequester() }
+    val closeRequester = remember { FocusRequester() }
+
+    LaunchedEffect(selectedPlayer) {
         delay(100L)
-        runCatching { firstOptionRequester.requestFocus() }
+        val index = PLAYER_ENGINE_OPTIONS.indexOf(selectedPlayer).coerceAtLeast(0)
+        runCatching { playerRequesters[index].requestFocus() }
     }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(24.dp),
@@ -2172,13 +2260,67 @@ internal fun PlayerMoreOptionsDialog(
                         }
                     }
                 }
-                PlayerMoreOptionRow(
-                    icon = Icons.Default.SmartDisplay,
-                    label = "Player",
-                    value = currentPlayer,
-                    modifier = Modifier.focusRequester(firstOptionRequester),
-                    onClick = onSwitchPlayer
-                )
+
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White.copy(alpha = 0.035f)
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.SmartDisplay,
+                                null,
+                                Modifier.size(22.dp),
+                                tint = Color.White.copy(alpha = 0.92f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "Player",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                selectedPlayer.playerChoiceLabel(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        PLAYER_ENGINE_OPTIONS.chunked(2).forEach { engines ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                engines.forEach { engine ->
+                                    val index = PLAYER_ENGINE_OPTIONS.indexOf(engine)
+                                    PlayerEngineChoiceButton(
+                                        engine = engine,
+                                        selected = engine == selectedPlayer,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .focusRequester(playerRequesters[index]),
+                                        onClick = {
+                                            if (engine != selectedPlayer) {
+                                                onSelectPlayer(engine)
+                                            }
+                                        }
+                                    )
+                                }
+                                if (engines.size < 2) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (pipAvailable) {
                     PlayerMoreOptionRow(
                         icon = Icons.Default.PictureInPictureAlt,
@@ -2210,12 +2352,24 @@ internal fun PlayerMoreOptionsDialog(
                 PlayerMoreOptionRow(
                     icon = if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                     label = if (fullscreen) "Exit fullscreen" else "Fullscreen",
+                    modifier = Modifier
+                        .focusRequester(finalOptionRequester)
+                        .focusProperties { down = closeRequester },
                     onClick = onToggleFullscreen
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .focusRequester(closeRequester)
+                    .focusProperties { up = finalOptionRequester }
+                    .playerControlFocus(RoundedCornerShape(12.dp)) {},
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Close")
+            }
         }
     )
 }

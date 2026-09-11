@@ -81,7 +81,9 @@ internal fun VlcPlayerScreen(
     startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null,
-    onSwitchPlayer: (Long) -> Unit,
+    moreOptionsOpen: Boolean = false,
+    onMoreOptionsOpenChanged: (Boolean) -> Unit = {},
+    onSelectPlayer: (PlaybackEngine, Long) -> Unit,
     configuredEngine: PlaybackEngine,
     focusPlayerSwitchOnEnter: Boolean = false,
     onPlayerSwitchFocusRestored: () -> Unit = {}
@@ -137,7 +139,6 @@ internal fun VlcPlayerScreen(
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
-    var moreOptionsOpen by remember(media.progressKey) { mutableStateOf(false) }
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
     var selectedSubtitleTrackId by remember(media.media.id) { mutableStateOf<Int?>(null) }
@@ -349,7 +350,7 @@ internal fun VlcPlayerScreen(
 
     BackHandler {
         when {
-            moreOptionsOpen -> moreOptionsOpen = false
+            moreOptionsOpen -> onMoreOptionsOpenChanged(false)
             queueVisible -> queueVisible = false
             pictureEditorVisible -> {
                 pictureEditorVisible = false
@@ -937,7 +938,7 @@ internal fun VlcPlayerScreen(
                         PlayerChromeIconButton(
                             icon = Icons.Default.MoreHoriz,
                             contentDescription = "More playback options",
-                            onClick = { moreOptionsOpen = true },
+                            onClick = { onMoreOptionsOpenChanged(true) },
                             modifier = Modifier
                                 .focusRequester(moreRequester)
                                 .focusProperties {
@@ -1088,13 +1089,14 @@ internal fun VlcPlayerScreen(
             if (moreOptionsOpen) {
                 PlayerMoreOptionsDialog(
                     detailLines = playbackDetailLines,
-                    currentPlayer = "VLC",
-                    onSwitchPlayer = {
-                        moreOptionsOpen = false
-                        modeFeedback = "Player · ${configuredEngine.nextPlayerChoice().playerChoiceLabel()}"
-                        scope.launch {
-                            delay(700L)
-                            onSwitchPlayer(player.time.coerceAtLeast(0L))
+                    selectedPlayer = configuredEngine,
+                    onSelectPlayer = { selectedEngine ->
+                        if (selectedEngine != configuredEngine) {
+                            modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
+                            onSelectPlayer(
+                                selectedEngine,
+                                player.time.coerceAtLeast(0L)
+                            )
                         }
                     },
                     pictureMode = activeAppearanceProfile,
@@ -1105,7 +1107,7 @@ internal fun VlcPlayerScreen(
                         modeFeedback = "Picture mode · ${next.name}"
                     },
                     onEditPictureMode = {
-                        moreOptionsOpen = false
+                        onMoreOptionsOpenChanged(false)
                         queueVisible = false
                         pictureEditorVisible = true
                         appearancePreview = null
@@ -1117,14 +1119,14 @@ internal fun VlcPlayerScreen(
                     },
                     pipAvailable = pipAvailable,
                     onPictureInPicture = {
-                        moreOptionsOpen = false
+                        onMoreOptionsOpenChanged(false)
                         controlsVisible = false
                         controlsFocused = false
                         pipActivity?.enterPlayerPictureInPicture()
                     },
                     fullscreen = focusMode,
                     onToggleFullscreen = {
-                        moreOptionsOpen = false
+                        onMoreOptionsOpenChanged(false)
                         val entering = !focusMode
                         if (startFullscreen && !entering) {
                             onBack()
@@ -1141,7 +1143,7 @@ internal fun VlcPlayerScreen(
                         }
                     },
                     onDismiss = {
-                        moreOptionsOpen = false
+                        onMoreOptionsOpenChanged(false)
                         scope.launch {
                             delay(80L)
                             runCatching { moreRequester.requestFocus() }
