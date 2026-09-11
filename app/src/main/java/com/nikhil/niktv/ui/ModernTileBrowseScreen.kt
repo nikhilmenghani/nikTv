@@ -871,8 +871,6 @@ private fun ModernNewEpisodesRow(
     clear: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
-    var focusedDetails by remember { mutableStateOf<Pair<String, String>?>(null) }
-
     Column(Modifier.fillMaxWidth()) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
@@ -909,7 +907,6 @@ private fun ModernNewEpisodesRow(
             )
 
             ModernCompactMediaCard(
-                onFocusedDetails = { title, details -> focusedDetails = title to details },
                 item = displayMedia,
                 subtitle = listOf(watched.series.title, episodeLabel)
                     .filter { it.isNotBlank() }
@@ -921,7 +918,6 @@ private fun ModernNewEpisodesRow(
             )
         }
     }
-        HomeTileDetails(focusedDetails?.first.orEmpty(), focusedDetails?.second.orEmpty())
     }
 
 }
@@ -1227,8 +1223,6 @@ private fun ModernContinueRow(
     clear: (RecentItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
-    var focusedDetails by remember { mutableStateOf<Pair<String, String>?>(null) }
-
     val listState = rememberLazyListState()
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val focusIds = remember(recents) {
@@ -1262,7 +1256,6 @@ private fun ModernContinueRow(
                 recent.media.id
             }
             ModernCompactMediaCard(
-                onFocusedDetails = { title, details -> focusedDetails = title to details },
                 item = recent.media,
                 subtitle =
                     if (recent.kind == FavoriteKind.SERIES) {
@@ -1305,7 +1298,6 @@ private fun ModernContinueRow(
             )
         }
     }
-        HomeTileDetails(focusedDetails?.first.orEmpty(), focusedDetails?.second.orEmpty())
     }
 
 }
@@ -1319,7 +1311,6 @@ private fun ModernCompactMediaCard(
     onFavorite: () -> Unit,
     onClear: (() -> Unit)? = null,
     progress: PlaybackProgress? = null,
-    onFocusedDetails: (String, String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -1339,39 +1330,46 @@ private fun ModernCompactMediaCard(
         label = "modernCompactProfileFocus"
     )
     val pressProgress by animateFloatAsState(
-        targetValue = if (!isTv && pressed) 1f else 0f,
+        targetValue = if (!remoteNavigationActive && pressed) 1f else 0f,
         animationSpec = tween(durationMillis = 110),
         label = "modernCompactTouchPress"
     )
     val visualProgress =
-        if (isTv) focusProgress
-        else maxOf(focusProgress, pressProgress)
-    val active = focused || pressed
-    val scale =
+        if (remoteNavigationActive) focusProgress else pressProgress
+    val active =
+        if (remoteNavigationActive) focused else pressed
+    val artworkScale =
         1f + (
             when {
-                isTv -> 0.08f
-                focused -> 0.08f
-                isTablet -> 0.035f
-                else -> 0.025f
+                isTv -> 0.035f
+                isTablet -> 0.018f
+                else -> 0.012f
             } * visualProgress
         )
     val shape = RoundedCornerShape(14.dp)
-    val backgroundColor = lerp(
-        Color(0xFF15171B),
-        if (isTv) Color(0xFF22252B) else Color(0xFF20242B),
-        visualProgress
-    )
+    val focusRingActive = remoteNavigationActive && focused
     val borderColor = lerp(
         Color(0xFF30343B),
-        when {
-            isTv -> Color(0xFFF2F3F5)
-            focused -> Color(0xFFBFC3CA)
-            else -> Color(0xFF555A63)
-        },
-        visualProgress
+        Color(0xFFF2F3F5),
+        if (focusRingActive) focusProgress else 0f
     )
+    val watchedFraction =
+        if (progress != null && progress.durationMillis > 0L) {
+            (progress.positionMillis.toFloat() / progress.durationMillis)
+                .coerceIn(0f, 1f)
+        } else {
+            0f
+        }
 
+    /*
+     * HOME_COMPACT_MEDIA_OVERLAY_V42
+     *
+     * Keep the focus surface at fixed bounds so the first LazyRow item cannot
+     * grow outside the row and be cropped on its leading edge. The artwork
+     * fills the complete tile; focus/press only applies a subtle internal art
+     * zoom. Title/subtitle sit on a bottom scrim and playback progress stays
+     * flush with the bottom edge, while the focus ring follows the tile shape.
+     */
     Box(
         modifier = modifier.then(returningTile.modifier)
             .width(
@@ -1402,7 +1400,6 @@ private fun ModernCompactMediaCard(
             )
             .onFocusChanged {
                 focused = it.isFocused
-                if (it.isFocused) onFocusedDetails(item.title, subtitle)
             }
             .remoteCombinedClickable(
                 interactionSource = interactionSource,
@@ -1411,69 +1408,95 @@ private fun ModernCompactMediaCard(
             )
     ) {
         Surface(
-            modifier = Modifier.graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(if (isTv) 1.35f else 1.4f),
             shape = shape,
-            color = backgroundColor,
+            color = Color(0xFF15171B),
             border = BorderStroke(
                 when {
-                    remoteNavigationActive && focused -> 3.dp
-                    focused -> 2.dp
+                    focusRingActive && isTv -> 3.dp
+                    focusRingActive -> 2.dp
                     else -> 1.dp
                 },
                 borderColor
             )
         ) {
-          Column {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1.65f)
-                    .background(Color(0xFF222222))
-            ) {
+            Box(Modifier.fillMaxSize()) {
                 ModernPosterImage(
-                    item,
-                    context,
-                    Modifier.fillMaxSize()
+                    item = item,
+                    context = context,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = artworkScale
+                            scaleY = artworkScale
+                        }
                 )
-                val watchedFraction = if (progress != null && progress.durationMillis > 0L) {
-                    (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f)
-                } else 0f
-                if (watchedFraction > 0f) {
-                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0xFF3A3A3A))) {
-                        Box(Modifier.fillMaxHeight().fillMaxWidth(watchedFraction).background(Color(0xFFE50914)))
-                    }
-                }
-            }
-            Column(
-                Modifier.padding(if (isTv) 10.dp else 9.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            item.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            minLines = 2,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (focused) Color.White else Color(0xFFD4D7DC)
+
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.08f),
+                                    Color.Black.copy(alpha = 0.88f)
+                                )
+                            )
                         )
+                )
+
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .padding(
+                            start = if (isTv) 11.dp else 9.dp,
+                            end = if (isTv) 11.dp else 9.dp,
+                            bottom = if (watchedFraction > 0f) 11.dp else 8.dp
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        item.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight =
+                            if (active) FontWeight.Bold
+                            else FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    if (subtitle.isNotBlank()) {
                         Text(
                             subtitle,
-                            minLines = 2,
-                            maxLines = 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = if (active) Color(0xFFBFC3CA) else Color(0xFF858B94),
-                            style = MaterialTheme.typography.bodySmall
+                            color = Color.White.copy(alpha = 0.78f),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+
+                if (watchedFraction > 0f) {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(if (isTv) 5.dp else 4.dp)
+                            .background(Color.Black.copy(alpha = 0.58f))
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(watchedFraction)
+                                .background(Color(0xFFE50914))
                         )
                     }
                 }
             }
-          }
         }
         ModernTileActionsMenu(
             expanded = menuOpen,
@@ -1484,7 +1507,6 @@ private fun ModernCompactMediaCard(
         )
     }
 }
-
 private fun MediaItem.compactEpisodeTitle(): String = title
     .replaceFirst(Regex("^\\s*(?:S\\d+\\s*[:._-]?\\s*E(?:P(?:ISODE)?)?\\s*\\d+|(?:EPISODE|EP|E)\\s*#?\\s*\\d+)\\s*[. :|\\-–—]*\\s*", RegexOption.IGNORE_CASE), "")
     .trim()
