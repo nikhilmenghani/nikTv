@@ -112,7 +112,10 @@ import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
 import com.nikhil.niktv.data.AppStorageSnapshot
 import com.nikhil.niktv.data.appStorageSnapshot
-import com.nikhil.niktv.data.clearAppCaches
+import com.nikhil.niktv.data.clearArtworkCache
+import com.nikhil.niktv.data.clearSubtitleCache
+import com.nikhil.niktv.data.clearHlsWorkingFiles
+import com.nikhil.niktv.data.clearTemporaryCaches
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -130,6 +133,10 @@ internal fun OfflineDownloadsScreen(
     val context = LocalContext.current
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
     val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
+    val hlsExportActive = entries.any {
+        it.requestId.startsWith("hls-export:") && OfflineMediaDownloads.status(context, it.requestId, it.downloadId) in
+            setOf(OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED)
+    }
     var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
     var pendingClear by remember { mutableStateOf<String?>(null) }
     var storageRevision by remember { mutableLongStateOf(0L) }
@@ -144,8 +151,12 @@ internal fun OfflineDownloadsScreen(
         OfflineStorageCard(
             storage = storage,
             clearing = clearing,
+            hlsExportActive = hlsExportActive,
             onClearDownloads = { pendingClear = "downloads" },
-            onClearCache = { pendingClear = "cache" }
+            onClearArtwork = { pendingClear = "artwork" },
+            onClearSubtitles = { pendingClear = "subtitles" },
+            onClearHlsWorking = { pendingClear = "hls" },
+            onClearTemporary = { pendingClear = "temporary" }
         )
         if (entries.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -220,9 +231,28 @@ internal fun OfflineDownloadsScreen(
                                         )
                                     }
                                     Text(
-                                        if (entry.requestId.startsWith("hls-export:")) "${entry.fileType.ifBlank { "HLS → MP4" }} · Download/NikTV"
-                                        else if (entry.downloadId >= 0L) "${entry.fileType.ifBlank { "Video" }} · Download/NikTV · external players"
-                                        else "Legacy HLS cache · NikTV only",
+                                        buildList {
+                                            add(when (entry.catalogType) {
+                                                CatalogType.LIVE_TV -> "Live TV"
+                                                CatalogType.RADIO -> "Radio"
+                                                CatalogType.MOVIES -> "Movie"
+                                                CatalogType.SERIES -> "Episode"
+                                            })
+                                            entry.media.seasonNumber?.let { add("Season $it") }
+                                            entry.media.episodeNumber?.let { add("Episode $it") }
+                                            add(entry.fileType.ifBlank { if (entry.requestId.startsWith("hls-export:")) "HLS → MP4" else "Video" })
+                                        }.joinToString(" · "),
+                                        color = Color.Gray,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        when {
+                                            info.status != OfflineDownloadStatus.COMPLETE -> "Not playable until the download finishes"
+                                            entry.downloadId >= 0L || entry.requestId.startsWith("hls-export:") -> "Download/NikTV Offline · NikTV and external players"
+                                            else -> "Private app storage · NikTV only"
+                                        },
                                         color = Color.Gray,
                                         style = MaterialTheme.typography.labelSmall,
                                         maxLines = 1,
@@ -252,34 +282,40 @@ internal fun OfflineDownloadsScreen(
         )
     }
     pendingClear?.let { target ->
-        val downloads = target == "downloads"
+        val title = when (target) {
+            "downloads" -> "Clear offline downloads?"
+            "artwork" -> "Clear artwork cache?"
+            "subtitles" -> "Clear downloaded subtitles?"
+            "hls" -> "Clear HLS working files?"
+            else -> "Clear temporary cache?"
+        }
+        val explanation = when (target) {
+            "downloads" -> "This removes NikTV-tracked offline videos. Other files in Download/NikTV Offline, profiles, settings, and watch history are kept."
+            "artwork" -> "Cached posters and artwork will be downloaded again when needed."
+            "subtitles" -> "Downloaded internet subtitle files will be removed. They can be downloaded again later."
+            "hls" -> "Incomplete and temporary HLS conversion files will be removed. Completed offline videos are kept."
+            else -> "Other temporary app files will be removed. Offline videos, artwork, subtitles, profiles, and watch history are kept."
+        }
         AlertDialog(
             onDismissRequest = { pendingClear = null },
-            title = { Text(if (downloads) "Clear offline downloads?" else "Clear app cache?") },
-            text = {
-                Text(
-                    if (downloads) {
-                        "This removes NikTV-tracked offline videos and clears NikTV's private offline media cache. Other files in Download/NikTV are not deleted. Profiles, settings, and watch history are kept."
-                    } else {
-                        "This clears temporary artwork and subtitle files. They will be downloaded again when needed."
-                    }
-                )
-            },
+            title = { Text(title) },
+            text = { Text(explanation) },
             dismissButton = { TextButton(onClick = { pendingClear = null }) { Text("Cancel") } },
             confirmButton = {
                 Button(onClick = {
                     pendingClear = null
                     clearing = true
                     scope.launch {
-                        if (downloads) {
-                            removeAll()
-                            // Give tracked direct/HLS removals a chance to cancel before
-                            // clearing the dedicated private Media3 cache. This never scans
-                            // or deletes unrelated files from Download/NikTV.
-                            delay(1_000L)
-                            OfflineMediaDownloads.clearCachedMedia(context)
-                        } else {
-                            clearAppCaches(context)
+                        when (target) {
+                            "downloads" -> {
+                                removeAll()
+                                delay(1_000L)
+                                OfflineMediaDownloads.clearCachedMedia(context)
+                            }
+                            "artwork" -> clearArtworkCache(context)
+                            "subtitles" -> clearSubtitleCache(context)
+                            "hls" -> clearHlsWorkingFiles(context)
+                            else -> clearTemporaryCaches(context)
                         }
                         storageRevision++
                         clearing = false
@@ -294,8 +330,12 @@ internal fun OfflineDownloadsScreen(
 private fun OfflineStorageCard(
     storage: AppStorageSnapshot?,
     clearing: Boolean,
+    hlsExportActive: Boolean,
     onClearDownloads: () -> Unit,
-    onClearCache: () -> Unit
+    onClearArtwork: () -> Unit,
+    onClearSubtitles: () -> Unit,
+    onClearHlsWorking: () -> Unit,
+    onClearTemporary: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
@@ -329,10 +369,28 @@ private fun OfflineStorageCard(
                     onClear = onClearDownloads
                 )
                 StorageUsageRow(
-                    label = "Artwork and subtitle cache",
-                    bytes = snapshot.cacheBytes,
-                    enabled = !clearing && snapshot.cacheBytes > 0L,
-                    onClear = onClearCache
+                    label = "Artwork cache",
+                    bytes = snapshot.artworkCacheBytes,
+                    enabled = !clearing && snapshot.artworkCacheBytes > 0L,
+                    onClear = onClearArtwork
+                )
+                StorageUsageRow(
+                    label = "Downloaded subtitles",
+                    bytes = snapshot.subtitleCacheBytes,
+                    enabled = !clearing && snapshot.subtitleCacheBytes > 0L,
+                    onClear = onClearSubtitles
+                )
+                StorageUsageRow(
+                    label = if (hlsExportActive) "HLS working files (download active)" else "HLS working files",
+                    bytes = snapshot.hlsWorkingBytes,
+                    enabled = !clearing && !hlsExportActive && snapshot.hlsWorkingBytes > 0L,
+                    onClear = onClearHlsWorking
+                )
+                StorageUsageRow(
+                    label = "Other temporary cache",
+                    bytes = snapshot.temporaryCacheBytes,
+                    enabled = !clearing && snapshot.temporaryCacheBytes > 0L,
+                    onClear = onClearTemporary
                 )
             }
         }

@@ -12,7 +12,10 @@ data class AppStorageSnapshot(
     val totalBytes: Long,
     val availableBytes: Long,
     val offlineDownloadBytes: Long,
-    val cacheBytes: Long
+    val artworkCacheBytes: Long,
+    val subtitleCacheBytes: Long,
+    val hlsWorkingBytes: Long,
+    val temporaryCacheBytes: Long
 )
 
 suspend fun appStorageSnapshot(
@@ -39,28 +42,63 @@ suspend fun appStorageSnapshot(
             ).bytesDownloaded.coerceAtLeast(0L)
         }
 
+    val artworkDirectory = File(appContext.cacheDir, "artwork_cache")
+    val subtitleDirectory = File(appContext.cacheDir, "subtitles")
+    val hlsDirectory = File(appContext.cacheDir, "hls_exports")
+    val namedCacheBytes = directorySize(artworkDirectory) +
+        directorySize(subtitleDirectory) + directorySize(hlsDirectory)
+    val allCacheBytes = directorySize(appContext.cacheDir) +
+        (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
+
     AppStorageSnapshot(
         totalBytes = stats.totalBytes,
         availableBytes = stats.availableBytes,
         offlineDownloadBytes =
             OfflineMediaDownloads.cachedMediaBytes(appContext) + trackedPublicBytes,
-        cacheBytes = directorySize(appContext.cacheDir) +
-            (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
+        artworkCacheBytes = directorySize(artworkDirectory),
+        subtitleCacheBytes = directorySize(subtitleDirectory),
+        hlsWorkingBytes = directorySize(hlsDirectory),
+        temporaryCacheBytes = (allCacheBytes - namedCacheBytes).coerceAtLeast(0L)
     )
 }
 
-suspend fun clearAppCaches(context: Context): Long = withContext(Dispatchers.IO) {
+suspend fun clearArtworkCache(context: Context): Long = withContext(Dispatchers.IO) {
     val appContext = context.applicationContext
-    val before = directorySize(appContext.cacheDir) +
-        (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
+    val directory = File(appContext.cacheDir, "artwork_cache")
+    val before = directorySize(directory)
     runCatching { appContext.imageLoader.memoryCache?.clear() }
     runCatching { appContext.imageLoader.diskCache?.clear() }
-    deleteDirectoryContents(appContext.cacheDir, excludedNames = setOf("hls_exports"))
-    appContext.externalCacheDir?.let(::deleteDirectoryContents)
-    val after = directorySize(appContext.cacheDir) +
-        (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
+    val after = directorySize(directory)
     (before - after).coerceAtLeast(0L)
 }
+
+suspend fun clearSubtitleCache(context: Context): Long =
+    clearDirectory(context, File(context.cacheDir, "subtitles"))
+
+suspend fun clearHlsWorkingFiles(context: Context): Long =
+    clearDirectory(context, File(context.cacheDir, "hls_exports"))
+
+suspend fun clearTemporaryCaches(context: Context): Long = withContext(Dispatchers.IO) {
+    val appContext = context.applicationContext
+    val excluded = setOf("artwork_cache", "subtitles", "hls_exports")
+    val before = unnamedCacheSize(appContext, excluded)
+    deleteDirectoryContents(appContext.cacheDir, excluded)
+    appContext.externalCacheDir?.let(::deleteDirectoryContents)
+    (before - unnamedCacheSize(appContext, excluded)).coerceAtLeast(0L)
+}
+
+private suspend fun clearDirectory(context: Context, directory: File): Long =
+    withContext(Dispatchers.IO) {
+        val before = directorySize(directory)
+        deleteDirectoryContents(directory)
+        (before - directorySize(directory)).coerceAtLeast(0L)
+    }
+
+private fun unnamedCacheSize(context: Context, excludedNames: Set<String>): Long =
+    (context.cacheDir.listFiles()
+        ?.filterNot { it.name in excludedNames }
+        ?.sumOf(::directorySize) ?: 0L) +
+        (context.externalCacheDir?.let(::directorySize) ?: 0L)
 
 internal fun directorySize(directory: File): Long {
     if (!directory.exists()) return 0L
