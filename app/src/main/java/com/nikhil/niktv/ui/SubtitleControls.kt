@@ -93,6 +93,7 @@ internal fun SubtitleSelectionDialog(
     var searchError by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
+    var focusSearchOutcome by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val keyboard = LocalSoftwareKeyboardController.current
     val isTv = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
@@ -138,6 +139,19 @@ internal fun SubtitleSelectionDialog(
             if (searchMode) searchFocusRequester.requestFocus()
             else modeFocusRequester.requestFocus()
         }
+    }
+    LaunchedEffect(searching, results, searchError, focusSearchOutcome) {
+        if (!searchMode || searching || !focusSearchOutcome) return@LaunchedEffect
+        delay(80L)
+        val destination = resultFocusRequesters.firstOrNull() ?: searchFocusRequester
+        repeat(4) { attempt ->
+            if (runCatching { destination.requestFocus() }.getOrDefault(false)) {
+                focusSearchOutcome = false
+                return@LaunchedEffect
+            }
+            delay(40L * (attempt + 1))
+        }
+        focusSearchOutcome = false
     }
     BackHandler(onBack = onDismiss)
     Box(
@@ -278,8 +292,10 @@ internal fun SubtitleSelectionDialog(
                                     } else false
                                 }
                         )
-                        Button(
+                        IconButton(
                             onClick = {
+                                if (searching || query.isBlank()) return@IconButton
+                                focusSearchOutcome = true
                                 val request = internetSearch?.copy(query = query, languages = language)
                                     ?: SubtitleSearchRequest(query = query, languages = language)
                                 scope.launch {
@@ -291,7 +307,6 @@ internal fun SubtitleSelectionDialog(
                                     searching = false
                                 }
                             },
-                            enabled = query.isNotBlank() && !searching,
                             modifier = Modifier
                                 .focusRequester(searchFocusRequester)
                                 .focusProperties {
@@ -300,7 +315,7 @@ internal fun SubtitleSelectionDialog(
                                     right = searchFocusRequester
                                     down = resultFocusRequesters.firstOrNull() ?: searchFocusRequester
                                 }
-                                .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                                .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
                         ) { Icon(Icons.Default.Search, "Search") }
                     }
                     if (searching) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
@@ -310,6 +325,7 @@ internal fun SubtitleSelectionDialog(
                             val subtitle = results[index]
                             TextButton(
                                 onClick = {
+                                    if (downloadingId != null) return@TextButton
                                     scope.launch {
                                         downloadingId = subtitle.id
                                         searchError = null
@@ -319,7 +335,9 @@ internal fun SubtitleSelectionDialog(
                                         downloadingId = null
                                     }
                                 },
-                                enabled = downloadingId == null,
+                                // Keep the focused result in the graph while its
+                                // subtitle file is being downloaded.
+                                enabled = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .focusRequester(resultFocusRequesters[index])
@@ -350,6 +368,12 @@ internal fun SubtitleSelectionDialog(
                                     up = modeFocusRequester
                                     down = trackFocusRequesters.getOrNull(1) ?: earlierFocusRequester
                                 }
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                        (trackFocusRequesters.getOrNull(1) ?: earlierFocusRequester).requestFocus()
+                                        true
+                                    } else false
+                                }
                         ) { onSelect(null) }
                     }
                     items(tracks.size, key = { tracks[it].id }) { index ->
@@ -363,6 +387,17 @@ internal fun SubtitleSelectionDialog(
                                 .focusProperties {
                                     up = trackFocusRequesters[requesterIndex - 1]
                                     down = trackFocusRequesters.getOrNull(requesterIndex + 1) ?: earlierFocusRequester
+                                }
+                                .onPreviewKeyEvent { event ->
+                                    when {
+                                        event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
+                                            trackFocusRequesters[requesterIndex - 1].requestFocus(); true
+                                        }
+                                        event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
+                                            (trackFocusRequesters.getOrNull(requesterIndex + 1) ?: earlierFocusRequester).requestFocus(); true
+                                        }
+                                        else -> false
+                                    }
                                 }
                         ) { onSelect(track.id) }
                     }
