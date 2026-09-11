@@ -1248,7 +1248,7 @@ fun PlayerScreen(
                             Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
                         Text("${if (media.offlinePlayback) "OFFLINE" else "IPTV STREAM"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }} · Player: ${effectiveEngine.playerEngineLabel()} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = if (media.offlinePlayback) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                        offlineDownloadProgressText?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+                        Text(offlineDownloadProgressText.orEmpty(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                     if (media.catalogType != CatalogType.LIVE_TV) {
                         IconButton(
@@ -1269,7 +1269,7 @@ fun PlayerScreen(
                                 )
                                 .playerControlFocus(CircleShape) { controlsFocused = it }
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
                                 if (displayedDownloadInProgress) {
                                     if (offlineDownloadProgress != null) CircularProgressIndicator(
                                         progress = { offlineDownloadProgress.coerceIn(0f, 1f) },
@@ -1281,7 +1281,7 @@ fun PlayerScreen(
                                     )
                                 }
                                 Icon(
-                                    if (displayedDownloadInProgress) Icons.Default.Downloading else if (offlineDownloadPresent) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                                    if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                     if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
                                     modifier = Modifier.size(22.dp),
                                     tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White

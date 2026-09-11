@@ -128,6 +128,7 @@ object OfflineMediaDownloads {
     fun status(context: Context, requestId: String): OfflineDownloadStatus {
         if (requestId.isBlank()) return OfflineDownloadStatus.MISSING
         hlsWorkInfo(context, requestId)?.let { return it.toOfflineInfo().status }
+        if (persistedHlsOutput(context, requestId) != null) return OfflineDownloadStatus.COMPLETE
         val download = runCatching { manager(context).downloadIndex.getDownload(requestId) }.getOrNull()
             ?: return OfflineDownloadStatus.MISSING
         return when (download.state) {
@@ -148,6 +149,10 @@ object OfflineMediaDownloads {
     fun info(context: Context, requestId: String): OfflineDownloadInfo {
         if (requestId.isBlank()) return OfflineDownloadInfo(OfflineDownloadStatus.MISSING)
         hlsWorkInfo(context, requestId)?.let { return it.toOfflineInfo() }
+        persistedHlsOutput(context, requestId)?.let { output ->
+            val size = mediaStoreSize(context, Uri.parse(output))
+            return OfflineDownloadInfo(OfflineDownloadStatus.COMPLETE, 100f, size, size.takeIf { it > 0L })
+        }
         val download = runCatching { manager(context).downloadIndex.getDownload(requestId) }.getOrNull()
             ?: return OfflineDownloadInfo(OfflineDownloadStatus.MISSING)
         val status = when (download.state) {
@@ -176,9 +181,12 @@ object OfflineMediaDownloads {
                 ?.takeIf { status(context, requestId, downloadId) == OfflineDownloadStatus.COMPLETE }
         }
         hlsWorkInfo(context, requestId)?.let { work ->
-            return work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI)
-                ?.takeIf { work.state == WorkInfo.State.SUCCEEDED }
+            if (work.state == WorkInfo.State.SUCCEEDED) {
+                return work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI)
+                    ?: persistedHlsOutput(context, requestId)
+            }
         }
+        persistedHlsOutput(context, requestId)?.let { return it }
         return sourceUrl.takeIf { it.isNotBlank() && status(context, requestId) == OfflineDownloadStatus.COMPLETE }
     }
 
@@ -188,7 +196,8 @@ object OfflineMediaDownloads {
             return
         }
         hlsWorkInfo(context, requestId)?.let { work ->
-            work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI)?.let { output ->
+            (work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI)
+                ?: persistedHlsOutput(context, requestId))?.let { output ->
                 runCatching {
                     val outputUri = Uri.parse(output)
                     if (outputUri.scheme == "file") File(outputUri.path.orEmpty()).delete()
@@ -196,6 +205,7 @@ object OfflineMediaDownloads {
                 }
             }
             WorkManager.getInstance(context.applicationContext).cancelWorkById(work.id)
+            clearPersistedHlsOutput(context, requestId)
             return
         }
         if (requestId.isNotBlank()) {
@@ -237,6 +247,9 @@ object OfflineMediaDownloads {
 
     private fun WorkInfo.toOfflineInfo(): OfflineDownloadInfo {
         val progress = progress.getInt(HlsExportWorker.KEY_PROGRESS, 0).coerceIn(0, 100)
+        val data = if (state == WorkInfo.State.SUCCEEDED) outputData else this.progress
+        val bytes = data.getLong(HlsExportWorker.KEY_BYTES, 0L).coerceAtLeast(0L)
+        val total = data.getLong(HlsExportWorker.KEY_TOTAL_BYTES, -1L).takeIf { it > 0L }
         return OfflineDownloadInfo(
             status = when (state) {
                 WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> OfflineDownloadStatus.QUEUED
@@ -248,9 +261,34 @@ object OfflineMediaDownloads {
                 WorkInfo.State.SUCCEEDED -> 100f
                 WorkInfo.State.RUNNING -> progress.toFloat()
                 else -> null
-            }
+            },
+            bytesDownloaded = bytes,
+            totalBytes = total
         )
     }
+
+    private fun persistedHlsOutput(context: Context, requestId: String): String? {
+        val id = requestId.removePrefix(HLS_WORK_PREFIX).takeIf { requestId.startsWith(HLS_WORK_PREFIX) }
+            ?: return null
+        return context.applicationContext
+            .getSharedPreferences(HlsExportWorker.OUTPUT_PREFERENCES, Context.MODE_PRIVATE)
+            .getString(id, null)
+    }
+
+    private fun clearPersistedHlsOutput(context: Context, requestId: String) {
+        val id = requestId.removePrefix(HLS_WORK_PREFIX).takeIf { requestId.startsWith(HLS_WORK_PREFIX) }
+            ?: return
+        context.applicationContext
+            .getSharedPreferences(HlsExportWorker.OUTPUT_PREFERENCES, Context.MODE_PRIVATE)
+            .edit().remove(id).apply()
+    }
+
+    private fun mediaStoreSize(context: Context, uri: Uri): Long = runCatching {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getLong(0).coerceAtLeast(0L) else 0L
+            } ?: 0L
+    }.getOrDefault(0L)
 
     private const val HLS_WORK_PREFIX = "hls-export:"
 }

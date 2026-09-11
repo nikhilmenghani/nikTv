@@ -189,7 +189,9 @@ internal fun OfflineDownloadsScreen(
                                     Text(entry.media.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                                     entry.series?.let { Text(it.title, color = Color.Gray, style = MaterialTheme.typography.bodySmall) }
                                     val statusText = when (info.status) {
-                                        OfflineDownloadStatus.COMPLETE -> "Available offline"
+                                        OfflineDownloadStatus.COMPLETE -> if (info.bytesDownloaded > 0L) {
+                                            "Available offline · ${formatOfflineBytes(info.bytesDownloaded)}"
+                                        } else "Available offline"
                                         OfflineDownloadStatus.DOWNLOADING -> info.progressLabel()
                                         OfflineDownloadStatus.QUEUED -> "Queued"
                                         OfflineDownloadStatus.PAUSED -> "Paused"
