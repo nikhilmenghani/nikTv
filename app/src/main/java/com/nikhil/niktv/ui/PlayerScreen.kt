@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key as ComposeKey
 import androidx.compose.ui.input.key.KeyEventType as ComposeKeyEventType
 import androidx.compose.ui.input.key.key
@@ -49,6 +50,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
@@ -333,6 +335,7 @@ fun PlayerScreen(
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
+    var moreOptionsOpen by remember(media.progressKey) { mutableStateOf(false) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -421,6 +424,7 @@ fun PlayerScreen(
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val moreFocusRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rewindFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -434,7 +438,7 @@ fun PlayerScreen(
         if (restorePlayerSwitchFocus) {
             controlsVisible = true
             delay(120L)
-            runCatching { playerSwitchFocusRequester.requestFocus() }
+            runCatching { moreFocusRequester.requestFocus() }
             restorePlayerSwitchFocus = false
         }
     }
@@ -714,7 +718,8 @@ fun PlayerScreen(
         media.progressKey,
         embeddedMode,
         queueVisible,
-        pictureEditorVisible
+        pictureEditorVisible,
+        moreOptionsOpen
     ) {
         val canAutoHide =
             controlsVisible &&
@@ -723,6 +728,7 @@ fun PlayerScreen(
                 !startupTimedOut
                 && !queueVisible
                 && !pictureEditorVisible
+                && !moreOptionsOpen
 
         if (canAutoHide) {
             delay(
@@ -818,6 +824,7 @@ fun PlayerScreen(
 
     BackHandler {
         when {
+            moreOptionsOpen -> moreOptionsOpen = false
             queueVisible -> queueVisible = false
             pictureEditorVisible -> {
                 pictureEditorVisible = false
@@ -1205,201 +1212,345 @@ fun PlayerScreen(
 
         VideoAppearanceOverlay(activeAppearanceProfile)
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+            val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
+            val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
+            val playbackDetailLines = buildList {
+                videoDetails.takeIf { it.isNotBlank() }?.let { add(it) }
+                add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
+                add("Player · ${effectiveEngine.playerEngineLabel()} · Video fit · ${resizeMode.label}")
+                add("Picture · ${activeAppearanceProfile.name} · Controls · ${controlsTimeoutSeconds}s")
+            }
             Box(
-                Modifier.fillMaxSize().then(
-                    if (focusMode) Modifier.background(
-                        Brush.verticalGradient(listOf(Color.Black.copy(alpha = .82f), Color.Transparent, Color.Black.copy(alpha = .88f)))
-                    ) else Modifier
-                )
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.00f to Color.Black.copy(alpha = 0.76f),
+                            0.22f to Color.Transparent,
+                            0.68f to Color.Transparent,
+                            1.00f to Color.Black.copy(alpha = 0.88f)
+                        )
+                    )
             ) {
                 Row(
-                    Modifier.fillMaxWidth()
+                    Modifier
+                        .fillMaxWidth()
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
-                        .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
                         .padding(
-                            horizontal = if (compactMobileControls) 8.dp else 16.dp,
-                            vertical = if (compactMobileControls) 4.dp else 10.dp
+                            horizontal = if (compactMobileControls) 10.dp else 20.dp,
+                            vertical = if (compactMobileControls) 8.dp else 14.dp
                         ),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
-                    IconButton(
+                    PlayerChromeIconButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
                         onClick = onBack,
-                        modifier = Modifier.focusRequester(backFocusRequester)
+                        modifier = Modifier
+                            .focusRequester(backFocusRequester)
                             .focusProperties {
                                 right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester
-                                down = playPauseFocusRequester
+                                down = topDownRequester
                             }
                             .playerDpadFocusRoutes(
                                 right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester,
-                                down = playPauseFocusRequester
-                            )
-                            .playerControlFocus(CircleShape) { controlsFocused = it }
-                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
-                    Column(Modifier.weight(1f).padding(horizontal = if (compactMobileControls) 4.dp else 10.dp)) {
+                                down = topDownRequester
+                            ),
+                        onFocused = { controlsFocused = it }
+                    )
+                    Spacer(Modifier.width(if (compactMobileControls) 8.dp else 12.dp))
+                    Column(
+                        Modifier.weight(1f).padding(top = 2.dp, end = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         Text(
                             media.media.title,
                             color = Color.White,
                             style = if (compactMobileControls) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                             maxLines = 1
                         )
-                        media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
-                        PlayerDateTime(compact = compactMobileControls)
-                        videoDetails.takeIf { it.isNotBlank() }?.let {
-                            Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        media.series?.let {
+                            Text(
+                                it.title,
+                                color = Color.White.copy(alpha = 0.72f),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1
+                            )
                         }
-                        Text("${if (media.offlinePlayback) "OFFLINE" else "IPTV STREAM"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }} · Player: ${effectiveEngine.playerEngineLabel()} · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = if (media.offlinePlayback) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                        Text(offlineDownloadProgressText.orEmpty(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        PlayerDateTime(compact = compactMobileControls)
+                        PlayerDownloadStatusPill(offlineDownloadProgressText.orEmpty())
                     }
-                    if (media.catalogType != CatalogType.LIVE_TV) {
-                        IconButton(
-                            onClick = {
-                                if (!offlineDownloadPresent) downloadRequested = true
-                                onDownload()
-                            },
-                            modifier = Modifier.focusRequester(downloadFocusRequester)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (media.catalogType != CatalogType.LIVE_TV) {
+                            PlayerChromeIconButton(
+                                icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
+                                contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
+                                onClick = {
+                                    if (!offlineDownloadPresent) downloadRequested = true
+                                    onDownload()
+                                },
+                                modifier = Modifier
+                                    .focusRequester(downloadFocusRequester)
+                                    .focusProperties {
+                                        left = backFocusRequester
+                                        right = subtitleFocusRequester
+                                        down = topDownRequester
+                                    }
+                                    .playerDpadFocusRoutes(backFocusRequester, subtitleFocusRequester, topDownRequester),
+                                selected = offlineDownloadPresent,
+                                progress = offlineDownloadProgress.takeIf { displayedDownloadInProgress },
+                                indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
+                                onFocused = { controlsFocused = it }
+                            )
+                        }
+                        PlayerChromeIconButton(
+                            icon = Icons.Default.Subtitles,
+                            contentDescription = "Subtitles",
+                            onClick = { subtitleDialogOpen = true },
+                            modifier = Modifier
+                                .focusRequester(subtitleFocusRequester)
                                 .focusProperties {
-                                    left = backFocusRequester
-                                    right = subtitleFocusRequester
-                                    down = playPauseFocusRequester
+                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
+                                    right = resizeFocusRequester
+                                    down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    backFocusRequester,
-                                    subtitleFocusRequester,
-                                    playPauseFocusRequester
-                                )
-                                .playerControlFocus(CircleShape) { controlsFocused = it }
-                        ) {
-                            Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-                                if (displayedDownloadInProgress) {
-                                    if (offlineDownloadProgress != null) CircularProgressIndicator(
-                                        progress = { offlineDownloadProgress.coerceIn(0f, 1f) },
-                                        modifier = Modifier.size(34.dp),
-                                        strokeWidth = 3.dp
-                                    ) else CircularProgressIndicator(
-                                        modifier = Modifier.size(34.dp),
-                                        strokeWidth = 3.dp
-                                    )
-                                }
-                                Icon(
-                                    if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
-                                    if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
-                                    modifier = Modifier.size(22.dp),
-                                    tint = if (offlineDownloadPresent) MaterialTheme.colorScheme.primary else Color.White
-                                )
-                            }
-                        }
-                    }
-                    IconButton(
-                        onClick = { subtitleDialogOpen = true },
-                        modifier = Modifier.focusRequester(subtitleFocusRequester)
-                            .focusProperties {
-                                left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
-                                right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
-                                down = playPauseFocusRequester
-                            }
-                            .playerControlFocus(CircleShape) { controlsFocused = it }
-                    ) {
-                        Icon(Icons.Default.Subtitles, "Subtitles", tint = Color.White)
-                    }
-                    // PLAYER_GLOBAL_ORIENTATION_NO_ROTATE_V12
-                    if (pipAvailable) {
-                        IconButton(
-                            onClick = {
-                                controlsVisible = false
-                                controlsFocused = false
-                                pipActivity?.enterPlayerPictureInPicture()
+                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester,
+                                    right = resizeFocusRequester,
+                                    down = topDownRequester
+                                ),
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = when (resizeMode) {
+                                VideoResizeMode.FIT -> Icons.Default.FitScreen
+                                VideoResizeMode.FILL -> Icons.Default.CropFree
+                                VideoResizeMode.ZOOM -> Icons.Default.ZoomIn
+                                VideoResizeMode.STRETCH -> Icons.Default.AspectRatio
                             },
-                            modifier = Modifier.focusRequester(pipFocusRequester)
+                            contentDescription = "Video fit: ${resizeMode.label}",
+                            onClick = {
+                                resizeMode = resizeMode.next()
+                                videoScale = 1f
+                                videoOffset = Offset.Zero
+                                modeFeedback = "Video fit · ${resizeMode.label}"
+                            },
+                            modifier = Modifier
+                                .focusRequester(resizeFocusRequester)
                                 .focusProperties {
                                     left = subtitleFocusRequester
-                                    right = playerSwitchFocusRequester
-                                    down = playPauseFocusRequester
+                                    right = moreFocusRequester
+                                    down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    subtitleFocusRequester,
-                                    playerSwitchFocusRequester,
-                                    playPauseFocusRequester
-                                )
-                                .playerControlFocus(CircleShape) { controlsFocused = it }
-                        ) { Icon(Icons.Default.PictureInPictureAlt, "Picture in Picture", tint = Color.White) }
+                                    left = subtitleFocusRequester,
+                                    right = moreFocusRequester,
+                                    down = topDownRequester
+                                ),
+                            selected = resizeMode != VideoResizeMode.FIT,
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = Icons.Default.MoreHoriz,
+                            contentDescription = "More playback options",
+                            onClick = { moreOptionsOpen = true },
+                            modifier = Modifier
+                                .focusRequester(moreFocusRequester)
+                                .focusProperties {
+                                    left = resizeFocusRequester
+                                    down = topDownRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    left = resizeFocusRequester,
+                                    down = topDownRequester
+                                ),
+                            onFocused = { controlsFocused = it }
+                        )
                     }
-                    IconButton(
-                        onClick = {
-                            val nextEngine = playbackEngine.nextPlayerChoice()
-                            modeFeedback = "Player · ${nextEngine.playerChoiceLabel()}"
-                            coroutineScope.launch {
-                                delay(700L)
-                                engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
-                                restorePlayerSwitchFocus = true
-                                onPlaybackEngineChanged(nextEngine)
-                                sessionEngineOverride = nextEngine.resolvePlayerEngine(context, playbackScope)
-                            }
-                        },
-                        modifier = Modifier.focusRequester(playerSwitchFocusRequester)
-                            .focusProperties {
-                                left = if (pipAvailable) pipFocusRequester
-                                else subtitleFocusRequester
-                                right = resizeFocusRequester
-                                down = playPauseFocusRequester
-                            }
-                            .playerDpadFocusRoutes(
-                                left = if (pipAvailable) pipFocusRequester
-                                else subtitleFocusRequester,
-                                right = resizeFocusRequester,
-                                down = playPauseFocusRequester
-                            )
-                            .playerControlFocus(CircleShape) { controlsFocused = it }
+                }
+
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
+                        .padding(
+                            horizontal = if (compactMobileControls) 10.dp else 24.dp,
+                            vertical = if (compactMobileControls) 8.dp else 14.dp
+                        ),
+                    shape = RoundedCornerShape(if (compactMobileControls) 18.dp else 22.dp),
+                    color = Color.Black.copy(alpha = 0.58f),
+                    contentColor = Color.White,
+                    shadowElevation = if (focusMode) 8.dp else 2.dp
+                ) {
+                    Column(
+                        Modifier.padding(
+                            horizontal = if (compactMobileControls) 10.dp else 16.dp,
+                            vertical = if (compactMobileControls) 8.dp else 11.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 5.dp else 8.dp)
                     ) {
-                        Icon(Icons.Default.SmartDisplay, "Switch player. Current: ${playbackEngine.playerChoiceLabel()}", tint = Color.White)
-                    }
-                    PlayerVisualButtons(
-                        resizeMode = resizeMode,
-                        onResize = {
-                            resizeMode = resizeMode.next()
-                            videoScale = 1f
-                            videoOffset = Offset.Zero
-                            modeFeedback = "Video fit · ${resizeMode.label}"
-                        },
-                        profiles = appearanceProfiles,
-                        activeProfile = activeAppearanceProfile,
-                        onPictureMode = { next ->
-                            VideoAppearancePreferences.setActive(context, next.id)
-                            modeFeedback = "Picture mode · ${next.name}"
-                        },
-                        onEditPictureMode = {
-                            queueVisible = false
-                            pictureEditorVisible = !pictureEditorVisible
-                            if (!pictureEditorVisible) appearancePreview = null
-                        },
-                        resizeRequester = resizeFocusRequester,
-                        pictureModeRequester = pictureModeFocusRequester,
-                        pictureSettingsRequester = pictureSettingsFocusRequester,
-                        leftRequester = playerSwitchFocusRequester,
-                        rightRequester = controlsTimeoutFocusRequester,
-                        downRequester = playPauseFocusRequester,
-                        onControlsFocused = { controlsFocused = it }
-                    )
-                    PlayerControlsTimeoutButton(
-                        seconds = controlsTimeoutSeconds,
-                        onChange = { seconds ->
-                            onControlsTimeoutChanged(seconds)
-                            modeFeedback = "Controls hide after ${seconds}s"
-                        },
-                        modifier = Modifier
-                            .focusRequester(controlsTimeoutFocusRequester)
-                            .focusProperties {
-                                left = pictureSettingsFocusRequester
-                                right = fullscreenFocusRequester
-                                down = playPauseFocusRequester
-                            }
-                            .playerDpadFocusRoutes(
-                                left = pictureSettingsFocusRequester,
-                                right = fullscreenFocusRequester,
-                                down = playPauseFocusRequester
+                        if (seekable) {
+                            PlaybackProgressBar(
+                                mediaKey = media.progressKey,
+                                position = position,
+                                duration = duration,
+                                onSeek = { player.seekTo(it) },
+                                compact = compactMobileControls,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(progressFocusRequester)
+                                    .focusProperties {
+                                        up = moreFocusRequester
+                                        down = playPauseFocusRequester
+                                    }
+                                    .playerControlFocus(RoundedCornerShape(14.dp)) { controlsFocused = it }
                             )
-                            .playerControlFocus(CircleShape) { controlsFocused = it }
-                    )
-                    IconButton(onClick = {
+                        } else if (media.catalogType == CatalogType.LIVE_TV) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    "LIVE",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                )
+                            }
+                        }
+                        if (playbackError == null && !startupTimedOut) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (media.previousEpisode != null) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.SkipPrevious,
+                                        contentDescription = "Previous",
+                                        onClick = { if (!advancing) { advancing = true; onPlayPrevious() } },
+                                        modifier = Modifier.focusRequester(previousFocusRequester)
+                                            .focusProperties { up = if (seekable) progressFocusRequester else moreFocusRequester },
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                                if (seekable) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.Replay10,
+                                        contentDescription = "Back 10 seconds",
+                                        onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) },
+                                        modifier = Modifier.focusRequester(rewindFocusRequester)
+                                            .focusProperties { up = progressFocusRequester },
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                                PlayerChromeIconButton(
+                                    icon = if (playbackRequested) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (playbackRequested) "Pause" else "Play",
+                                    onClick = {
+                                        playbackRequested = !playbackRequested
+                                        if (playbackRequested) player.play() else player.pause()
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(playPauseFocusRequester)
+                                        .focusProperties {
+                                            up = if (seekable) progressFocusRequester else moreFocusRequester
+                                            left = when {
+                                                seekable -> rewindFocusRequester
+                                                media.previousEpisode != null -> previousFocusRequester
+                                                else -> FocusRequester.Default
+                                            }
+                                            right = when {
+                                                seekable -> forwardFocusRequester
+                                                media.nextEpisode != null -> nextFocusRequester
+                                                else -> FocusRequester.Default
+                                            }
+                                        },
+                                    primaryAction = true,
+                                    size = if (compactMobileControls) 50.dp else 58.dp,
+                                    iconSize = if (compactMobileControls) 27.dp else 30.dp,
+                                    onFocused = { controlsFocused = it }
+                                )
+                                if (seekable) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.Forward10,
+                                        contentDescription = "Forward 10 seconds",
+                                        onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) },
+                                        modifier = Modifier.focusRequester(forwardFocusRequester)
+                                            .focusProperties { up = progressFocusRequester },
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                                if (media.nextEpisode != null) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.SkipNext,
+                                        contentDescription = "Next",
+                                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                                        modifier = Modifier.focusRequester(nextFocusRequester)
+                                            .focusProperties { up = if (seekable) progressFocusRequester else moreFocusRequester },
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (moreOptionsOpen) {
+                PlayerMoreOptionsDialog(
+                    detailLines = playbackDetailLines,
+                    currentPlayer = effectiveEngine.playerEngineLabel(),
+                    onSwitchPlayer = {
+                        moreOptionsOpen = false
+                        val nextEngine = playbackEngine.nextPlayerChoice()
+                        modeFeedback = "Player · ${nextEngine.playerChoiceLabel()}"
+                        coroutineScope.launch {
+                            delay(700L)
+                            engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                            restorePlayerSwitchFocus = true
+                            onPlaybackEngineChanged(nextEngine)
+                            sessionEngineOverride = nextEngine.resolvePlayerEngine(context, playbackScope)
+                        }
+                    },
+                    pictureMode = activeAppearanceProfile,
+                    onNextPictureMode = {
+                        val current = appearanceProfiles.indexOfFirst { it.id == activeAppearanceProfile.id }.coerceAtLeast(0)
+                        val next = appearanceProfiles[(current + 1) % appearanceProfiles.size]
+                        VideoAppearancePreferences.setActive(context, next.id)
+                        modeFeedback = "Picture mode · ${next.name}"
+                    },
+                    onEditPictureMode = {
+                        moreOptionsOpen = false
+                        queueVisible = false
+                        pictureEditorVisible = true
+                        appearancePreview = null
+                    },
+                    controlsTimeoutSeconds = controlsTimeoutSeconds,
+                    onControlsTimeoutChanged = { seconds ->
+                        onControlsTimeoutChanged(seconds)
+                        modeFeedback = "Controls hide after ${seconds}s"
+                    },
+                    pipAvailable = pipAvailable,
+                    onPictureInPicture = {
+                        moreOptionsOpen = false
+                        controlsVisible = false
+                        controlsFocused = false
+                        pipActivity?.enterPlayerPictureInPicture()
+                    },
+                    fullscreen = focusMode,
+                    onToggleFullscreen = {
+                        moreOptionsOpen = false
                         val enteringFullscreen = !focusMode
                         if (startFullscreen && !enteringFullscreen) {
                             onBack()
@@ -1414,97 +1565,15 @@ fun PlayerScreen(
                                 showControlsAndFocusPlayPause()
                             }
                         }
-                    }, modifier = Modifier.focusRequester(fullscreenFocusRequester)
-                        .focusProperties {
-                            left = controlsTimeoutFocusRequester
-                            down = playPauseFocusRequester
-                        }
-                        .playerDpadFocusRoutes(
-                            left = controlsTimeoutFocusRequester,
-                            down = playPauseFocusRequester
-                        )
-                        .playerControlFocus(CircleShape) { controlsFocused = it }) {
-                        Icon(if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
-                    }
-                }
-
-                Column(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                        .then(if (focusMode) Modifier.navigationBarsPadding() else Modifier)
-                        .then(if (!focusMode) Modifier.background(Color(0xFF090909)) else Modifier)
-                        .padding(
-                            horizontal = if (compactMobileControls) 10.dp else 24.dp,
-                            vertical = if (compactMobileControls) 8.dp else 16.dp
-                        )
-                ) {
-                    val seekable = duration > 0L && media.catalogType != com.nikhil.niktv.model.CatalogType.LIVE_TV
-                    Row(
-                        modifier = Modifier.onPreviewKeyEvent { event ->
-                            if (event.type == ComposeKeyEventType.KeyDown && event.key == ComposeKey.DirectionUp) {
-                                runCatching { fullscreenFocusRequester.requestFocus() }
-                                true
-                            } else if (
-                                focusMode &&
-                                event.type == ComposeKeyEventType.KeyDown &&
-                                event.key == ComposeKey.DirectionDown &&
-                                hasPlaybackQueue &&
-                                !pictureEditorVisible &&
-                                !queueVisible
-                            ) {
-                                queueVisible = true
-                                queueRevealProgress = 1f
-                                queueRevealDragging = false
-                                true
-                            } else false
-                        },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                            if (playbackError == null && !startupTimedOut) {
-                                if (media.previousEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayPrevious() } }, modifier = Modifier.focusRequester(previousFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                    Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White)
-                                }
-                                if (seekable) IconButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = Modifier.focusRequester(rewindFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                    Icon(Icons.Default.Replay10, "Back 10 seconds", tint = Color.White)
-                                }
-                                FilledIconButton(
-                                    onClick = { playbackRequested = !playbackRequested; if (playbackRequested) player.play() else player.pause() },
-                                    modifier = Modifier.size(if (compactMobileControls) 44.dp else 52.dp).focusRequester(playPauseFocusRequester)
-                                        .focusProperties {
-                                            up = fullscreenFocusRequester
-                                            left = if (seekable) rewindFocusRequester else previousFocusRequester
-                                            right = if (seekable) forwardFocusRequester else nextFocusRequester
-                                        }
-                                        .playerControlFocus(CircleShape) { controlsFocused = it },
-                                    colors = IconButtonDefaults.filledIconButtonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = MaterialTheme.colorScheme.onPrimary
-                                    )
-                                ) { Icon(if (playbackRequested) Icons.Default.Pause else Icons.Default.PlayArrow, if (playbackRequested) "Pause" else "Play") }
-                                if (seekable) IconButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) }, modifier = Modifier.focusRequester(forwardFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                    Icon(Icons.Default.Forward10, "Forward 10 seconds", tint = Color.White)
-                                }
-                                if (media.nextEpisode != null) IconButton(onClick = { if (!advancing) { advancing = true; onPlayNext() } }, modifier = Modifier.focusRequester(nextFocusRequester).playerControlFocus(CircleShape) { controlsFocused = it }) {
-                                    Icon(Icons.Default.SkipNext, "Next", tint = Color.White)
-                                }
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            if (seekable) PlaybackProgressBar(
-                                mediaKey = media.progressKey,
-                                position = position,
-                                duration = duration,
-                                onSeek = { player.seekTo(it) },
-                                compact = compactMobileControls,
-                                modifier = Modifier.weight(1f).focusRequester(progressFocusRequester)
-                                    .playerControlFocus(RoundedCornerShape(28.dp)) { controlsFocused = it }
-                            ) else if (media.catalogType == com.nikhil.niktv.model.CatalogType.LIVE_TV) Row(
-                                Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically
-                            ) {
-                            Box(Modifier.size(9.dp).clip(RoundedCornerShape(50)).background(Color(0xFFE50914)))
-                            Spacer(Modifier.width(8.dp))
-                            Text("LIVE", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    },
+                    onDismiss = {
+                        moreOptionsOpen = false
+                        coroutineScope.launch {
+                            delay(80L)
+                            runCatching { moreFocusRequester.requestFocus() }
                         }
                     }
-                }
+                )
             }
         }
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
@@ -1910,9 +1979,255 @@ private object PlayerEngineFallback {
     }
 }
 
+/*
+ * MODERN_PLAYER_CHROME_V48
+ *
+ * One visual system for Media3/ExoPlayer and VLC:
+ * - cinematic top/bottom scrims instead of opaque toolbars;
+ * - compact identity metadata with download progress as a pill;
+ * - a small primary action strip, with secondary/technical controls in More;
+ * - an inset transport dock with a slim scrubber and separate time readout;
+ * - TV-only focus chrome so touch devices do not retain a TV-style focus ring.
+ */
+@Composable
+internal fun PlayerChromeIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    primaryAction: Boolean = false,
+    progress: Float? = null,
+    indeterminateProgress: Boolean = false,
+    size: Dp = if (primaryAction) 56.dp else 48.dp,
+    iconSize: Dp = if (primaryAction) 28.dp else 23.dp,
+    onFocused: (Boolean) -> Unit = {}
+) {
+    val shape = RoundedCornerShape(if (primaryAction) 18.dp else 14.dp)
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(size)
+            .background(
+                if (primaryAction) Color.Black.copy(alpha = 0.64f)
+                else Color.Black.copy(alpha = 0.46f),
+                shape
+            )
+            .playerControlFocus(shape, onFocused)
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (indeterminateProgress) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(34.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.White.copy(alpha = 0.18f)
+                )
+            } else if (progress != null) {
+                CircularProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.size(34.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.White.copy(alpha = 0.18f)
+                )
+            }
+            Icon(
+                icon,
+                contentDescription,
+                modifier = Modifier.size(iconSize),
+                tint = if (selected) MaterialTheme.colorScheme.primary else Color.White
+            )
+        }
+    }
+}
+
+@Composable
+internal fun PlayerDownloadStatusPill(text: String) {
+    if (text.isBlank()) return
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = Color.Black.copy(alpha = 0.52f),
+        contentColor = MaterialTheme.colorScheme.primary
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Icon(
+                Icons.Default.Download,
+                null,
+                Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text,
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerMoreOptionRow(
+    icon: ImageVector,
+    label: String,
+    value: String? = null,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .fillMaxWidth()
+            .playerControlFocus(shape) {},
+        shape = shape,
+        color = Color.White.copy(alpha = 0.055f),
+        contentColor = Color.White
+    ) {
+        Row(
+            Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(icon, null, Modifier.size(22.dp), tint = Color.White.copy(alpha = 0.92f))
+            Text(
+                label,
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White
+            )
+            value?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.66f),
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PlayerMoreOptionsDialog(
+    detailLines: List<String>,
+    currentPlayer: String,
+    onSwitchPlayer: () -> Unit,
+    pictureMode: VideoAppearanceProfile,
+    onNextPictureMode: () -> Unit,
+    onEditPictureMode: () -> Unit,
+    controlsTimeoutSeconds: Int,
+    onControlsTimeoutChanged: (Int) -> Unit,
+    pipAvailable: Boolean,
+    onPictureInPicture: () -> Unit,
+    fullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val firstOptionRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(100L)
+        runCatching { firstOptionRequester.requestFocus() }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color(0xF21A1A1A),
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Playback options", color = Color.White)
+                Text(
+                    "Technical details and less-frequent controls",
+                    color = Color.White.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        },
+        text = {
+            Column(
+                Modifier.widthIn(min = 300.dp, max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (detailLines.any { it.isNotBlank() }) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.Black.copy(alpha = 0.34f)
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            detailLines.filter(String::isNotBlank).forEach { line ->
+                                Text(
+                                    line,
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                        }
+                    }
+                }
+                PlayerMoreOptionRow(
+                    icon = Icons.Default.SmartDisplay,
+                    label = "Player",
+                    value = currentPlayer,
+                    modifier = Modifier.focusRequester(firstOptionRequester),
+                    onClick = onSwitchPlayer
+                )
+                if (pipAvailable) {
+                    PlayerMoreOptionRow(
+                        icon = Icons.Default.PictureInPictureAlt,
+                        label = "Picture in Picture",
+                        onClick = onPictureInPicture
+                    )
+                }
+                PlayerMoreOptionRow(
+                    icon = videoAppearanceIcon(pictureMode.id),
+                    label = "Picture mode",
+                    value = pictureMode.name,
+                    onClick = onNextPictureMode
+                )
+                PlayerMoreOptionRow(
+                    icon = Icons.Default.Tune,
+                    label = "Picture settings",
+                    onClick = onEditPictureMode
+                )
+                PlayerMoreOptionRow(
+                    icon = Icons.Default.Timer,
+                    label = "Controls hide",
+                    value = "${controlsTimeoutSeconds}s",
+                    onClick = {
+                        onControlsTimeoutChanged(
+                            nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
+                        )
+                    }
+                )
+                PlayerMoreOptionRow(
+                    icon = if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                    label = if (fullscreen) "Exit fullscreen" else "Fullscreen",
+                    onClick = onToggleFullscreen
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
 /**
  * A seek bar with an Android 16-style vertical indicator. The left-aligned
  * readout is clipped into active/inactive layers as the fill passes beneath it.
+ */
+/**
+ * MODERN_PLAYER_CHROME_V48
+ * Slim full-width scrubber with time readouts above the rail. D-pad Left/Right
+ * keeps the existing delayed seek-preview behavior; touch drag still seeks.
  */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1935,8 +2250,6 @@ internal fun PlaybackProgressBar(
         if (directionHeld || dragging) return@LaunchedEffect
         delay(450L)
         seek(target.coerceIn(0L, safeDuration))
-        // Keep the preview visible until the engine has had time to update its
-        // sampled position; don't flash the pre-seek position while buffering.
         delay(1_000L)
         preview = null
     }
@@ -1945,8 +2258,10 @@ internal fun PlaybackProgressBar(
     val elapsed = formatPlayerTime(safePosition)
     val remaining = formatPlayerTime(safeDuration - safePosition)
     val total = formatPlayerTime(safeDuration)
-    Box(
-        modifier.height(if (compact) 44.dp else 56.dp)
+    Column(
+        modifier
+            .height(if (compact) 48.dp else 58.dp)
+            .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
             .onPreviewKeyEvent { event ->
                 val direction = when (event.key) {
                     ComposeKey.DirectionLeft, ComposeKey.MediaRewind -> -1
@@ -1965,8 +2280,24 @@ internal fun PlaybackProgressBar(
             }
             .onFocusChanged { if (!it.hasFocus) directionHeld = false }
             .focusable(),
-        contentAlignment = Alignment.Center
+        verticalArrangement = Arrangement.Center
     ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                elapsed,
+                color = Color.White.copy(alpha = 0.92f),
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "−$remaining  /  $total",
+                color = Color.White.copy(alpha = 0.70f),
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium
+            )
+        }
         Slider(
             value = safePosition.toFloat(),
             onValueChange = {
@@ -1977,24 +2308,27 @@ internal fun PlaybackProgressBar(
             onValueChangeFinished = { dragging = false; revision++ },
             enabled = safeDuration > 0L,
             valueRange = 0f..safeDuration.coerceAtLeast(1L).toFloat(),
-            modifier = Modifier.fillMaxWidth().height(if (compact) 44.dp else 56.dp),
+            modifier = Modifier.fillMaxWidth().height(if (compact) 24.dp else 28.dp),
             thumb = {
                 Box(
-                    Modifier.width(if (compact) 3.dp else 4.dp).height(if (compact) 34.dp else 44.dp)
-                        .shadow(5.dp, RoundedCornerShape(99.dp))
-                        .clip(RoundedCornerShape(99.dp))
-                        .background(MaterialTheme.colorScheme.primary)
+                    Modifier
+                        .size(if (compact) 12.dp else 14.dp)
+                        .shadow(4.dp, CircleShape)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape)
                 )
             },
             track = {
                 Box(
-                    Modifier.fillMaxWidth().height(if (compact) 28.dp else 36.dp)
-                        .clip(RoundedCornerShape(if (compact) 14.dp else 18.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                    Modifier
+                        .fillMaxWidth()
+                        .height(if (compact) 4.dp else 5.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Color.White.copy(alpha = 0.24f))
                 ) {
                     Box(
-                        Modifier.fillMaxHeight().fillMaxWidth(fraction)
-                            .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
+                        Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(fraction)
                             .background(MaterialTheme.colorScheme.primary)
                     )
                 }
@@ -2005,18 +2339,6 @@ internal fun PlaybackProgressBar(
                 inactiveTrackColor = Color.Transparent
             )
         )
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color.Black.copy(alpha = 0.46f),
-            contentColor = Color.White
-        ) {
-            Text(
-                "$elapsed  •  −$remaining  •  $total",
-                modifier = Modifier.padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 2.dp else 4.dp),
-                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
-                maxLines = 1
-            )
-        }
     }
 }
 
@@ -2037,21 +2359,34 @@ internal fun Modifier.playerControlFocus(
     onFocused: (Boolean) -> Unit
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val isTv = context.isTvLikeDevice(configuration)
+    val minimumSize = when {
+        isTv -> 56.dp
+        configuration.smallestScreenWidthDp < 600 -> 44.dp
+        else -> 48.dp
+    }
     return this
-        .requiredSizeIn(
-            minWidth = if (LocalConfiguration.current.smallestScreenWidthDp < 600) 44.dp else 56.dp,
-            minHeight = if (LocalConfiguration.current.smallestScreenWidthDp < 600) 44.dp else 56.dp
-        )
+        .requiredSizeIn(minWidth = minimumSize, minHeight = minimumSize)
         .onFocusChanged {
             focused = it.isFocused
             onFocused(it.isFocused)
         }
         .then(
-            if (focused) Modifier
-                .shadow(18.dp, shape, ambientColor = Color(0xFFE50914), spotColor = Color(0xFFE50914))
-                .background(Color(0xFF451014), shape)
-                .border(4.dp, Color(0xFFFF3340), shape)
-            else Modifier
+            if (focused && isTv) {
+                Modifier
+                    .shadow(
+                        12.dp,
+                        shape,
+                        ambientColor = Color(0x99E50914),
+                        spotColor = Color(0x99E50914)
+                    )
+                    .background(Color(0xFF351014), shape)
+                    .border(2.dp, Color(0xFFFF4A54), shape)
+            } else {
+                Modifier
+            }
         )
 }
 
