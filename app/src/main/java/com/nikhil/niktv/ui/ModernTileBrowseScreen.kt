@@ -59,7 +59,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -134,6 +133,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
+private val ModernAppBackground = Color(0xFF0B0B0F)
+private val ModernChromeSurface = Color(0xFF101116)
+private val ModernCardSurface = Color(0xFF151720)
+private val ModernOutline = Color(0xFF2A2D36)
+private val ModernBrandAccent = Color(0xFF7C8CFF)
+private val ModernBrandViolet = Color(0xFFA275FF)
+
 @Composable
 internal fun ModernTileBrowseScreen(
     state: NikTvState,
@@ -175,7 +181,7 @@ internal fun ModernTileBrowseScreen(
     destinationStateHolder.SaveableStateProvider(destinationKey) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color(0xFF090909)
+            color = ModernAppBackground
         ) {
             when {
                 activeTmdb != null -> {
@@ -264,18 +270,18 @@ private fun ModernTilePhoneHeader(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Color(0xFF0B0B0C))
+            .background(ModernChromeSurface)
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 9.dp),
+                .padding(horizontal = 14.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Image(
                 painter = painterResource(R.drawable.niktv_logo_foreground),
                 contentDescription = "NikTV",
-                modifier = Modifier.size(34.dp)
+                modifier = Modifier.size(32.dp)
             )
             Spacer(Modifier.width(9.dp))
             Text(
@@ -358,7 +364,7 @@ private fun ModernTilePhoneHeader(
             }
         }
 
-        HorizontalDivider(color = Color(0xFF242424))
+        HorizontalDivider(color = ModernOutline)
     }
 }
 
@@ -469,8 +475,26 @@ private fun ModernDestinationHub(
             emptyList()
         }
 
+    val newEpisodes = if (dashboardSurface == DashboardSurface.HOME) {
+        state.watchedSeries.flatMap { watched ->
+            watched.newEpisodes.map { episode -> watched to episode }
+        }
+    } else {
+        emptyList()
+    }
+    val recents = if (dashboardSurface == DashboardSurface.HOME) {
+        state.recentlyPlayed
+            .filter {
+                it.kind == FavoriteKind.MOVIE ||
+                    it.kind == FavoriteKind.SERIES
+            }
+            .take(12)
+    } else {
+        emptyList()
+    }
+
     val screenTitle = when (dashboardSurface) {
-        DashboardSurface.HOME -> "Explore"
+        DashboardSurface.HOME -> "Home"
         DashboardSurface.MOVIES -> "Movies"
         DashboardSurface.SERIES -> "Series"
         DashboardSurface.LIVE_TV -> "Live TV"
@@ -505,186 +529,56 @@ private fun ModernDestinationHub(
             else 12.dp
         )
     ) {
-        item("hub-header", span = fullSpan) {
-            Column(
-                Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    screenTitle,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Black,
-                    color = Color.White
-                )
-                Text(
-                    if (dashboardSurface == DashboardSurface.HOME) {
-                        "Choose a destination first. NikTV loads titles only after you open it."
-                    } else {
-                        "Pick a TMDB collection or provider category."
-                    },
-                    color = Color(0xFFB9B9B9),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp)
+        if (dashboardSurface != DashboardSurface.HOME) {
+            item("hub-header", span = fullSpan) {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item("search-this-tab") {
-                        AssistChip(
-                            onClick = openSearch,
-                            label = {
-                                Text(
-                                    if (dashboardSurface == DashboardSurface.HOME) "Search"
-                                    else "Search ${screenTitle}"
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Default.Search, null, Modifier.size(17.dp))
-                            }
-                        )
-                    }
-                    if (dashboardSurface != DashboardSurface.LIVE_TV) {
-                        item("configure-tmdb") {
-                            AssistChip(
-                                onClick = configureTmdb,
-                                label = { Text("TMDB sections") },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.DashboardCustomize,
-                                        null,
-                                        Modifier.size(17.dp)
-                                    )
-                                }
-                            )
-                        }
-                    }
-
-                    when (dashboardSurface) {
-                        DashboardSurface.HOME -> {
-                            item("configure-live") {
-                                AssistChip(
-                                    onClick = {
-                                        configureIptv(CatalogType.LIVE_TV)
-                                    },
-                                    label = { Text("Live TV categories") },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.LiveTv,
-                                            null,
-                                            Modifier.size(17.dp)
-                                        )
-                                    }
-                                )
-                            }
-                            item("configure-movies") {
-                                AssistChip(
-                                    onClick = {
-                                        configureIptv(CatalogType.MOVIES)
-                                    },
-                                    label = { Text("Movie categories") },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.SmartDisplay,
-                                            null,
-                                            Modifier.size(17.dp)
-                                        )
-                                    }
-                                )
-                            }
-                            item("configure-series") {
-                                AssistChip(
-                                    onClick = {
-                                        configureIptv(CatalogType.SERIES)
-                                    },
-                                    label = { Text("Series categories") },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Tv,
-                                            null,
-                                            Modifier.size(17.dp)
-                                        )
-                                    }
-                                )
-                            }
-                        }
-
-                        DashboardSurface.MOVIES -> {
-                            item("configure-iptv") {
-                                AssistChip(
-                                    onClick = {
-                                        configureIptv(CatalogType.MOVIES)
-                                    },
-                                    label = { Text("IPTV categories") },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Tune,
-                                            null,
-                                            Modifier.size(17.dp)
-                                        )
-                                    }
-                                )
-                            }
-                        }
-
-                        DashboardSurface.SERIES -> {
-                            item("configure-iptv") {
-                                AssistChip(
-                                    onClick = {
-                                        configureIptv(CatalogType.SERIES)
-                                    },
-                                    label = { Text("IPTV categories") },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Tune,
-                                            null,
-                                            Modifier.size(17.dp)
-                                        )
-                                    }
-                                )
-                            }
-                        }
-
-                        DashboardSurface.LIVE_TV -> {
-                            item("configure-iptv") {
-                                AssistChip(
-                                    onClick = { configureIptv(CatalogType.LIVE_TV) },
-                                    label = { Text("IPTV categories") },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.Tune, null, Modifier.size(17.dp))
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    item("reset") {
-                        AssistChip(
-                            onClick = resetSurface,
-                            label = { Text("Reset") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.RestartAlt,
-                                    null,
-                                    Modifier.size(17.dp)
-                                )
-                            }
-                        )
-                    }
+                    Text(
+                        screenTitle,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Black,
+                        color = Color.White
+                    )
+                    Text(
+                        "Choose a collection or provider category to browse.",
+                        color = Color(0xFFA7ABB5),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    ModernHubQuickActions(
+                        dashboardSurface = dashboardSurface,
+                        screenTitle = screenTitle,
+                        openSearch = openSearch,
+                        configureTmdb = configureTmdb,
+                        configureIptv = configureIptv,
+                        resetSurface = resetSurface,
+                        isTv = isTv
+                    )
                 }
             }
         }
 
         if (dashboardSurface == DashboardSurface.HOME) {
-            val newEpisodes = state.watchedSeries.flatMap { watched ->
-                watched.newEpisodes.map { episode -> watched to episode }
-            }
-            val recents = state.recentlyPlayed
-                .filter {
-                    it.kind == FavoriteKind.MOVIE ||
-                        it.kind == FavoriteKind.SERIES
+            if (recents.isNotEmpty()) {
+                item("continue-header", span = fullSpan) {
+                    ModernHubSectionHeading(
+                        "Continue Watching",
+                        "Pick up where you left off."
+                    )
                 }
-                .take(12)
+                item("continue-row", span = fullSpan) {
+                    ModernContinueRow(
+                        recents = recents,
+                        playbackProgress = state.playbackProgress,
+                        favorites = state.favorites,
+                        returnFocusId = state.playbackReturnFocusId,
+                        open = openRecent,
+                        clear = removeRecent,
+                        toggleFavorite = toggleFavorite
+                    )
+                }
+            }
 
             if (newEpisodes.isNotEmpty()) {
                 item("new-episodes-header", span = fullSpan) {
@@ -704,22 +598,23 @@ private fun ModernDestinationHub(
                 }
             }
 
-            if (recents.isNotEmpty()) {
-                item("continue-header", span = fullSpan) {
+            item("home-browse-header", span = fullSpan) {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ModernHubSectionHeading(
-                        "Continue Watching",
-                        "Jump back in without browsing a destination."
+                        "Browse",
+                        "Search NikTV or choose which destinations appear on Home."
                     )
-                }
-                item("continue-row", span = fullSpan) {
-                    ModernContinueRow(
-                        recents = recents,
-                        playbackProgress = state.playbackProgress,
-                        favorites = state.favorites,
-                        returnFocusId = state.playbackReturnFocusId,
-                        open = openRecent,
-                        clear = removeRecent,
-                        toggleFavorite = toggleFavorite
+                    ModernHubQuickActions(
+                        dashboardSurface = dashboardSurface,
+                        screenTitle = screenTitle,
+                        openSearch = openSearch,
+                        configureTmdb = configureTmdb,
+                        configureIptv = configureIptv,
+                        resetSurface = resetSurface,
+                        isTv = isTv
                     )
                 }
             }
@@ -831,10 +726,10 @@ private fun ModernDestinationHub(
                         .fillMaxWidth()
                         .padding(top = 12.dp),
                     shape = RoundedCornerShape(18.dp),
-                    color = Color(0xFF151515),
+                    color = ModernCardSurface,
                     border = BorderStroke(
                         1.dp,
-                        Color(0xFF343434)
+                        ModernOutline
                     )
                 ) {
                     Column(
@@ -845,7 +740,7 @@ private fun ModernDestinationHub(
                             Icons.Default.DashboardCustomize,
                             null,
                             Modifier.size(30.dp),
-                            tint = Color(0xFFE50914)
+                            tint = ModernBrandViolet
                         )
                         Text(
                             "Choose your destinations",
@@ -969,8 +864,262 @@ private fun ModernHubSectionHeading(
         Text(
             subtitle,
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF9D9D9D)
+            color = Color(0xFFA7ABB5)
         )
+    }
+}
+
+@Composable
+private fun ModernHubQuickActions(
+    dashboardSurface: DashboardSurface,
+    screenTitle: String,
+    openSearch: () -> Unit,
+    configureTmdb: () -> Unit,
+    configureIptv: (CatalogType) -> Unit,
+    resetSurface: () -> Unit,
+    isTv: Boolean
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(top = 4.dp, end = 8.dp, bottom = 10.dp)
+    ) {
+        item("quick-search") {
+            ModernQuickActionTile(
+                title = if (dashboardSurface == DashboardSurface.HOME) "Search" else "Search $screenTitle",
+                subtitle = "Across NikTV",
+                icon = Icons.Default.Search,
+                accent = ModernBrandAccent,
+                isTv = isTv,
+                onClick = openSearch
+            )
+        }
+        if (dashboardSurface != DashboardSurface.LIVE_TV) {
+            item("quick-tmdb") {
+                ModernQuickActionTile(
+                    title = "TMDB sections",
+                    subtitle = "Choose Discover rows",
+                    icon = Icons.Default.DashboardCustomize,
+                    accent = ModernBrandViolet,
+                    isTv = isTv,
+                    onClick = configureTmdb
+                )
+            }
+        }
+
+        when (dashboardSurface) {
+            DashboardSurface.HOME -> {
+                item("quick-live") {
+                    ModernQuickActionTile(
+                        title = "Live TV categories",
+                        subtitle = "Choose channel groups",
+                        icon = Icons.Default.LiveTv,
+                        accent = Color(0xFFE65D68),
+                        isTv = isTv,
+                        onClick = { configureIptv(CatalogType.LIVE_TV) }
+                    )
+                }
+                item("quick-movies") {
+                    ModernQuickActionTile(
+                        title = "Movie categories",
+                        subtitle = "Choose provider rows",
+                        icon = Icons.Default.SmartDisplay,
+                        accent = Color(0xFF55B8FF),
+                        isTv = isTv,
+                        onClick = { configureIptv(CatalogType.MOVIES) }
+                    )
+                }
+                item("quick-series") {
+                    ModernQuickActionTile(
+                        title = "Series categories",
+                        subtitle = "Choose provider rows",
+                        icon = Icons.Default.Tv,
+                        accent = Color(0xFF9A80FF),
+                        isTv = isTv,
+                        onClick = { configureIptv(CatalogType.SERIES) }
+                    )
+                }
+            }
+            DashboardSurface.MOVIES -> {
+                item("quick-iptv") {
+                    ModernQuickActionTile(
+                        title = "IPTV categories",
+                        subtitle = "Choose provider rows",
+                        icon = Icons.Default.Tune,
+                        accent = Color(0xFF55B8FF),
+                        isTv = isTv,
+                        onClick = { configureIptv(CatalogType.MOVIES) }
+                    )
+                }
+            }
+            DashboardSurface.SERIES -> {
+                item("quick-iptv") {
+                    ModernQuickActionTile(
+                        title = "IPTV categories",
+                        subtitle = "Choose provider rows",
+                        icon = Icons.Default.Tune,
+                        accent = Color(0xFF9A80FF),
+                        isTv = isTv,
+                        onClick = { configureIptv(CatalogType.SERIES) }
+                    )
+                }
+            }
+            DashboardSurface.LIVE_TV -> {
+                item("quick-iptv") {
+                    ModernQuickActionTile(
+                        title = "IPTV categories",
+                        subtitle = "Choose channel groups",
+                        icon = Icons.Default.Tune,
+                        accent = Color(0xFFE65D68),
+                        isTv = isTv,
+                        onClick = { configureIptv(CatalogType.LIVE_TV) }
+                    )
+                }
+            }
+        }
+
+        item("quick-reset") {
+            ModernQuickActionTile(
+                title = "Reset",
+                subtitle = "Restore defaults",
+                icon = Icons.Default.RestartAlt,
+                accent = Color(0xFFA7ADB8),
+                isTv = isTv,
+                onClick = resetSurface
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModernQuickActionTile(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    accent: Color,
+    isTv: Boolean,
+    onClick: () -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
+    val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    var focused by remember { mutableStateOf(false) }
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(durationMillis = 170),
+        label = "modernQuickActionFocus"
+    )
+    val pressProgress by animateFloatAsState(
+        targetValue = if (!remoteNavigationActive && pressed) 1f else 0f,
+        animationSpec = tween(durationMillis = 110),
+        label = "modernQuickActionPress"
+    )
+    val visualProgress = if (remoteNavigationActive) focusProgress else pressProgress
+    val scale = 1f + (
+        if (remoteNavigationActive) {
+            if (isTv) 0.055f else 0.035f
+        } else if (isTablet) {
+            0.025f
+        } else {
+            0.018f
+        }
+    ) * visualProgress
+    val shape = RoundedCornerShape(if (isTv) 18.dp else 16.dp)
+    val tileWidth = when {
+        isTv -> 240.dp
+        isPhone -> 196.dp
+        else -> 220.dp
+    }
+    val tileHeight = when {
+        isTv -> 92.dp
+        isPhone -> 82.dp
+        else -> 88.dp
+    }
+
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        modifier = Modifier
+            .width(tileWidth)
+            .height(tileHeight)
+            .zIndex(visualProgress)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .shadow(
+                elevation = ((if (isTv) 18f else 8f) * visualProgress).dp,
+                shape = shape,
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.42f),
+                spotColor = accent.copy(alpha = if (isTv) 0.34f else 0.18f)
+            )
+            .onFocusChanged { focused = it.isFocused },
+        shape = shape,
+        color = ModernCardSurface,
+        border = BorderStroke(
+            if (remoteNavigationActive && focused) {
+                if (isTv) 3.dp else 2.dp
+            } else {
+                1.dp
+            },
+            if (remoteNavigationActive && focused) {
+                accent.copy(alpha = 0.95f)
+            } else {
+                ModernOutline
+            }
+        )
+    ) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(accent.copy(alpha = 0.16f), Color.Transparent)
+                    )
+                )
+                .padding(horizontal = if (isPhone) 12.dp else 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
+            Surface(
+                modifier = Modifier.size(if (isPhone) 38.dp else 42.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = accent.copy(alpha = 0.16f)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        icon,
+                        null,
+                        Modifier.size(if (isPhone) 20.dp else 22.dp),
+                        tint = accent
+                    )
+                }
+            }
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    title,
+                    style = if (isPhone) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFA7ABB5),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
@@ -1059,8 +1208,8 @@ private fun ModernDestinationTile(
                     if (isTv) Color(0x88000000)
                     else Color(0x55000000),
                 spotColor =
-                    if (isTv) Color(0x77E50914)
-                    else Color(0x33E50914)
+                    if (isTv) ModernBrandViolet.copy(alpha = 0.34f)
+                    else ModernBrandAccent.copy(alpha = 0.18f)
             )
             .onFocusChanged {
                 focused = it.isFocused
@@ -1122,7 +1271,7 @@ private fun ModernDestinationTile(
                             scaleY = iconScale
                         },
                     shape = RoundedCornerShape(if (isTv) 14.dp else 12.dp),
-                    color = Color.Black.copy(alpha = 0.30f)
+                    color = ModernBrandAccent.copy(alpha = 0.13f)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -1135,7 +1284,7 @@ private fun ModernDestinationTile(
                                     else -> 23.dp
                                 }
                             ),
-                            tint = Color.White
+                            tint = Color(0xFFD9DEFF)
                         )
                     }
                 }
@@ -1191,7 +1340,7 @@ private fun ModernDestinationTile(
                         .align(Alignment.BottomStart)
                         .width(72.dp)
                         .height(4.dp)
-                        .background(Color(0xFFE50914))
+                        .background(ModernBrandAccent)
                 )
             }
         }
@@ -1202,12 +1351,12 @@ private fun destinationPalette(
     seed: String
 ): Pair<Color, Color> {
     val palettes = listOf(
-        Color(0xFF1A2332) to Color(0xFF461217),
-        Color(0xFF25172B) to Color(0xFF101116),
-        Color(0xFF122B2A) to Color(0xFF111218),
-        Color(0xFF332115) to Color(0xFF151015),
-        Color(0xFF16233A) to Color(0xFF11131C),
-        Color(0xFF2D1820) to Color(0xFF171116)
+        Color(0xFF182238) to Color(0xFF11141C),
+        Color(0xFF211A35) to Color(0xFF12131A),
+        Color(0xFF142A2C) to Color(0xFF111419),
+        Color(0xFF282033) to Color(0xFF141219),
+        Color(0xFF17263D) to Color(0xFF11151E),
+        Color(0xFF202536) to Color(0xFF12141B)
     )
     return palettes[
         (seed.hashCode() and Int.MAX_VALUE) %
@@ -1358,7 +1507,7 @@ private fun ModernCompactMediaCard(
                 else -> 0.025f
             } * visualProgress
         )
-    val shape = RoundedCornerShape(11.dp)
+    val shape = RoundedCornerShape(14.dp)
     val borderColor = lerp(
         Color(0xFF30343B),
         when {
@@ -1377,13 +1526,11 @@ private fun ModernCompactMediaCard(
         }
 
     /*
-     * HOME_MEDIA_FULL_TEXT_V45
+     * HOME_MEDIA_COMPACT_METADATA_V52
      *
-     * Match Home Continue Watching / New Episodes cards to the actual
-     * ModernCollectionPoster geometry used after opening a TMDB/IPTV movie
-     * collection. Keep the Home title/subtitle scrim and playback progress,
-     * and let both the media title and subtitle metadata wrap naturally so
-     * long episode details remain fully readable instead of being ellipsized.
+     * Home rails keep poster-first artwork and a concise two-line text
+     * hierarchy. Full episode metadata remains available after opening the
+     * title; Home prioritizes scanability and playback progress.
      */
     Box(
         modifier = modifier.then(returningTile.modifier)
@@ -1404,8 +1551,8 @@ private fun ModernCompactMediaCard(
                     if (isTv) Color(0x88000000)
                     else Color(0x55000000),
                 spotColor =
-                    if (isTv) Color(0x66E50914)
-                    else Color(0x22E50914)
+                    if (isTv) ModernBrandViolet.copy(alpha = 0.32f)
+                    else ModernBrandAccent.copy(alpha = 0.14f)
             )
             .onFocusChanged {
                 focused = it.isFocused
@@ -1450,8 +1597,9 @@ private fun ModernCompactMediaCard(
                             Brush.verticalGradient(
                                 colors = listOf(
                                     Color.Transparent,
-                                    Color.Black.copy(alpha = 0.08f),
-                                    Color.Black.copy(alpha = 0.88f)
+                                    Color.Black.copy(alpha = 0.05f),
+                                    Color.Black.copy(alpha = 0.48f),
+                                    Color.Black.copy(alpha = 0.94f)
                                 )
                             )
                         )
@@ -1471,18 +1619,20 @@ private fun ModernCompactMediaCard(
                     Text(
                         item.title,
                         style = MaterialTheme.typography.titleSmall,
-                        softWrap = true,
                         fontWeight =
                             if (active) FontWeight.Bold
                             else FontWeight.SemiBold,
-                        color = Color.White
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     if (subtitle.isNotBlank()) {
                         Text(
                             subtitle,
-                            softWrap = true,
-                            color = Color.White.copy(alpha = 0.78f),
-                            style = MaterialTheme.typography.labelSmall
+                            color = Color.White.copy(alpha = 0.76f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -1493,13 +1643,16 @@ private fun ModernCompactMediaCard(
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .height(if (isTv) 5.dp else 4.dp)
-                            .background(Color.Black.copy(alpha = 0.58f))
+                            .background(
+                                Color.White.copy(alpha = 0.16f),
+                                RoundedCornerShape(50)
+                            )
                     ) {
                         Box(
                             Modifier
                                 .fillMaxHeight()
                                 .fillMaxWidth(watchedFraction)
-                                .background(Color(0xFFE50914))
+                                .background(ModernBrandAccent, RoundedCornerShape(50))
                         )
                     }
                 }
