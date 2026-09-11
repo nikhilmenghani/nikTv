@@ -557,14 +557,17 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         val present = state.offlineDownloads.any { download ->
                             download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                                 download.catalogType == state.nowPlaying?.catalogType &&
-                                download.media.id == state.nowPlaying?.media?.id
+                                download.media.id == state.nowPlaying?.media?.id &&
+                                OfflineMediaDownloads.status(appContext, download.requestId, download.downloadId) !in
+                                    setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)
                         }
                         if (present) confirmPlayerDownloadRemoval = true else vm.downloadNowPlaying()
                     },
                     offlineDownloadPresent = state.offlineDownloads.any { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
-                            download.media.id == state.nowPlaying?.media?.id
+                            download.media.id == state.nowPlaying?.media?.id &&
+                            OfflineMediaDownloads.status(appContext, download.requestId, download.downloadId) == OfflineDownloadStatus.COMPLETE
                     },
                     offlineDownloadInProgress = state.offlineDownloads.firstOrNull { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&

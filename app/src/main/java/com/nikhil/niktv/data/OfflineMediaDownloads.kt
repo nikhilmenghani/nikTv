@@ -143,7 +143,13 @@ object OfflineMediaDownloads {
 
     fun status(context: Context, requestId: String): OfflineDownloadStatus {
         if (requestId.isBlank()) return OfflineDownloadStatus.MISSING
-        hlsWorkInfo(context, requestId)?.let { return it.toOfflineInfo().status }
+        hlsWorkInfo(context, requestId)?.let { work ->
+            if (work.state == WorkInfo.State.SUCCEEDED &&
+                work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI).isNullOrBlank() &&
+                persistedHlsOutput(context, requestId).isNullOrBlank()
+            ) return OfflineDownloadStatus.FAILED
+            return work.toOfflineInfo().status
+        }
         if (persistedHlsOutput(context, requestId) != null) return OfflineDownloadStatus.COMPLETE
         val download = runCatching { manager(context).downloadIndex.getDownload(requestId) }.getOrNull()
             ?: return OfflineDownloadStatus.MISSING
@@ -164,7 +170,13 @@ object OfflineMediaDownloads {
 
     fun info(context: Context, requestId: String): OfflineDownloadInfo {
         if (requestId.isBlank()) return OfflineDownloadInfo(OfflineDownloadStatus.MISSING)
-        hlsWorkInfo(context, requestId)?.let { return it.toOfflineInfo() }
+        hlsWorkInfo(context, requestId)?.let { work ->
+            if (work.state == WorkInfo.State.SUCCEEDED &&
+                work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI).isNullOrBlank() &&
+                persistedHlsOutput(context, requestId).isNullOrBlank()
+            ) return OfflineDownloadInfo(OfflineDownloadStatus.FAILED)
+            return work.toOfflineInfo()
+        }
         persistedHlsOutput(context, requestId)?.let { output ->
             val size = mediaStoreSize(context, Uri.parse(output))
             return OfflineDownloadInfo(OfflineDownloadStatus.COMPLETE, 100f, size, size.takeIf { it > 0L })

@@ -3791,9 +3791,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profileKey = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey() ?: return
         val existingKey = "$profileKey:${playing.catalogType.name}:${playing.media.id}"
-        _state.value.offlineDownloads.firstOrNull { it.key == existingKey }?.let {
-            removeOfflineDownload(playing.media, playing.catalogType)
-            return
+        _state.value.offlineDownloads.firstOrNull { it.key == existingKey }?.let { existing ->
+            if (OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) !in
+                setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)
+            ) {
+                removeOfflineDownload(playing.media, playing.catalogType)
+                return
+            }
         }
         val session = _state.value.session ?: return
         viewModelScope.launch {

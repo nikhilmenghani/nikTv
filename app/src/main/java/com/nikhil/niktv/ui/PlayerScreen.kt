@@ -7,6 +7,7 @@ import android.content.res.Configuration
 import android.media.AudioManager
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.Gravity
 import android.view.ScaleGestureDetector
 import android.view.MotionEvent
 import android.view.View
@@ -50,6 +51,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -2349,6 +2352,10 @@ internal fun PlayerMoreOptionsDialog(
         shape = RoundedCornerShape(24.dp),
         containerColor = Color(0xF21A1A1A),
         title = {
+            val dialogView = LocalView.current
+            SideEffect {
+                (dialogView.parent as? DialogWindowProvider)?.window?.setGravity(Gravity.END)
+            }
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Playback options", color = Color.White)
                 Text(

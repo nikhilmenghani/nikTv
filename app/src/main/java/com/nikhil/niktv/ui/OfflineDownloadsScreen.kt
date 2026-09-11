@@ -133,10 +133,6 @@ internal fun OfflineDownloadsScreen(
     val context = LocalContext.current
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
     val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
-    val hlsExportActive = entries.any {
-        it.requestId.startsWith("hls-export:") && OfflineMediaDownloads.status(context, it.requestId, it.downloadId) in
-            setOf(OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED)
-    }
     var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
     var pendingClear by remember { mutableStateOf<String?>(null) }
     var storageRevision by remember { mutableLongStateOf(0L) }
@@ -151,11 +147,9 @@ internal fun OfflineDownloadsScreen(
         OfflineStorageCard(
             storage = storage,
             clearing = clearing,
-            hlsExportActive = hlsExportActive,
             onClearDownloads = { pendingClear = "downloads" },
             onClearArtwork = { pendingClear = "artwork" },
             onClearSubtitles = { pendingClear = "subtitles" },
-            onClearHlsWorking = { pendingClear = "hls" },
             onClearTemporary = { pendingClear = "temporary" }
         )
         if (entries.isEmpty()) {
@@ -174,12 +168,12 @@ internal fun OfflineDownloadsScreen(
             ) {
                 listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach { type ->
                     val group = entries.filter { it.catalogType == type }
-                    item("offline-header-${type.name}") {
-                        Text(type.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+                    if (group.isNotEmpty()) {
+                        item("offline-header-${type.name}") {
+                            Text(type.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+                        }
                     }
-                    if (group.isEmpty()) {
-                        item("offline-empty-${type.name}") { Text("No downloads", color = Color.DarkGray) }
-                    } else items(group, key = { it.key }) { entry ->
+                    items(group, key = { it.key }) { entry ->
                         val info = remember(entry.requestId, state.offlineDownloadRevision) {
                             OfflineMediaDownloads.info(context, entry.requestId, entry.downloadId)
                         }
@@ -286,14 +280,12 @@ internal fun OfflineDownloadsScreen(
             "downloads" -> "Clear offline downloads?"
             "artwork" -> "Clear artwork cache?"
             "subtitles" -> "Clear downloaded subtitles?"
-            "hls" -> "Clear HLS working files?"
             else -> "Clear temporary cache?"
         }
         val explanation = when (target) {
             "downloads" -> "This removes NikTV-tracked offline videos. Other files in Download/NikTV Offline, profiles, settings, and watch history are kept."
             "artwork" -> "Cached posters and artwork will be downloaded again when needed."
             "subtitles" -> "Downloaded internet subtitle files will be removed. They can be downloaded again later."
-            "hls" -> "Incomplete and temporary HLS conversion files will be removed. Completed offline videos are kept."
             else -> "Other temporary app files will be removed. Offline videos, artwork, subtitles, profiles, and watch history are kept."
         }
         AlertDialog(
@@ -311,10 +303,10 @@ internal fun OfflineDownloadsScreen(
                                 removeAll()
                                 delay(1_000L)
                                 OfflineMediaDownloads.clearCachedMedia(context)
+                                clearHlsWorkingFiles(context)
                             }
                             "artwork" -> clearArtworkCache(context)
                             "subtitles" -> clearSubtitleCache(context)
-                            "hls" -> clearHlsWorkingFiles(context)
                             else -> clearTemporaryCaches(context)
                         }
                         storageRevision++
@@ -330,20 +322,18 @@ internal fun OfflineDownloadsScreen(
 private fun OfflineStorageCard(
     storage: AppStorageSnapshot?,
     clearing: Boolean,
-    hlsExportActive: Boolean,
     onClearDownloads: () -> Unit,
     onClearArtwork: () -> Unit,
     onClearSubtitles: () -> Unit,
-    onClearHlsWorking: () -> Unit,
     onClearTemporary: () -> Unit
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFF151820),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(10.dp))
@@ -355,43 +345,22 @@ private fun OfflineStorageCard(
                 val usedBytes = (snapshot.totalBytes - snapshot.availableBytes).coerceAtLeast(0L)
                 LinearProgressIndicator(
                     progress = { if (snapshot.totalBytes > 0L) usedBytes.toFloat() / snapshot.totalBytes else 0f },
-                    modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(99.dp))
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(99.dp))
                 )
                 Text(
                     "${formatDownloadBytes(snapshot.availableBytes)} available of ${formatDownloadBytes(snapshot.totalBytes)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.LightGray
                 )
-                StorageUsageRow(
-                    label = "Offline downloads",
-                    bytes = snapshot.offlineDownloadBytes,
-                    enabled = !clearing && snapshot.offlineDownloadBytes > 0L,
-                    onClear = onClearDownloads
-                )
-                StorageUsageRow(
-                    label = "Artwork cache",
-                    bytes = snapshot.artworkCacheBytes,
-                    enabled = !clearing && snapshot.artworkCacheBytes > 0L,
-                    onClear = onClearArtwork
-                )
-                StorageUsageRow(
-                    label = "Downloaded subtitles",
-                    bytes = snapshot.subtitleCacheBytes,
-                    enabled = !clearing && snapshot.subtitleCacheBytes > 0L,
-                    onClear = onClearSubtitles
-                )
-                StorageUsageRow(
-                    label = if (hlsExportActive) "HLS working files (download active)" else "HLS working files",
-                    bytes = snapshot.hlsWorkingBytes,
-                    enabled = !clearing && !hlsExportActive && snapshot.hlsWorkingBytes > 0L,
-                    onClear = onClearHlsWorking
-                )
-                StorageUsageRow(
-                    label = "Other temporary cache",
-                    bytes = snapshot.temporaryCacheBytes,
-                    enabled = !clearing && snapshot.temporaryCacheBytes > 0L,
-                    onClear = onClearTemporary
-                )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    StorageUsageRow("Offline downloads", snapshot.offlineDownloadBytes, !clearing && snapshot.offlineDownloadBytes > 0L, onClearDownloads)
+                    StorageUsageRow("Artwork cache", snapshot.artworkCacheBytes, !clearing && snapshot.artworkCacheBytes > 0L, onClearArtwork)
+                    StorageUsageRow("Downloaded subtitles", snapshot.subtitleCacheBytes, !clearing && snapshot.subtitleCacheBytes > 0L, onClearSubtitles)
+                    StorageUsageRow("Other temporary cache", snapshot.temporaryCacheBytes, !clearing && snapshot.temporaryCacheBytes > 0L, onClearTemporary)
+                }
             }
         }
     }
@@ -404,16 +373,23 @@ private fun StorageUsageRow(
     enabled: Boolean,
     onClear: () -> Unit
 ) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(formatDownloadBytes(bytes), style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+    Surface(
+        color = Color.White.copy(alpha = 0.035f),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.width(230.dp)
+    ) {
+      Row(Modifier.padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1)
+            Text(formatDownloadBytes(bytes), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         }
         TextButton(
             onClick = onClear,
             enabled = enabled,
-            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+            modifier = Modifier.heightIn(min = 34.dp).remoteFocusFrame(RoundedCornerShape(10.dp))
         ) { Text("Clear") }
+      }
     }
 }
 

@@ -45,8 +45,7 @@ suspend fun appStorageSnapshot(
     val artworkDirectory = File(appContext.cacheDir, "artwork_cache")
     val subtitleDirectory = File(appContext.cacheDir, "subtitles")
     val hlsDirectory = File(appContext.cacheDir, "hls_exports")
-    val namedCacheBytes = directorySize(artworkDirectory) +
-        directorySize(subtitleDirectory) + directorySize(hlsDirectory)
+    val namedCacheBytes = directorySize(artworkDirectory) + directorySize(subtitleDirectory)
     val allCacheBytes = directorySize(appContext.cacheDir) +
         (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
 
@@ -54,11 +53,11 @@ suspend fun appStorageSnapshot(
         totalBytes = stats.totalBytes,
         availableBytes = stats.availableBytes,
         offlineDownloadBytes =
-            OfflineMediaDownloads.cachedMediaBytes(appContext) + trackedPublicBytes,
+            OfflineMediaDownloads.cachedMediaBytes(appContext) + trackedPublicBytes + directorySize(hlsDirectory),
         artworkCacheBytes = directorySize(artworkDirectory),
         subtitleCacheBytes = directorySize(subtitleDirectory),
-        hlsWorkingBytes = directorySize(hlsDirectory),
-        temporaryCacheBytes = (allCacheBytes - namedCacheBytes).coerceAtLeast(0L)
+        hlsWorkingBytes = 0L,
+        temporaryCacheBytes = (allCacheBytes - namedCacheBytes - directorySize(hlsDirectory)).coerceAtLeast(0L)
     )
 }
 
@@ -80,9 +79,9 @@ suspend fun clearHlsWorkingFiles(context: Context): Long =
 
 suspend fun clearTemporaryCaches(context: Context): Long = withContext(Dispatchers.IO) {
     val appContext = context.applicationContext
-    val excluded = setOf("artwork_cache", "subtitles", "hls_exports")
+    val excluded = setOf("artwork_cache", "subtitles", "hls_exports", "data")
     val before = unnamedCacheSize(appContext, excluded)
-    deleteDirectoryContents(appContext.cacheDir, excluded)
+    deleteDirectoryContents(appContext.cacheDir, excluded, setOf("workdb.sqlite"))
     appContext.externalCacheDir?.let(::deleteDirectoryContents)
     (before - unnamedCacheSize(appContext, excluded)).coerceAtLeast(0L)
 }
@@ -96,7 +95,7 @@ private suspend fun clearDirectory(context: Context, directory: File): Long =
 
 private fun unnamedCacheSize(context: Context, excludedNames: Set<String>): Long =
     (context.cacheDir.listFiles()
-        ?.filterNot { it.name in excludedNames }
+        ?.filterNot { it.name in excludedNames || it.name.startsWith("workdb.sqlite") }
         ?.sumOf(::directorySize) ?: 0L) +
         (context.externalCacheDir?.let(::directorySize) ?: 0L)
 
@@ -106,8 +105,14 @@ internal fun directorySize(directory: File): Long {
     return directory.listFiles()?.sumOf(::directorySize) ?: 0L
 }
 
-private fun deleteDirectoryContents(directory: File, excludedNames: Set<String> = emptySet()) {
-    directory.listFiles()?.filterNot { it.name in excludedNames }?.forEach { child ->
+private fun deleteDirectoryContents(
+    directory: File,
+    excludedNames: Set<String> = emptySet(),
+    excludedPrefixes: Set<String> = emptySet()
+) {
+    directory.listFiles()?.filterNot { child ->
+        child.name in excludedNames || excludedPrefixes.any(child.name::startsWith)
+    }?.forEach { child ->
         if (child.isDirectory) child.deleteRecursively() else child.delete()
     }
 }
