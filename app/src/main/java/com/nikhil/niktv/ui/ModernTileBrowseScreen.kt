@@ -1375,13 +1375,13 @@ private fun ModernCompactMediaCard(
         }
 
     /*
-     * HOME_MEDIA_MATCH_COLLECTION_POSTER_V43
+     * HOME_MEDIA_FULL_TITLE_V44
      *
      * Match Home Continue Watching / New Episodes cards to the actual
      * ModernCollectionPoster geometry used after opening a TMDB/IPTV movie
-     * collection: the same adaptive grid-cell width, portrait 2:3 aspect,
-     * 11dp corners, focus zoom, border, and shadow. Keep the Home-specific
-     * title/subtitle scrim and playback progress overlay unchanged.
+     * collection. Keep the Home title/subtitle scrim and playback progress,
+     * but let the media title wrap to every line it needs instead of truncating
+     * it after two lines. Subtitle metadata stays compact below the full title.
      */
     Box(
         modifier = modifier.then(returningTile.modifier)
@@ -1469,8 +1469,7 @@ private fun ModernCompactMediaCard(
                     Text(
                         item.title,
                         style = MaterialTheme.typography.titleSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
                         fontWeight =
                             if (active) FontWeight.Bold
                             else FontWeight.SemiBold,
