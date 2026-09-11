@@ -3,3 +3,5 @@
 /local.properties
 **/build/
 *.iml
+/execute_python.py
+/execute_python.bat
