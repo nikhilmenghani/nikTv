@@ -144,6 +144,7 @@ internal fun VlcPlayerScreen(
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile) }
     var externalSubtitleAttached by remember(media.media.id) { mutableStateOf(false) }
     var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile != null) }
+    var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -752,6 +753,7 @@ internal fun VlcPlayerScreen(
             positionMs = position,
             delayMs = subtitleDelayMs,
             enabled = externalSubtitleEnabled,
+            appearance = subtitleAppearance,
             modifier = Modifier.fillMaxSize().padding(bottom = if (controlsVisible) 118.dp else 24.dp)
         )
         if (
@@ -1189,6 +1191,8 @@ internal fun VlcPlayerScreen(
                     player.setSpuDelay(delay * 1_000L)
                 },
                 onDismiss = { subtitleDialogOpen = false },
+                appearance = subtitleAppearance,
+                onAppearanceChange = { subtitleAppearance = it },
                 internetSearch = SubtitleSearchRequest(
                     query = media.suggestedSubtitleSearchTitle(),
                     seasonNumber = media.media.seasonNumber,

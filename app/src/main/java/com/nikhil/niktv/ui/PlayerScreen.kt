@@ -59,7 +59,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.C
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
@@ -89,6 +88,8 @@ private data class Media3SubtitleTrack(
     val group: Tracks.Group,
     val trackIndex: Int
 )
+
+private const val DOWNLOADED_SUBTITLE_TRACK_ID = "niktv:downloaded"
 
 internal fun Modifier.playerActivityObserver(onActivity: () -> Unit): Modifier =
     onPreviewKeyEvent { event ->
@@ -244,6 +245,8 @@ fun PlayerScreen(
     var sessionEngineOverride by remember(media.media.id) { mutableStateOf<PlaybackEngine?>(null) }
     var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(0L) }
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf<File?>(null) }
+    var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(false) }
+    var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
     DisposableEffect(media.media.id, externalSubtitleFile?.absolutePath) {
         val episodeSubtitleFile = externalSubtitleFile
         onDispose {
@@ -444,7 +447,7 @@ fun PlayerScreen(
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
-    val player = remember(media.progressKey, effectiveEngine, media.url, externalSubtitleFile?.absolutePath) {
+    val player = remember(media.progressKey, effectiveEngine, media.url) {
         val renderersFactory = DefaultRenderersFactory(context).apply {
             if (effectiveEngine == PlaybackEngine.MEDIA3) {
                 // Media3 mode applies NikTV's learned decoder policy.
@@ -462,23 +465,6 @@ fun PlayerScreen(
         }
         builder.build().apply {
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
-            externalSubtitleFile?.let { file ->
-                val mimeType = when (file.extension.lowercase()) {
-                    "vtt" -> MimeTypes.TEXT_VTT
-                    "ssa", "ass" -> MimeTypes.TEXT_SSA
-                    "ttml", "xml" -> MimeTypes.APPLICATION_TTML
-                    else -> MimeTypes.APPLICATION_SUBRIP
-                }
-                mediaItemBuilder.setSubtitleConfigurations(
-                    listOf(
-                        MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(file))
-                            .setMimeType(mimeType)
-                            .setLabel("OpenSubtitles")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .build()
-                    )
-                )
-            }
             setMediaItem(mediaItemBuilder.build())
             if (engineSwitchResumePosition > 0L) seekTo(engineSwitchResumePosition)
             prepare()
@@ -1175,6 +1161,14 @@ fun PlayerScreen(
                     ) else Modifier)
             )
         }
+        DownloadedSubtitleOverlay(
+            file = externalSubtitleFile,
+            positionMs = position,
+            delayMs = subtitleDelayMs,
+            enabled = externalSubtitleEnabled,
+            appearance = subtitleAppearance,
+            modifier = Modifier.fillMaxSize().padding(bottom = if (controlsVisible) 118.dp else 24.dp)
+        )
         if (
             !embeddedMode &&
             !controlsVisible &&
@@ -1673,16 +1667,26 @@ fun PlayerScreen(
         }
         if (subtitleDialogOpen) {
             SubtitleSelectionDialog(
-                tracks = subtitleTracks.map { track ->
-                    SubtitleTrackOption(track.id, track.label, track.group.isTrackSelected(track.trackIndex))
+                tracks = buildList {
+                    addAll(subtitleTracks.map { track ->
+                        SubtitleTrackOption(track.id, track.label, !externalSubtitleEnabled && track.group.isTrackSelected(track.trackIndex))
+                    })
+                    externalSubtitleFile?.let {
+                        add(SubtitleTrackOption(DOWNLOADED_SUBTITLE_TRACK_ID, "Downloaded - ${it.name}", externalSubtitleEnabled))
+                    }
                 },
                 delayMs = subtitleDelayMs,
                 onSelect = { id ->
                     val builder = player.trackSelectionParameters.buildUpon()
                         .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    if (id == null) {
+                    if (id == DOWNLOADED_SUBTITLE_TRACK_ID) {
+                        externalSubtitleEnabled = true
+                        builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    } else if (id == null) {
+                        externalSubtitleEnabled = false
                         builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                     } else {
+                        externalSubtitleEnabled = false
                         subtitleTracks.firstOrNull { it.id == id }?.let { track ->
                             builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                                 .setOverrideForType(
@@ -1694,12 +1698,11 @@ fun PlayerScreen(
                 },
                 onDelayChange = { delay ->
                     subtitleDelayMs = delay
-                    engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
-                    sessionEngineOverride = PlaybackEngine.VLC
-                    subtitleDialogOpen = false
                 },
                 onDismiss = { subtitleDialogOpen = false },
-                timingRequiresVlc = true,
+                timingRequiresVlc = false,
+                appearance = subtitleAppearance,
+                onAppearanceChange = { subtitleAppearance = it },
                 internetSearch = SubtitleSearchRequest(
                     query = media.suggestedSubtitleSearchTitle(),
                     seasonNumber = media.media.seasonNumber,
@@ -1707,9 +1710,12 @@ fun PlayerScreen(
                     episodeTitle = media.media.title
                 ),
                 onExternalSubtitle = { file ->
-                    engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                    externalSubtitleFile?.takeIf { it != file }?.delete()
                     externalSubtitleFile = file
-                    sessionEngineOverride = PlaybackEngine.VLC
+                    externalSubtitleEnabled = true
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
                 },
                 downloadedSubtitleName = externalSubtitleFile?.name,
                 onDeleteDownloadedSubtitle = externalSubtitleFile?.let { file ->
@@ -1720,7 +1726,7 @@ fun PlayerScreen(
                             .build()
                         file.delete()
                         externalSubtitleFile = null
-                        subtitleDialogOpen = false
+                        externalSubtitleEnabled = false
                     }
                 }
             )

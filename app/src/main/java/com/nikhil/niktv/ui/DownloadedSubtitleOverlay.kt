@@ -14,15 +14,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 private data class DownloadedSubtitleCue(val startMs: Long, val endMs: Long, val text: String)
 
+internal enum class SubtitleAppearancePreset(
+    val label: String,
+    val textSizeSp: Int,
+    val textColor: Color,
+    val backgroundColor: Color,
+    val bottomPaddingDp: Int
+) {
+    COMPACT("Compact", 16, Color.White, Color.Black.copy(alpha = .72f), 20),
+    STANDARD("Standard", 20, Color.White, Color.Black.copy(alpha = .78f), 28),
+    LARGE("Large", 26, Color.White, Color.Black.copy(alpha = .82f), 36),
+    HIGH_CONTRAST("High contrast", 22, Color.Yellow, Color.Black, 28),
+    HIGH("Higher", 20, Color.White, Color.Black.copy(alpha = .78f), 92);
+
+    fun next(): SubtitleAppearancePreset = entries[(ordinal + 1) % entries.size]
+}
+
 @Composable
 internal fun DownloadedSubtitleOverlay(
-    file: File?, positionMs: Long, delayMs: Long, enabled: Boolean, modifier: Modifier = Modifier
+    file: File?, positionMs: Long, delayMs: Long, enabled: Boolean,
+    appearance: SubtitleAppearancePreset = SubtitleAppearancePreset.STANDARD,
+    modifier: Modifier = Modifier
 ) {
     val cues by produceState(emptyList<DownloadedSubtitleCue>(), file?.absolutePath) {
         value = withContext(Dispatchers.IO) {
@@ -35,11 +54,11 @@ internal fun DownloadedSubtitleOverlay(
     Box(modifier, contentAlignment = Alignment.BottomCenter) {
         Text(
             cue.text,
-            color = Color.White,
+            color = appearance.textColor,
             textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 28.dp)
-                .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(6.dp))
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = appearance.textSizeSp.sp),
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = appearance.bottomPaddingDp.dp)
+                .background(appearance.backgroundColor, RoundedCornerShape(6.dp))
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         )
     }

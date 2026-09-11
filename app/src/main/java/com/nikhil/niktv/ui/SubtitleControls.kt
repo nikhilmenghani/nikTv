@@ -82,6 +82,8 @@ internal fun SubtitleSelectionDialog(
     onDelayChange: (Long) -> Unit,
     onDismiss: () -> Unit,
     timingRequiresVlc: Boolean = false,
+    appearance: SubtitleAppearancePreset = SubtitleAppearancePreset.STANDARD,
+    onAppearanceChange: (SubtitleAppearancePreset) -> Unit = {},
     internetSearch: SubtitleSearchRequest? = null,
     onExternalSubtitle: ((File) -> Unit)? = null,
     downloadedSubtitleName: String? = null,
@@ -140,6 +142,7 @@ internal fun SubtitleSelectionDialog(
     val earlierFocusRequester = remember { FocusRequester() }
     val laterFocusRequester = remember { FocusRequester() }
     val resetFocusRequester = remember { FocusRequester() }
+    val appearanceFocusRequester = remember { FocusRequester() }
     val deleteFocusRequester = remember { FocusRequester() }
     val trackFocusRequesters = remember(tracks.map { it.id }) {
         List(tracks.size + 1) { FocusRequester() }
@@ -594,8 +597,7 @@ internal fun SubtitleSelectionDialog(
                                 right = laterFocusRequester
                                 down = when {
                                     delayMs != 0L -> resetFocusRequester
-                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
-                                    else -> earlierFocusRequester
+                                    else -> appearanceFocusRequester
                                 }
                             }
                             .onPreviewKeyEvent { event ->
@@ -619,8 +621,7 @@ internal fun SubtitleSelectionDialog(
                                             requestSubtitleFocus(
                                                 when {
                                                     delayMs != 0L -> resetFocusRequester
-                                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
-                                                    else -> earlierFocusRequester
+                                                    else -> appearanceFocusRequester
                                                 }
                                             )
                                         else -> false
@@ -642,8 +643,7 @@ internal fun SubtitleSelectionDialog(
                                 right = laterFocusRequester
                                 down = when {
                                     delayMs != 0L -> resetFocusRequester
-                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
-                                    else -> laterFocusRequester
+                                    else -> appearanceFocusRequester
                                 }
                             }
                             .onPreviewKeyEvent { event ->
@@ -667,8 +667,7 @@ internal fun SubtitleSelectionDialog(
                                             requestSubtitleFocus(
                                                 when {
                                                     delayMs != 0L -> resetFocusRequester
-                                                    onDeleteDownloadedSubtitle != null -> deleteFocusRequester
-                                                    else -> laterFocusRequester
+                                                    else -> appearanceFocusRequester
                                                 }
                                             )
                                         else -> false
@@ -686,7 +685,7 @@ internal fun SubtitleSelectionDialog(
                         .focusRequester(resetFocusRequester)
                         .focusProperties {
                             up = earlierFocusRequester
-                            down = if (onDeleteDownloadedSubtitle != null) deleteFocusRequester else resetFocusRequester
+                            down = appearanceFocusRequester
                         }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) {
@@ -699,11 +698,7 @@ internal fun SubtitleSelectionDialog(
                                         )
                                     Key.DirectionDown ->
                                         requestSubtitleFocus(
-                                            if (onDeleteDownloadedSubtitle != null) {
-                                                deleteFocusRequester
-                                            } else {
-                                                resetFocusRequester
-                                            }
+                                            appearanceFocusRequester
                                         )
                                     else -> false
                                 }
@@ -711,6 +706,23 @@ internal fun SubtitleSelectionDialog(
                         }
                         .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Reset timing") }
+                if (!searchMode) TextButton(
+                    onClick = { onAppearanceChange(appearance.next()) },
+                    modifier = Modifier
+                        .focusRequester(appearanceFocusRequester)
+                        .focusProperties {
+                            up = if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
+                            left = appearanceFocusRequester
+                            right = appearanceFocusRequester
+                            down = appearanceFocusRequester
+                        }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                                requestSubtitleFocus(if (delayMs != 0L) resetFocusRequester else earlierFocusRequester)
+                            } else false
+                        }
+                        .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                ) { Text("Appearance: ${appearance.label}") }
                 if (!searchMode && hasSubtitleTracks && timingRequiresVlc && !compact) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")
                 }
