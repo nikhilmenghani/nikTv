@@ -44,6 +44,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.nikhil.niktv.data.OnlineSubtitle
@@ -148,16 +150,50 @@ internal fun SubtitleSelectionDialog(
         if (hasSubtitleTracks) {
             trackFocusRequesters[1]
         } else {
-            trackFocusRequesters[0]
+            earlierFocusRequester
         }
+    var focusedTrackRequesterIndex by remember(tracks.map { it.id }) {
+        mutableStateOf(0)
+    }
+    var trackListHasFocus by remember { mutableStateOf(false) }
+
+    /*
+     * SUBTITLE_DPAD_GRAPH_V42
+     *
+     * The embedded/downloaded track list is a LazyColumn. Route vertical
+     * D-pad movement at the list boundary, before LazyColumn can consume the
+     * key for scrolling, and retry focus once composition settles if needed.
+     */
+    fun requestSubtitleFocus(destination: FocusRequester): Boolean {
+        val moved =
+            runCatching { destination.requestFocus() }
+                .getOrDefault(false)
+        if (!moved) {
+            scope.launch {
+                repeat(4) { attempt ->
+                    delay(16L * (attempt + 1))
+                    if (
+                        runCatching { destination.requestFocus() }
+                            .getOrDefault(false)
+                    ) {
+                        return@launch
+                    }
+                }
+            }
+        }
+        return true
+    }
+
     val resultFocusRequesters = remember(results.map { it.id }) {
         List(results.size) { FocusRequester() }
     }
     LaunchedEffect(searchMode) {
-        delay(100L)
-        runCatching {
-            if (searchMode) searchFocusRequester.requestFocus()
-            else trackHeaderFocusRequester.requestFocus()
+        val destination = if (searchMode) searchFocusRequester else trackHeaderFocusRequester
+        repeat(6) { attempt ->
+            delay(40L * (attempt + 1))
+            if (runCatching { destination.requestFocus() }.getOrDefault(false)) {
+                return@LaunchedEffect
+            }
         }
     }
     LaunchedEffect(searching, results, searchError, focusSearchOutcome) {
@@ -173,12 +209,36 @@ internal fun SubtitleSelectionDialog(
         }
         focusSearchOutcome = false
     }
-    BackHandler(onBack = onDismiss)
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
     Box(
-        Modifier.fillMaxSize().padding(
-            end = if (compact) 8.dp else 24.dp,
-            bottom = if (compact) 8.dp else 20.dp
-        ),
+        Modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (searchMode || !trackListHasFocus || event.type != KeyEventType.KeyDown) {
+                    false
+                } else when (event.key) {
+                    Key.DirectionUp -> requestSubtitleFocus(
+                        if (focusedTrackRequesterIndex == 0) trackHeaderFocusRequester
+                        else trackFocusRequesters[focusedTrackRequesterIndex - 1]
+                    )
+                    Key.DirectionDown -> requestSubtitleFocus(
+                        when {
+                            !hasSubtitleTracks -> earlierFocusRequester
+                            focusedTrackRequesterIndex < tracks.size ->
+                                trackFocusRequesters[focusedTrackRequesterIndex + 1]
+                            else -> earlierFocusRequester
+                        }
+                    )
+                    else -> false
+                }
+            }
+            .padding(
+                end = if (compact) 8.dp else 24.dp,
+                bottom = if (compact) 8.dp else 20.dp
+            ),
         contentAlignment = Alignment.BottomEnd
     ) {
         Surface(
@@ -194,7 +254,6 @@ internal fun SubtitleSelectionDialog(
             Column(
                 Modifier
                     .focusGroup()
-                    .focusProperties { exit = { FocusRequester.Cancel } }
                     .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = if (compact) 8.dp else 14.dp),
                 verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp)
             ) {
@@ -367,6 +426,21 @@ internal fun SubtitleSelectionDialog(
                                         left = resultFocusRequesters[index]
                                         right = resultFocusRequesters[index]
                                     }
+                                    .onPreviewKeyEvent { event ->
+                                        if (event.type != KeyEventType.KeyDown) {
+                                            false
+                                        } else when (event.key) {
+                                            Key.DirectionUp -> requestSubtitleFocus(
+                                                resultFocusRequesters.getOrNull(index - 1)
+                                                    ?: searchFocusRequester
+                                            )
+                                            Key.DirectionDown -> requestSubtitleFocus(
+                                                resultFocusRequesters.getOrNull(index + 1)
+                                                    ?: resultFocusRequesters[index]
+                                            )
+                                            else -> false
+                                        }
+                                    }
                                     .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                             ) {
                                 Text(subtitle.displayName, Modifier.weight(1f))
@@ -377,22 +451,66 @@ internal fun SubtitleSelectionDialog(
                             item { Text("Search OpenSubtitles using the suggested title or enter your own.", Modifier.padding(12.dp)) }
                         }
                     }
-                } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = listHeight)) {
+                } else LazyColumn(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = listHeight)
+                        .onFocusChanged { trackListHasFocus = it.hasFocus }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) {
+                                false
+                            } else {
+                                when (event.key) {
+                                    Key.DirectionUp -> {
+                                        if (focusedTrackRequesterIndex == 0) {
+                                            requestSubtitleFocus(
+                                                trackHeaderFocusRequester
+                                            )
+                                        } else {
+                                            requestSubtitleFocus(
+                                                trackFocusRequesters[
+                                                    focusedTrackRequesterIndex - 1
+                                                ]
+                                            )
+                                        }
+                                    }
+                                    Key.DirectionDown -> {
+                                        when {
+                                            !hasSubtitleTracks ->
+                                                requestSubtitleFocus(
+                                                    earlierFocusRequester
+                                                )
+                                            focusedTrackRequesterIndex < tracks.size ->
+                                                requestSubtitleFocus(
+                                                    trackFocusRequesters[
+                                                        focusedTrackRequesterIndex + 1
+                                                    ]
+                                                )
+                                            else ->
+                                                requestSubtitleFocus(
+                                                    earlierFocusRequester
+                                                )
+                                        }
+                                    }
+                                    else -> false
+                                }
+                            }
+                        }
+                ) {
                     item {
                         SubtitleTrackRow(
                             "Off",
                             tracks.none { it.selected },
                             Modifier
                                 .focusRequester(trackFocusRequesters[0])
+                                .onFocusChanged {
+                                    if (it.isFocused) {
+                                        focusedTrackRequesterIndex = 0
+                                    }
+                                }
                                 .focusProperties {
                                     up = trackHeaderFocusRequester
                                     down = offDownFocusRequester
-                                }
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                        offDownFocusRequester.requestFocus()
-                                        true
-                                    } else false
                                 }
                         ) { onSelect(null) }
                     }
@@ -403,30 +521,38 @@ internal fun SubtitleSelectionDialog(
                             track.label,
                             track.selected,
                             Modifier
-                                .focusRequester(trackFocusRequesters[requesterIndex])
-                                .focusProperties {
-                                    up = trackFocusRequesters[requesterIndex - 1]
-                                    down = trackFocusRequesters.getOrNull(requesterIndex + 1) ?: earlierFocusRequester
-                                }
-                                .onPreviewKeyEvent { event ->
-                                    when {
-                                        event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
-                                            trackFocusRequesters[requesterIndex - 1].requestFocus(); true
-                                        }
-                                        event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
-                                            (trackFocusRequesters.getOrNull(requesterIndex + 1) ?: earlierFocusRequester).requestFocus(); true
-                                        }
-                                        else -> false
+                                .focusRequester(
+                                    trackFocusRequesters[requesterIndex]
+                                )
+                                .onFocusChanged {
+                                    if (it.isFocused) {
+                                        focusedTrackRequesterIndex =
+                                            requesterIndex
                                     }
+                                }
+                                .focusProperties {
+                                    up =
+                                        trackFocusRequesters[
+                                            requesterIndex - 1
+                                        ]
+                                    down =
+                                        trackFocusRequesters.getOrNull(
+                                            requesterIndex + 1
+                                        ) ?: earlierFocusRequester
                                 }
                         ) { onSelect(track.id) }
                     }
                     if (tracks.isEmpty()) {
-                        item { Text("No subtitle tracks are available in this stream.", Modifier.padding(12.dp)) }
+                        item {
+                            Text(
+                                "No subtitle tracks are available in this stream.",
+                                Modifier.padding(12.dp)
+                            )
+                        }
                     }
                 }
-                if (!searchMode && hasSubtitleTracks && !compact) Text("Subtitle timing")
-                if (!searchMode && hasSubtitleTracks) Row(
+                if (!searchMode && !compact) Text("Subtitle timing")
+                if (!searchMode) Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -440,6 +566,35 @@ internal fun SubtitleSelectionDialog(
                                 left = earlierFocusRequester
                                 right = laterFocusRequester
                                 down = if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) {
+                                    false
+                                } else {
+                                    when (event.key) {
+                                        Key.DirectionUp ->
+                                            requestSubtitleFocus(
+                                                trackFocusRequesters.last()
+                                            )
+                                        Key.DirectionLeft ->
+                                            requestSubtitleFocus(
+                                                earlierFocusRequester
+                                            )
+                                        Key.DirectionRight ->
+                                            requestSubtitleFocus(
+                                                laterFocusRequester
+                                            )
+                                        Key.DirectionDown ->
+                                            requestSubtitleFocus(
+                                                if (delayMs != 0L) {
+                                                    resetFocusRequester
+                                                } else {
+                                                    earlierFocusRequester
+                                                }
+                                            )
+                                        else -> false
+                                    }
+                                }
                             }
                             .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
                     ) {
@@ -456,6 +611,35 @@ internal fun SubtitleSelectionDialog(
                                 right = laterFocusRequester
                                 down = if (delayMs != 0L) resetFocusRequester else laterFocusRequester
                             }
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) {
+                                    false
+                                } else {
+                                    when (event.key) {
+                                        Key.DirectionUp ->
+                                            requestSubtitleFocus(
+                                                trackFocusRequesters.last()
+                                            )
+                                        Key.DirectionLeft ->
+                                            requestSubtitleFocus(
+                                                earlierFocusRequester
+                                            )
+                                        Key.DirectionRight ->
+                                            requestSubtitleFocus(
+                                                laterFocusRequester
+                                            )
+                                        Key.DirectionDown ->
+                                            requestSubtitleFocus(
+                                                if (delayMs != 0L) {
+                                                    resetFocusRequester
+                                                } else {
+                                                    laterFocusRequester
+                                                }
+                                            )
+                                        else -> false
+                                    }
+                                }
+                            }
                             .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
                     ) {
                         Icon(Icons.Default.Add, "Show subtitles later")
@@ -469,6 +653,23 @@ internal fun SubtitleSelectionDialog(
                             up = earlierFocusRequester
                             down = resetFocusRequester
                         }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) {
+                                false
+                            } else {
+                                when (event.key) {
+                                    Key.DirectionUp ->
+                                        requestSubtitleFocus(
+                                            earlierFocusRequester
+                                        )
+                                    Key.DirectionDown ->
+                                        requestSubtitleFocus(
+                                            resetFocusRequester
+                                        )
+                                    else -> false
+                                }
+                            }
+                        }
                         .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Reset timing") }
                 if (!searchMode && hasSubtitleTracks && timingRequiresVlc && !compact) {
@@ -476,6 +677,7 @@ internal fun SubtitleSelectionDialog(
                 }
             }
         }
+    }
     }
 }
 
