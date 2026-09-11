@@ -28,6 +28,8 @@ import androidx.work.workDataOf
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class OfflineDownloadStatus { QUEUED, DOWNLOADING, PAUSED, COMPLETE, FAILED, MISSING }
 data class OfflineDownloadInfo(
@@ -61,6 +63,20 @@ object OfflineMediaDownloads {
         NoOpCacheEvictor(),
         database(context)
     ).also { cacheInstance = it }
+
+    // OFFLINE_OWNERSHIP_STORAGE_V47: this cache directory is app-private and dedicated to NikTV
+    // offline media. Public Downloads/NikTV files are never enumerated or swept.
+    fun cachedMediaBytes(context: Context): Long =
+        runCatching { cache(context).cacheSpace.coerceAtLeast(0L) }.getOrDefault(0L)
+
+    suspend fun clearCachedMedia(context: Context): Long = withContext(Dispatchers.IO) {
+        val mediaCache = cache(context)
+        val before = mediaCache.cacheSpace.coerceAtLeast(0L)
+        mediaCache.keys.toList().forEach { key ->
+            runCatching { mediaCache.removeResource(key) }
+        }
+        (before - mediaCache.cacheSpace.coerceAtLeast(0L)).coerceAtLeast(0L)
+    }
 
     fun cacheDataSourceFactory(context: Context): CacheDataSource.Factory = CacheDataSource.Factory()
         .setCache(cache(context))
@@ -192,19 +208,28 @@ object OfflineMediaDownloads {
 
     fun remove(context: Context, requestId: String, downloadId: Long = -1L) {
         if (downloadId >= 0L) {
+            // System DownloadManager owns this exact NikTV download id. Removing it
+            // deletes only that tracked file; no shared-folder scan is performed.
             context.applicationContext.getSystemService(SystemDownloadManager::class.java).remove(downloadId)
             return
         }
-        hlsWorkInfo(context, requestId)?.let { work ->
-            (work.outputData.getString(HlsExportWorker.KEY_OUTPUT_URI)
-                ?: persistedHlsOutput(context, requestId))?.let { output ->
+        if (requestId.startsWith(HLS_WORK_PREFIX)) {
+            // WorkManager may prune a completed job before the user clears it. The
+            // persisted output URI remains NikTV's ownership record, so use it even
+            // when WorkInfo is no longer available and delete only that exact URI.
+            val work = hlsWorkInfo(context, requestId)
+            val output = work?.outputData?.getString(HlsExportWorker.KEY_OUTPUT_URI)
+                ?: persistedHlsOutput(context, requestId)
+            output?.let { storedOutput ->
                 runCatching {
-                    val outputUri = Uri.parse(output)
+                    val outputUri = Uri.parse(storedOutput)
                     if (outputUri.scheme == "file") File(outputUri.path.orEmpty()).delete()
                     else context.contentResolver.delete(outputUri, null, null)
                 }
             }
-            WorkManager.getInstance(context.applicationContext).cancelWorkById(work.id)
+            work?.let {
+                WorkManager.getInstance(context.applicationContext).cancelWorkById(it.id)
+            }
             clearPersistedHlsOutput(context, requestId)
             return
         }

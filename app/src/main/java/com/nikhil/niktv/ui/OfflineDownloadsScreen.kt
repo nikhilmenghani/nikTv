@@ -137,7 +137,7 @@ internal fun OfflineDownloadsScreen(
     var clearing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(state.offlineDownloadRevision, storageRevision) {
-        storage = runCatching { appStorageSnapshot(context) }.getOrNull()
+        storage = runCatching { appStorageSnapshot(context, state.offlineDownloads) }.getOrNull()
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
         ModernScreenTopBar("Offline downloads", close)
@@ -188,17 +188,37 @@ internal fun OfflineDownloadsScreen(
                                 Column(Modifier.weight(1f)) {
                                     Text(entry.media.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                                     entry.series?.let { Text(it.title, color = Color.Gray, style = MaterialTheme.typography.bodySmall) }
+                                    // OFFLINE_OWNERSHIP_STORAGE_V47: status and physical size are separate so every
+                                    // list item clearly reports how much storage its NikTV download uses.
                                     val statusText = when (info.status) {
-                                        OfflineDownloadStatus.COMPLETE -> if (info.bytesDownloaded > 0L) {
-                                            "Available offline · ${formatOfflineBytes(info.bytesDownloaded)}"
-                                        } else "Available offline"
-                                        OfflineDownloadStatus.DOWNLOADING -> info.progressLabel()
+                                        OfflineDownloadStatus.COMPLETE -> "Available offline"
+                                        OfflineDownloadStatus.DOWNLOADING -> info.percent?.let {
+                                            "Downloading · ${it.toInt()}%"
+                                        } ?: "Downloading"
                                         OfflineDownloadStatus.QUEUED -> "Queued"
                                         OfflineDownloadStatus.PAUSED -> "Paused"
                                         OfflineDownloadStatus.FAILED -> "Download failed"
                                         OfflineDownloadStatus.MISSING -> "Not downloaded"
                                     }
                                     Text(statusText, color = if (info.status == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.LightGray, style = MaterialTheme.typography.labelMedium)
+                                    val sizeText = when {
+                                        info.status == OfflineDownloadStatus.COMPLETE ->
+                                            (info.totalBytes ?: info.bytesDownloaded)
+                                                .takeIf { it > 0L }
+                                                ?.let { "Size · ${formatOfflineBytes(it)}" }
+                                        info.totalBytes != null && info.totalBytes > 0L ->
+                                            "Downloaded · ${formatOfflineBytes(info.bytesDownloaded)} / ${formatOfflineBytes(info.totalBytes)}"
+                                        info.bytesDownloaded > 0L ->
+                                            "Downloaded · ${formatOfflineBytes(info.bytesDownloaded)}"
+                                        else -> null
+                                    }
+                                    sizeText?.let {
+                                        Text(
+                                            it,
+                                            color = Color(0xFFB7BCC5),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
                                     Text(
                                         if (entry.requestId.startsWith("hls-export:")) "${entry.fileType.ifBlank { "HLS → MP4" }} · Download/NikTV"
                                         else if (entry.downloadId >= 0L) "${entry.fileType.ifBlank { "Video" }} · Download/NikTV · external players"
@@ -239,7 +259,7 @@ internal fun OfflineDownloadsScreen(
             text = {
                 Text(
                     if (downloads) {
-                        "This removes every downloaded movie and episode. Profiles, settings, and watch history are kept."
+                        "This removes NikTV-tracked offline videos and clears NikTV's private offline media cache. Other files in Download/NikTV are not deleted. Profiles, settings, and watch history are kept."
                     } else {
                         "This clears temporary artwork and subtitle files. They will be downloaded again when needed."
                     }
@@ -253,7 +273,11 @@ internal fun OfflineDownloadsScreen(
                     scope.launch {
                         if (downloads) {
                             removeAll()
+                            // Give tracked direct/HLS removals a chance to cancel before
+                            // clearing the dedicated private Media3 cache. This never scans
+                            // or deletes unrelated files from Download/NikTV.
                             delay(1_000L)
+                            OfflineMediaDownloads.clearCachedMedia(context)
                         } else {
                             clearAppCaches(context)
                         }
