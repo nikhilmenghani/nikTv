@@ -137,12 +137,13 @@ internal fun VlcPlayerScreen(
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
-    var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
-    var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
-    var selectedSubtitleTrackId by remember(media.progressKey) { mutableStateOf<Int?>(null) }
-    var subtitleDelayMs by remember(media.progressKey) { mutableLongStateOf(initialSubtitleDelayMs) }
-    var externalSubtitleFile by remember(media.progressKey) { mutableStateOf(initialExternalSubtitleFile) }
-    var externalSubtitleAttached by remember(media.progressKey) { mutableStateOf(false) }
+    var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
+    var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
+    var selectedSubtitleTrackId by remember(media.media.id) { mutableStateOf<Int?>(null) }
+    var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(initialSubtitleDelayMs) }
+    var externalSubtitleFile by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile) }
+    var externalSubtitleAttached by remember(media.media.id) { mutableStateOf(false) }
+    var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile != null) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -202,6 +203,21 @@ internal fun VlcPlayerScreen(
             .filter { it.id >= 0 }
             .map { it.id to (it.name?.takeIf(String::isNotBlank) ?: "Subtitle ${it.id}") }
         selectedSubtitleTrackId = player.spuTrack.takeIf { it >= 0 }
+    }
+    fun selectDownloadedSubtitleWhenReady() {
+        scope.launch {
+            repeat(12) { attempt ->
+                if (attempt > 0) delay(250L)
+                refreshSubtitleTracks()
+                val downloadedTrackId = subtitleTracks.lastOrNull()?.first
+                    ?: return@repeat
+                if (player.setSpuTrack(downloadedTrackId)) {
+                    selectedSubtitleTrackId = downloadedTrackId
+                    player.setSpuDelay(subtitleDelayMs * 1_000L)
+                    return@launch
+                }
+            }
+        }
     }
     LaunchedEffect(player, subtitleDelayMs) {
         player.setSpuDelay(subtitleDelayMs * 1_000L)
@@ -381,6 +397,7 @@ internal fun VlcPlayerScreen(
                         )
                         refreshSubtitleTracks()
                         player.setSpuDelay(subtitleDelayMs * 1_000L)
+                        selectDownloadedSubtitleWhenReady()
                     }
                 }
                 MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> {
@@ -419,6 +436,16 @@ internal fun VlcPlayerScreen(
         val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
             setHWDecoderEnabled(false, false)
             addOption(":network-caching=1500")
+            externalSubtitleFile?.takeIf(File::exists)?.let { file ->
+                addSlave(
+                    IMedia.Slave(
+                        IMedia.Slave.Type.Subtitle,
+                        4,
+                        android.net.Uri.fromFile(file).toString()
+                    )
+                )
+                externalSubtitleAttached = true
+            }
         }
         player.media = vlcMedia
         vlcMedia.release()
@@ -707,9 +734,9 @@ internal fun VlcPlayerScreen(
                     // second view attachment, so release the previous surface
                     // before binding the replacement layout.
                     runCatching { player.detachViews() }
-                    // TextureView avoids rotated SurfaceView buffer-size
-                    // rejection on Fire TV/tablet-style landscape devices.
-                    player.attachViews(layout, null, false, true)
+                    // LibVLC only creates its separate subtitle surface when
+                    // using SurfaceView. TextureView silently drops SPU text.
+                    player.attachViews(layout, null, true, false)
                     }
                 },
                 modifier = Modifier.fillMaxSize().then(
@@ -720,6 +747,13 @@ internal fun VlcPlayerScreen(
                 )
             )
         }
+        DownloadedSubtitleOverlay(
+            file = externalSubtitleFile,
+            positionMs = position,
+            delayMs = subtitleDelayMs,
+            enabled = externalSubtitleEnabled,
+            modifier = Modifier.fillMaxSize().padding(bottom = if (controlsVisible) 118.dp else 24.dp)
+        )
         if (
             !embeddedMode &&
             !controlsVisible &&
@@ -1148,6 +1182,7 @@ internal fun VlcPlayerScreen(
                     val trackId = id?.toIntOrNull() ?: -1
                     player.setSpuTrack(trackId)
                     selectedSubtitleTrackId = trackId.takeIf { it >= 0 }
+                    externalSubtitleEnabled = id != null
                 },
                 onDelayChange = { delay ->
                     subtitleDelayMs = delay
@@ -1163,10 +1198,12 @@ internal fun VlcPlayerScreen(
                 onExternalSubtitle = { file ->
                     externalSubtitleFile?.takeIf { it != file }?.delete()
                     externalSubtitleFile = file
+                    externalSubtitleEnabled = true
                     player.addSlave(IMedia.Slave.Type.Subtitle, android.net.Uri.fromFile(file), true)
                     externalSubtitleAttached = true
                     refreshSubtitleTracks()
                     player.setSpuDelay(subtitleDelayMs * 1_000L)
+                    selectDownloadedSubtitleWhenReady()
                 },
                 downloadedSubtitleName = externalSubtitleFile?.name,
                 onDeleteDownloadedSubtitle = externalSubtitleFile?.let { file ->
@@ -1176,6 +1213,7 @@ internal fun VlcPlayerScreen(
                         file.delete()
                         externalSubtitleFile = null
                         externalSubtitleAttached = false
+                        externalSubtitleEnabled = false
                         refreshSubtitleTracks()
                     }
                 }

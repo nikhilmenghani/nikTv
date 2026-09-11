@@ -107,7 +107,10 @@ object OpenSubtitlesClient {
             it.body?.bytes() ?: throw IOException("The downloaded subtitle file was empty.")
         }
         val directory = File(context.cacheDir, "subtitles").apply { mkdirs() }
-        val extension = subtitle.fileName.substringAfterLast('.', "srt").take(5).filter(Char::isLetterOrDigit).ifBlank { "srt" }
+        val extension = subtitle.fileName.substringAfterLast('.', "srt")
+            .lowercase()
+            .takeIf { it in setOf("srt", "vtt", "ass", "ssa", "ttml", "xml") }
+            ?: "srt"
         File(directory, "opensubtitles-${subtitle.fileId}.$extension").apply { writeBytes(bytes) }
     }
 

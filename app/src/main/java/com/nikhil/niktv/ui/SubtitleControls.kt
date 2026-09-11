@@ -274,7 +274,7 @@ internal fun SubtitleSelectionDialog(
                                 .focusRequester(modeFocusRequester)
                                 .focusProperties {
                                     left = modeFocusRequester
-                                    right = closeFocusRequester
+                                    right = if (!searchMode && onDeleteDownloadedSubtitle != null) deleteFocusRequester else closeFocusRequester
                                     down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
                                 }
                                 .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
@@ -283,12 +283,35 @@ internal fun SubtitleSelectionDialog(
                             if (!compact) Text(if (searchMode) " Tracks" else " Online")
                         }
                     }
+                    if (!searchMode && onDeleteDownloadedSubtitle != null) {
+                        IconButton(
+                            onClick = onDeleteDownloadedSubtitle,
+                            modifier = Modifier
+                                .focusRequester(deleteFocusRequester)
+                                .focusProperties {
+                                    left = if (internetSearch != null && onExternalSubtitle != null) modeFocusRequester else deleteFocusRequester
+                                    right = closeFocusRequester
+                                    down = trackFocusRequesters.first()
+                                }
+                                .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                downloadedSubtitleName?.let { "Delete downloaded subtitle $it" }
+                                    ?: "Delete downloaded subtitle"
+                            )
+                        }
+                    }
                     TextButton(
                         onClick = onDismiss,
                         modifier = Modifier
                             .focusRequester(closeFocusRequester)
                             .focusProperties {
-                                left = if (internetSearch != null && onExternalSubtitle != null) modeFocusRequester else closeFocusRequester
+                                left = when {
+                                    !searchMode && onDeleteDownloadedSubtitle != null -> deleteFocusRequester
+                                    internetSearch != null && onExternalSubtitle != null -> modeFocusRequester
+                                    else -> closeFocusRequester
+                                }
                                 right = closeFocusRequester
                                 down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
                             }
@@ -688,22 +711,6 @@ internal fun SubtitleSelectionDialog(
                         }
                         .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Reset timing") }
-                if (!searchMode && onDeleteDownloadedSubtitle != null) TextButton(
-                    onClick = onDeleteDownloadedSubtitle,
-                    modifier = Modifier
-                        .focusRequester(deleteFocusRequester)
-                        .focusProperties {
-                            up = if (delayMs != 0L) resetFocusRequester else earlierFocusRequester
-                            down = deleteFocusRequester
-                        }
-                        .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                ) {
-                    Icon(Icons.Default.Delete, null)
-                    Text(
-                        downloadedSubtitleName?.let { " Delete downloaded · $it" }
-                            ?: " Delete downloaded"
-                    )
-                }
                 if (!searchMode && hasSubtitleTracks && timingRequiresVlc && !compact) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")
                 }

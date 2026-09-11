@@ -241,9 +241,15 @@ fun PlayerScreen(
     }
     val displayedDownloadInProgress = offlineDownloadInProgress || downloadRequested
     val playbackScope = media.series?.id ?: media.progressKey.ifBlank { media.media.id }
-    var sessionEngineOverride by remember { mutableStateOf<PlaybackEngine?>(null) }
-    var subtitleDelayMs by remember(media.progressKey) { mutableLongStateOf(0L) }
-    var externalSubtitleFile by remember(media.progressKey) { mutableStateOf<File?>(null) }
+    var sessionEngineOverride by remember(media.media.id) { mutableStateOf<PlaybackEngine?>(null) }
+    var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(0L) }
+    var externalSubtitleFile by remember(media.media.id) { mutableStateOf<File?>(null) }
+    DisposableEffect(media.media.id, externalSubtitleFile?.absolutePath) {
+        val episodeSubtitleFile = externalSubtitleFile
+        onDispose {
+            episodeSubtitleFile?.delete()
+        }
+    }
     var engineSwitchResumePosition by remember(media.progressKey) {
         mutableLongStateOf(media.resumePositionMillis)
     }
