@@ -149,6 +149,7 @@ internal fun VlcPlayerScreen(
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
+    var pictureModePickerVisible by remember { mutableStateOf(false) }
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
     var selectedSubtitleTrackId by remember(media.media.id) { mutableStateOf<Int?>(null) }
@@ -942,15 +943,26 @@ internal fun VlcPlayerScreen(
                                 .focusRequester(resizeRequester)
                                 .focusProperties {
                                     left = subtitleRequester
-                                    right = moreRequester
+                                    right = pictureModeRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = subtitleRequester,
-                                    right = moreRequester,
+                                    right = pictureModeRequester,
                                     down = topDownRequester
                                 ),
                             selected = resizeMode != VideoResizeMode.FIT,
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = videoAppearanceIcon(activeAppearanceProfile.id),
+                            contentDescription = "Choose picture mode: ${activeAppearanceProfile.name}",
+                            onClick = { pictureModePickerVisible = true },
+                            modifier = Modifier
+                                .focusRequester(pictureModeRequester)
+                                .focusProperties { left = resizeRequester; right = moreRequester; down = topDownRequester }
+                                .playerDpadFocusRoutes(resizeRequester, moreRequester, topDownRequester),
+                            selected = activeAppearanceProfile.id != "standard",
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -960,11 +972,11 @@ internal fun VlcPlayerScreen(
                             modifier = Modifier
                                 .focusRequester(moreRequester)
                                 .focusProperties {
-                                    left = resizeRequester
+                                    left = pictureModeRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = resizeRequester,
+                                    left = pictureModeRequester,
                                     down = topDownRequester
                                 ),
                             onFocused = { controlsFocused = it }
@@ -1198,6 +1210,23 @@ internal fun VlcPlayerScreen(
             onPreview = { appearancePreview = it },
             onSelected = {
                 VideoAppearancePreferences.setActive(context, it)
+            }
+        )
+        if (pictureModePickerVisible) PictureModeQuickOverlay(
+            profiles = appearanceProfiles,
+            persisted = persistedAppearanceProfile,
+            preview = activeAppearanceProfile,
+            onPreview = { appearancePreview = it },
+            onApply = {
+                VideoAppearancePreferences.setActive(context, activeAppearanceProfile.id)
+                pictureModePickerVisible = false
+                appearancePreview = null
+                showControls()
+            },
+            onSkip = {
+                appearancePreview = null
+                pictureModePickerVisible = false
+                showControls()
             }
         )
 

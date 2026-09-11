@@ -377,6 +377,7 @@ fun PlayerScreen(
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
+    var pictureModePickerVisible by remember { mutableStateOf(false) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -1397,15 +1398,26 @@ fun PlayerScreen(
                                 .focusRequester(resizeFocusRequester)
                                 .focusProperties {
                                     left = subtitleFocusRequester
-                                    right = moreFocusRequester
+                                    right = pictureModeFocusRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = subtitleFocusRequester,
-                                    right = moreFocusRequester,
+                                    right = pictureModeFocusRequester,
                                     down = topDownRequester
                                 ),
                             selected = resizeMode != VideoResizeMode.FIT,
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = videoAppearanceIcon(activeAppearanceProfile.id),
+                            contentDescription = "Choose picture mode: ${activeAppearanceProfile.name}",
+                            onClick = { pictureModePickerVisible = true },
+                            modifier = Modifier
+                                .focusRequester(pictureModeFocusRequester)
+                                .focusProperties { left = resizeFocusRequester; right = moreFocusRequester; down = topDownRequester }
+                                .playerDpadFocusRoutes(resizeFocusRequester, moreFocusRequester, topDownRequester),
+                            selected = activeAppearanceProfile.id != "standard",
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -1415,11 +1427,11 @@ fun PlayerScreen(
                             modifier = Modifier
                                 .focusRequester(moreFocusRequester)
                                 .focusProperties {
-                                    left = resizeFocusRequester
+                                    left = pictureModeFocusRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = resizeFocusRequester,
+                                    left = pictureModeFocusRequester,
                                     down = topDownRequester
                                 ),
                             onFocused = { controlsFocused = it }
@@ -1655,6 +1667,23 @@ fun PlayerScreen(
             onPreview = { appearancePreview = it },
             onSelected = {
                 VideoAppearancePreferences.setActive(context, it)
+            }
+        )
+        if (pictureModePickerVisible) PictureModeQuickOverlay(
+            profiles = appearanceProfiles,
+            persisted = persistedAppearanceProfile,
+            preview = activeAppearanceProfile,
+            onPreview = { appearancePreview = it },
+            onApply = {
+                VideoAppearancePreferences.setActive(context, activeAppearanceProfile.id)
+                pictureModePickerVisible = false
+                appearancePreview = null
+                showControlsAndFocusPlayPause()
+            },
+            onSkip = {
+                appearancePreview = null
+                pictureModePickerVisible = false
+                showControlsAndFocusPlayPause()
             }
         )
         if (
@@ -2315,6 +2344,73 @@ private fun PlayerPictureModeChoiceButton(
     }
 }
 
+@Composable
+internal fun PictureModeQuickOverlay(
+    profiles: List<VideoAppearanceProfile>,
+    persisted: VideoAppearanceProfile,
+    preview: VideoAppearanceProfile,
+    onPreview: (VideoAppearanceProfile) -> Unit,
+    onApply: () -> Unit,
+    onSkip: () -> Unit
+) {
+    val modeRequesters = remember(profiles.map { it.id }) { profiles.map { FocusRequester() } }
+    val skipRequester = remember { FocusRequester() }
+    val applyRequester = remember { FocusRequester() }
+    LaunchedEffect(profiles, preview.id) {
+        withFrameNanos { }
+        modeRequesters.getOrNull(profiles.indexOfFirst { it.id == preview.id }.coerceAtLeast(0))?.requestFocus()
+    }
+    AlertDialog(
+        onDismissRequest = onSkip,
+        shape = RoundedCornerShape(20.dp),
+        containerColor = Color(0xF21A1A1A),
+        title = {
+            val dialogView = LocalView.current
+            SideEffect { (dialogView.parent as? DialogWindowProvider)?.window?.setGravity(Gravity.END) }
+            Column {
+                Text("Picture mode", color = Color.White)
+                Text("Previewing ${preview.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+        },
+        text = {
+            Column(Modifier.widthIn(min = 320.dp, max = 500.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                profiles.chunked(4).forEachIndexed { row, rowModes ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        rowModes.forEachIndexed { column, profile ->
+                            val index = row * 4 + column
+                            PlayerPictureModeChoiceButton(
+                                profile = profile,
+                                selected = profile.id == preview.id,
+                                modifier = Modifier.weight(1f).focusRequester(modeRequesters[index]).focusProperties {
+                                    if (column > 0) left = modeRequesters[index - 1]
+                                    if (column < rowModes.lastIndex) right = modeRequesters[index + 1]
+                                    if (row > 0) up = modeRequesters[index - 4]
+                                    down = modeRequesters.getOrNull(index + 4) ?: applyRequester
+                                },
+                                onClick = { onPreview(profile) }
+                            )
+                        }
+                        repeat(4 - rowModes.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+                if (preview.id != persisted.id) {
+                    Text("Preview only until Apply", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .65f))
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip, modifier = Modifier.focusRequester(skipRequester).playerControlFocus { }) {
+                Text("Skip")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onApply, modifier = Modifier.focusRequester(applyRequester).focusProperties { left = skipRequester }.playerControlFocus { }) {
+                Text("Apply")
+            }
+        }
+    )
+}
+
 
 @Composable
 internal fun PlayerMoreOptionsDialog(
@@ -2457,87 +2553,6 @@ internal fun PlayerMoreOptionsDialog(
                         onClick = onPictureInPicture
                     )
                 }
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color.White.copy(alpha = 0.035f)
-                ) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                videoAppearanceIcon(pictureMode.id),
-                                null,
-                                Modifier.size(22.dp),
-                                tint = Color.White.copy(alpha = 0.92f)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "Picture mode",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                pictureMode.name,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1
-                            )
-                        }
-
-                        pictureModes.chunked(4).forEach { rowModes ->
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                rowModes.forEach { profile ->
-                                    val index = pictureModes.indexOfFirst { it.id == profile.id }
-                                    val column = index % 4
-                                    val leftTarget =
-                                        pictureRequesters.getOrNull(index - 1)
-                                            .takeIf { column > 0 }
-                                    val rightTarget =
-                                        pictureRequesters.getOrNull(index + 1)
-                                            .takeIf { column < 3 }
-                                    val upTarget = pictureRequesters.getOrNull(index - 4)
-                                    val downTarget = pictureRequesters.getOrNull(index + 4)
-
-                                    PlayerPictureModeChoiceButton(
-                                        profile = profile,
-                                        selected = profile.id == pictureMode.id,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .focusRequester(pictureRequesters[index])
-                                            .focusProperties {
-                                                if (leftTarget != null) left = leftTarget
-                                                if (rightTarget != null) right = rightTarget
-                                                if (upTarget != null) up = upTarget
-                                                if (downTarget != null) down = downTarget
-                                            },
-                                        onClick = {
-                                            if (profile.id != pictureMode.id) {
-                                                onSelectPictureMode(profile)
-                                            }
-                                        }
-                                    )
-                                }
-                                repeat((4 - rowModes.size).coerceAtLeast(0)) {
-                                    Spacer(Modifier.weight(1f))
-                                }
-                            }
-                        }
-                    }
-                }
-                PlayerMoreOptionRow(
-                    icon = Icons.Default.Tune,
-                    label = "Picture settings",
-                    onClick = onEditPictureMode
-                )
                 PlayerMoreOptionRow(
                     icon = Icons.Default.Timer,
                     label = "Controls timeout",
@@ -2715,6 +2730,7 @@ internal fun Modifier.playerControlFocus(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isTvLikeDevice(configuration)
+    val remoteNavigation = context.usesRemoteNavigation(configuration)
     val minimumSize = when {
         isTv -> 56.dp
         configuration.smallestScreenWidthDp < 600 -> 44.dp
@@ -2727,16 +2743,16 @@ internal fun Modifier.playerControlFocus(
             onFocused(it.isFocused)
         }
         .then(
-            if (focused && isTv) {
+            if (focused && remoteNavigation) {
                 Modifier
                     .shadow(
-                        16.dp,
+                        18.dp,
                         shape,
                         ambientColor = Color(0xAAFFFFFF),
                         spotColor = Color(0xFFFF4A54)
                     )
-                    .background(Color(0xFF53151B), shape)
-                    .border(3.dp, Color.White, shape)
+                    .background(Color(0xFF64151D), shape)
+                    .border(4.dp, Color.White, shape)
             } else {
                 Modifier
             }
