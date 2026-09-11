@@ -75,12 +75,17 @@ jobs:
           fi
           chmod +x ./gradlew
           ./gradlew assembleDebug
-      - name: Rename APK
-        run: mv app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/NikTV-${TAG}.apk"
+          mkdir -p "$RUNNER_TEMP/niktv-apks"
+          cp app/build/outputs/apk/debug/app-arm64-v8a-debug.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-arm64-v8a.apk"
+          cp app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-armeabi-v7a.apk"
+          cp app/build/outputs/apk/debug/app-universal-debug.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-universal.apk"
+          cp app/build/outputs/apk/debug/app-universal-debug.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}.apk"
+          ./gradlew clean assembleDebug -PfireTvApk=true
+          cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-firetv.apk"
       - name: Publish prerelease
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/NikTV-${{ env.TAG }}.apk
+          files: ${{ runner.temp }}/niktv-apks/*.apk
           tag_name: ${{ env.TAG }}
           name: NikTV Development ${{ env.VERSION }}
           prerelease: true

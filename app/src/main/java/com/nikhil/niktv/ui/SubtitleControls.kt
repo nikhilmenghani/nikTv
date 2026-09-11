@@ -33,8 +33,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -80,11 +87,14 @@ internal fun SubtitleSelectionDialog(
     var searchMode by remember { mutableStateOf(false) }
     var query by remember(internetSearch?.query) { mutableStateOf(internetSearch?.query.orEmpty()) }
     var language by remember { mutableStateOf(internetSearch?.languages ?: "en") }
+    var queryEditing by remember { mutableStateOf(false) }
+    var languageEditing by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<OnlineSubtitle>>(emptyList()) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
     val configuration = LocalConfiguration.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val isTv = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
         (configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
@@ -195,6 +205,7 @@ internal fun SubtitleSelectionDialog(
                     OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
+                        readOnly = isTv && !queryEditing,
                         label = {
                             Text(if (internetSearch?.seasonNumber != null || internetSearch?.episodeNumber != null) "Series title" else "Movie title")
                         },
@@ -205,6 +216,21 @@ internal fun SubtitleSelectionDialog(
                             .focusProperties {
                                 up = modeFocusRequester
                                 down = languageFocusRequester
+                            }
+                            .onFocusChanged {
+                                if (!it.isFocused && queryEditing) {
+                                    queryEditing = false
+                                    keyboard?.hide()
+                                }
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (isTv && !queryEditing && event.type == KeyEventType.KeyUp &&
+                                    event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                                ) {
+                                    queryEditing = true
+                                    keyboard?.show()
+                                    true
+                                } else false
                             },
                         textStyle = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
                     )
@@ -225,6 +251,7 @@ internal fun SubtitleSelectionDialog(
                         OutlinedTextField(
                             value = language,
                             onValueChange = { language = it.take(12) },
+                            readOnly = isTv && !languageEditing,
                             label = { Text("Languages") },
                             singleLine = true,
                             modifier = Modifier
@@ -234,6 +261,21 @@ internal fun SubtitleSelectionDialog(
                                     up = queryFocusRequester
                                     right = searchFocusRequester
                                     down = resultFocusRequesters.firstOrNull() ?: languageFocusRequester
+                                }
+                                .onFocusChanged {
+                                    if (!it.isFocused && languageEditing) {
+                                        languageEditing = false
+                                        keyboard?.hide()
+                                    }
+                                }
+                                .onPreviewKeyEvent { event ->
+                                    if (isTv && !languageEditing && event.type == KeyEventType.KeyUp &&
+                                        event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                                    ) {
+                                        languageEditing = true
+                                        keyboard?.show()
+                                        true
+                                    } else false
                                 }
                         )
                         Button(

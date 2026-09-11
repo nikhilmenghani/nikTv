@@ -47,6 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.HeartBroken
 import androidx.compose.material.icons.filled.Home
@@ -114,12 +115,15 @@ import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.TrendingMovie
 import com.nikhil.niktv.data.TrendingSeries
 import com.nikhil.niktv.data.artworkRequest
+import com.nikhil.niktv.data.OfflineDownloadStatus
+import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.Category
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.OfflineMediaDownload
 import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.R
 import com.nikhil.niktv.model.RecentItem
@@ -1378,10 +1382,6 @@ private fun ModernCompactMediaCard(
                 }
             )
             .zIndex(visualProgress)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
             .shadow(
                 elevation =
                     (
@@ -1411,6 +1411,10 @@ private fun ModernCompactMediaCard(
             )
     ) {
         Surface(
+            modifier = Modifier.graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
             shape = shape,
             color = backgroundColor,
             border = BorderStroke(
@@ -1780,6 +1784,11 @@ private fun ModernTmdbCollection(
 
                 ModernCollectionPoster(
                     item = media,
+                    offlineDownload = state.offlineDownloads.firstOrNull { download ->
+                        download.catalogType == CatalogType.MOVIES &&
+                            (download.media.id == media.id || download.media.id == entry.iptv?.id)
+                    },
+                    offlineRevision = state.offlineDownloadRevision,
                     modifier = Modifier
                         .onFocusChanged {
                             if (it.hasFocus) focusedPosterIndex = index
@@ -1828,7 +1837,9 @@ private fun ModernTmdbCollection(
             }
         }
 
-        if (state.modernTmdbLoading) {
+        // Initial loading needs its own placeholder. Pagination loading is
+        // rendered in the stable Load More focus target below.
+        if (state.modernTmdbLoading && count == 0) {
             item("tmdb-loading", span = fullSpan) {
                 ModernCollectionLoading(
                     "Loading titles…"
@@ -2087,6 +2098,10 @@ private fun ModernIptvCollection(
                 )
             } else ModernCollectionPoster(
                 item = media,
+                offlineDownload = state.offlineDownloads.firstOrNull { download ->
+                    download.catalogType == category.type && download.media.id == media.id
+                },
+                offlineRevision = state.offlineDownloadRevision,
                 modifier = tileModifier,
                 subtitle = media.description.orEmpty(),
                 onClick = {
@@ -2109,12 +2124,7 @@ private fun ModernIptvCollection(
         if (state.catalogHasMore || state.catalogLoadingMore || appendPage.pending) {
             item("iptv-load-more", span = fullSpan) {
                 ModernLoadMoreButton(
-                    label =
-                        if (state.catalogLoadingMore) {
-                            "Loading titles…"
-                        } else {
-                            "Load more"
-                        },
+                    label = "Load more",
                     loading = state.catalogLoadingMore || appendPage.pending,
                     onClick = appendPage.load
                 )
@@ -2402,6 +2412,8 @@ private fun ModernCollectionPoster(
     subtitle: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    offlineDownload: OfflineMediaDownload? = null,
+    offlineRevision: Long = 0L,
     isFavorite: Boolean = false,
     onFavorite: (() -> Unit)? = null,
     compactLandscape: Boolean = false,
@@ -2412,6 +2424,16 @@ private fun ModernCollectionPoster(
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val offlineInfo = remember(offlineDownload, offlineRevision) {
+        offlineDownload?.let {
+            OfflineMediaDownloads.info(context, it.requestId, it.downloadId)
+        }
+    }
+    val downloadActive = offlineInfo?.status in setOf(
+        OfflineDownloadStatus.QUEUED,
+        OfflineDownloadStatus.DOWNLOADING,
+        OfflineDownloadStatus.PAUSED
+    )
     val configuration = LocalConfiguration.current
     val isTablet = !isTv && configuration.screenWidthDp >= 600
     val interactionSource = remember { MutableInteractionSource() }
@@ -2452,11 +2474,7 @@ private fun ModernCollectionPoster(
     Column(
         modifier.then(returningTile.modifier)
             .fillMaxWidth()
-            .zIndex(visualProgress)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            },
+            .zIndex(visualProgress),
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         /*
@@ -2514,6 +2532,13 @@ private fun ModernCollectionPoster(
                 Modifier
                     .fillMaxWidth()
                     .aspectRatio(if (compactLandscape) 4f / 3f else 2f / 3f)
+                    // Animate only the visual artwork. The Surface above owns
+                    // focus and must keep fixed bounds so lazy-grid scrolling
+                    // does not chase every animation frame.
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    }
                     .background(Color(0xFF222222))
             ) {
                 ModernPosterImage(
@@ -2521,6 +2546,57 @@ private fun ModernCollectionPoster(
                     context = context,
                     modifier = Modifier.fillMaxSize()
                 )
+
+                if (downloadActive) {
+                    val percent = offlineInfo?.percent?.coerceIn(0f, 100f)
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xDD111318)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Downloading,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp),
+                                tint = Color.White
+                            )
+                            Text(
+                                percent?.let { "${it.toInt()}%" } ?: "Queued",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    if (percent != null) {
+                        LinearProgressIndicator(
+                            progress = { percent / 100f },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(6.dp),
+                            color = Color(0xFFE50914),
+                            trackColor = Color.Black.copy(alpha = 0.72f)
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(6.dp),
+                            color = Color(0xFFE50914),
+                            trackColor = Color.Black.copy(alpha = 0.72f)
+                        )
+                    }
+                }
 
                 if (isTv && focused) {
                     Box(
@@ -2680,7 +2756,7 @@ private fun ModernLoadMoreButton(
                 Spacer(Modifier.width(8.dp))
             }
             Text(
-                label,
+                if (loading) "Loading…" else label,
                 fontWeight = FontWeight.Bold
             )
         }

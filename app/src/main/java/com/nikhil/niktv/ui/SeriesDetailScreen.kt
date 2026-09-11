@@ -137,9 +137,11 @@ internal fun ModernSeriesDetailScreen(
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
     var searchQuery by rememberSaveable(series.id) { mutableStateOf("") }
     var episodeSearchEditing by rememberSaveable(series.id) { mutableStateOf(false) }
+    var episodeTextEditing by rememberSaveable(series.id) { mutableStateOf(false) }
     var handledPlaybackReturnFocusId by remember(series.id) { mutableStateOf<String?>(null) }
     var seasonDropdownExpanded by remember { mutableStateOf(false) }
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
+    val episodeSearchCloseRequester = remember(series.id) { FocusRequester() }
     val returningEpisodeRequester = remember(series.id) { FocusRequester() }
     val episodeListState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -164,8 +166,11 @@ internal fun ModernSeriesDetailScreen(
     LaunchedEffect(episodeSearchEditing) {
         if (episodeSearchEditing) {
             delay(80L)
-            runCatching { episodeSearchRequester.requestFocus() }
-            keyboardController?.show()
+            // Opening search should expose the prefilled controls without
+            // summoning the IME. The field enters edit mode only on Select.
+            runCatching { episodeSearchCloseRequester.requestFocus() }
+        } else {
+            episodeTextEditing = false
         }
     }
 
@@ -602,12 +607,14 @@ internal fun ModernSeriesDetailScreen(
                             )
                     )
                 }
-                if (state.episodeHasMore && searchQuery.isBlank()) {
-                    item("episodes-load-more-${state.episodePage}") {
+                if ((state.episodeHasMore || state.episodeLoadingMore) && searchQuery.isBlank()) {
+                    item("episodes-load-more") {
                         Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
                             Button(
                                 onClick = loadMoreEpisodes,
-                                enabled = !state.episodeLoadingMore,
+                                // Keeping the button enabled preserves the current TV
+                                // focus target while the next page is being appended.
+                                enabled = true,
                                 modifier = Modifier.fillMaxWidth().height(48.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
                                 shape = RoundedCornerShape(10.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
@@ -641,15 +648,31 @@ internal fun ModernSeriesDetailScreen(
                     IconButton(onClick = {
                         episodeSearchEditing = false
                         keyboardController?.hide()
-                    }) {
+                    }, modifier = Modifier.focusRequester(episodeSearchCloseRequester)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close episode search", tint = Color.White)
                     }
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
+                        readOnly = episodeIsTv && !episodeTextEditing,
                         modifier = Modifier
                             .weight(1f)
-                            .focusRequester(episodeSearchRequester),
+                            .focusRequester(episodeSearchRequester)
+                            .onFocusChanged {
+                                if (!it.isFocused && episodeTextEditing) {
+                                    episodeTextEditing = false
+                                    keyboardController?.hide()
+                                }
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (episodeIsTv && !episodeTextEditing && event.type == KeyEventType.KeyUp &&
+                                    event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+                                ) {
+                                    episodeTextEditing = true
+                                    keyboardController?.show()
+                                    true
+                                } else false
+                            },
                         placeholder = { Text("Episode name or number") },
                         trailingIcon = if (searchQuery.isNotEmpty()) {{
                             IconButton(onClick = { searchQuery = "" }) {
@@ -681,12 +704,14 @@ internal fun ModernEpisodeCard(
     modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
+    val episodeFocusRequester = remember(episode.id) { FocusRequester() }
+    val downloadFocusRequester = remember(episode.id) { FocusRequester() }
     val episodeContext = LocalContext.current
     val episodeConfiguration = LocalConfiguration.current
     val isTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     var confirmRemoval by remember { mutableStateOf(false) }
     val offlineInfo = remember(offlineDownload, offlineRevision) {
-        offlineDownload?.let { OfflineMediaDownloads.info(episodeContext, it.requestId) }
+        offlineDownload?.let { OfflineMediaDownloads.info(episodeContext, it.requestId, it.downloadId) }
     }
     val offlineStatus = offlineInfo?.status
     var downloadRequested by remember(episode.id) { mutableStateOf(false) }
@@ -736,6 +761,8 @@ internal fun ModernEpisodeCard(
         },
         shadowElevation = if (focused) 14.dp else 0.dp,
         modifier = modifier
+            .focusRequester(episodeFocusRequester)
+            .focusProperties { right = downloadFocusRequester }
             .onFocusChanged { focused = it.isFocused }
     ) {
         Row(
@@ -920,7 +947,11 @@ internal fun ModernEpisodeCard(
                 } else {
                     { confirmRemoval = true }
                 },
-                enabled = !downloadRequested || offlineDownload != null
+                enabled = !downloadRequested || offlineDownload != null,
+                modifier = Modifier
+                    .focusRequester(downloadFocusRequester)
+                    .focusProperties { left = episodeFocusRequester }
+                    .remoteFocusFrame(CircleShape)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     offlineInfo?.percent?.takeIf { displayedOfflineStatus == OfflineDownloadStatus.DOWNLOADING }?.let {

@@ -300,7 +300,9 @@ internal fun CategoryManagerDialog(
 
     LaunchedEffect(type) {
         withFrameNanos { }
-        (firstCategoryRequester ?: searchRequester).requestFocus()
+        // Never make the text editor the dialog's implicit entry target.
+        // Empty category lists start on Apply instead.
+        (firstCategoryRequester ?: applyRequester).requestFocus()
     }
     LaunchedEffect(type, searchQuery) {
         if (filteredRaw.isNotEmpty()) gridState.scrollToItem(0)

@@ -110,6 +110,9 @@ import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
 import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
+import com.nikhil.niktv.data.AppStorageSnapshot
+import com.nikhil.niktv.data.appStorageSnapshot
+import com.nikhil.niktv.data.clearAppCaches
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -121,16 +124,31 @@ internal fun OfflineDownloadsScreen(
     state: NikTvState,
     play: (OfflineMediaDownload) -> Unit,
     remove: (MediaItem, CatalogType) -> Unit,
+    removeAll: () -> Unit,
     close: () -> Unit
 ) {
     val context = LocalContext.current
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
     val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
     var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
+    var pendingClear by remember { mutableStateOf<String?>(null) }
+    var storageRevision by remember { mutableLongStateOf(0L) }
+    var storage by remember { mutableStateOf<AppStorageSnapshot?>(null) }
+    var clearing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(state.offlineDownloadRevision, storageRevision) {
+        storage = runCatching { appStorageSnapshot(context) }.getOrNull()
+    }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
         ModernScreenTopBar("Offline downloads", close)
+        OfflineStorageCard(
+            storage = storage,
+            clearing = clearing,
+            onClearDownloads = { pendingClear = "downloads" },
+            onClearCache = { pendingClear = "cache" }
+        )
         if (entries.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Default.DownloadDone, null, Modifier.size(54.dp), tint = Color.Gray)
                     Text("No offline downloads", style = MaterialTheme.typography.titleLarge)
@@ -139,7 +157,7 @@ internal fun OfflineDownloadsScreen(
             }
         } else {
             LazyColumn(
-                Modifier.fillMaxSize(),
+                Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -152,7 +170,7 @@ internal fun OfflineDownloadsScreen(
                         item("offline-empty-${type.name}") { Text("No downloads", color = Color.DarkGray) }
                     } else items(group, key = { it.key }) { entry ->
                         val info = remember(entry.requestId, state.offlineDownloadRevision) {
-                            OfflineMediaDownloads.info(context, entry.requestId)
+                            OfflineMediaDownloads.info(context, entry.requestId, entry.downloadId)
                         }
                         Surface(
                             onClick = { play(entry) },
@@ -179,6 +197,15 @@ internal fun OfflineDownloadsScreen(
                                         OfflineDownloadStatus.MISSING -> "Not downloaded"
                                     }
                                     Text(statusText, color = if (info.status == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.LightGray, style = MaterialTheme.typography.labelMedium)
+                                    Text(
+                                        if (entry.requestId.startsWith("hls-export:")) "${entry.fileType.ifBlank { "HLS → MP4" }} · Download/NikTV Offline"
+                                        else if (entry.downloadId >= 0L) "${entry.fileType.ifBlank { "Video" }} · Download/NikTV Offline · external players"
+                                        else "Legacy HLS cache · NikTV only",
+                                        color = Color.Gray,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                     info.percent?.takeIf { info.status == OfflineDownloadStatus.DOWNLOADING }?.let {
                                         LinearProgressIndicator(progress = { it / 100f }, Modifier.fillMaxWidth().padding(top = 5.dp))
                                     }
@@ -196,11 +223,113 @@ internal fun OfflineDownloadsScreen(
     pendingRemoval?.let { entry ->
         AlertDialog(
             onDismissRequest = { pendingRemoval = null },
-            title = { Text(if (OfflineMediaDownloads.status(context, entry.requestId) == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
+            title = { Text(if (OfflineMediaDownloads.status(context, entry.requestId, entry.downloadId) == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
             text = { Text("Remove “${entry.media.title}” from offline downloads?") },
             dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Keep") } },
             confirmButton = { Button(onClick = { remove(entry.media, entry.catalogType); pendingRemoval = null }) { Text("Remove") } }
         )
+    }
+    pendingClear?.let { target ->
+        val downloads = target == "downloads"
+        AlertDialog(
+            onDismissRequest = { pendingClear = null },
+            title = { Text(if (downloads) "Clear offline downloads?" else "Clear app cache?") },
+            text = {
+                Text(
+                    if (downloads) {
+                        "This removes every downloaded movie and episode. Profiles, settings, and watch history are kept."
+                    } else {
+                        "This clears temporary artwork and subtitle files. They will be downloaded again when needed."
+                    }
+                )
+            },
+            dismissButton = { TextButton(onClick = { pendingClear = null }) { Text("Cancel") } },
+            confirmButton = {
+                Button(onClick = {
+                    pendingClear = null
+                    clearing = true
+                    scope.launch {
+                        if (downloads) {
+                            removeAll()
+                            delay(1_000L)
+                        } else {
+                            clearAppCaches(context)
+                        }
+                        storageRevision++
+                        clearing = false
+                    }
+                }) { Text("Clear") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun OfflineStorageCard(
+    storage: AppStorageSnapshot?,
+    clearing: Boolean,
+    onClearDownloads: () -> Unit,
+    onClearCache: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF151820),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Text("Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                if (clearing || storage == null) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+            storage?.let { snapshot ->
+                val usedBytes = (snapshot.totalBytes - snapshot.availableBytes).coerceAtLeast(0L)
+                LinearProgressIndicator(
+                    progress = { if (snapshot.totalBytes > 0L) usedBytes.toFloat() / snapshot.totalBytes else 0f },
+                    modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(99.dp))
+                )
+                Text(
+                    "${formatDownloadBytes(snapshot.availableBytes)} available of ${formatDownloadBytes(snapshot.totalBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.LightGray
+                )
+                StorageUsageRow(
+                    label = "Offline downloads",
+                    bytes = snapshot.offlineDownloadBytes,
+                    enabled = !clearing && snapshot.offlineDownloadBytes > 0L,
+                    onClear = onClearDownloads
+                )
+                StorageUsageRow(
+                    label = "Artwork and subtitle cache",
+                    bytes = snapshot.cacheBytes,
+                    enabled = !clearing && snapshot.cacheBytes > 0L,
+                    onClear = onClearCache
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StorageUsageRow(
+    label: String,
+    bytes: Long,
+    enabled: Boolean,
+    onClear: () -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(formatDownloadBytes(bytes), style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        }
+        TextButton(
+            onClick = onClear,
+            enabled = enabled,
+            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))
+        ) { Text("Clear") }
     }
 }
 

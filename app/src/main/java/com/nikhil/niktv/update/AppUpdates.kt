@@ -53,7 +53,19 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-data class UpdateInfo(val version: String, val downloadUrl: String)
+enum class UpdatePackage(val assetSuffix: String, val displayName: String) {
+    AUTO("", "Automatic"),
+    ARM64("arm64-v8a", "64-bit ARM"),
+    ARM32("armeabi-v7a", "32-bit ARM"),
+    UNIVERSAL("universal", "Universal"),
+    FIRE_TV("firetv", "Fire TV")
+}
+
+data class UpdateInfo(
+    val version: String,
+    val downloadUrl: String,
+    val updatePackage: UpdatePackage = UpdatePackage.UNIVERSAL
+)
 
 data class DownloadedApkCleanup(
     val fileCount: Int,
@@ -137,6 +149,7 @@ object AppUpdates {
     private const val PREF_INSTALL_AFTER_DOWNLOAD = "install_after_download"
     private const val PREF_ENFORCE_UPDATES = "enforce_updates"
     private const val PREF_STARTUP_CHECK = "startup_check_enabled"
+    private const val PREF_UPDATE_PACKAGE = "update_package"
     private const val CHANNEL = "niktv-updates"
     private const val AVAILABLE_NOTIFICATION_ID = 1001
     private const val READY_NOTIFICATION_ID = 1002
@@ -158,6 +171,8 @@ object AppUpdates {
     val updateEnforcementEnabled: StateFlow<Boolean> = mutableUpdateEnforcementEnabled.asStateFlow()
     private val mutableStartupUpdateCheckEnabled = MutableStateFlow(true)
     val startupUpdateCheckEnabled: StateFlow<Boolean> = mutableStartupUpdateCheckEnabled.asStateFlow()
+    private val mutableUpdatePackage = MutableStateFlow(UpdatePackage.AUTO)
+    val updatePackage: StateFlow<UpdatePackage> = mutableUpdatePackage.asStateFlow()
 
     const val ACTION_REQUEST_UPDATE_DOWNLOAD =
         "com.nikhil.niktv.action.REQUEST_UPDATE_DOWNLOAD"
@@ -177,6 +192,11 @@ object AppUpdates {
         mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !BuildConfig.DEBUG)
         mutableStartupUpdateCheckEnabled.value =
             preferences().getBoolean(PREF_STARTUP_CHECK, true)
+        mutableUpdatePackage.value = runCatching {
+            UpdatePackage.valueOf(
+                preferences().getString(PREF_UPDATE_PACKAGE, null) ?: UpdatePackage.AUTO.name
+            )
+        }.getOrDefault(UpdatePackage.AUTO)
         createChannel(appContext)
         restorePendingUpdate()
 
@@ -231,7 +251,8 @@ object AppUpdates {
         }
 
         val expectedTag = expectedReleaseTag(version)
-        val expectedAssetName = expectedApkAssetName(version)
+        val selectedPackage = effectiveUpdatePackage()
+        val expectedAssetName = expectedApkAssetName(version, selectedPackage)
 
         val releaseJson = fetchText(
             "$RELEASE_BY_TAG_URL$expectedTag",
@@ -279,7 +300,8 @@ object AppUpdates {
 
         val update = UpdateInfo(
             version = version,
-            downloadUrl = assetUrl
+            downloadUrl = assetUrl,
+            updatePackage = selectedPackage
         )
 
         check(isUpdateForCurrentChannel(update)) {
@@ -322,7 +344,7 @@ object AppUpdates {
                 .onFailure { Log.w(TAG, "Could not remove failed download $previousId", it) }
         }
 
-        val fileName = apkFileName(update.version)
+        val fileName = apkFileName(update.version, update.updatePackage)
         val request = DownloadManager.Request(Uri.parse(update.downloadUrl))
             .setTitle("NikTV ${update.version}")
             .setDescription("Downloading NikTV update")
@@ -516,7 +538,8 @@ object AppUpdates {
         }
     }
 
-    fun savedLocation(version: String): String = "Downloads/NikTV/${apkFileName(version)}"
+    fun savedLocation(version: String): String =
+        "Downloads/NikTV/${apkFileName(version, effectiveUpdatePackage())}"
 
     suspend fun obsoleteDownloadedApks(context: Context): DownloadedApkCleanup =
         withContext(Dispatchers.IO) {
@@ -568,6 +591,19 @@ object AppUpdates {
                 file.name != protectedName
         }
     }
+
+    fun setUpdatePackage(updatePackage: UpdatePackage) {
+        check(initialized) { "AppUpdates has not been initialized" }
+        preferences().edit().putString(PREF_UPDATE_PACKAGE, updatePackage.name).apply()
+        mutableUpdatePackage.value = updatePackage
+        mutablePendingUpdate.value?.let(::clearPendingUpdate)
+    }
+
+    fun effectiveUpdatePackage(): UpdatePackage = resolveUpdatePackage(
+        mutableUpdatePackage.value,
+        Build.SUPPORTED_ABIS.toList(),
+        Build.MANUFACTURER
+    )
 
     fun notifyAvailable(context: Context, update: UpdateInfo) {
         if (!notificationsAllowed(context)) return
@@ -845,8 +881,8 @@ object AppUpdates {
             "v$version"
         }
 
-    private fun expectedApkAssetName(version: String): String =
-        "NikTV-${expectedReleaseTag(version)}.apk"
+    private fun expectedApkAssetName(version: String, updatePackage: UpdatePackage): String =
+        "NikTV-${expectedReleaseTag(version)}-${updatePackage.assetSuffix}.apk"
 
     private fun isUpdateForCurrentChannel(update: UpdateInfo): Boolean {
         if (!isValidUpdateVersion(update.version)) {
@@ -856,15 +892,16 @@ object AppUpdates {
         return runCatching {
             val uri = Uri.parse(update.downloadUrl)
             val expectedTag = expectedReleaseTag(update.version)
-            val expectedAsset = expectedApkAssetName(update.version)
-
-            val expectedPath =
-                "/nikhilmenghani/nikTv/releases/download/" +
-                    "$expectedTag/$expectedAsset"
+            val allowedPaths = UpdatePackage.entries
+                .filterNot { it == UpdatePackage.AUTO }
+                .map { updatePackage ->
+                    "/nikhilmenghani/nikTv/releases/download/$expectedTag/" +
+                        expectedApkAssetName(update.version, updatePackage)
+                }
 
             uri.scheme.equals("https", ignoreCase = true) &&
                 uri.host.equals("github.com", ignoreCase = true) &&
-                uri.path == expectedPath
+                uri.path in allowedPaths
         }.getOrDefault(false)
     }
 
@@ -903,6 +940,23 @@ object AppUpdates {
                     "APK package mismatch. Expected '$expectedPackage' " +
                         "but downloaded '$downloadedPackage'"
                 )
+            }
+
+            val signatureFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                PackageManager.GET_SIGNATURES
+            }
+            val installedInfo = context.packageManager.getPackageInfo(expectedPackage, signatureFlags)
+            val signedArchive = context.packageManager.getPackageArchiveInfo(
+                temporaryApk.absolutePath,
+                signatureFlags
+            ) ?: error("Downloaded APK signing information could not be read")
+            check(
+                installedInfo.signerCertificates().isNotEmpty() &&
+                    installedInfo.signerCertificates() == signedArchive.signerCertificates()
+            ) {
+                "APK signature mismatch. The update was not signed by the installed NikTV key."
             }
 
             val downloadedVersion = packageInfo.versionName.orEmpty()
@@ -1014,15 +1068,18 @@ object AppUpdates {
         }
     }
 
-    private fun apkFileName(version: String): String {
+    private fun apkFileName(
+        version: String,
+        updatePackage: UpdatePackage = effectiveUpdatePackage()
+    ): String {
         val safeVersion =
             version.replace(Regex("[^A-Za-z0-9._-]"), "_")
                 .ifBlank { "update" }
 
         return if (BuildConfig.DEBUG) {
-            "NikTV-dev-v$safeVersion.apk"
+            "NikTV-dev-v$safeVersion-${updatePackage.assetSuffix}.apk"
         } else {
-            "NikTV-v$safeVersion.apk"
+            "NikTV-v$safeVersion-${updatePackage.assetSuffix}.apk"
         }
     }
 
@@ -1037,6 +1094,37 @@ object AppUpdates {
     )
 
     private data class ActiveDownload(val downloadId: Long, val version: String)
+}
+
+internal fun resolveUpdatePackage(
+    preference: UpdatePackage,
+    supportedAbis: List<String>,
+    manufacturer: String
+): UpdatePackage {
+    if (preference != UpdatePackage.AUTO) return preference
+    if (manufacturer.contains("amazon", ignoreCase = true)) return UpdatePackage.FIRE_TV
+    return when {
+        supportedAbis.any { it.equals("arm64-v8a", ignoreCase = true) } -> UpdatePackage.ARM64
+        supportedAbis.any { it.equals("armeabi-v7a", ignoreCase = true) } -> UpdatePackage.ARM32
+        else -> UpdatePackage.UNIVERSAL
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun android.content.pm.PackageInfo.signerCertificates(): Set<String> {
+    val packageSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        signingInfo?.let { info ->
+            if (info.hasMultipleSigners()) info.apkContentsSigners.toList()
+            else info.signingCertificateHistory.toList()
+        }.orEmpty()
+    } else {
+        signatures.orEmpty().toList()
+    }
+    return packageSignatures.map { signature ->
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(signature.toByteArray())
+            .joinToString("") { byte -> "%02x".format(byte) }
+    }.toSet()
 }
 
 internal fun downloadPercent(bytesDownloaded: Long, totalBytes: Long?): Int? =

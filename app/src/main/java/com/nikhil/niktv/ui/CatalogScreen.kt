@@ -156,6 +156,7 @@ internal fun CatalogScreen(
     setUseTmdbEpisodeMetadata: (Boolean) -> Unit,
     downloadForOffline: (MediaItem, CatalogType, MediaItem?) -> Unit,
     removeOfflineDownload: (MediaItem, CatalogType) -> Unit,
+    removeAllOfflineDownloads: () -> Unit,
     toggleSeriesWatch: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     setBrowseLayout: (BrowseLayout) -> Unit,
@@ -290,6 +291,7 @@ internal fun CatalogScreen(
                     state = state,
                     play = playOfflineDownload,
                     remove = removeOfflineDownload,
+                    removeAll = removeAllOfflineDownloads,
                     close = closeOfflineDownloads
                 )
                 state.settingsOpen -> ModernSettingsScreen(

@@ -107,6 +107,7 @@ import com.nikhil.niktv.model.*
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
+import com.nikhil.niktv.update.UpdatePackage
 import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
 import com.nikhil.niktv.data.OfflineMediaDownloads
@@ -355,6 +356,7 @@ internal fun ModernSettingsScreen(
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
     val startupUpdateCheckEnabled by AppUpdates.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
+    val updatePackagePreference by AppUpdates.updatePackage.collectAsStateWithLifecycle()
     var obsoleteApks by remember { mutableStateOf<DownloadedApkCleanup?>(null) }
     var cleaningObsoleteApks by remember { mutableStateOf(false) }
     var apkCleanupMessage by remember { mutableStateOf<String?>(null) }
@@ -746,10 +748,10 @@ internal fun ModernSettingsScreen(
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Edit ${editing.name}", style = MaterialTheme.typography.titleMedium)
-                        OutlinedTextField(
+                        TvSafeSettingsTextField(
                             value = editName,
                             onValueChange = { editName = it },
-                            label = { Text("Profile name") },
+                            label = "Profile name",
                             singleLine = true,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1780,6 +1782,39 @@ internal fun ModernSettingsScreen(
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
+                HorizontalDivider()
+                Column(
+                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Update APK", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (updatePackagePreference == UpdatePackage.AUTO) {
+                            "Automatic · ${AppUpdates.effectiveUpdatePackage().displayName} detected"
+                        } else {
+                            "Use ${updatePackagePreference.displayName} for future updates"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        UpdatePackage.entries.forEach { option ->
+                            FilterChip(
+                                selected = updatePackagePreference == option,
+                                onClick = {
+                                    AppUpdates.setUpdatePackage(option)
+                                    availableUpdate = null
+                                    updateMessage = "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
+                                },
+                                label = { Text(option.displayName) },
+                                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))
+                            )
+                        }
+                    }
+                }
                 HorizontalDivider()
                 ListItem(
                     headlineContent = { Text("One-click update") },

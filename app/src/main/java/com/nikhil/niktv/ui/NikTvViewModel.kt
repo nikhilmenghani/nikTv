@@ -219,7 +219,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive) {
                 delay(2_000L)
                 if (_state.value.offlineDownloads.any {
-                        OfflineMediaDownloads.status(getApplication(), it.requestId) in setOf(
+                        OfflineMediaDownloads.status(getApplication(), it.requestId, it.downloadId) in setOf(
                             OfflineDownloadStatus.QUEUED,
                             OfflineDownloadStatus.DOWNLOADING,
                             OfflineDownloadStatus.PAUSED
@@ -1772,44 +1772,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     // season with absolute episode numbers while IPTV groups them by year.
                     runCatching { tmdb.seasonEpisodes(matched.id, 1) }.getOrDefault(emptyList())
                 }
-                val metadataByAirDate = tmdbEpisodes
-                    .mapNotNull { metadata -> metadata.airDate?.let { it to metadata } }
-                    .groupBy({ it.first }, { it.second })
-                    .mapNotNull { (date, matches) -> matches.singleOrNull()?.let { date to it } }
-                    .toMap()
                 val specialKeys = result.episodes.mapNotNull { it.title.specialEpisodeKey() }.toSet()
-                val specialMetadataByKey = if (specialKeys.isNotEmpty()) {
+                val specialEpisodes = if (specialKeys.isNotEmpty()) {
                     runCatching { tmdb.seasonEpisodes(matched.id, 0) }.getOrDefault(emptyList())
-                        .mapNotNull { metadata -> metadata.name?.specialEpisodeKey()?.let { it to metadata } }
-                        .toMap()
-                } else emptyMap()
-                val metadataByTitle = tmdbEpisodes.mapNotNull { metadata ->
-                    metadata.name?.episodeMetadataTitleKey()?.takeIf { it.isNotBlank() }?.let { it to metadata }
-                }.toMap()
-                val metadataByEpisodeNumber = tmdbEpisodes
-                    .groupBy { it.episodeNumber }
-                    .mapNotNull { (number, matches) ->
-                        number?.let { matches.singleOrNull()?.let { metadata -> number to metadata } }
-                    }
-                    .toMap()
+                } else emptyList()
                 Log.i("NikTvEpisodeMetadata", "TMDB episode metadata candidates=${tmdbEpisodes.size}; IPTV episodes=${result.episodes.size}")
                 result = result.copy(episodes = result.episodes.map { episode ->
-                    val specialKey = episode.title.specialEpisodeKey()
-                    val titleKey = episode.title.episodeSpecificTitleKey()
-                    val dateMetadata = episode.episodeAirDate?.let(metadataByAirDate::get)
-                    val metadata = when {
-                        specialKey != null -> specialMetadataByKey[specialKey]
-                        episode.episodeNumber != null -> metadataByEpisodeNumber[episode.episodeNumber]
-                        dateMetadata != null -> dateMetadata
-                        titleKey.isNotBlank() -> metadataByTitle[titleKey]
-                        else -> null
-                    } ?: return@map episode
+                    val metadata = selectTmdbEpisodeMetadata(episode, tmdbEpisodes, specialEpisodes)
+                        ?: return@map episode
                     episode.copy(
                         title = metadata.name ?: episode.title,
                         logo = metadata.stillUrl ?: episode.logo,
                         description = metadata.overview ?: episode.description,
-                        seasonNumber = metadata.seasonNumber,
-                        episodeNumber = metadata.episodeNumber,
+                        // TMDB metadata enriches the portal episode; it must not
+                        // replace the portal's playback identity or visible numbering.
+                        seasonNumber = episode.seasonNumber ?: metadata.seasonNumber,
+                        episodeNumber = episode.episodeNumber ?: metadata.episodeNumber,
                         externalTmdbId = matched.id,
                         episodeAirDate = metadata.airDate ?: episode.episodeAirDate
                     )
@@ -3790,12 +3768,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val session = requireNotNull(_state.value.session)
                 val key = "${session.profile.cacheKey()}:${type.name}:${item.id}"
                 val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
-                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId) !in
+                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) !in
                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
-                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId) }
+                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId, it.downloadId) }
                 val url = portal.playableUrl(session, item, type)
-                val id = OfflineMediaDownloads.enqueue(getApplication(), key, item.title, url)
-                val entry = OfflineMediaDownload(requestId = id, sourceUrl = url, profileKey = session.profile.cacheKey(), catalogType = type, media = item, series = series)
+                val handle = OfflineMediaDownloads.enqueue(getApplication(), key, item.title, url)
+                val entry = OfflineMediaDownload(downloadId = handle.downloadId, requestId = handle.requestId, sourceUrl = url, profileKey = session.profile.cacheKey(), catalogType = type, media = item, series = series, fileType = handle.fileType)
                 val updated = listOf(entry) + _state.value.offlineDownloads.filterNot { it.key == key }
                 _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
                 store.saveOfflineDownloads(updated)
@@ -3822,11 +3800,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 val key = existingKey
                 val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
-                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId) !in
+                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) !in
                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
-                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId) }
-                val id = OfflineMediaDownloads.enqueue(getApplication(), key, playing.media.title, playing.url)
-                val entry = OfflineMediaDownload(requestId = id, sourceUrl = playing.url, profileKey = session.profile.cacheKey(), catalogType = playing.catalogType, media = playing.media, series = playing.series)
+                existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId, it.downloadId) }
+                val handle = OfflineMediaDownloads.enqueue(getApplication(), key, playing.media.title, playing.url)
+                val entry = OfflineMediaDownload(downloadId = handle.downloadId, requestId = handle.requestId, sourceUrl = playing.url, profileKey = session.profile.cacheKey(), catalogType = playing.catalogType, media = playing.media, series = playing.series, fileType = handle.fileType)
                 val updated = listOf(entry) + _state.value.offlineDownloads.filterNot { it.key == key }
                 _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
                 store.saveOfflineDownloads(updated)
@@ -3878,7 +3856,46 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             store.saveOfflineDownloads(updated)
-            OfflineMediaDownloads.remove(getApplication(), entry.requestId)
+            OfflineMediaDownloads.remove(getApplication(), entry.requestId, entry.downloadId)
+        }
+    }
+
+    fun removeAllOfflineDownloads() {
+        val downloads = _state.value.offlineDownloads
+        if (downloads.isEmpty()) return
+        val playing = _state.value.nowPlaying
+        val activeDownload = playing?.takeIf { it.offlinePlayback }?.let { active ->
+            downloads.firstOrNull {
+                it.catalogType == active.catalogType && it.media.id == active.media.id
+            }
+        }
+        viewModelScope.launch {
+            var onlineUrl: String? = null
+            if (activeDownload != null) {
+                val session = _state.value.session
+                if (session == null) {
+                    _state.update { it.copy(error = "Connect to the IPTV provider before clearing downloads while offline media is playing.") }
+                    return@launch
+                }
+                onlineUrl = runCatching {
+                    portal.playableUrl(session, playing.media, playing.catalogType)
+                }.getOrElse { failure ->
+                    _state.update { it.copy(error = failure.message ?: "Could not switch active playback online. Downloads were kept.") }
+                    return@launch
+                }
+            }
+
+            _state.update { current ->
+                current.copy(
+                    offlineDownloads = emptyList(),
+                    offlineDownloadRevision = current.offlineDownloadRevision + 1L,
+                    nowPlaying = if (activeDownload != null && onlineUrl != null) {
+                        playing.copy(url = onlineUrl, offlinePlayback = false)
+                    } else current.nowPlaying
+                )
+            }
+            store.saveOfflineDownloads(emptyList())
+            downloads.forEach { OfflineMediaDownloads.remove(getApplication(), it.requestId, it.downloadId) }
         }
     }
 
@@ -3902,9 +3919,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val cachedUrl = if (mayReuseUrl) {
             _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
         } else null
-        val offlineUrl = _state.value.offlineDownloads
+        val offlineEntry = _state.value.offlineDownloads
             .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${item.id}" }
-            ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl) }
+        val offlineUrl = offlineEntry
+            ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl, it.downloadId) }
         val url = offlineUrl ?: cachedUrl ?: portal.playableUrl(session, item, type).also { resolved ->
             if (type != CatalogType.LIVE_TV && session.profile.portalType == PortalType.XTREAM) {
                 val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
@@ -4047,7 +4065,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     progressKey = progressKey,
                     authorizationRetryCount = authorizationRetryCount,
             directFullscreen = directFullscreen,
-            offlinePlayback = offlineUrl != null
+            offlinePlayback = offlineUrl != null,
+            playbackFormat = offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) }
                 ),
                 playbackReturnFocusId =
                     if (
@@ -4698,7 +4717,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closeOfflineDownloads() = _state.update { it.copy(offlineDownloadsOpen = false) }
 
     fun playOfflineDownload(entry: OfflineMediaDownload) {
-        val uri = OfflineMediaDownloads.playableUri(getApplication(), entry.requestId, entry.sourceUrl)
+        val uri = OfflineMediaDownloads.playableUri(getApplication(), entry.requestId, entry.sourceUrl, entry.downloadId)
         if (uri == null) {
             _state.update { it.copy(error = "This download is not complete yet.") }
             return
@@ -4716,6 +4735,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     progressKey = progressKey,
                     directFullscreen = true,
                     offlinePlayback = true
+                    ,playbackFormat = entry.fileType.ifBlank { mediaFormatLabel(entry.sourceUrl) }
                 )
             )
         }
@@ -5086,7 +5106,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_PLAYBACK_URLS = 500
         private const val DASHBOARD_CATEGORY_LIMIT = 10
         private const val MODERN_TMDB_PAGE_SIZE = 20
-        private const val EPISODE_METADATA_VERSION = 3
+        private const val EPISODE_METADATA_VERSION = 4
         private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30

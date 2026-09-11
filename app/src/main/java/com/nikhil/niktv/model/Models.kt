@@ -277,7 +277,8 @@ data class PlayingMedia(
     val progressKey: String = "",
     val authorizationRetryCount: Int = 0,
     val directFullscreen: Boolean = false,
-    val offlinePlayback: Boolean = false
+    val offlinePlayback: Boolean = false,
+    val playbackFormat: String = ""
 )
 
 @Serializable
@@ -307,6 +308,7 @@ data class OfflineMediaDownload(
     val catalogType: CatalogType,
     val media: MediaItem,
     val series: MediaItem? = null,
+    val fileType: String = "",
     val queuedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "$profileKey:${catalogType.name}:${media.id}"

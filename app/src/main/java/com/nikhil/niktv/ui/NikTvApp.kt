@@ -570,20 +570,20 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
-                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId).status }
+                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId, it.downloadId).status }
                         ?.let { it == OfflineDownloadStatus.DOWNLOADING || it == OfflineDownloadStatus.QUEUED } == true,
                     offlineDownloadProgress = state.offlineDownloads.firstOrNull { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
-                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId) }
+                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId, it.downloadId) }
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.percent?.div(100f),
                     offlineDownloadProgressText = state.offlineDownloads.firstOrNull { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
-                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId) }
+                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId, it.downloadId) }
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.progressLabel(),
                     onPlayItem = vm::openMedia,
@@ -666,6 +666,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,setUseTmdbEpisodeMetadata = vm::setUseTmdbEpisodeMetadata
                     ,downloadForOffline = vm::downloadForOffline
                     ,removeOfflineDownload = vm::removeOfflineDownload
+                    ,removeAllOfflineDownloads = vm::removeAllOfflineDownloads
                     ,toggleSeriesWatch = vm::toggleSeriesWatch
                     ,openWatchedEpisode = vm::openWatchedEpisode
                     ,setBrowseLayout = vm::setBrowseLayout

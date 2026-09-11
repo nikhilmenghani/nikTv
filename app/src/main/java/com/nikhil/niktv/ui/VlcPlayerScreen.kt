@@ -783,7 +783,7 @@ internal fun VlcPlayerScreen(
                         )
                         media.series?.let { Text(it.title, color = Color.LightGray, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                         PlayerDateTime(compact = compactMobileControls)
-                        Text("${if (media.offlinePlayback) "OFFLINE" else "IPTV STREAM"} · Player: VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = if (media.offlinePlayback) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        Text("${if (media.offlinePlayback) "OFFLINE" else "IPTV STREAM"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }} · Player: VLC · ${resizeMode.label} · ${activeAppearanceProfile.name}", color = if (media.offlinePlayback) MaterialTheme.colorScheme.primary else Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         offlineDownloadProgressText?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
                     }
                     if (media.catalogType != CatalogType.LIVE_TV) IconButton(

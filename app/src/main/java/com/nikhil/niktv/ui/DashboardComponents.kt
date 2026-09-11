@@ -624,29 +624,36 @@ internal fun ModernPosterCard(
     val posterShape = RoundedCornerShape(10.dp)
     val fraction = if (progress != null && progress.durationMillis > 0L)
         (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else 0f
-    Box(modifier.then(returningTile.modifier)) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .then(
-                    if (focusRequester != null) {
-                        Modifier.focusRequester(focusRequester)
-                    } else {
-                        Modifier
-                    }
-                )
-                .graphicsLayer {
-                    scaleX = posterScale
-                    scaleY = posterScale
+    Box(
+        modifier
+            .then(returningTile.modifier)
+            .then(
+                if (focusRequester != null) {
+                    Modifier.focusRequester(focusRequester)
+                } else {
+                    Modifier
                 }
-                .onFocusChanged { focused = it.isFocused }
-                .remoteCombinedClickable(
+            )
+            // Keep the focus target's measured and transformed bounds stable.
+            // Scaling the focus node itself makes LazyRow/LazyGrid repeatedly
+            // bring its changing bounds into view, which looks like a bounce.
+            .onFocusChanged { focused = it.isFocused }
+            .remoteCombinedClickable(
                 onClick = returningTile.open,
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
                     { menuOpen = true }
                 } else onLongClick,
                 interactionSource = interactionSource
-            ),
+            )
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = posterScale
+                    scaleY = posterScale
+                }
+                .zIndex(if (focused || touchPressed) 1f else 0f),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio)

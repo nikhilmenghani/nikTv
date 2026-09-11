@@ -186,30 +186,25 @@ internal fun ModernFavoriteCard(
         }
     }
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = Color(0xFF090909)
+    ModernPosterCard(
+        item = favorite.media,
+        aspectRatio = aspectRatio,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+        onClick = open,
+        onLongClick = { removalConfirmationOpen = true },
+        titleMaxLines = Int.MAX_VALUE,
+        focusedScale = 1.08f
     ) {
-        ModernPosterCard(
-            item = favorite.media,
-            aspectRatio = aspectRatio,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-            onClick = open,
-            onLongClick = { removalConfirmationOpen = true },
-            titleMaxLines = Int.MAX_VALUE
-        ) {
-            Text(
-                listOfNotNull(
-                    favorite.kind.mediaTypeLabel(),
-                    favorite.categoryTitle?.takeIf { it.isNotBlank() }
-                ).joinToString(" · "),
-                color = Color(0xFFB3B3B3),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            listOfNotNull(
+                favorite.kind.mediaTypeLabel(),
+                favorite.categoryTitle?.takeIf { it.isNotBlank() }
+            ).joinToString(" · "),
+            color = Color(0xFFB3B3B3),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 
     if (removalConfirmationOpen) {

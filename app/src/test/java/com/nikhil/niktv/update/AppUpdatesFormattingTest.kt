@@ -47,4 +47,32 @@ class AppUpdatesFormattingTest {
         assertEquals(0, AppUpdates.compareAppVersions("dev-v0.1.21", "0.1.21-dev"))
         assertTrue(AppUpdates.compareAppVersions("0.1.22", "0.1.21-dev") > 0)
     }
+
+    @Test
+    fun automaticPackageUsesAmazonAndDeviceAbi() {
+        assertEquals(
+            UpdatePackage.FIRE_TV,
+            resolveUpdatePackage(UpdatePackage.AUTO, listOf("arm64-v8a"), "Amazon")
+        )
+        assertEquals(
+            UpdatePackage.ARM64,
+            resolveUpdatePackage(UpdatePackage.AUTO, listOf("arm64-v8a", "armeabi-v7a"), "Google")
+        )
+        assertEquals(
+            UpdatePackage.ARM32,
+            resolveUpdatePackage(UpdatePackage.AUTO, listOf("armeabi-v7a"), "Amlogic")
+        )
+        assertEquals(
+            UpdatePackage.UNIVERSAL,
+            resolveUpdatePackage(UpdatePackage.AUTO, listOf("x86_64"), "Google")
+        )
+    }
+
+    @Test
+    fun explicitPackageOverridesDetection() {
+        assertEquals(
+            UpdatePackage.UNIVERSAL,
+            resolveUpdatePackage(UpdatePackage.UNIVERSAL, listOf("arm64-v8a"), "Amazon")
+        )
+    }
 }

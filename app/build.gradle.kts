@@ -39,6 +39,8 @@ val openSubtitlesKey = providers.gradleProperty("OPEN_SUBTITLES_KEY")
     .orElse("")
 val githubToken = providers.gradleProperty("G_TOKEN")
     .orElse(providers.environmentVariable("G_TOKEN")).orElse("")
+val fireTvApk = providers.gradleProperty("fireTvApk")
+    .map(String::toBoolean).orElse(false)
 
 plugins {
     id("com.android.application")
@@ -67,6 +69,17 @@ android {
         buildConfigField("String", "TMDB_READ_ACCESS_TOKEN", tmdbReadAccessToken.get().asBuildConfigString())
         buildConfigField("String", "OPEN_SUBTITLES_KEY", openSubtitlesKey.get().asBuildConfigString())
         buildConfigField("String", "G_TOKEN", githubToken.get().asBuildConfigString())
+        if (fireTvApk.get()) {
+            ndk { abiFilters += setOf("armeabi-v7a", "arm64-v8a") }
+        }
+    }
+    splits {
+        abi {
+            isEnable = !fireTvApk.get()
+            reset()
+            include("armeabi-v7a", "arm64-v8a")
+            isUniversalApk = !fireTvApk.get()
+        }
     }
     signingConfigs {
         create("automation") {
@@ -132,6 +145,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("androidx.media3:media3-database:1.8.0")
+    implementation("androidx.media3:media3-transformer:1.8.0")
     implementation("org.videolan.android:libvlc-all:3.6.5")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
