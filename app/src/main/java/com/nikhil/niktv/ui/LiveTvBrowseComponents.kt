@@ -391,11 +391,11 @@ internal fun ModernSideRail(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            ModernRailButton(Icons.Default.Home, "Home", state.homeOpen && !state.favoritesOpen && !state.searchOpen && !state.settingsOpen, expanded, openHome)
+            ModernRailButton(Icons.Default.Home, "Home", state.homeOpen && !state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen, expanded, openHome)
             visibleCatalogTypes.forEach { type ->
-                ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && !state.searchOpen && !state.settingsOpen && state.selectedType == type, expanded) { selectType(type) }
+                ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen && state.selectedType == type, expanded) { selectType(type) }
             }
-            ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen && !state.searchOpen && !state.settingsOpen, expanded, openFavorites)
+            ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen, expanded, openFavorites)
             ModernRailButton(Icons.Default.DownloadDone, "Offline", state.offlineDownloadsOpen, expanded, openOfflineDownloads)
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Search, "Search", state.searchOpen, expanded, openSearch)

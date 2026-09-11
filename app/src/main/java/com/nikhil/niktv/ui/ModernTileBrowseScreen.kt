@@ -886,17 +886,21 @@ private fun ModernNewEpisodesRow(
                 "modern-new-episode-${watched.series.id}-${episode.id}"
             }
         ) { (watched, episode) ->
+            // HOME_OFFLINE_CONSISTENCY_V46: New Episodes uses the same series-first card identity
+            // as Continue Watching, while preserving the episode action targets.
             val displayMedia = if (
-                episode.logo.isNullOrBlank() &&
-                !watched.series.logo.isNullOrBlank()
+                watched.series.logo.isNullOrBlank() &&
+                !episode.logo.isNullOrBlank()
             ) {
-                episode.copy(logo = watched.series.logo)
+                watched.series.copy(logo = episode.logo)
             } else {
-                episode
+                watched.series
             }
-            val episodeLabel = listOfNotNull(
-                episode.seasonNumber?.let { "S$it" },
-                episode.episodeNumber?.let { "E$it" }
+            val episodeDetails = listOfNotNull(
+                episode.seasonNumber?.let { season ->
+                    episode.episodeNumber?.let { ep -> "S$season:E$ep" }
+                },
+                episode.compactEpisodeTitle().takeIf { it.isNotBlank() }
             ).joinToString(" · ")
             val favorite = FavoriteItem(
                 kind = FavoriteKind.EPISODE,
@@ -908,9 +912,7 @@ private fun ModernNewEpisodesRow(
 
             ModernCompactMediaCard(
                 item = displayMedia,
-                subtitle = listOf(watched.series.title, episodeLabel)
-                    .filter { it.isNotBlank() }
-                    .joinToString(" · "),
+                subtitle = episodeDetails,
                 onClick = { open(watched, episode) },
                 isFavorite = favorites.any { it.key == favorite.key },
                 onFavorite = { toggleFavorite(favorite) },

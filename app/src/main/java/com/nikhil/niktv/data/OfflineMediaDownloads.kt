@@ -119,7 +119,7 @@ object OfflineMediaDownloads {
             .setTitle(title)
             .setMimeType(MimeTypes.VIDEO_UNKNOWN)
             .setNotificationVisibility(SystemDownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "NikTV Offline/$fileName")
+            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "NikTV/$fileName")
         val downloadId = context.applicationContext
             .getSystemService(SystemDownloadManager::class.java).enqueue(request)
         return OfflineDownloadHandle(downloadId = downloadId, fileType = extension.uppercase())

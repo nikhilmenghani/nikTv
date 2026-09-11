@@ -127,7 +127,7 @@ class HlsExportWorker(context: Context, parameters: WorkerParameters) :
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/NikTV Offline")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/NikTV")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             val resolver = applicationContext.contentResolver
@@ -147,7 +147,7 @@ class HlsExportWorker(context: Context, parameters: WorkerParameters) :
         } else {
             val directory = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "NikTV Offline"
+                "NikTV"
             ).apply { mkdirs() }
             val target = File(directory, fileName)
             source.copyTo(target, overwrite = true)

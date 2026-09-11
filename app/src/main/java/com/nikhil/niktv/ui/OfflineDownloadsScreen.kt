@@ -200,8 +200,8 @@ internal fun OfflineDownloadsScreen(
                                     }
                                     Text(statusText, color = if (info.status == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.LightGray, style = MaterialTheme.typography.labelMedium)
                                     Text(
-                                        if (entry.requestId.startsWith("hls-export:")) "${entry.fileType.ifBlank { "HLS → MP4" }} · Download/NikTV Offline"
-                                        else if (entry.downloadId >= 0L) "${entry.fileType.ifBlank { "Video" }} · Download/NikTV Offline · external players"
+                                        if (entry.requestId.startsWith("hls-export:")) "${entry.fileType.ifBlank { "HLS → MP4" }} · Download/NikTV"
+                                        else if (entry.downloadId >= 0L) "${entry.fileType.ifBlank { "Video" }} · Download/NikTV · external players"
                                         else "Legacy HLS cache · NikTV only",
                                         color = Color.Gray,
                                         style = MaterialTheme.typography.labelSmall,

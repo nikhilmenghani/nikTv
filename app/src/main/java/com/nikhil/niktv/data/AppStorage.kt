@@ -22,7 +22,13 @@ suspend fun appStorageSnapshot(context: Context): AppStorageSnapshot = withConte
         totalBytes = stats.totalBytes,
         availableBytes = stats.availableBytes,
         offlineDownloadBytes = directorySize(File(appContext.filesDir, "offline_media_cache")) +
-            directorySize(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "NikTV Offline")),
+            offlineMediaDirectorySize(
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "NikTV")
+            ) +
+            // Keep legacy exports visible in storage totals without moving/deleting them.
+            directorySize(
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "NikTV Offline")
+            ),
         cacheBytes = directorySize(appContext.cacheDir) +
             (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
     )
@@ -45,6 +51,20 @@ internal fun directorySize(directory: File): Long {
     if (!directory.exists()) return 0L
     if (directory.isFile) return directory.length().coerceAtLeast(0L)
     return directory.listFiles()?.sumOf(::directorySize) ?: 0L
+}
+
+private val offlineMediaExtensions = setOf("mp4", "mkv", "webm", "avi", "mov", "ts", "m4v")
+
+private fun offlineMediaDirectorySize(directory: File): Long {
+    if (!directory.exists()) return 0L
+    if (directory.isFile) {
+        return if (directory.extension.lowercase() in offlineMediaExtensions) {
+            directory.length().coerceAtLeast(0L)
+        } else {
+            0L
+        }
+    }
+    return directory.listFiles()?.sumOf(::offlineMediaDirectorySize) ?: 0L
 }
 
 private fun deleteDirectoryContents(directory: File, excludedNames: Set<String> = emptySet()) {
