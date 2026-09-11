@@ -96,6 +96,14 @@ internal fun SubtitleSelectionDialog(
     var focusSearchOutcome by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val keyboard = LocalSoftwareKeyboardController.current
+    /*
+     * SUBTITLE_EMPTY_TRACK_FOCUS_V41
+     *
+     * Timing controls only have meaning when the active stream exposes at
+     * least one subtitle track. Keep that same fact in the D-pad focus graph
+     * so every explicit destination corresponds to a composed control.
+     */
+    val hasSubtitleTracks = tracks.isNotEmpty()
     val isTv = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
         (configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
@@ -130,6 +138,18 @@ internal fun SubtitleSelectionDialog(
     val trackFocusRequesters = remember(tracks.map { it.id }) {
         List(tracks.size + 1) { FocusRequester() }
     }
+    val trackHeaderFocusRequester =
+        if (internetSearch != null && onExternalSubtitle != null) {
+            modeFocusRequester
+        } else {
+            closeFocusRequester
+        }
+    val offDownFocusRequester =
+        if (hasSubtitleTracks) {
+            trackFocusRequesters[1]
+        } else {
+            trackFocusRequesters[0]
+        }
     val resultFocusRequesters = remember(results.map { it.id }) {
         List(results.size) { FocusRequester() }
     }
@@ -137,7 +157,7 @@ internal fun SubtitleSelectionDialog(
         delay(100L)
         runCatching {
             if (searchMode) searchFocusRequester.requestFocus()
-            else modeFocusRequester.requestFocus()
+            else trackHeaderFocusRequester.requestFocus()
         }
     }
     LaunchedEffect(searching, results, searchError, focusSearchOutcome) {
@@ -365,12 +385,12 @@ internal fun SubtitleSelectionDialog(
                             Modifier
                                 .focusRequester(trackFocusRequesters[0])
                                 .focusProperties {
-                                    up = modeFocusRequester
-                                    down = trackFocusRequesters.getOrNull(1) ?: earlierFocusRequester
+                                    up = trackHeaderFocusRequester
+                                    down = offDownFocusRequester
                                 }
                                 .onPreviewKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                        (trackFocusRequesters.getOrNull(1) ?: earlierFocusRequester).requestFocus()
+                                        offDownFocusRequester.requestFocus()
                                         true
                                     } else false
                                 }
@@ -405,8 +425,8 @@ internal fun SubtitleSelectionDialog(
                         item { Text("No subtitle tracks are available in this stream.", Modifier.padding(12.dp)) }
                     }
                 }
-                if (!searchMode && !compact) Text("Subtitle timing")
-                if (!searchMode) Row(
+                if (!searchMode && hasSubtitleTracks && !compact) Text("Subtitle timing")
+                if (!searchMode && hasSubtitleTracks) Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -441,7 +461,7 @@ internal fun SubtitleSelectionDialog(
                         Icon(Icons.Default.Add, "Show subtitles later")
                     }
                 }
-                if (!searchMode && delayMs != 0L) TextButton(
+                if (!searchMode && hasSubtitleTracks && delayMs != 0L) TextButton(
                     onClick = { onDelayChange(0L) },
                     modifier = Modifier
                         .focusRequester(resetFocusRequester)
@@ -451,7 +471,7 @@ internal fun SubtitleSelectionDialog(
                         }
                         .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Reset timing") }
-                if (!searchMode && timingRequiresVlc && !compact) {
+                if (!searchMode && hasSubtitleTracks && timingRequiresVlc && !compact) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")
                 }
             }
