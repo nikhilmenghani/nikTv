@@ -19,9 +19,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
@@ -580,46 +581,72 @@ internal fun PlayerQueueOverlay(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     /*
-     * MOBILE_PLAYER_QUEUE_DENSITY_V35
+     * PLAYER_QUEUE_GRID_V40
      *
-     * The playback queue is shared across TV, tablet and phone. Phones use
-     * the same horizontal rail and gesture, but with a shorter sheet, narrower
-     * cards, tighter spacing and touch-oriented visual treatment.
+     * Keep one shared queue surface for Media3/ExoPlayer and VLC, but present
+     * the queue as a vertically scrollable grid instead of a horizontal rail.
+     * Columns adapt to the available player width while D-pad navigation is
+     * explicit so vertical movement stays in the same column.
      */
-    val mobileQueueRail =
-        configuration.smallestScreenWidthDp < 600
+    val tvQueueGrid =
+        context.packageManager.hasSystemFeature(
+            android.content.pm.PackageManager.FEATURE_LEANBACK
+        ) ||
+            (
+                configuration.uiMode and
+                    android.content.res.Configuration.UI_MODE_TYPE_MASK
+                ) ==
+                android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
+            !context.packageManager.hasSystemFeature(
+                android.content.pm.PackageManager.FEATURE_TOUCHSCREEN
+            )
+    val compactQueueGrid =
+        !tvQueueGrid &&
+            configuration.smallestScreenWidthDp < 600
+    val queueColumnCount = when {
+        tvQueueGrid -> 4
+        compactQueueGrid && configuration.screenWidthDp < 600 -> 2
+        compactQueueGrid -> 3
+        configuration.screenWidthDp < 900 -> 3
+        else -> 4
+    }
     val queueSheetMinHeight =
-        if (mobileQueueRail) 176.dp else 250.dp
+        if (compactQueueGrid) 230.dp else 340.dp
+    val desiredQueueSheetMaxHeight =
+        (
+            configuration.screenHeightDp *
+                if (compactQueueGrid) .88f else .82f
+            ).dp
     val queueSheetMaxHeight =
-        if (mobileQueueRail) 230.dp else 340.dp
-    val queueOuterHorizontalPadding =
-        if (mobileQueueRail) 8.dp else 28.dp
-    val queueOuterVerticalPadding =
-        if (mobileQueueRail) 8.dp else 22.dp
-    val queueDismissBoundary =
-        if (mobileQueueRail) {
-            queueSheetMaxHeight + queueOuterVerticalPadding
+        if (desiredQueueSheetMaxHeight > queueSheetMinHeight) {
+            desiredQueueSheetMaxHeight
         } else {
-            380.dp
+            queueSheetMinHeight
         }
+    val queueOuterHorizontalPadding =
+        if (compactQueueGrid) 8.dp else 28.dp
+    val queueOuterVerticalPadding =
+        if (compactQueueGrid) 8.dp else 22.dp
+    val queueDismissBoundary =
+        queueSheetMaxHeight + queueOuterVerticalPadding
     val queueSheetPadding =
-        if (mobileQueueRail) 12.dp else 20.dp
+        if (compactQueueGrid) 12.dp else 20.dp
     val queueSheetCornerRadius =
-        if (mobileQueueRail) 18.dp else 24.dp
+        if (compactQueueGrid) 18.dp else 24.dp
     val queueHeaderSpacer =
-        if (mobileQueueRail) 8.dp else 14.dp
-    val queueRailSpacing =
-        if (mobileQueueRail) 8.dp else 12.dp
-    val queueCardWidth =
-        if (mobileQueueRail) 176.dp else 280.dp
-    val queueLoadMoreWidth =
-        if (mobileQueueRail) 180.dp else 240.dp
+        if (compactQueueGrid) 8.dp else 14.dp
+    val queueGridHorizontalSpacing =
+        if (compactQueueGrid) 8.dp else 12.dp
+    val queueGridVerticalSpacing =
+        if (compactQueueGrid) 8.dp else 12.dp
+    val queueCardHeight =
+        if (compactQueueGrid) 146.dp else 174.dp
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val loadMoreRequester = remember { FocusRequester() }
-    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
 
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
@@ -649,28 +676,35 @@ internal fun PlayerQueueOverlay(
     val showLoadMore = hasMore || loadingMore || loadMoreRequested
 
     fun focusAt(index: Int) {
-        val maxIndex = if (showLoadMore) uniqueItems.size else uniqueItems.lastIndex
+        val maxIndex =
+            if (showLoadMore) uniqueItems.size else uniqueItems.lastIndex
         if (maxIndex < 0) return
 
         val target = index.coerceIn(0, maxIndex)
         focusedIndex = target
 
-        val requester = if (target < uniqueItems.size) {
-            requesters.getOrPut(uniqueItems[target].id) { FocusRequester() }
-        } else {
-            loadMoreRequester
-        }
-        val alreadyVisible = listState.layoutInfo.visibleItemsInfo.any {
-            it.index == target
-        }
-        if (alreadyVisible && runCatching { requester.requestFocus() }.getOrDefault(false)) {
+        val requester =
+            if (target < uniqueItems.size) {
+                requesters.getOrPut(uniqueItems[target].id) {
+                    FocusRequester()
+                }
+            } else {
+                loadMoreRequester
+            }
+        val alreadyVisible =
+            gridState.layoutInfo.visibleItemsInfo.any {
+                it.index == target
+            }
+
+        if (
+            alreadyVisible &&
+            runCatching { requester.requestFocus() }.getOrDefault(false)
+        ) {
             return
         }
+
         scope.launch {
-            // Avoid waiting for a full animated scroll before moving focus.
-            // Adjacent visible cards focus synchronously; an off-screen edge
-            // card is composed with one direct scroll and focused next frame.
-            listState.scrollToItem(target)
+            gridState.scrollToItem(target)
             withFrameNanos { }
             runCatching { requester.requestFocus() }
         }
@@ -680,8 +714,9 @@ internal fun PlayerQueueOverlay(
         if (!initialFocusApplied && uniqueItems.isNotEmpty()) {
             initialFocusApplied = true
             val target =
-                uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
-            listState.scrollToItem(target)
+                uniqueItems.indexOfFirst { it.id == playingId }
+                    .coerceAtLeast(0)
+            gridState.scrollToItem(target)
             focusedIndex = target
             delay(120L)
             runCatching {
@@ -716,6 +751,165 @@ internal fun PlayerQueueOverlay(
         }
     }
 
+    @Composable
+    fun QueueMediaTile(index: Int, item: MediaItem) {
+        val requester =
+            requesters.getOrPut(item.id) { FocusRequester() }
+        var focused by remember(item.id) { mutableStateOf(false) }
+        val current = item.id == playingId
+        val artwork = remember(item.id, item.title, item.logo) {
+            artworkRequest(context, item)
+        }
+
+        Surface(
+            Modifier
+                .fillMaxWidth()
+                .height(queueCardHeight)
+                .focusRequester(requester)
+                .onFocusChanged {
+                    focused = it.isFocused
+                    if (it.isFocused) focusedIndex = index
+                }
+                .clickable { onSelect(item) }
+                .focusable(),
+            color = when {
+                focused && tvQueueGrid ->
+                    Color(0xFFE50914)
+                current -> Color(0xFF383838)
+                else -> Color(0xFF242424)
+            },
+            shape =
+                androidx.compose.foundation.shape.RoundedCornerShape(
+                    12.dp
+                )
+        ) {
+            Column(
+                Modifier.padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    Modifier.fillMaxWidth().weight(1f),
+                    shape =
+                        androidx.compose.foundation.shape.RoundedCornerShape(
+                            8.dp
+                        ),
+                    color = Color(0xFF111111)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (item.logo.isNullOrBlank()) {
+                            Icon(
+                                Icons.Default.Movie,
+                                null,
+                                tint = Color.LightGray
+                            )
+                        } else {
+                            SubcomposeAsyncImage(
+                                model = artwork,
+                                contentDescription = item.title,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            ) {
+                                when (painter.state.value) {
+                                    is AsyncImagePainter.State.Success ->
+                                        SubcomposeAsyncImageContent()
+                                    else -> Icon(
+                                        Icons.Default.Movie,
+                                        null,
+                                        tint = Color.LightGray
+                                    )
+                                }
+                            }
+                        }
+
+                        if (current) {
+                            Surface(
+                                Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(5.dp),
+                                color =
+                                    Color.Black.copy(alpha = .78f),
+                                shape =
+                                    androidx.compose.foundation.shape
+                                        .RoundedCornerShape(5.dp)
+                            ) {
+                                Row(
+                                    Modifier.padding(
+                                        horizontal = 6.dp,
+                                        vertical = 3.dp
+                                    ),
+                                    verticalAlignment =
+                                        Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.PlayArrow,
+                                        null,
+                                        Modifier.size(14.dp),
+                                        tint = Color.White
+                                    )
+                                    Text(
+                                        "PLAYING",
+                                        color = Color.White,
+                                        style =
+                                            MaterialTheme.typography
+                                                .labelSmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        item.title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = if (compactQueueGrid) 1 else 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    val episodeLabel = listOfNotNull(
+                        item.seasonNumber?.let { "Season $it" },
+                        item.episodeNumber?.let { "Episode $it" }
+                    ).joinToString(" · ")
+
+                    if (episodeLabel.isNotBlank()) {
+                        Text(
+                            episodeLabel,
+                            color = Color.White.copy(alpha = .76f),
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    item.description
+                        ?.trim()
+                        ?.takeIf {
+                            it.isNotBlank() &&
+                                !it.equals(
+                                    item.title.trim(),
+                                    ignoreCase = true
+                                )
+                        }
+                        ?.let {
+                            Text(
+                                it,
+                                color =
+                                    Color.White.copy(alpha = .68f),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                }
+            }
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -724,56 +918,104 @@ internal fun PlayerQueueOverlay(
                 if (event.type != KeyEventType.KeyDown) {
                     false
                 } else {
+                    val maxIndex =
+                        if (showLoadMore) {
+                            uniqueItems.size
+                        } else {
+                            uniqueItems.lastIndex
+                        }
+                    val currentColumn =
+                        if (focusedIndex >= 0) {
+                            focusedIndex % queueColumnCount
+                        } else {
+                            0
+                        }
+
                     when (event.key) {
                         Key.DirectionUp -> {
-                            onDismiss()
-                            true
-                        }
-
-                        Key.DirectionLeft -> {
-                            focusAt((focusedIndex - 1).coerceAtLeast(0))
-                            true
-                        }
-
-                        Key.DirectionRight -> {
-                            val maxIndex =
-                                if (showLoadMore) uniqueItems.size
-                                else uniqueItems.lastIndex
-                            if (maxIndex >= 0) {
-                                focusAt((focusedIndex + 1).coerceAtMost(maxIndex))
+                            if (focusedIndex < queueColumnCount) {
+                                onDismiss()
+                            } else {
+                                focusAt(focusedIndex - queueColumnCount)
                             }
                             true
                         }
 
-                        Key.DirectionDown -> true
+                        Key.DirectionLeft -> {
+                            if (currentColumn > 0) {
+                                focusAt(focusedIndex - 1)
+                            }
+                            true
+                        }
+
+                        Key.DirectionRight -> {
+                            val target = focusedIndex + 1
+                            if (
+                                currentColumn < queueColumnCount - 1 &&
+                                target <= maxIndex
+                            ) {
+                                focusAt(target)
+                            }
+                            true
+                        }
+
+                        Key.DirectionDown -> {
+                            val target =
+                                focusedIndex + queueColumnCount
+                            if (target <= maxIndex) {
+                                focusAt(target)
+                            }
+                            true
+                        }
 
                         else -> false
                     }
                 }
             }
-            .pointerInput(onDismiss) {
+            .pointerInput(onDismiss, gridState) {
                 awaitPointerEventScope {
                     var start = Offset.Zero
                     var tracking = false
+                    var startedAtGridTop = true
                     while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val change = event.changes.firstOrNull() ?: continue
+                        val event =
+                            awaitPointerEvent(PointerEventPass.Initial)
+                        val change =
+                            event.changes.firstOrNull() ?: continue
                         if (change.pressed && !change.previousPressed) {
                             start = change.position
                             tracking = true
-                        } else if (!change.pressed && change.previousPressed && tracking) {
+                            startedAtGridTop =
+                                gridState.firstVisibleItemIndex == 0 &&
+                                    gridState
+                                        .firstVisibleItemScrollOffset == 0
+                        } else if (
+                            !change.pressed &&
+                            change.previousPressed &&
+                            tracking
+                        ) {
                             val delta = change.position - start
-                            val swipeDown = delta.y > 64.dp.toPx() &&
-                                kotlin.math.abs(delta.y) > kotlin.math.abs(delta.x)
-                            val outsideTap = delta.getDistance() < 12.dp.toPx() &&
-                                start.y < size.height - queueDismissBoundary.toPx()
-                            if (swipeDown || outsideTap) onDismiss()
+                            val swipeDown =
+                                startedAtGridTop &&
+                                    delta.y > 64.dp.toPx() &&
+                                    kotlin.math.abs(delta.y) >
+                                    kotlin.math.abs(delta.x)
+                            val outsideTap =
+                                delta.getDistance() < 12.dp.toPx() &&
+                                    start.y <
+                                    size.height -
+                                    queueDismissBoundary.toPx()
+                            if (swipeDown || outsideTap) {
+                                onDismiss()
+                            }
                             tracking = false
                         }
                     }
                 }
             }
-            .background(Color.Black.copy(alpha = .76f * renderedReveal))
+            .background(
+                Color.Black.copy(alpha = .76f * renderedReveal)
+            )
             .padding(
                 horizontal = queueOuterHorizontalPadding,
                 vertical = queueOuterVerticalPadding
@@ -788,7 +1030,8 @@ internal fun PlayerQueueOverlay(
                     max = queueSheetMaxHeight
                 )
                 .graphicsLayer {
-                    translationY = size.height * (1f - renderedReveal)
+                    translationY =
+                        size.height * (1f - renderedReveal)
                 },
             color = Color(0xF51A1A1A),
             shape =
@@ -804,7 +1047,7 @@ internal fun PlayerQueueOverlay(
                 Text(
                     "Choose what to play",
                     style =
-                        if (mobileQueueRail) {
+                        if (compactQueueGrid) {
                             MaterialTheme.typography.titleMedium
                         } else {
                             MaterialTheme.typography.headlineSmall
@@ -812,13 +1055,13 @@ internal fun PlayerQueueOverlay(
                     color = Color.White
                 )
                 Text(
-                    if (mobileQueueRail) {
-                        "Swipe down to close  •  Tap to play"
+                    if (tvQueueGrid) {
+                        "D-pad browse  •  ↑ from top closes  •  OK Play"
                     } else {
-                        "←/→ Browse  •  ↑ Close  •  OK Play"
+                        "Swipe to browse  •  Swipe down at top to close"
                     },
                     style =
-                        if (mobileQueueRail) {
+                        if (compactQueueGrid) {
                             MaterialTheme.typography.labelSmall
                         } else {
                             MaterialTheme.typography.bodySmall
@@ -827,183 +1070,49 @@ internal fun PlayerQueueOverlay(
                 )
                 Spacer(Modifier.height(queueHeaderSpacer))
 
-                LazyRow(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    state = listState,
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(queueColumnCount),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    state = gridState,
                     horizontalArrangement =
-                        Arrangement.spacedBy(queueRailSpacing),
-                    verticalAlignment = Alignment.CenterVertically
+                        Arrangement.spacedBy(
+                            queueGridHorizontalSpacing
+                        ),
+                    verticalArrangement =
+                        Arrangement.spacedBy(
+                            queueGridVerticalSpacing
+                        )
                 ) {
-                    itemsIndexed(
-                        uniqueItems,
-                        key = { _, item -> "player-queue-${item.id}" }
-                    ) { index, item ->
-                        val requester =
-                            requesters.getOrPut(item.id) { FocusRequester() }
-                        var focused by remember(item.id) { mutableStateOf(false) }
-                        val current = item.id == playingId
-                        val artwork = remember(item.id, item.title, item.logo) {
-                            artworkRequest(context, item)
+                    items(
+                        count = uniqueItems.size,
+                        key = { index ->
+                            "player-queue-${uniqueItems[index].id}"
                         }
-
-                        Surface(
-                            Modifier
-                                .width(queueCardWidth)
-                                .fillMaxHeight()
-                                .focusRequester(requester)
-                                .onFocusChanged {
-                                    focused = it.isFocused
-                                    if (it.isFocused) focusedIndex = index
-                                }
-                                .clickable { onSelect(item) }
-                                .focusable(),
-                            color = when {
-                                focused && !mobileQueueRail ->
-                                    Color(0xFFE50914)
-                                current -> Color(0xFF383838)
-                                else -> Color(0xFF242424)
-                            },
-                            shape =
-                                androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                        ) {
-                            Column(
-                                Modifier.padding(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Surface(
-                                    Modifier.fillMaxWidth().weight(1f),
-                                    shape =
-                                        androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                                    color = Color(0xFF111111)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        if (item.logo.isNullOrBlank()) {
-                                            Icon(
-                                                Icons.Default.Movie,
-                                                null,
-                                                tint = Color.LightGray
-                                            )
-                                        } else {
-                                            SubcomposeAsyncImage(
-                                                model = artwork,
-                                                contentDescription = item.title,
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentScale = ContentScale.Crop
-                                            ) {
-                                                when (painter.state.value) {
-                                                    is AsyncImagePainter.State.Success ->
-                                                        SubcomposeAsyncImageContent()
-                                                    else -> Icon(
-                                                        Icons.Default.Movie,
-                                                        null,
-                                                        tint = Color.LightGray
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        if (current) {
-                                            Surface(
-                                                Modifier
-                                                    .align(Alignment.BottomStart)
-                                                    .padding(5.dp),
-                                                color =
-                                                    Color.Black.copy(alpha = .78f),
-                                                shape =
-                                                    androidx.compose.foundation.shape
-                                                        .RoundedCornerShape(5.dp)
-                                            ) {
-                                                Row(
-                                                    Modifier.padding(
-                                                        horizontal = 6.dp,
-                                                        vertical = 3.dp
-                                                    ),
-                                                    verticalAlignment =
-                                                        Alignment.CenterVertically
-                                                ) {
-                                                    Icon(
-                                                        Icons.Default.PlayArrow,
-                                                        null,
-                                                        Modifier.size(14.dp),
-                                                        tint = Color.White
-                                                    )
-                                                    Text(
-                                                        "PLAYING",
-                                                        color = Color.White,
-                                                        style =
-                                                            MaterialTheme.typography
-                                                                .labelSmall
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Column(
-                                    Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text(
-                                        item.title,
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-
-                                    val episodeLabel = listOfNotNull(
-                                        item.seasonNumber?.let { "Season $it" },
-                                        item.episodeNumber?.let { "Episode $it" }
-                                    ).joinToString(" · ")
-
-                                    if (episodeLabel.isNotBlank()) {
-                                        Text(
-                                            episodeLabel,
-                                            color = Color.White.copy(alpha = .76f),
-                                            style =
-                                                MaterialTheme.typography.labelMedium
-                                        )
-                                    }
-
-                                    item.description
-                                        ?.trim()
-                                        ?.takeIf {
-                                            it.isNotBlank() &&
-                                                !it.equals(
-                                                    item.title.trim(),
-                                                    ignoreCase = true
-                                                )
-                                        }
-                                        ?.let {
-                                            Text(
-                                                it,
-                                                color =
-                                                    Color.White.copy(alpha = .68f),
-                                                style =
-                                                    MaterialTheme.typography.bodySmall,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                }
-                            }
-                        }
+                    ) { index ->
+                        QueueMediaTile(
+                            index = index,
+                            item = uniqueItems[index]
+                        )
                     }
 
                     if (showLoadMore) {
                         item(key = "player-queue-load-more") {
-                            var focused by remember { mutableStateOf(false) }
+                            var focused by remember {
+                                mutableStateOf(false)
+                            }
 
                             Surface(
                                 Modifier
-                                    .width(queueLoadMoreWidth)
-                                    .fillMaxHeight()
+                                    .fillMaxWidth()
+                                    .height(queueCardHeight)
                                     .focusRequester(loadMoreRequester)
                                     .onFocusChanged {
                                         focused = it.isFocused
                                         if (it.isFocused) {
-                                            focusedIndex = uniqueItems.size
+                                            focusedIndex =
+                                                uniqueItems.size
                                         }
                                     }
                                     .clickable(
@@ -1012,11 +1121,15 @@ internal fun PlayerQueueOverlay(
                                                 !loadingMore &&
                                                 !loadMoreRequested
                                     ) {
-                                        loadMoreRequested = onLoadMore()
+                                        loadMoreRequested =
+                                            onLoadMore()
                                     }
                                     .focusable(),
                                 color =
-                                    if (focused && !mobileQueueRail) {
+                                    if (
+                                        focused &&
+                                        tvQueueGrid
+                                    ) {
                                         Color(0xFFE50914)
                                     } else {
                                         Color(0xFF303030)
@@ -1025,18 +1138,23 @@ internal fun PlayerQueueOverlay(
                                     androidx.compose.foundation.shape
                                         .RoundedCornerShape(12.dp)
                             ) {
-                                Row(
+                                Column(
                                     Modifier.padding(
                                         horizontal = 16.dp,
                                         vertical = 14.dp
                                     ),
-                                    horizontalArrangement =
-                                        Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    horizontalAlignment =
+                                        Alignment.CenterHorizontally,
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(10.dp)
                                 ) {
-                                    if (loadingMore || loadMoreRequested) {
+                                    if (
+                                        loadingMore ||
+                                        loadMoreRequested
+                                    ) {
                                         CircularProgressIndicator(
-                                            modifier = Modifier.size(24.dp),
+                                            modifier =
+                                                Modifier.size(24.dp),
                                             color = Color.White,
                                             strokeWidth = 3.dp
                                         )
@@ -1047,24 +1165,33 @@ internal fun PlayerQueueOverlay(
                                             tint = Color.White
                                         )
                                     }
-                                    Column {
-                                        Text(
-                                            if (loadingMore || loadMoreRequested) {
-                                                "Loading more…"
-                                            } else {
-                                                "Load more"
-                                            },
-                                            color = Color.White,
-                                            style =
-                                                MaterialTheme.typography.titleSmall
-                                        )
-                                        Text(
-                                            "Continue this playback list",
-                                            color = Color.White.copy(alpha = .70f),
-                                            style =
-                                                MaterialTheme.typography.bodySmall
-                                        )
-                                    }
+                                    Text(
+                                        if (
+                                            loadingMore ||
+                                            loadMoreRequested
+                                        ) {
+                                            "Loading more…"
+                                        } else {
+                                            "Load more"
+                                        },
+                                        color = Color.White,
+                                        style =
+                                            MaterialTheme.typography
+                                                .titleSmall
+                                    )
+                                    Text(
+                                        "Continue this playback list",
+                                        color =
+                                            Color.White.copy(
+                                                alpha = .70f
+                                            ),
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                        maxLines = 2,
+                                        overflow =
+                                            TextOverflow.Ellipsis
+                                    )
                                 }
                             }
                         }
