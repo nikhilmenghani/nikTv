@@ -255,7 +255,7 @@ class ProfileStore(private val context: Context) {
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
     suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = context.dataStore.edit {
-        it[playerControlsTimeoutKey] = seconds.coerceIn(1, 30)
+        it[playerControlsTimeoutKey] = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
     }
     suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = context.dataStore.edit {
         it[keepAwakeOnlyDuringPlaybackKey] = if (enabled) 1 else 0

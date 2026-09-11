@@ -127,7 +127,30 @@ internal val PLAYER_ENGINE_OPTIONS = listOf(
     PlaybackEngine.EXOPLAYER
 )
 
-internal val PLAYER_CONTROLS_TIMEOUT_OPTIONS = listOf(3, 5, 10, 15)
+/*
+ * PLAYER_PICTURE_TIMEOUT_FOCUS_V51
+ *
+ * Zero is the persisted sentinel for Infinite. Keep the existing numeric
+ * values unchanged so old preferences/backups remain compatible.
+ */
+internal const val PLAYER_CONTROLS_TIMEOUT_INFINITE = 0
+internal val PLAYER_CONTROLS_TIMEOUT_OPTIONS = listOf(
+    3,
+    5,
+    10,
+    15,
+    PLAYER_CONTROLS_TIMEOUT_INFINITE
+)
+
+internal fun playerControlsTimeoutLabel(seconds: Int): String =
+    if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) "Infinite" else "${seconds}s"
+
+internal fun playerControlsTimeoutFeedback(seconds: Int): String =
+    if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) {
+        "Controls stay visible"
+    } else {
+        "Controls hide after ${seconds}s"
+    }
 
 internal fun nextPlayerControlsTimeoutSeconds(current: Int): Int {
     val exactIndex = PLAYER_CONTROLS_TIMEOUT_OPTIONS.indexOf(current)
@@ -146,8 +169,10 @@ internal fun PlayerControlsTimeoutButton(
     onChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val displaySeconds = seconds.coerceIn(0, 99).toString()
-    val badgeWidth = if (displaySeconds.length > 1) 20.dp else 17.dp
+    val displayValue =
+        if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) "∞"
+        else seconds.coerceIn(0, 99).toString()
+    val badgeWidth = if (displayValue.length > 1) 20.dp else 17.dp
 
     IconButton(
         onClick = { onChange(nextPlayerControlsTimeoutSeconds(seconds)) },
@@ -159,7 +184,7 @@ internal fun PlayerControlsTimeoutButton(
         ) {
             Icon(
                 Icons.Default.Timer,
-                "Controls hide after ${seconds}s",
+                playerControlsTimeoutFeedback(seconds),
                 Modifier.fillMaxSize(),
                 tint = Color.White
             )
@@ -178,7 +203,7 @@ internal fun PlayerControlsTimeoutButton(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = displaySeconds,
+                        text = displayValue,
                         color = Color.White,
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
@@ -189,6 +214,7 @@ internal fun PlayerControlsTimeoutButton(
         }
     }
 }
+
 
 private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
     PlaybackEngine.VLC -> "VLC"
@@ -752,7 +778,10 @@ fun PlayerScreen(
                 && !pictureEditorVisible
                 && !moreOptionsOpen
 
-        if (canAutoHide) {
+        if (
+            canAutoHide &&
+            controlsTimeoutSeconds != PLAYER_CONTROLS_TIMEOUT_INFINITE
+        ) {
             delay(
                 controlsTimeoutSeconds
                     .coerceIn(1, 30) * 1_000L
@@ -1542,12 +1571,13 @@ fun PlayerScreen(
                             sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
                         }
                     },
+                    pictureModes = appearanceProfiles,
                     pictureMode = activeAppearanceProfile,
-                    onNextPictureMode = {
-                        val current = appearanceProfiles.indexOfFirst { it.id == activeAppearanceProfile.id }.coerceAtLeast(0)
-                        val next = appearanceProfiles[(current + 1) % appearanceProfiles.size]
-                        VideoAppearancePreferences.setActive(context, next.id)
-                        modeFeedback = "Picture mode · ${next.name}"
+                    onSelectPictureMode = { selectedMode ->
+                        if (selectedMode.id != activeAppearanceProfile.id) {
+                            VideoAppearancePreferences.setActive(context, selectedMode.id)
+                            modeFeedback = "Picture mode · ${selectedMode.name}"
+                        }
                     },
                     onEditPictureMode = {
                         moreOptionsOpen = false
@@ -1558,7 +1588,7 @@ fun PlayerScreen(
                     controlsTimeoutSeconds = controlsTimeoutSeconds,
                     onControlsTimeoutChanged = { seconds ->
                         onControlsTimeoutChanged(seconds)
-                        modeFeedback = "Controls hide after ${seconds}s"
+                        modeFeedback = playerControlsTimeoutFeedback(seconds)
                     },
                     pipAvailable = pipAvailable,
                     onPictureInPicture = {
@@ -2219,13 +2249,78 @@ private fun PlayerEngineChoiceButton(
 }
 
 
+/*
+ * Picture mode uses the same selected-vs-focused visual language as Player.
+ * Eight presets are shown as two uniform rows of four so every choice remains
+ * visible without shrinking long labels into unreadable chips.
+ */
+@Composable
+private fun PlayerPictureModeChoiceButton(
+    profile: VideoAppearanceProfile,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val isTv = context.isTvLikeDevice(configuration)
+    val controlHeight = if (isTv) 56.dp else 48.dp
+    val shape = RoundedCornerShape(10.dp)
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .height(controlHeight)
+            .playerControlFocus(shape) {},
+        shape = shape,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        } else {
+            Color.White.copy(alpha = 0.055f)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
+            } else {
+                Color.White.copy(alpha = 0.10f)
+            }
+        ),
+        contentColor = Color.White
+    ) {
+        Box(
+            Modifier.fillMaxSize().padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                profile.name,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) {
+                    androidx.compose.ui.text.font.FontWeight.SemiBold
+                } else {
+                    androidx.compose.ui.text.font.FontWeight.Medium
+                },
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    Color.White.copy(alpha = 0.90f)
+                },
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+
 @Composable
 internal fun PlayerMoreOptionsDialog(
     detailLines: List<String>,
     selectedPlayer: PlaybackEngine,
     onSelectPlayer: (PlaybackEngine) -> Unit,
+    pictureModes: List<VideoAppearanceProfile>,
     pictureMode: VideoAppearanceProfile,
-    onNextPictureMode: () -> Unit,
+    onSelectPictureMode: (VideoAppearanceProfile) -> Unit,
     onEditPictureMode: () -> Unit,
     controlsTimeoutSeconds: Int,
     onControlsTimeoutChanged: (Int) -> Unit,
@@ -2236,6 +2331,10 @@ internal fun PlayerMoreOptionsDialog(
     onDismiss: () -> Unit
 ) {
     val playerRequesters = remember { PLAYER_ENGINE_OPTIONS.map { FocusRequester() } }
+    val pictureModeIds = pictureModes.map { it.id }
+    val pictureRequesters = remember(pictureModeIds) {
+        pictureModeIds.map { FocusRequester() }
+    }
     val finalOptionRequester = remember { FocusRequester() }
     val closeRequester = remember { FocusRequester() }
 
@@ -2351,12 +2450,82 @@ internal fun PlayerMoreOptionsDialog(
                         onClick = onPictureInPicture
                     )
                 }
-                PlayerMoreOptionRow(
-                    icon = videoAppearanceIcon(pictureMode.id),
-                    label = "Picture mode",
-                    value = pictureMode.name,
-                    onClick = onNextPictureMode
-                )
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White.copy(alpha = 0.035f)
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                videoAppearanceIcon(pictureMode.id),
+                                null,
+                                Modifier.size(22.dp),
+                                tint = Color.White.copy(alpha = 0.92f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "Picture mode",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                pictureMode.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1
+                            )
+                        }
+
+                        pictureModes.chunked(4).forEach { rowModes ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                rowModes.forEach { profile ->
+                                    val index = pictureModes.indexOfFirst { it.id == profile.id }
+                                    val column = index % 4
+                                    val leftTarget =
+                                        pictureRequesters.getOrNull(index - 1)
+                                            .takeIf { column > 0 }
+                                    val rightTarget =
+                                        pictureRequesters.getOrNull(index + 1)
+                                            .takeIf { column < 3 }
+                                    val upTarget = pictureRequesters.getOrNull(index - 4)
+                                    val downTarget = pictureRequesters.getOrNull(index + 4)
+
+                                    PlayerPictureModeChoiceButton(
+                                        profile = profile,
+                                        selected = profile.id == pictureMode.id,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .focusRequester(pictureRequesters[index])
+                                            .focusProperties {
+                                                if (leftTarget != null) left = leftTarget
+                                                if (rightTarget != null) right = rightTarget
+                                                if (upTarget != null) up = upTarget
+                                                if (downTarget != null) down = downTarget
+                                            },
+                                        onClick = {
+                                            if (profile.id != pictureMode.id) {
+                                                onSelectPictureMode(profile)
+                                            }
+                                        }
+                                    )
+                                }
+                                repeat((4 - rowModes.size).coerceAtLeast(0)) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
                 PlayerMoreOptionRow(
                     icon = Icons.Default.Tune,
                     label = "Picture settings",
@@ -2364,8 +2533,8 @@ internal fun PlayerMoreOptionsDialog(
                 )
                 PlayerMoreOptionRow(
                     icon = Icons.Default.Timer,
-                    label = "Controls hide",
-                    value = "${controlsTimeoutSeconds}s",
+                    label = "Controls timeout",
+                    value = playerControlsTimeoutLabel(controlsTimeoutSeconds),
                     onClick = {
                         onControlsTimeoutChanged(
                             nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
@@ -2554,13 +2723,13 @@ internal fun Modifier.playerControlFocus(
             if (focused && isTv) {
                 Modifier
                     .shadow(
-                        12.dp,
+                        16.dp,
                         shape,
-                        ambientColor = Color(0x99E50914),
-                        spotColor = Color(0x99E50914)
+                        ambientColor = Color(0xAAFFFFFF),
+                        spotColor = Color(0xFFFF4A54)
                     )
-                    .background(Color(0xFF351014), shape)
-                    .border(2.dp, Color(0xFFFF4A54), shape)
+                    .background(Color(0xFF53151B), shape)
+                    .border(3.dp, Color.White, shape)
             } else {
                 Modifier
             }

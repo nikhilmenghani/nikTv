@@ -310,7 +310,15 @@ internal fun VlcPlayerScreen(
         }
     }
     LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible, moreOptionsOpen) {
-        if (controlsVisible && playing && error == null && !queueVisible && !pictureEditorVisible && !moreOptionsOpen) {
+        if (
+            controlsVisible &&
+            playing &&
+            error == null &&
+            !queueVisible &&
+            !pictureEditorVisible &&
+            !moreOptionsOpen &&
+            controlsTimeoutSeconds != PLAYER_CONTROLS_TIMEOUT_INFINITE
+        ) {
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
             controlsFocused = false
@@ -1109,12 +1117,13 @@ internal fun VlcPlayerScreen(
                             )
                         }
                     },
+                    pictureModes = appearanceProfiles,
                     pictureMode = activeAppearanceProfile,
-                    onNextPictureMode = {
-                        val current = appearanceProfiles.indexOfFirst { it.id == activeAppearanceProfile.id }.coerceAtLeast(0)
-                        val next = appearanceProfiles[(current + 1) % appearanceProfiles.size]
-                        VideoAppearancePreferences.setActive(context, next.id)
-                        modeFeedback = "Picture mode · ${next.name}"
+                    onSelectPictureMode = { selectedMode ->
+                        if (selectedMode.id != activeAppearanceProfile.id) {
+                            VideoAppearancePreferences.setActive(context, selectedMode.id)
+                            modeFeedback = "Picture mode · ${selectedMode.name}"
+                        }
                     },
                     onEditPictureMode = {
                         onMoreOptionsOpenChanged(false)
@@ -1125,7 +1134,7 @@ internal fun VlcPlayerScreen(
                     controlsTimeoutSeconds = controlsTimeoutSeconds,
                     onControlsTimeoutChanged = { seconds ->
                         onControlsTimeoutChanged(seconds)
-                        modeFeedback = "Controls hide after ${seconds}s"
+                        modeFeedback = playerControlsTimeoutFeedback(seconds)
                     },
                     pipAvailable = pipAvailable,
                     onPictureInPicture = {

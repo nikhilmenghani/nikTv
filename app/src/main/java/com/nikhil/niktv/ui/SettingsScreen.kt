@@ -666,8 +666,11 @@ internal fun ModernSettingsScreen(
         PlaybackEngineSettingsSection(state.playbackEngine, setPlaybackEngine)
         SettingsSection("Player controls") {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Hide controls after", style = MaterialTheme.typography.titleMedium)
-                Text("While video is playing, controls automatically disappear after this period of inactivity.", color = Color.Gray)
+                Text("Controls timeout", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Choose how long controls stay visible while video is playing. Infinite keeps them visible until you dismiss them.",
+                    color = Color.Gray
+                )
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     PLAYER_CONTROLS_TIMEOUT_OPTIONS.forEachIndexed { index, seconds ->
                         val shape = uniformSegmentShape(index, PLAYER_CONTROLS_TIMEOUT_OPTIONS.size)
@@ -676,7 +679,12 @@ internal fun ModernSettingsScreen(
                             { setPlayerControlsTimeoutSeconds(seconds) },
                             shape,
                             modifier = Modifier.remoteFocusFrame(shape)
-                        ) { Text("${seconds}s") }
+                        ) {
+                            Text(
+                                if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) "∞"
+                                else "${seconds}s"
+                            )
+                        }
                     }
                 }
             }

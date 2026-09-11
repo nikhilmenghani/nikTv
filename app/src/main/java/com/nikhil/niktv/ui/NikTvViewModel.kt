@@ -1088,7 +1088,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setPlayerControlsTimeoutSeconds(seconds: Int) {
-        val normalized = seconds.coerceIn(1, 30)
+        val normalized = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
         _state.update { it.copy(playerControlsTimeoutSeconds = normalized) }
         viewModelScope.launch {
             store.setPlayerControlsTimeoutSeconds(normalized)
