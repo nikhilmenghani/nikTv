@@ -225,6 +225,12 @@ internal fun ProjectCardConfirmationDialog(
     }
 }
 
+private val CategoryPickerBackground = Color(0xFF0B0B0F)
+private val CategoryPickerSurface = Color(0xFF151720)
+private val CategoryPickerRaised = Color(0xFF1B1E28)
+private val CategoryPickerOutline = Color(0xFF2A2D36)
+private val CategoryPickerMuted = Color(0xFFA7ABB5)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CategoryManagerDialog(
@@ -233,6 +239,12 @@ internal fun CategoryManagerDialog(
     applyFilters: (Map<CatalogType, List<String>>) -> Unit
 ) {
     val type = state.categoryManagerType
+    val categoryAccent = when (type) {
+        CatalogType.LIVE_TV -> Color(0xFFE65D68)
+        CatalogType.MOVIES -> Color(0xFF55B8FF)
+        CatalogType.SERIES -> Color(0xFF9A80FF)
+        CatalogType.RADIO -> Color(0xFF7C8CFF)
+    }
     val profile = state.savedProfile
     val profileKey = profile?.cacheKey()
     val raw = state.rawCategoriesByType[type].orEmpty().ifEmpty { if (state.selectedType == type) state.categories else emptyList() }
@@ -332,7 +344,7 @@ internal fun CategoryManagerDialog(
         Surface(
             modifier = categoryPanelModifier,
             shape = if (categoryIsTv) RoundedCornerShape(18.dp) else RoundedCornerShape(0.dp),
-            color = Color(0xFF090B10),
+            color = CategoryPickerBackground,
             tonalElevation = if (categoryIsTv) 6.dp else 0.dp
         ) {
             Column(
@@ -344,14 +356,14 @@ internal fun CategoryManagerDialog(
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             shape = RoundedCornerShape(14.dp),
-                            color = Color(0xFF2B1014),
-                            border = BorderStroke(1.dp, Color(0x66E50914))
+                            color = categoryAccent.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, categoryAccent.copy(alpha = 0.42f))
                         ) {
                             Icon(
                                 Icons.Default.Tune,
                                 null,
                                 Modifier.padding(10.dp).size(22.dp),
-                                tint = Color(0xFFFF3340)
+                                tint = categoryAccent
                             )
                         }
                         Spacer(Modifier.width(10.dp))
@@ -376,7 +388,7 @@ internal fun CategoryManagerDialog(
                                 .focusRequester(closeRequester)
                                 .onFocusChanged { closeFocused = it.isFocused }
                                 .background(
-                                    if (closeFocused) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                    if (closeFocused) categoryAccent.copy(alpha = 0.18f) else Color.Transparent,
                                     CircleShape
                                 )
                         ) { Icon(Icons.Default.Close, "Close") }
@@ -394,7 +406,7 @@ internal fun CategoryManagerDialog(
                             .onFocusChanged { applyFocused = it.isFocused },
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFE50914),
+                            containerColor = categoryAccent,
                             contentColor = Color.White
                         )
                     ) {
@@ -405,21 +417,21 @@ internal fun CategoryManagerDialog(
                 } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF2B1014),
-                        border = BorderStroke(1.dp, Color(0x66E50914))
+                        color = categoryAccent.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, categoryAccent.copy(alpha = 0.42f))
                     ) {
                         Icon(
                             Icons.Default.Tune,
                             null,
                             Modifier.padding(12.dp).size(24.dp),
-                            tint = Color(0xFFFF3340)
+                            tint = categoryAccent
                         )
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text("${type.title} Categories", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         Text(
-                            "Choose up to 10 · press → at the end of any row to save",
+                            "Choose up to 10 categories · press → from the last column to apply",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -447,7 +459,7 @@ internal fun CategoryManagerDialog(
                                 RoundedCornerShape(14.dp)
                             ),
                         shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                        colors = ButtonDefaults.buttonColors(containerColor = categoryAccent, contentColor = Color.White)
                     ) {
                         Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(7.dp))
@@ -465,7 +477,7 @@ internal fun CategoryManagerDialog(
                             }
                             .onFocusChanged { closeFocused = it.isFocused }
                             .background(
-                                if (closeFocused) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                if (closeFocused) categoryAccent.copy(alpha = 0.18f) else Color.Transparent,
                                 CircleShape
                             )
                     ) { Icon(Icons.Default.Close, "Close") }
@@ -475,25 +487,41 @@ internal fun CategoryManagerDialog(
 
                 val enabledCount = currentEnabledSet.size
                 val totalCount = raw.size
+                val selectionLimitReached = enabledCount >= 10
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = if (searchQuery.isNotBlank()) {
-                            "${filteredRaw.size} matching · $enabledCount of 10 selected ($totalCount available)"
-                        } else {
-                            "$enabledCount of 10 ${type.title} categories selected · $totalCount available"
+                        text = when {
+                            searchQuery.isNotBlank() && selectionLimitReached ->
+                                "${filteredRaw.size} matching · $enabledCount of 10 selected · Deselect one to choose another"
+                            searchQuery.isNotBlank() ->
+                                "${filteredRaw.size} matching · $enabledCount of 10 selected · $totalCount available"
+                            selectionLimitReached ->
+                                "$enabledCount of 10 selected · $totalCount available · Deselect one to choose another"
+                            else ->
+                                "$enabledCount of 10 selected · $totalCount available"
                         },
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = CategoryPickerMuted
                     )
                     if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
-                        TextButton(onClick = {
-                            updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet())
-                        }, modifier = Modifier.heightIn(min = 64.dp).focusRequester(selectMatchingRequester)) { Text("Select matching") }
+                        TextButton(
+                            onClick = {
+                                updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet())
+                            },
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .focusRequester(selectMatchingRequester)
+                        ) {
+                            Text("Select matching", color = categoryAccent)
+                        }
                     }
                 }
 
-                HorizontalDivider(Modifier.padding(vertical = 3.dp))
+                HorizontalDivider(
+                    Modifier.padding(vertical = 4.dp),
+                    color = CategoryPickerOutline
+                )
 
                 if (raw.isEmpty()) {
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -511,9 +539,9 @@ internal fun CategoryManagerDialog(
                         modifier = Modifier.weight(1f),
                         columns = GridCells.Fixed(categoryColumns),
                         state = gridState,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = PaddingValues(vertical = 6.dp)
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
                         itemsIndexed(filteredRaw, key = { _, category -> category.id }) { index, category ->
                             val selected = category.id in currentEnabledSet
@@ -529,21 +557,22 @@ internal fun CategoryManagerDialog(
                                         )
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 color = when {
-                                    rowFocused -> Color(0xFF292929)
-                                    selected -> Color(0xFF351416)
-                                    selectionLimitReached -> Color(0xFF111111)
-                                    else -> Color(0xFF171717)
+                                    rowFocused && selected -> categoryAccent.copy(alpha = 0.26f)
+                                    rowFocused -> CategoryPickerRaised
+                                    selected -> categoryAccent.copy(alpha = 0.16f)
+                                    selectionLimitReached -> CategoryPickerSurface.copy(alpha = 0.55f)
+                                    else -> CategoryPickerSurface
                                 },
                                 border = when {
-                                    rowFocused -> BorderStroke(4.dp, Color(0xFFFF3340))
-                                    selected -> BorderStroke(1.dp, Color(0xFFE50914).copy(alpha = 0.75f))
-                                    else -> BorderStroke(1.dp, Color(0xFF303030))
+                                    rowFocused -> BorderStroke(3.dp, Color.White)
+                                    selected -> BorderStroke(1.dp, categoryAccent.copy(alpha = 0.88f))
+                                    else -> BorderStroke(1.dp, CategoryPickerOutline)
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(52.dp)
+                                    .height(56.dp)
                                     .focusRequester(rowRequester)
                                     .focusProperties {
                                         if (index < categoryColumns) up = applyRequester
@@ -567,41 +596,67 @@ internal fun CategoryManagerDialog(
                             ) {
                                 Row(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(44.dp)
-                                        .padding(horizontal = 10.dp),
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Box(
-                                        Modifier.size(20.dp).clip(CircleShape)
-                                            .background(if (selected) Color(0xFFE50914) else Color.Transparent)
-                                            .border(1.dp, if (selected) Color(0xFFE50914) else Color(0xFF777777), CircleShape),
+                                        Modifier
+                                            .size(22.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (selected) categoryAccent
+                                                else Color.Transparent
+                                            )
+                                            .border(
+                                                1.dp,
+                                                if (selected) categoryAccent
+                                                else CategoryPickerMuted.copy(alpha = 0.72f),
+                                                CircleShape
+                                            ),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        if (selected) Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = Color.White)
+                                        if (selected) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                null,
+                                                Modifier.size(14.dp),
+                                                tint = Color.White
+                                            )
+                                        }
                                     }
-                                    Spacer(Modifier.width(8.dp))
-                                    Column(Modifier.weight(1f)) {
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(
+                                        Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(1.dp)
+                                    ) {
                                         Text(
                                             text = category.title,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                            style =
+                                                if (categoryIsTv) MaterialTheme.typography.bodyMedium
+                                                else MaterialTheme.typography.labelLarge,
+                                            fontWeight =
+                                                if (selected) FontWeight.SemiBold
+                                                else FontWeight.Medium,
+                                            color = when {
+                                                selected -> Color.White
+                                                selectionLimitReached -> Color(0xFF777D88)
+                                                else -> Color(0xFFE7E9EF)
+                                            },
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.fillMaxWidth().then(
                                                 if (rowFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
                                             )
                                         )
-                                        Text(
-                                            when {
-                                                selected -> "Included · ${currentEnabledSet.indexOf(category.id) + 1} of ${currentEnabledSet.size}"
-                                                selectionLimitReached -> "Selection limit reached"
-                                                else -> "Not included"
-                                            },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (selected) Color(0xFFFF8A91) else Color(0xFF8D929B),
-                                            maxLines = 1
-                                        )
+                                        if (selected) {
+                                            Text(
+                                                "Selected · ${currentEnabledSet.indexOf(category.id) + 1} of 10",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = categoryAccent.copy(alpha = 0.92f),
+                                                maxLines = 1
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -617,16 +672,24 @@ internal fun CategoryManagerDialog(
                 ) {
                     Box(Modifier.weight(1.55f)) {
                         Surface(
-                            Modifier.fillMaxWidth().height(52.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color.Black,
+                            Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = CategoryPickerSurface,
                             border = BorderStroke(
-                                if (searchEditing || searchFocused) 4.dp else 1.dp,
-                                if (searchEditing || searchFocused) Color(0xFFFF3340) else Color(0xFF666666)
+                                if (searchEditing || searchFocused) 3.dp else 1.dp,
+                                if (searchEditing || searchFocused) categoryAccent
+                                else CategoryPickerOutline
                             )
                         ) {
                             Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = Color.LightGray)
+                                Icon(
+                                    Icons.Default.Search,
+                                    null,
+                                    Modifier.size(20.dp),
+                                    tint =
+                                        if (searchEditing || searchFocused) categoryAccent
+                                        else CategoryPickerMuted
+                                )
                                 Spacer(Modifier.width(6.dp))
                                 BasicTextField(
                                     value = searchQuery,
@@ -656,7 +719,7 @@ internal fun CategoryManagerDialog(
                                     singleLine = true,
                                     readOnly = categoryIsTv && !searchEditing,
                                     textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                                    cursorBrush = SolidColor(Color(0xFFE50914)),
+                                    cursorBrush = SolidColor(categoryAccent),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                     keyboardActions = KeyboardActions(onDone = {
                                         searchEditing = false
@@ -664,7 +727,14 @@ internal fun CategoryManagerDialog(
                                     }),
                                     decorationBox = { inner ->
                                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                                            if (searchQuery.isEmpty()) Text("Search categories", color = Color.Gray, maxLines = 1, style = MaterialTheme.typography.bodySmall)
+                                            if (searchQuery.isEmpty()) {
+                                                Text(
+                                                    "Search categories",
+                                                    color = CategoryPickerMuted,
+                                                    maxLines = 1,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
                                             inner()
                                         }
                                     }
@@ -682,6 +752,7 @@ internal fun CategoryManagerDialog(
                     }
                     CategoryDialogActionButton(
                         text = "Select first 10",
+                        accent = categoryAccent,
                         onClick = { updateCurrentSelection(raw.take(10).map { it.id }.toSet()) },
                         modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
                             left = searchRequester
@@ -692,6 +763,7 @@ internal fun CategoryManagerDialog(
                     )
                     CategoryDialogActionButton(
                         text = "Deselect All",
+                        accent = categoryAccent,
                         onClick = { updateCurrentSelection(emptySet()) },
                         modifier = Modifier.weight(1f).focusRequester(deselectAllRequester).focusProperties {
                             left = selectAllRequester
@@ -711,6 +783,7 @@ internal fun CategoryManagerDialog(
 @Composable
 internal fun CategoryDialogActionButton(
     text: String,
+    accent: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -718,22 +791,26 @@ internal fun CategoryDialogActionButton(
     OutlinedButton(
         onClick = onClick,
         modifier = modifier
-            .height(52.dp)
+            .height(50.dp)
             .onFocusChanged { focused = it.isFocused },
         border = BorderStroke(
             if (focused) 3.dp else 1.dp,
-            if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+            if (focused) accent else CategoryPickerOutline
         ),
         colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = if (focused) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+            containerColor =
+                if (focused) accent.copy(alpha = 0.18f)
+                else CategoryPickerSurface,
+            contentColor = if (focused) Color.White else CategoryPickerMuted
         ),
-        shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+        shape = RoundedCornerShape(14.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Text(
             text,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1,
             softWrap = false
         )
