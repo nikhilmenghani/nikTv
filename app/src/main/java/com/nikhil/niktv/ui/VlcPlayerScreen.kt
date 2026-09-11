@@ -112,7 +112,17 @@ internal fun VlcPlayerScreen(
     var error by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
     ApplyMobileFullscreenOrientation(focusMode)
-    var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
+    var controlsVisible by remember(media.progressKey) {
+        mutableStateOf(
+            moreOptionsOpen ||
+                (!embeddedMode && !startFullscreen)
+        )
+    }
+    LaunchedEffect(moreOptionsOpen, media.progressKey) {
+        if (moreOptionsOpen) {
+            controlsVisible = true
+        }
+    }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var dpadInteraction by remember(media.progressKey) { mutableIntStateOf(0) }
     var suppressNextEmbeddedPlayerFocusHandoff by remember(media.progressKey) {

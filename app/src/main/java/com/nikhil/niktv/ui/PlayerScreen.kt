@@ -368,7 +368,17 @@ fun PlayerScreen(
             queueRevealDragging = false
         }
     }
-    var controlsVisible by remember(media.progressKey) { mutableStateOf(!embeddedMode && !startFullscreen) }
+    var controlsVisible by remember(media.progressKey) {
+        mutableStateOf(
+            moreOptionsOpen ||
+                (!embeddedMode && !startFullscreen)
+        )
+    }
+    LaunchedEffect(moreOptionsOpen, media.progressKey) {
+        if (moreOptionsOpen) {
+            controlsVisible = true
+        }
+    }
     var controlsFocused by remember(media.progressKey) { mutableStateOf(false) }
     var dpadInteraction by remember(media.progressKey) { mutableIntStateOf(0) }
     var suppressNextEmbeddedPlayerFocusHandoff by remember(media.progressKey) {
@@ -2139,6 +2149,13 @@ private fun PlayerMoreOptionRow(
     }
 }
 
+/*
+ * PLAYER_ENGINE_ROW_AND_POPUP_RESTORE_V50
+ *
+ * Keep every player choice in one equal-width row. Selection is persistent
+ * styling; D-pad focus remains a separate TV-only treatment. The compact
+ * label keeps Auto / Media3 / VLC / ExoPlayer visually balanced in one row.
+ */
 @Composable
 private fun PlayerEngineChoiceButton(
     engine: PlaybackEngine,
@@ -2146,15 +2163,20 @@ private fun PlayerEngineChoiceButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(12.dp)
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val isTv = context.isTvLikeDevice(configuration)
+    val controlHeight = if (isTv) 56.dp else 48.dp
+    val shape = RoundedCornerShape(10.dp)
+
     Surface(
         onClick = onClick,
         modifier = modifier
-            .heightIn(min = 48.dp)
+            .height(controlHeight)
             .playerControlFocus(shape) {},
         shape = shape,
         color = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
         } else {
             Color.White.copy(alpha = 0.055f)
         },
@@ -2168,33 +2190,34 @@ private fun PlayerEngineChoiceButton(
         ),
         contentColor = Color.White
     ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+        Box(
+            Modifier.fillMaxSize().padding(horizontal = 4.dp),
+            contentAlignment = Alignment.Center
         ) {
-            if (selected) {
-                Icon(
-                    Icons.Default.CheckCircle,
-                    null,
-                    Modifier.size(17.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.width(6.dp))
-            }
             Text(
                 engine.playerChoiceLabel(),
-                style = MaterialTheme.typography.labelLarge,
+                style = if (isTv) {
+                    MaterialTheme.typography.labelMedium
+                } else {
+                    MaterialTheme.typography.labelSmall
+                },
+                fontWeight = if (selected) {
+                    androidx.compose.ui.text.font.FontWeight.SemiBold
+                } else {
+                    androidx.compose.ui.text.font.FontWeight.Medium
+                },
                 color = if (selected) {
                     MaterialTheme.colorScheme.primary
                 } else {
                     Color.White.copy(alpha = 0.90f)
                 },
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
 }
+
 
 @Composable
 internal fun PlayerMoreOptionsDialog(
@@ -2293,29 +2316,29 @@ internal fun PlayerMoreOptionsDialog(
                             )
                         }
 
-                        PLAYER_ENGINE_OPTIONS.chunked(2).forEach { engines ->
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                engines.forEach { engine ->
-                                    val index = PLAYER_ENGINE_OPTIONS.indexOf(engine)
-                                    PlayerEngineChoiceButton(
-                                        engine = engine,
-                                        selected = engine == selectedPlayer,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .focusRequester(playerRequesters[index]),
-                                        onClick = {
-                                            if (engine != selectedPlayer) {
-                                                onSelectPlayer(engine)
-                                            }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            PLAYER_ENGINE_OPTIONS.forEachIndexed { index, engine ->
+                                val leftRequester = playerRequesters.getOrNull(index - 1)
+                                val rightRequester = playerRequesters.getOrNull(index + 1)
+                                PlayerEngineChoiceButton(
+                                    engine = engine,
+                                    selected = engine == selectedPlayer,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .focusRequester(playerRequesters[index])
+                                        .playerDpadFocusRoutes(
+                                            left = leftRequester,
+                                            right = rightRequester
+                                        ),
+                                    onClick = {
+                                        if (engine != selectedPlayer) {
+                                            onSelectPlayer(engine)
                                         }
-                                    )
-                                }
-                                if (engines.size < 2) {
-                                    Spacer(Modifier.weight(1f))
-                                }
+                                    }
+                                )
                             }
                         }
                     }
