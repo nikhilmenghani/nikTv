@@ -61,6 +61,20 @@ private val searchVisibleTypes = listOf(
     SearchContentType.MOVIES
 )
 
+private val SearchBackground = Color(0xFF0B0B0F)
+private val SearchSurface = Color(0xFF151720)
+private val SearchRaised = Color(0xFF1B1E28)
+private val SearchOutline = Color(0xFF2A2D36)
+private val SearchMuted = Color(0xFFA7ABB5)
+private val SearchAccent = Color(0xFF7C8CFF)
+
+private fun SearchContentType.searchAccent(): Color = when (this) {
+    SearchContentType.LIVE_TV -> Color(0xFFE65D68)
+    SearchContentType.MOVIES -> Color(0xFF55B8FF)
+    SearchContentType.SERIES -> Color(0xFF9A80FF)
+    SearchContentType.EPISODES -> SearchAccent
+}
+
 private data class SearchCategoryOption(
     val id: String,
     val title: String
@@ -180,7 +194,7 @@ internal fun ModernSearchScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF090A0C))
+            .background(SearchBackground)
             .padding(horizontal = if (configuration.screenWidthDp < 600) 14.dp else 20.dp)
     ) {
         SearchScreenHeader(
@@ -276,39 +290,42 @@ internal fun ModernSearchScreen(
                 }
             ),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Color(0xFF15181E),
-                unfocusedContainerColor = Color(0xFF111318),
+                focusedContainerColor = SearchRaised,
+                unfocusedContainerColor = SearchSurface,
                 focusedTextColor = Color.White,
                 unfocusedTextColor = Color.White,
-                focusedBorderColor = Color(0xFFE50914),
-                unfocusedBorderColor = Color(0xFF383C44),
-                cursorColor = Color(0xFFE50914)
+                focusedBorderColor = SearchAccent,
+                unfocusedBorderColor = SearchOutline,
+                focusedLeadingIconColor = SearchAccent,
+                unfocusedLeadingIconColor = SearchMuted,
+                cursorColor = SearchAccent
             )
         )
 
         Spacer(Modifier.height(12.dp))
 
         if (!state.searchScopeLocked) {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 searchVisibleTypes.forEachIndexed { index, type ->
-                    val shape =
-                        searchSegmentShape(index, searchVisibleTypes.size)
-                    SegmentedButton(
+                    SearchScopeButton(
+                        type = type,
                         selected = state.searchType == type,
                         onClick = { setType(type) },
-                        shape = shape,
                         modifier = Modifier
+                            .weight(1f)
                             .focusRequester(typeRequesters.getValue(type))
                             .focusProperties {
                                 up = searchRequester
                                 down = categoryRequester
-                                left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: FocusRequester.Cancel
-                                right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)] ?: FocusRequester.Cancel
+                                left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)]
+                                    ?: FocusRequester.Cancel
+                                right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)]
+                                    ?: FocusRequester.Cancel
                             }
-                            .remoteFocusFrame(shape)
-                    ) {
-                        Text(type.title, maxLines = 1)
-                    }
+                    )
                 }
             }
 
@@ -318,6 +335,7 @@ internal fun ModernSearchScreen(
         SearchCategoryButton(
             title = selectedCategoryTitle,
             availableCount = state.searchCategories.count { it.id != "*" },
+            contentType = state.searchType,
             onClick = {
                 restoreCategoryFocus = true
                 categoryPickerOpen = true
@@ -329,15 +347,6 @@ internal fun ModernSearchScreen(
                     down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
                 }
         )
-
-        if (state.searchScopeLocked) {
-            Text(
-                text = "${state.searchType.title} only",
-                modifier = Modifier.padding(start = 4.dp, top = 6.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color(0xFF8E939C)
-            )
-        }
 
         Spacer(Modifier.height(12.dp))
 
@@ -387,7 +396,7 @@ internal fun ModernSearchScreen(
             Text(
                 "Select to search again · long-press to remove",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF8E939C),
+                color = SearchMuted,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
             LazyColumn(
@@ -460,7 +469,7 @@ internal fun ModernSearchScreen(
                             onClick = { search(true) },
                             modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
                             enabled = !state.searchServerLoading,
-                            border = BorderStroke(1.dp, Color.Gray)
+                            border = BorderStroke(1.dp, SearchOutline)
                         ) {
                             Icon(Icons.Default.CloudDownload, null)
                             Spacer(Modifier.width(8.dp))
@@ -490,7 +499,7 @@ internal fun ModernSearchScreen(
                             },
                             modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
                             enabled = !state.searchServerLoading,
-                            border = BorderStroke(1.dp, Color.Gray)
+                            border = BorderStroke(1.dp, SearchOutline)
                         ) {
                             Icon(Icons.Default.SelectAll, null)
                             Spacer(Modifier.width(8.dp))
@@ -523,7 +532,7 @@ internal fun ModernSearchScreen(
                         onClick = { search(true) },
                         modifier = Modifier.remoteFocusFrame(),
                         enabled = !state.searchServerLoading,
-                        border = BorderStroke(1.dp, Color.Gray)
+                        border = BorderStroke(1.dp, SearchOutline)
                     ) {
                         Text(
                             if (searchingSpecificCategory) {
@@ -609,7 +618,7 @@ private fun SearchScreenHeader(
                     Text(
                         it,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF8E939C),
+                        color = SearchMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -619,65 +628,114 @@ private fun SearchScreenHeader(
 }
 
 @Composable
+private fun SearchScopeButton(
+    type: SearchContentType,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val accent = type.searchAccent()
+    val shape = RoundedCornerShape(14.dp)
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .height(48.dp)
+            .remoteFocusFrame(shape),
+        shape = shape,
+        color =
+            if (selected) accent.copy(alpha = 0.18f)
+            else SearchSurface,
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected) accent.copy(alpha = 0.88f)
+            else SearchOutline
+        )
+    ) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (selected) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                    tint = accent
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                type.title,
+                color = if (selected) Color.White else SearchMuted,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
 private fun SearchCategoryButton(
     title: String,
     availableCount: Int,
+    contentType: SearchContentType,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(16.dp)
+    val accent = contentType.searchAccent()
 
     Surface(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 58.dp)
+            .heightIn(min = 54.dp)
             .remoteFocusFrame(shape),
         shape = shape,
-        color = Color(0xFF15181E),
-        border = BorderStroke(1.dp, Color(0xFF343840))
+        color = SearchSurface,
+        border = BorderStroke(1.dp, SearchOutline)
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF2B1014)
+                shape = RoundedCornerShape(11.dp),
+                color = accent.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, accent.copy(alpha = 0.36f))
             ) {
                 Icon(
                     Icons.Default.FilterAlt,
                     null,
                     Modifier
-                        .padding(9.dp)
-                        .size(20.dp),
-                    tint = Color(0xFFFF5964)
+                        .padding(8.dp)
+                        .size(19.dp),
+                    tint = accent
                 )
             }
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(11.dp))
 
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Category",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color(0xFF8E939C)
-                )
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
 
             if (availableCount > 0) {
                 Text(
                     "$availableCount available",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF8E939C)
+                    color = SearchMuted
                 )
                 Spacer(Modifier.width(8.dp))
             }
@@ -685,7 +743,7 @@ private fun SearchCategoryButton(
             Icon(
                 Icons.Default.ChevronRight,
                 "Choose category",
-                tint = Color(0xFFB8BCC4)
+                tint = SearchMuted
             )
         }
     }
@@ -726,13 +784,13 @@ private fun SearchCategoryPicker(
         ) {
             Surface(
                 modifier = Modifier
-                    .fillMaxWidth(0.78f)
-                    .fillMaxHeight(0.84f)
-                    .widthIn(max = 820.dp),
-                shape = RoundedCornerShape(22.dp),
-                color = Color(0xFF101216),
+                    .fillMaxWidth(0.68f)
+                    .fillMaxHeight(0.82f)
+                    .widthIn(max = 720.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = SearchBackground,
                 tonalElevation = 8.dp,
-                border = BorderStroke(1.dp, Color(0xFF343840))
+                border = BorderStroke(1.dp, SearchOutline)
             ) {
                 SearchCategoryPickerContent(
                     options = options,
@@ -748,7 +806,7 @@ private fun SearchCategoryPicker(
     } else {
         ModalBottomSheet(
             onDismissRequest = close,
-            containerColor = Color(0xFF101216),
+            containerColor = SearchBackground,
             dragHandle = { BottomSheetDefaults.DragHandle() }
         ) {
             Box(
@@ -787,6 +845,7 @@ private fun SearchCategoryPickerContent(
     var categorySearchEditing by rememberSaveable(contentType) {
         mutableStateOf(false)
     }
+    val accent = contentType.searchAccent()
 
     val keyboard = LocalSoftwareKeyboardController.current
     val searchRequester = remember { FocusRequester() }
@@ -870,7 +929,7 @@ private fun SearchCategoryPickerContent(
                 Text(
                     "${contentType.title} · ${options.size - 1} categories",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF8E939C)
+                    color = SearchMuted
                 )
             }
 
@@ -959,7 +1018,18 @@ private fun SearchCategoryPickerContent(
                         categorySearchEditing = false
                         keyboard?.hide()
                     }
-                )
+                ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = SearchRaised,
+                unfocusedContainerColor = SearchSurface,
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                focusedBorderColor = accent,
+                unfocusedBorderColor = SearchOutline,
+                focusedLeadingIconColor = accent,
+                unfocusedLeadingIconColor = SearchMuted,
+                cursorColor = accent
+            )
         )
 
         Spacer(Modifier.height(10.dp))
@@ -1029,16 +1099,16 @@ private fun SearchCategoryPickerContent(
                         shape = shape,
                         color =
                             if (selected) {
-                                Color(0xFF2A171A)
+                                accent.copy(alpha = 0.18f)
                             } else {
-                                Color(0xFF171A1F)
+                                SearchSurface
                             },
                         border = BorderStroke(
                             if (selected) 2.dp else 1.dp,
                             if (selected) {
-                                Color(0xFFE50914)
+                                accent.copy(alpha = 0.9f)
                             } else {
-                                Color(0xFF30343B)
+                                SearchOutline
                             }
                         )
                     ) {
@@ -1059,9 +1129,9 @@ private fun SearchCategoryPickerContent(
                                 modifier = Modifier.size(21.dp),
                                 tint =
                                     if (selected) {
-                                        Color(0xFFFF727A)
+                                        accent
                                     } else {
-                                        Color(0xFF9DA2AB)
+                                        SearchMuted
                                     }
                             )
 
@@ -1086,7 +1156,7 @@ private fun SearchCategoryPickerContent(
                                 Icon(
                                     Icons.Default.CheckCircle,
                                     "Selected",
-                                    tint = Color(0xFFFF5964)
+                                    tint = accent
                                 )
                             }
                         }
@@ -1115,8 +1185,8 @@ private fun SearchRecentRow(
                 onLongClick = onRemove
             ),
         shape = shape,
-        color = Color(0xFF15181E),
-        border = BorderStroke(1.dp, Color(0xFF30343B))
+        color = SearchSurface,
+        border = BorderStroke(1.dp, SearchOutline)
     ) {
         Row(
             Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
@@ -1125,7 +1195,7 @@ private fun SearchRecentRow(
         ) {
             Surface(
                 shape = CircleShape,
-                color = Color(0xFF262A31)
+                color = SearchRaised
             ) {
                 Icon(
                     Icons.Default.History,
@@ -1133,7 +1203,7 @@ private fun SearchRecentRow(
                     modifier = Modifier
                         .padding(8.dp)
                         .size(19.dp),
-                    tint = Color(0xFFB8BCC4)
+                    tint = SearchAccent
                 )
             }
 
@@ -1152,14 +1222,14 @@ private fun SearchRecentRow(
                 Text(
                     "${recent.type.title} · ${recent.categoryTitle}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF8E939C),
+                    color = SearchMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
             IconButton(onClick = onRemove, modifier = Modifier.focusProperties { canFocus = false }) {
-                Icon(Icons.Default.Close, contentDescription = "Remove ${recent.query}", tint = Color(0xFFB8BCC4))
+                Icon(Icons.Default.Close, contentDescription = "Remove ${recent.query}", tint = SearchMuted)
             }
         }
     }
@@ -1391,8 +1461,8 @@ private fun ModernSearchLiveResultRow(
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
-            color = Color(0xFF15181E),
-            border = BorderStroke(1.dp, Color(0xFF2E3239))
+            color = SearchSurface,
+            border = BorderStroke(1.dp, SearchOutline)
         ) {
             Row(
                 Modifier.padding(if (isTv) 7.dp else 10.dp),
@@ -1550,8 +1620,8 @@ private fun ModernSearchMediaResultRow(
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
-            color = Color(0xFF15181E),
-            border = BorderStroke(1.dp, Color(0xFF2E3239))
+            color = SearchSurface,
+            border = BorderStroke(1.dp, SearchOutline)
         ) {
             Row(
                 Modifier.padding(if (isTv) 7.dp else 10.dp),
@@ -1682,8 +1752,8 @@ private fun ModernSearchPosterResultCard(
                     onLongClick = { menuOpen = true }
                 ),
             shape = shape,
-            color = Color(0xFF15181E),
-            border = BorderStroke(1.dp, Color(0xFF2E3239))
+            color = SearchSurface,
+            border = BorderStroke(1.dp, SearchOutline)
         ) {
             Column {
                 Box(
@@ -1776,7 +1846,7 @@ private fun SearchFavoriteMenu(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF202020),
+        containerColor = SearchRaised,
         shape = RoundedCornerShape(12.dp)
     ) {
         DropdownMenuItem(
