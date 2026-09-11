@@ -1322,6 +1322,16 @@ private fun ModernCompactMediaCard(
     val isTv = context.isModernTileTv(configuration)
     val remoteNavigationActive = context.usesRemoteNavigation(configuration)
     val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val collectionPosterColumns = modernPosterColumns(configuration, isTv)
+    val collectionPosterHorizontalPaddingDp = if (isTv) 24f else 18f
+    val collectionPosterHorizontalSpacingDp = if (isTv) 20f else 12f
+    val collectionPosterWidth = (
+        (
+            configuration.screenWidthDp.toFloat() -
+                (collectionPosterHorizontalPaddingDp * 2f) -
+                (collectionPosterHorizontalSpacingDp * (collectionPosterColumns - 1).toFloat())
+        ) / collectionPosterColumns.toFloat()
+    ).coerceAtLeast(1f).dp
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
@@ -1341,17 +1351,20 @@ private fun ModernCompactMediaCard(
     val artworkScale =
         1f + (
             when {
-                isTv -> 0.035f
-                isTablet -> 0.018f
-                else -> 0.012f
+                isTv -> 0.085f
+                isTablet -> 0.035f
+                else -> 0.025f
             } * visualProgress
         )
-    val shape = RoundedCornerShape(14.dp)
-    val focusRingActive = remoteNavigationActive && focused
+    val shape = RoundedCornerShape(11.dp)
     val borderColor = lerp(
         Color(0xFF30343B),
-        Color(0xFFF2F3F5),
-        if (focusRingActive) focusProgress else 0f
+        when {
+            isTv -> Color(0xFFF2F3F5)
+            focused -> Color(0xFFBFC3CA)
+            else -> Color(0xFF555A63)
+        },
+        visualProgress
     )
     val watchedFraction =
         if (progress != null && progress.durationMillis > 0L) {
@@ -1362,31 +1375,25 @@ private fun ModernCompactMediaCard(
         }
 
     /*
-     * HOME_COMPACT_MEDIA_OVERLAY_V42
+     * HOME_MEDIA_MATCH_COLLECTION_POSTER_V43
      *
-     * Keep the focus surface at fixed bounds so the first LazyRow item cannot
-     * grow outside the row and be cropped on its leading edge. The artwork
-     * fills the complete tile; focus/press only applies a subtle internal art
-     * zoom. Title/subtitle sit on a bottom scrim and playback progress stays
-     * flush with the bottom edge, while the focus ring follows the tile shape.
+     * Match Home Continue Watching / New Episodes cards to the actual
+     * ModernCollectionPoster geometry used after opening a TMDB/IPTV movie
+     * collection: the same adaptive grid-cell width, portrait 2:3 aspect,
+     * 11dp corners, focus zoom, border, and shadow. Keep the Home-specific
+     * title/subtitle scrim and playback progress overlay unchanged.
      */
     Box(
         modifier = modifier.then(returningTile.modifier)
-            .width(
-                when {
-                    isTv -> 196.dp
-                    isTablet -> 192.dp
-                    else -> 172.dp
-                }
-            )
+            .width(collectionPosterWidth)
             .zIndex(visualProgress)
             .shadow(
                 elevation =
                     (
                         when {
-                            isTv -> 18f
-                            isTablet -> 9f
-                            else -> 5f
+                            isTv -> 20f
+                            isTablet -> 10f
+                            else -> 6f
                         } * visualProgress
                     ).dp,
                 shape = shape,
@@ -1410,13 +1417,13 @@ private fun ModernCompactMediaCard(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(if (isTv) 1.35f else 1.4f),
+                .aspectRatio(2f / 3f),
             shape = shape,
-            color = Color(0xFF15171B),
+            color = Color(0xFF202020),
             border = BorderStroke(
                 when {
-                    focusRingActive && isTv -> 3.dp
-                    focusRingActive -> 2.dp
+                    isTv && focused -> 3.dp
+                    !isTv && focused -> 2.dp
                     else -> 1.dp
                 },
                 borderColor
