@@ -41,6 +41,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -281,7 +282,14 @@ internal fun ModernSearchScreen(
                 }
                 .pointerInput(searchEditing) {
                     if (!searchEditing) {
-                        detectTapGestures { activateSearchField() }
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.changes.any { it.pressed && !it.previousPressed }) {
+                                    activateSearchField()
+                                }
+                            }
+                        }
                     }
                 }
                 .remoteFocusFrame(RoundedCornerShape(18.dp)),

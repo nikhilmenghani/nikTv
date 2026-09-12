@@ -882,7 +882,20 @@ private fun CategoryManagerSearchField(
             }
         }
         if (!editing) {
-            Box(Modifier.matchParentSize().pointerInput(editing) { detectTapGestures { activate() } })
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .pointerInput(editing) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                if (event.changes.any { it.pressed && !it.previousPressed }) {
+                                    activate()
+                                }
+                            }
+                        }
+                    }
+            )
         }
     }
 }
