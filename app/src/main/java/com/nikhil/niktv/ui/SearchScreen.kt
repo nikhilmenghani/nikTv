@@ -15,6 +15,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -54,6 +56,7 @@ import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.data.artworkRequest
 import com.nikhil.niktv.model.*
+import kotlinx.coroutines.launch
 
 private val searchVisibleTypes = listOf(
     SearchContentType.LIVE_TV,
@@ -138,7 +141,8 @@ internal fun ModernSearchScreen(
             ?.title
             ?: "All categories"
     val searchingSpecificCategory = state.searchCategoryId != "*"
-    val typeBelowSearch = if (state.searchScopeLocked) categoryRequester else typeRequesters.getValue(searchVisibleTypes.first())
+    val selectedTypeRequester = typeRequesters[state.searchType] ?: typeRequesters.getValue(searchVisibleTypes.first())
+    val typeBelowSearch = if (state.searchScopeLocked) categoryRequester else selectedTypeRequester
     val activeProfileKey = state.session?.profile?.cacheKey()
     val visibleRecentSearches = remember(
         state.recentSearches,
@@ -229,7 +233,12 @@ internal fun ModernSearchScreen(
             subtitle = listOfNotNull(
                 state.session?.profile?.name?.takeIf { it.isNotBlank() },
                 selectedCategoryTitle.takeUnless { it == "All categories" }
-            ).joinToString(" · ").takeIf { it.isNotBlank() },
+            ).joinToString(" · ").takeIf { it.isNotBlank() }
+                ?: if (state.searchScopeLocked) {
+                    "Find ${state.searchType.title.lowercase()} in your library"
+                } else {
+                    "Find channels, series and movies"
+                },
             close = close
         )
 
@@ -240,10 +249,12 @@ internal fun ModernSearchScreen(
             onValueChange = setQuery,
             modifier = Modifier
                 .fillMaxWidth()
+                .widthIn(max = 1120.dp)
+                .align(Alignment.CenterHorizontally)
+                .height(if (isTv) 62.dp else 56.dp)
                 .focusRequester(searchRequester)
                 .focusProperties { down = typeBelowSearch }
                 .onFocusChanged {
-                    if (it.isFocused && !remoteNavigationActive) searchEditing = true
                     if (!it.isFocused && searchEditing) {
                         searchEditing = false
                         keyboard?.hide()
@@ -268,8 +279,8 @@ internal fun ModernSearchScreen(
                         false
                     }
                 }
-                .pointerInput(searchEditing, remoteNavigationActive) {
-                    if (remoteNavigationActive && !searchEditing) {
+                .pointerInput(searchEditing) {
+                    if (!searchEditing) {
                         detectTapGestures { activateSearchField() }
                     }
                 }
@@ -277,7 +288,7 @@ internal fun ModernSearchScreen(
             singleLine = true,
             shape = RoundedCornerShape(18.dp),
             placeholder = {
-                Text("Search ${state.searchType.title.lowercase()}")
+                Text(if (state.searchScopeLocked) "Search ${state.searchType.title.lowercase()}" else "Search NikTV")
             },
             leadingIcon = {
                 Icon(Icons.Default.Search, contentDescription = null)
@@ -298,7 +309,13 @@ internal fun ModernSearchScreen(
                         modifier = Modifier.focusProperties { canFocus = false },
                         enabled =
                             state.searchQuery.isNotBlank() &&
-                                !state.searchServerLoading
+                                !state.searchServerLoading,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = SearchAccent,
+                            contentColor = Color.White,
+                            disabledContainerColor = SearchOutline,
+                            disabledContentColor = SearchMuted
+                        )
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowForward,
@@ -307,7 +324,7 @@ internal fun ModernSearchScreen(
                     }
                 }
             },
-            readOnly = remoteNavigationActive && !searchEditing,
+            readOnly = !searchEditing,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = {
@@ -332,48 +349,110 @@ internal fun ModernSearchScreen(
         Spacer(Modifier.height(12.dp))
 
         if (!state.searchScopeLocked) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                searchVisibleTypes.forEachIndexed { index, type ->
-                    SearchScopeButton(
-                        type = type,
-                        selected = state.searchType == type,
-                        onClick = { setType(type) },
+            if (configuration.screenWidthDp < 600) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    searchVisibleTypes.forEachIndexed { index, type ->
+                        SearchScopeButton(
+                            type = type,
+                            selected = state.searchType == type,
+                            onClick = { setType(type) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(typeRequesters.getValue(type))
+                                .focusProperties {
+                                    up = searchRequester
+                                    down = categoryRequester
+                                    left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: FocusRequester.Cancel
+                                    right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)] ?: FocusRequester.Cancel
+                                }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                SearchCategoryButton(
+                    title = selectedCategoryTitle,
+                    availableCount = state.searchCategories.count { it.id != "*" },
+                    contentType = state.searchType,
+                    onClick = {
+                        restoreCategoryFocus = true
+                        categoryPickerOpen = true
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(categoryRequester)
+                        .focusProperties {
+                            up = selectedTypeRequester
+                            down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                        }
+                )
+            } else {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 1120.dp)
+                        .align(Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    searchVisibleTypes.forEachIndexed { index, type ->
+                        SearchScopeButton(
+                            type = type,
+                            selected = state.searchType == type,
+                            onClick = { setType(type) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(typeRequesters.getValue(type))
+                                .focusProperties {
+                                    up = searchRequester
+                                    down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                                    left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: FocusRequester.Cancel
+                                    right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)] ?: categoryRequester
+                                }
+                        )
+                    }
+                    SearchCategoryButton(
+                        title = selectedCategoryTitle,
+                        availableCount = state.searchCategories.count { it.id != "*" },
+                        contentType = state.searchType,
+                        onClick = {
+                            restoreCategoryFocus = true
+                            categoryPickerOpen = true
+                        },
                         modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(typeRequesters.getValue(type))
+                            .weight(1.35f)
+                            .focusRequester(categoryRequester)
                             .focusProperties {
                                 up = searchRequester
-                                down = categoryRequester
-                                left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)]
-                                    ?: FocusRequester.Cancel
-                                right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)]
-                                    ?: FocusRequester.Cancel
+                                left = typeRequesters.getValue(searchVisibleTypes.last())
+                                right = FocusRequester.Cancel
+                                down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
                             }
                     )
                 }
             }
-
-            Spacer(Modifier.height(10.dp))
+        } else {
+            SearchCategoryButton(
+                title = selectedCategoryTitle,
+                availableCount = state.searchCategories.count { it.id != "*" },
+                contentType = state.searchType,
+                onClick = {
+                    restoreCategoryFocus = true
+                    categoryPickerOpen = true
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 1120.dp)
+                    .align(Alignment.CenterHorizontally)
+                    .focusRequester(categoryRequester)
+                    .focusProperties {
+                        up = searchRequester
+                        down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                    }
+            )
         }
-
-        SearchCategoryButton(
-            title = selectedCategoryTitle,
-            availableCount = state.searchCategories.count { it.id != "*" },
-            contentType = state.searchType,
-            onClick = {
-                restoreCategoryFocus = true
-                categoryPickerOpen = true
-            },
-            modifier = Modifier
-                .focusRequester(categoryRequester)
-                .focusProperties {
-                    up = if (state.searchScopeLocked) searchRequester else typeRequesters.getValue(state.searchType)
-                    down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
-                }
-        )
 
         Spacer(Modifier.height(12.dp))
 
@@ -421,7 +500,7 @@ internal fun ModernSearchScreen(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                "Select to search again · long-press to remove",
+                if (isTv) "OK to search again · hold OK to remove" else "Select to search again",
                 style = MaterialTheme.typography.bodySmall,
                 color = SearchMuted,
                 modifier = Modifier.padding(bottom = 8.dp)
@@ -441,6 +520,7 @@ internal fun ModernSearchScreen(
                         recent = recent,
                         onClick = { useRecent(recent) },
                         onRemove = { deleteRecent(recent) },
+                        showRemoveButton = !isTv,
                         modifier = if (recent == visibleRecentSearches.first()) Modifier.focusRequester(contentRequester) else Modifier
                     )
                 }
@@ -478,14 +558,10 @@ internal fun ModernSearchScreen(
                 )
                 Text(
                     when {
-                        !state.searchUsedServer && searchingSpecificCategory ->
-                            "Nothing available locally in $selectedCategoryTitle. Search your IPTV provider in this category before broadening the search."
                         !state.searchUsedServer ->
-                            "Search your IPTV provider when you want to look beyond content already available on this device."
-                        searchingSpecificCategory ->
-                            "Nothing matched in $selectedCategoryTitle. Broaden only if you want to search every ${state.searchType.title.lowercase()} category."
+                            "Search your provider or choose another category."
                         else ->
-                            "Try another title or choose a different category."
+                            "Try another title or category."
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -587,6 +663,7 @@ internal fun ModernSearchScreen(
                 loadMore = loadMore,
             toggleFavorite = toggleFavorite,
             firstItemRequester = contentRequester,
+            topRequester = categoryRequester,
             autoFocusFirst = !searchEditing || state.searchUsedServer,
             modifier = Modifier.weight(1f)
             )
@@ -664,38 +741,26 @@ private fun SearchScopeButton(
 ) {
     val accent = type.searchAccent()
     val shape = RoundedCornerShape(14.dp)
-
+    val icon = when (type) {
+        SearchContentType.LIVE_TV -> Icons.Default.LiveTv
+        SearchContentType.SERIES -> Icons.Default.VideoLibrary
+        SearchContentType.MOVIES -> Icons.Default.Movie
+        SearchContentType.EPISODES -> Icons.Default.PlaylistPlay
+    }
     Surface(
         onClick = onClick,
-        modifier = modifier
-            .height(48.dp)
-            .remoteFocusFrame(shape),
+        modifier = modifier.height(48.dp).remoteFocusFrame(shape),
         shape = shape,
-        color =
-            if (selected) accent.copy(alpha = 0.18f)
-            else SearchSurface,
-        border = BorderStroke(
-            if (selected) 2.dp else 1.dp,
-            if (selected) accent.copy(alpha = 0.88f)
-            else SearchOutline
-        )
+        color = if (selected) accent.copy(alpha = 0.18f) else SearchSurface,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) accent.copy(alpha = 0.88f) else SearchOutline)
     ) {
         Row(
-            Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
+            Modifier.fillMaxSize().padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            if (selected) {
-                Icon(
-                    Icons.Default.Check,
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                    tint = accent
-                )
-                Spacer(Modifier.width(6.dp))
-            }
+            Icon(icon, null, Modifier.size(19.dp), tint = if (selected) accent else SearchMuted)
+            Spacer(Modifier.width(7.dp))
             Text(
                 type.title,
                 color = if (selected) Color.White else SearchMuted,
@@ -715,64 +780,44 @@ private fun SearchCategoryButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(14.dp)
     val accent = contentType.searchAccent()
-
     Surface(
         onClick = onClick,
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 54.dp)
-            .remoteFocusFrame(shape),
+        modifier = modifier.height(48.dp).remoteFocusFrame(shape),
         shape = shape,
         color = SearchSurface,
         border = BorderStroke(1.dp, SearchOutline)
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            Modifier.fillMaxSize().padding(horizontal = 11.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = RoundedCornerShape(11.dp),
+                Modifier.size(30.dp),
+                shape = RoundedCornerShape(9.dp),
                 color = accent.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, accent.copy(alpha = 0.36f))
+                border = BorderStroke(1.dp, accent.copy(alpha = 0.34f))
             ) {
-                Icon(
-                    Icons.Default.FilterAlt,
-                    null,
-                    Modifier
-                        .padding(8.dp)
-                        .size(19.dp),
-                    tint = accent
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.FilterAlt, null, Modifier.size(17.dp), tint = accent)
+                }
             }
-
-            Spacer(Modifier.width(11.dp))
-
+            Spacer(Modifier.width(9.dp))
             Text(
                 title,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleSmall,
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-
             if (availableCount > 0) {
-                Text(
-                    "$availableCount available",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SearchMuted
-                )
-                Spacer(Modifier.width(8.dp))
+                Text(availableCount.toString(), style = MaterialTheme.typography.labelSmall, color = SearchMuted)
+                Spacer(Modifier.width(5.dp))
             }
-
-            Icon(
-                Icons.Default.ChevronRight,
-                "Choose category",
-                tint = SearchMuted
-            )
+            Icon(Icons.Default.ChevronRight, "Choose category", Modifier.size(20.dp), tint = SearchMuted)
         }
     }
 }
@@ -790,70 +835,64 @@ private fun SearchCategoryPicker(
     val context = LocalContext.current
     val isTv = context.isSearchTvLikeDevice(configuration)
     val remoteNavigationActive = context.usesRemoteNavigation(configuration)
-
     val options = remember(categories) {
         buildList {
             add(SearchCategoryOption("*", "All categories"))
-            categories
-                .filter { it.id != "*" }
-                .distinctBy { it.id }
-                .forEach {
-                    add(SearchCategoryOption(it.id, it.title))
-                }
+            categories.filter { it.id != "*" }.distinctBy { it.id }.forEach {
+                add(SearchCategoryOption(it.id, it.title))
+            }
         }
     }
-
     if (isTv) {
-        Dialog(
-            onDismissRequest = close,
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false
-            )
-        ) {
+        Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth(0.68f)
-                    .fillMaxHeight(0.82f)
-                    .widthIn(max = 720.dp),
+                modifier = Modifier.fillMaxWidth(0.72f).fillMaxHeight(0.84f).widthIn(max = 760.dp),
                 shape = RoundedCornerShape(24.dp),
                 color = SearchBackground,
                 tonalElevation = 8.dp,
                 border = BorderStroke(1.dp, SearchOutline)
             ) {
-                SearchCategoryPickerContent(
-                    options = options,
-                    selectedCategoryId = selectedCategoryId,
-                    contentType = contentType,
-                    isTv = true,
-                    remoteNavigationActive = true,
-                    onSelect = onSelect,
-                    close = close
-                )
+                SearchCategoryPickerContent(options, selectedCategoryId, contentType, true, true, onSelect, close)
             }
         }
     } else {
-        ModalBottomSheet(
-            onDismissRequest = close,
-            containerColor = SearchBackground,
-            dragHandle = { BottomSheetDefaults.DragHandle() }
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 680.dp)
-                    .navigationBarsPadding()
-            ) {
-                SearchCategoryPickerContent(
-                    options = options,
-                    selectedCategoryId = selectedCategoryId,
-                    contentType = contentType,
-                    isTv = false,
-                    remoteNavigationActive = remoteNavigationActive,
-                    onSelect = onSelect,
-                    close = close
-                )
+        ModalBottomSheet(onDismissRequest = close, containerColor = SearchBackground, dragHandle = { BottomSheetDefaults.DragHandle() }) {
+            Box(Modifier.fillMaxWidth().heightIn(max = 680.dp).navigationBarsPadding()) {
+                SearchCategoryPickerContent(options, selectedCategoryId, contentType, false, remoteNavigationActive, onSelect, close)
             }
         }
+    }
+}
+
+private fun Modifier.searchPickerDpadNavigation(
+    index: Int,
+    columns: Int,
+    itemCount: Int,
+    topRequester: FocusRequester,
+    moveFocus: (Int) -> Unit
+): Modifier = onPreviewKeyEvent { event ->
+    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+    when (event.key) {
+        Key.DirectionUp -> {
+            val target = index - columns
+            if (target < 0) topRequester.requestFocus() else moveFocus(target)
+            true
+        }
+        Key.DirectionDown -> {
+            val target = index + columns
+            if (target < itemCount) moveFocus(target)
+            true
+        }
+        Key.DirectionLeft -> {
+            if (index % columns > 0) moveFocus(index - 1)
+            true
+        }
+        Key.DirectionRight -> {
+            val target = index + 1
+            if (index % columns < columns - 1 && target < itemCount) moveFocus(target)
+            true
+        }
+        else -> false
     }
 }
 
@@ -867,186 +906,106 @@ private fun SearchCategoryPickerContent(
     onSelect: (String) -> Unit,
     close: () -> Unit
 ) {
-    var categoryQuery by rememberSaveable(contentType) {
-        mutableStateOf("")
-    }
-    var categorySearchEditing by rememberSaveable(contentType) {
-        mutableStateOf(false)
-    }
+    var categoryQuery by rememberSaveable(contentType) { mutableStateOf("") }
+    var categorySearchEditing by rememberSaveable(contentType) { mutableStateOf(false) }
     val accent = contentType.searchAccent()
-
+    val configuration = LocalConfiguration.current
+    val columns = if (isTv || configuration.screenWidthDp >= 700) 2 else 1
     val keyboard = LocalSoftwareKeyboardController.current
     val searchRequester = remember { FocusRequester() }
     val listState = rememberLazyListState()
-    val optionRequesters = remember {
-        mutableMapOf<String, FocusRequester>()
-    }
-
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val optionRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val filteredOptions = remember(options, categoryQuery) {
         val query = categoryQuery.trim()
-        if (query.isBlank()) {
-            options
-        } else {
-            options.filter {
-                it.title.contains(query, ignoreCase = true)
+        if (query.isBlank()) options else options.filter { it.title.contains(query, ignoreCase = true) }
+    }
+    filteredOptions.forEach { optionRequesters.getOrPut(it.id) { FocusRequester() } }
+    val entryIndex = remember(filteredOptions, selectedCategoryId) {
+        filteredOptions.indexOfFirst { it.id == selectedCategoryId }.takeIf { it >= 0 } ?: 0
+    }
+    fun requestOptionFocus(targetIndex: Int) {
+        val option = filteredOptions.getOrNull(targetIndex) ?: return
+        val requester = optionRequesters.getValue(option.id)
+        if (runCatching { requester.requestFocus() }.getOrDefault(false)) return
+        scope.launch {
+            if (columns > 1) gridState.scrollToItem(targetIndex) else listState.scrollToItem(targetIndex)
+            repeat(5) { attempt ->
+                withFrameNanos { }
+                if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
+                kotlinx.coroutines.delay(30L * (attempt + 1))
             }
         }
     }
-
-    filteredOptions.forEach {
-        optionRequesters.getOrPut(it.id) { FocusRequester() }
-    }
-
     fun activateCategorySearch() {
         categorySearchEditing = true
         searchRequester.requestFocus()
         keyboard?.show()
     }
-
     BackHandler(enabled = categorySearchEditing) {
         categorySearchEditing = false
         keyboard?.hide()
         searchRequester.requestFocus()
     }
-
-    LaunchedEffect(remoteNavigationActive) {
-        if (!remoteNavigationActive || filteredOptions.isEmpty()) {
-            return@LaunchedEffect
-        }
-
-        val selectedIndex =
-            filteredOptions
-                .indexOfFirst { it.id == selectedCategoryId }
-                .takeIf { it >= 0 }
-                ?: 0
-
-        listState.scrollToItem(selectedIndex)
+    LaunchedEffect(remoteNavigationActive, selectedCategoryId, categoryQuery, categorySearchEditing, columns) {
+        if (!remoteNavigationActive || filteredOptions.isEmpty() || categorySearchEditing) return@LaunchedEffect
+        if (columns > 1) gridState.scrollToItem(entryIndex) else listState.scrollToItem(entryIndex)
         withFrameNanos { }
-        val selectedRequester = optionRequesters.getValue(filteredOptions[selectedIndex].id)
+        val requester = optionRequesters.getValue(filteredOptions[entryIndex].id)
         repeat(4) { attempt ->
-            if (runCatching { selectedRequester.requestFocus() }.getOrDefault(false)) {
-                return@LaunchedEffect
-            }
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
             kotlinx.coroutines.delay(40L * (attempt + 1))
         }
     }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(
-                horizontal = if (isTv) 22.dp else 18.dp,
-                vertical = if (isTv) 18.dp else 8.dp
-            )
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+    Column(Modifier.fillMaxSize().padding(horizontal = if (isTv) 22.dp else 18.dp, vertical = if (isTv) 18.dp else 8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    "Choose category",
-                    style = if (isTv) {
-                        MaterialTheme.typography.headlineSmall
-                    } else {
-                        MaterialTheme.typography.titleLarge
-                    },
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                Text(
-                    "${contentType.title} · ${options.size - 1} categories",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = SearchMuted
-                )
+                Text("Choose category", style = if (isTv) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("${contentType.title} · ${options.size - 1} available", style = MaterialTheme.typography.bodySmall, color = SearchMuted)
             }
-
-            IconButton(
-                onClick = close,
-                modifier = Modifier.focusProperties { canFocus = false }
-            ) {
+            IconButton(onClick = close, modifier = Modifier.focusProperties { canFocus = false }) {
                 Icon(Icons.Default.Close, "Close category picker")
             }
         }
-
         Spacer(Modifier.height(10.dp))
-
         OutlinedTextField(
             value = categoryQuery,
             onValueChange = { categoryQuery = it },
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(searchRequester)
+                .focusProperties {
+                    down = filteredOptions.getOrNull(entryIndex)?.let { optionRequesters.getValue(it.id) } ?: FocusRequester.Default
+                }
                 .onFocusChanged {
-                    if (it.isFocused && !remoteNavigationActive) {
-                        categorySearchEditing = true
-                    }
-                    if (!it.isFocused && categorySearchEditing) {
-                        categorySearchEditing = false
-                        keyboard?.hide()
-                    }
+                    if (it.isFocused && !remoteNavigationActive) categorySearchEditing = true
+                    if (!it.isFocused && categorySearchEditing) { categorySearchEditing = false; keyboard?.hide() }
                 }
                 .onPreviewKeyEvent { event ->
                     if (!categorySearchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                        filteredOptions.firstOrNull()?.let { option ->
-                            optionRequesters.getValue(option.id).requestFocus()
-                        }
+                        if (filteredOptions.isNotEmpty()) requestOptionFocus(entryIndex)
                         true
-                    } else if (
-                        !categorySearchEditing &&
-                        event.type == KeyEventType.KeyUp &&
-                        event.key in listOf(
-                            Key.DirectionCenter,
-                            Key.Enter,
-                            Key.NumPadEnter
-                        )
-                    ) {
-                        activateCategorySearch()
-                        true
-                    } else {
-                        false
-                    }
+                    } else if (!categorySearchEditing && event.type == KeyEventType.KeyUp && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
+                        activateCategorySearch(); true
+                    } else false
                 }
                 .pointerInput(categorySearchEditing, remoteNavigationActive) {
-                    if (remoteNavigationActive && !categorySearchEditing) {
-                        detectTapGestures {
-                            activateCategorySearch()
-                        }
-                    }
+                    if (remoteNavigationActive && !categorySearchEditing) detectTapGestures { activateCategorySearch() }
                 }
                 .remoteFocusFrame(RoundedCornerShape(14.dp)),
             singleLine = true,
             readOnly = remoteNavigationActive && !categorySearchEditing,
             shape = RoundedCornerShape(14.dp),
             placeholder = { Text("Find a category") },
-            leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = null)
-            },
-            trailingIcon =
-                if (categoryQuery.isNotEmpty()) {
-                    {
-                        IconButton(
-                            onClick = { categoryQuery = "" },
-                            modifier = Modifier.focusProperties { canFocus = false }
-                        ) {
-                            Icon(
-                                Icons.Default.Close,
-                                "Clear category search"
-                            )
-                        }
-                    }
-                } else {
-                    null
-                },
-            keyboardOptions =
-                KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions =
-                KeyboardActions(
-                    onDone = {
-                        categorySearchEditing = false
-                        keyboard?.hide()
-                    }
-                ),
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = if (categoryQuery.isNotEmpty()) {{
+                IconButton(onClick = { categoryQuery = "" }, modifier = Modifier.focusProperties { canFocus = false }) {
+                    Icon(Icons.Default.Close, "Clear category search")
+                }
+            }} else null,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { categorySearchEditing = false; keyboard?.hide() }),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = SearchRaised,
                 unfocusedContainerColor = SearchSurface,
@@ -1059,138 +1018,83 @@ private fun SearchCategoryPickerContent(
                 cursorColor = accent
             )
         )
-
         Spacer(Modifier.height(10.dp))
-
         if (filteredOptions.isEmpty()) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.FilterListOff, null, Modifier.size(36.dp), tint = SearchMuted)
+                    Text("No categories match “${categoryQuery.trim()}”", color = SearchMuted)
+                }
+            }
+        } else if (columns > 1) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                state = gridState,
+                contentPadding = PaddingValues(bottom = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        Icons.Default.FilterListOff,
-                        contentDescription = null,
-                        modifier = Modifier.size(36.dp),
-                        tint = Color(0xFF7C818A)
-                    )
-                    Text(
-                        "No categories match “${categoryQuery.trim()}”",
-                        color = Color(0xFFB8BCC4)
+                gridItemsIndexed(filteredOptions, key = { _, option -> option.id }) { index, option ->
+                    SearchCategoryOptionTile(
+                        option = option,
+                        selected = option.id == selectedCategoryId,
+                        accent = accent,
+                        isTv = isTv,
+                        onSelect = { onSelect(option.id) },
+                        modifier = Modifier
+                            .focusRequester(optionRequesters.getValue(option.id))
+                            .searchPickerDpadNavigation(index, columns, filteredOptions.size, searchRequester, ::requestOptionFocus)
                     )
                 }
             }
         } else {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 state = listState,
                 contentPadding = PaddingValues(bottom = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                items(
-                    filteredOptions,
-                    key = { it.id }
-                ) { option ->
-                    val selected = option.id == selectedCategoryId
-                    val shape = RoundedCornerShape(14.dp)
-                    val optionIndex = filteredOptions.indexOf(option)
-
-                    Surface(
-                        onClick = { onSelect(option.id) },
+                items(filteredOptions, key = { it.id }) { option ->
+                    val index = filteredOptions.indexOf(option)
+                    SearchCategoryOptionTile(
+                        option = option,
+                        selected = option.id == selectedCategoryId,
+                        accent = accent,
+                        isTv = isTv,
+                        onSelect = { onSelect(option.id) },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(
-                                optionRequesters.getValue(option.id)
-                            )
-                            .focusProperties {
-                                up = if (optionIndex > 0) {
-                                    optionRequesters.getValue(filteredOptions[optionIndex - 1].id)
-                                } else {
-                                    searchRequester
-                                }
-                                down = if (optionIndex < filteredOptions.lastIndex) {
-                                    optionRequesters.getValue(filteredOptions[optionIndex + 1].id)
-                                } else {
-                                    FocusRequester.Cancel
-                                }
-                                left = FocusRequester.Cancel
-                                right = FocusRequester.Cancel
-                            }
-                            .remoteFocusFrame(shape),
-                        shape = shape,
-                        color =
-                            if (selected) {
-                                accent.copy(alpha = 0.18f)
-                            } else {
-                                SearchSurface
-                            },
-                        border = BorderStroke(
-                            if (selected) 2.dp else 1.dp,
-                            if (selected) {
-                                accent.copy(alpha = 0.9f)
-                            } else {
-                                SearchOutline
-                            }
-                        )
-                    ) {
-                        Row(
-                            Modifier.padding(
-                                horizontal = 14.dp,
-                                vertical = if (isTv) 13.dp else 12.dp
-                            ),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                if (option.id == "*") {
-                                    Icons.Default.SelectAll
-                                } else {
-                                    Icons.Default.FolderOpen
-                                },
-                                contentDescription = null,
-                                modifier = Modifier.size(21.dp),
-                                tint =
-                                    if (selected) {
-                                        accent
-                                    } else {
-                                        SearchMuted
-                                    }
-                            )
-
-                            Spacer(Modifier.width(12.dp))
-
-                            Text(
-                                option.title,
-                                Modifier.weight(1f),
-                                color = Color.White,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight =
-                                    if (selected) {
-                                        FontWeight.SemiBold
-                                    } else {
-                                        FontWeight.Normal
-                                    },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-
-                            if (selected) {
-                                Icon(
-                                    Icons.Default.CheckCircle,
-                                    "Selected",
-                                    tint = accent
-                                )
-                            }
-                        }
-                    }
+                            .focusRequester(optionRequesters.getValue(option.id))
+                            .searchPickerDpadNavigation(index, 1, filteredOptions.size, searchRequester, ::requestOptionFocus)
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SearchCategoryOptionTile(
+    option: SearchCategoryOption,
+    selected: Boolean,
+    accent: Color,
+    isTv: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Surface(
+        onClick = onSelect,
+        modifier = modifier.fillMaxWidth().heightIn(min = if (isTv) 58.dp else 54.dp).remoteFocusFrame(shape),
+        shape = shape,
+        color = if (selected) accent.copy(alpha = 0.18f) else SearchSurface,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) accent.copy(alpha = 0.9f) else SearchOutline)
+    ) {
+        Row(Modifier.padding(horizontal = 13.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (option.id == "*") Icons.Default.SelectAll else Icons.Default.FolderOpen, null, Modifier.size(20.dp), tint = if (selected) accent else SearchMuted)
+            Spacer(Modifier.width(10.dp))
+            Text(option.title, Modifier.weight(1f), color = Color.White, style = if (isTv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (selected) Icon(Icons.Default.CheckCircle, "Selected", Modifier.size(20.dp), tint = accent)
         }
     }
 }
@@ -1200,66 +1104,65 @@ private fun SearchRecentRow(
     recent: RecentSearch,
     onClick: () -> Unit,
     onRemove: () -> Unit,
+    showRemoveButton: Boolean,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(14.dp)
-
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .remoteFocusFrame(shape)
-            .remoteCombinedClickable(
-                onClick = onClick,
-                onLongClick = onRemove
-            ),
+        modifier = modifier.fillMaxWidth().remoteFocusFrame(shape).remoteCombinedClickable(onClick = onClick, onLongClick = onRemove),
         shape = shape,
         color = SearchSurface,
         border = BorderStroke(1.dp, SearchOutline)
     ) {
         Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Surface(
-                shape = CircleShape,
-                color = SearchRaised
-            ) {
-                Icon(
-                    Icons.Default.History,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .padding(8.dp)
-                        .size(19.dp),
-                    tint = SearchAccent
-                )
+            Surface(shape = CircleShape, color = SearchRaised) {
+                Icon(Icons.Default.History, null, Modifier.padding(8.dp).size(19.dp), tint = SearchAccent)
             }
-
-            Column(
-                Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    recent.query,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "${recent.type.title} · ${recent.categoryTitle}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = SearchMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(recent.query, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${recent.type.title} · ${recent.categoryTitle}", style = MaterialTheme.typography.bodySmall, color = SearchMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-
-            IconButton(onClick = onRemove, modifier = Modifier.focusProperties { canFocus = false }) {
-                Icon(Icons.Default.Close, contentDescription = "Remove ${recent.query}", tint = SearchMuted)
+            if (showRemoveButton) {
+                IconButton(onClick = onRemove, modifier = Modifier.focusProperties { canFocus = false }) {
+                    Icon(Icons.Default.Close, "Remove ${recent.query}", tint = SearchMuted)
+                }
             }
         }
+    }
+}
+
+private fun Modifier.searchResultGridDpadNavigation(
+    index: Int,
+    columns: Int,
+    itemCount: Int,
+    topRequester: FocusRequester,
+    moveFocus: (Int) -> Unit
+): Modifier = onPreviewKeyEvent { event ->
+    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+    when (event.key) {
+        Key.DirectionUp -> {
+            val target = index - columns
+            if (target < 0) topRequester.requestFocus() else moveFocus(target)
+            true
+        }
+        Key.DirectionDown -> {
+            val target = index + columns
+            if (target < itemCount) { moveFocus(target); true } else false
+        }
+        Key.DirectionLeft -> {
+            if (index % columns > 0) moveFocus(index - 1)
+            true
+        }
+        Key.DirectionRight -> {
+            val target = index + 1
+            if (index % columns < columns - 1 && target < itemCount) moveFocus(target)
+            true
+        }
+        else -> false
     }
 }
 
@@ -1272,134 +1175,100 @@ private fun SearchResultsContent(
     loadMore: () -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     firstItemRequester: FocusRequester,
+    topRequester: FocusRequester,
     autoFocusFirst: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val posterGrid =
-        state.searchType in setOf(
-            SearchContentType.MOVIES,
-            SearchContentType.SERIES
-        ) &&
-            !isTv && screenWidthDp >= 600
-
-    if (posterGrid) {
-        val minimumCardWidth =
-            if (isTv) 180.dp else 164.dp
-
+    val posterGrid = state.searchType in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) && (isTv || screenWidthDp >= 600)
+    val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
+    if (posterGrid || liveGrid) {
+        val columns = when {
+            liveGrid -> 2
+            isTv -> 6
+            screenWidthDp >= 1200 -> 5
+            screenWidthDp >= 840 -> 4
+            else -> 3
+        }
+        val gridState = rememberLazyGridState()
+        val scope = rememberCoroutineScope()
+        val requesters = remember(state.searchType, state.searchQuery, state.searchCategoryId) { mutableMapOf<String, FocusRequester>() }
+        state.searchResults.forEachIndexed { index, item -> if (index > 0) requesters.getOrPut(item.id) { FocusRequester() } }
+        fun requesterAt(index: Int): FocusRequester = if (index == 0) firstItemRequester else requesters.getOrPut(state.searchResults[index].id) { FocusRequester() }
+        fun requestResultFocus(targetIndex: Int) {
+            if (targetIndex !in state.searchResults.indices) return
+            val requester = requesterAt(targetIndex)
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return
+            scope.launch {
+                if (gridState.layoutInfo.visibleItemsInfo.none { it.index == targetIndex }) gridState.scrollToItem(targetIndex)
+                repeat(5) { attempt ->
+                    withFrameNanos { }
+                    if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
+                    kotlinx.coroutines.delay(30L * (attempt + 1))
+                }
+            }
+        }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = minimumCardWidth),
+            columns = GridCells.Fixed(columns),
+            state = gridState,
             modifier = modifier.fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (isTv) 14.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (isTv) 18.dp else 14.dp)
         ) {
-            gridItems(
-                items = state.searchResults,
-                key = { "search-${state.searchType}-${it.id}" }
-            ) { item ->
-                if (item == state.searchResults.first()) {
-                    SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
-                }
+            gridItemsIndexed(state.searchResults, key = { _, item -> "search-${state.searchType}-${item.id}" }) { index, item ->
+                if (index == 0) SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
                 val category = state.searchCategoryTitle(item)
-                ModernSearchPosterResultCard(
-                    item = item,
-                    type = state.searchType,
-                    categoryTitle = category,
-                    isFavorite = state.isSearchFavorite(item),
-                    toggleFavorite = {
-                        toggleFavorite(
-                            state.searchFavoriteItem(item, category)
-                        )
-                    },
-                    onClick = { openResult(item) },
-                    modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
-                )
-            }
-
-            if (state.searchHasMore) {
-                item(
-                    key = "search-load-more",
-                    span = { GridItemSpan(maxLineSpan) }
-                ) {
-                    SearchLoadMoreButton(
-                        loading = state.searchServerLoading,
-                        onClick = loadMore
+                val favorite = state.isSearchFavorite(item)
+                val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
+                val itemModifier = Modifier
+                    .focusRequester(requesterAt(index))
+                    .searchResultGridDpadNavigation(index, columns, state.searchResults.size, topRequester, ::requestResultFocus)
+                if (liveGrid) {
+                    ModernSearchLiveResultRow(item, category, favorite, toggle, { openResult(item) }, true, itemModifier)
+                } else {
+                    ModernSearchPosterResultCard(
+                        item = item,
+                        type = state.searchType,
+                        categoryTitle = category,
+                        isFavorite = favorite,
+                        toggleFavorite = toggle,
+                        onClick = { openResult(item) },
+                        isTv = isTv,
+                        modifier = itemModifier
                     )
                 }
-            } else if (state.searchUsedServer) {
-                item(
-                    key = "search-provider-complete",
-                    span = { GridItemSpan(maxLineSpan) }
-                ) {
-                    SearchProviderCompleteMessage()
+            }
+            if (state.searchHasMore) {
+                item(key = "search-load-more", span = { GridItemSpan(maxLineSpan) }) {
+                    SearchLoadMoreButton(state.searchServerLoading, loadMore)
                 }
+            } else if (state.searchUsedServer) {
+                item(key = "search-provider-complete", span = { GridItemSpan(maxLineSpan) }) { SearchProviderCompleteMessage() }
             }
         }
         return
     }
-
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        items(
-            state.searchResults,
-            key = { "search-${state.searchType}-${it.id}" }
-        ) { item ->
-            if (item == state.searchResults.first()) {
-                SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
-            }
+        items(state.searchResults, key = { "search-${state.searchType}-${it.id}" }) { item ->
+            if (item == state.searchResults.first()) SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
             val category = state.searchCategoryTitle(item)
             val favorite = state.isSearchFavorite(item)
-            val toggle = {
-                toggleFavorite(
-                    state.searchFavoriteItem(item, category)
-                )
-            }
-
+            val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
+            val firstModifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
             if (state.searchType == SearchContentType.LIVE_TV) {
-                ModernSearchLiveResultRow(
-                    item = item,
-                    categoryTitle = category,
-                    isFavorite = favorite,
-                    toggleFavorite = toggle,
-                    onClick = { openResult(item) },
-                    isTv = isTv,
-                    modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
-                )
+                ModernSearchLiveResultRow(item, category, favorite, toggle, { openResult(item) }, isTv, firstModifier)
             } else {
-                ModernSearchMediaResultRow(
-                    item = item,
-                    type = state.searchType,
-                    categoryTitle = category,
-                    isFavorite = favorite,
-                    toggleFavorite = toggle,
-                    onClick = { openResult(item) },
-                    isTv = isTv,
-                    modifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
-                )
+                ModernSearchMediaResultRow(item, state.searchType, category, favorite, toggle, { openResult(item) }, isTv, firstModifier)
             }
         }
-
         if (state.searchHasMore) {
-            /*
-             * SEARCH_STABLE_LOAD_MORE_FOCUS_V4
-             *
-             * Do not include searchPage in this key. The same logical button
-             * survives an appended page so D-pad focus is not discarded just
-             * because the page number changed.
-             */
-            item("search-load-more") {
-                SearchLoadMoreButton(
-                    loading = state.searchServerLoading,
-                    onClick = loadMore
-                )
-            }
+            item("search-load-more") { SearchLoadMoreButton(state.searchServerLoading, loadMore) }
         } else if (state.searchUsedServer) {
-            item("search-provider-complete") {
-                SearchProviderCompleteMessage()
-            }
+            item("search-provider-complete") { SearchProviderCompleteMessage() }
         }
     }
 }
@@ -1778,6 +1647,7 @@ private fun ModernSearchPosterResultCard(
     isFavorite: Boolean,
     toggleFavorite: () -> Unit,
     onClick: () -> Unit,
+    isTv: Boolean,
     modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -1786,12 +1656,7 @@ private fun ModernSearchPosterResultCard(
         artworkRequest(context, item)
     }
     val shape = RoundedCornerShape(14.dp)
-    val fallbackIcon =
-        if (type == SearchContentType.SERIES) {
-            Icons.Default.VideoLibrary
-        } else {
-            Icons.Default.Movie
-        }
+    val fallbackIcon = if (type == SearchContentType.SERIES) Icons.Default.VideoLibrary else Icons.Default.Movie
 
     Box {
         Surface(
@@ -1818,7 +1683,7 @@ private fun ModernSearchPosterResultCard(
                         Icon(
                             fallbackIcon,
                             null,
-                            Modifier.size(44.dp),
+                            Modifier.size(if (isTv) 40.dp else 44.dp),
                             tint = Color.LightGray
                         )
                     } else {
@@ -1829,16 +1694,13 @@ private fun ModernSearchPosterResultCard(
                             contentScale = ContentScale.Crop
                         ) {
                             when (painter.state.value) {
-                                is coil3.compose.AsyncImagePainter.State.Success ->
-                                    SubcomposeAsyncImageContent()
-
-                                else ->
-                                    Icon(
-                                        fallbackIcon,
-                                        null,
-                                        Modifier.size(44.dp),
-                                        tint = Color.LightGray
-                                    )
+                                is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                                else -> Icon(
+                                    fallbackIcon,
+                                    null,
+                                    Modifier.size(if (isTv) 40.dp else 44.dp),
+                                    tint = Color.LightGray
+                                )
                             }
                         }
                     }
@@ -1846,31 +1708,29 @@ private fun ModernSearchPosterResultCard(
 
                 Column(
                     Modifier.padding(
-                        horizontal = 11.dp,
-                        vertical = 10.dp
+                        horizontal = if (isTv) 9.dp else 11.dp,
+                        vertical = if (isTv) 8.dp else 10.dp
                     ),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         item.title,
                         color = Color.White,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = if (isTv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    categoryTitle
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let {
-                            Text(
-                                it,
-                                color = Color(0xFF9DA2AB),
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                    categoryTitle?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it,
+                            color = SearchMuted,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }

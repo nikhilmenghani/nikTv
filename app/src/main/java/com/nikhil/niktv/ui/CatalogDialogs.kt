@@ -301,6 +301,19 @@ internal fun CategoryManagerDialog(
     var closeFocused by remember { mutableStateOf(false) }
     var applyFocused by remember { mutableStateOf(false) }
     var focusedCategoryId by remember { mutableStateOf<String?>(null) }
+    fun requestCategoryFocus(targetIndex: Int) {
+        val category = filteredRaw.getOrNull(targetIndex) ?: return
+        val requester = categoryRequesters.getValue(category.id)
+        if (runCatching { requester.requestFocus() }.getOrDefault(false)) return
+        scope.launch {
+            gridState.scrollToItem(targetIndex)
+            repeat(5) { attempt ->
+                withFrameNanos { }
+                if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
+                delay(30L * (attempt + 1))
+            }
+        }
+    }
     val activateSearch: () -> Unit = {
         if (!searchEditing) {
             searchEditing = true
@@ -385,7 +398,7 @@ internal fun CategoryManagerDialog(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                "Choose up to 10 categories",
+                                "Choose the categories shown in NikTV",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -395,6 +408,10 @@ internal fun CategoryManagerDialog(
                             modifier = Modifier
                                 .size(44.dp)
                                 .focusRequester(closeRequester)
+                                .focusProperties {
+                                    left = applyRequester
+                                    down = searchRequester
+                                }
                                 .onFocusChanged { closeFocused = it.isFocused }
                                 .background(
                                     if (closeFocused) categoryAccent.copy(alpha = 0.18f) else Color.Transparent,
@@ -414,13 +431,13 @@ internal fun CategoryManagerDialog(
                             .focusRequester(applyRequester)
                             .onPreviewKeyEvent { event ->
                                 if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                    (firstCategoryRequester ?: searchRequester).requestFocus()
+                                    searchRequester.requestFocus()
                                     true
                                 } else false
                             }
                             .focusProperties {
-                                down = firstCategoryRequester ?: searchRequester
-                                up = searchRequester
+                                right = closeRequester
+                                down = searchRequester
                             }
                             .onFocusChanged { applyFocused = it.isFocused },
                         shape = RoundedCornerShape(14.dp),
@@ -431,7 +448,7 @@ internal fun CategoryManagerDialog(
                     ) {
                         Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(7.dp))
-                        Text("Apply & Close", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Apply", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Surface(
@@ -450,7 +467,7 @@ internal fun CategoryManagerDialog(
                     Column(Modifier.weight(1f)) {
                         Text("${type.title} Categories", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         Text(
-                            "Choose up to 10 categories · press → from the last column to apply",
+                            "Choose the categories shown in NikTV",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -472,10 +489,9 @@ internal fun CategoryManagerDialog(
                             .focusProperties {
                                 left = focusedCategoryId
                                     ?.let(categoryRequesters::get)
-                                    ?: firstCategoryRequester
-                                    ?: searchRequester
+                                    ?: deselectAllRequester
                                 right = closeRequester
-                                down = firstCategoryRequester ?: searchRequester
+                                down = searchRequester
                             }
                             .onFocusChanged { applyFocused = it.isFocused }
                             .border(
@@ -488,7 +504,7 @@ internal fun CategoryManagerDialog(
                     ) {
                         Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(7.dp))
-                        Text("Apply & Close", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Apply", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.width(8.dp))
                     IconButton(
@@ -498,7 +514,7 @@ internal fun CategoryManagerDialog(
                             .focusRequester(closeRequester)
                             .focusProperties {
                                 left = applyRequester
-                                down = firstCategoryRequester ?: searchRequester
+                                down = searchRequester
                             }
                             .onFocusChanged { closeFocused = it.isFocused }
                             .background(
@@ -513,34 +529,132 @@ internal fun CategoryManagerDialog(
                 val enabledCount = currentEnabledSet.size
                 val totalCount = raw.size
                 val selectionLimitReached = enabledCount >= 10
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = when {
-                            searchQuery.isNotBlank() && selectionLimitReached ->
-                                "${filteredRaw.size} matching · $enabledCount of 10 selected · Deselect one to choose another"
-                            searchQuery.isNotBlank() ->
-                                "${filteredRaw.size} matching · $enabledCount of 10 selected · $totalCount available"
-                            selectionLimitReached ->
-                                "$enabledCount of 10 selected · $totalCount available · Deselect one to choose another"
-                            else ->
-                                "$enabledCount of 10 selected · $totalCount available"
-                        },
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = CategoryPickerMuted
+
+                if (categoryIsCompact) {
+                    CategoryManagerSearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        isTv = categoryIsTv,
+                        editing = searchEditing,
+                        onEditingChange = { searchEditing = it },
+                        focused = searchFocused,
+                        onFocusedChange = { searchFocused = it },
+                        accent = categoryAccent,
+                        searchRequester = searchRequester,
+                        upRequester = applyRequester,
+                        downRequester = firstCategoryRequester ?: applyRequester,
+                        rightRequester = if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) selectMatchingRequester else selectAllRequester,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
-                        TextButton(
-                            onClick = {
-                                updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet())
-                            },
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .focusRequester(selectMatchingRequester)
-                        ) {
-                            Text("Select matching", color = categoryAccent)
+                    Spacer(Modifier.height(7.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
+                            CategoryDialogActionButton(
+                                text = "Matching",
+                                accent = categoryAccent,
+                                onClick = { updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet()) },
+                                modifier = Modifier.weight(1f).focusRequester(selectMatchingRequester).focusProperties {
+                                    left = searchRequester; right = selectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
+                                }
+                            )
                         }
+                        CategoryDialogActionButton(
+                            text = "First 10",
+                            accent = categoryAccent,
+                            onClick = { updateCurrentSelection(raw.take(10).map { it.id }.toSet()) },
+                            modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
+                                left = if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) selectMatchingRequester else searchRequester
+                                right = deselectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
+                            }
+                        )
+                        CategoryDialogActionButton(
+                            text = "Clear",
+                            accent = categoryAccent,
+                            onClick = { updateCurrentSelection(emptySet()) },
+                            modifier = Modifier.weight(1f).focusRequester(deselectAllRequester).focusProperties {
+                                left = selectAllRequester; right = applyRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
+                            }
+                        )
                     }
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CategoryManagerSearchField(
+                            query = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            isTv = categoryIsTv,
+                            editing = searchEditing,
+                            onEditingChange = { searchEditing = it },
+                            focused = searchFocused,
+                            onFocusedChange = { searchFocused = it },
+                            accent = categoryAccent,
+                            searchRequester = searchRequester,
+                            upRequester = applyRequester,
+                            downRequester = firstCategoryRequester ?: applyRequester,
+                            rightRequester = if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) selectMatchingRequester else selectAllRequester,
+                            modifier = Modifier.weight(1.7f)
+                        )
+                        if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) {
+                            CategoryDialogActionButton(
+                                text = "Matching",
+                                accent = categoryAccent,
+                                onClick = { updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet()) },
+                                modifier = Modifier.weight(0.8f).focusRequester(selectMatchingRequester).focusProperties {
+                                    left = searchRequester; right = selectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
+                                }
+                            )
+                        }
+                        CategoryDialogActionButton(
+                            text = "First 10",
+                            accent = categoryAccent,
+                            onClick = { updateCurrentSelection(raw.take(10).map { it.id }.toSet()) },
+                            modifier = Modifier.weight(0.75f).focusRequester(selectAllRequester).focusProperties {
+                                left = if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) selectMatchingRequester else searchRequester
+                                right = deselectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
+                            }
+                        )
+                        CategoryDialogActionButton(
+                            text = "Clear",
+                            accent = categoryAccent,
+                            onClick = { updateCurrentSelection(emptySet()) },
+                            modifier = Modifier.weight(0.65f).focusRequester(deselectAllRequester).focusProperties {
+                                left = selectAllRequester; right = applyRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
+                            }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (selectionLimitReached) categoryAccent.copy(alpha = 0.18f) else CategoryPickerRaised,
+                        border = BorderStroke(1.dp, if (selectionLimitReached) categoryAccent.copy(alpha = 0.72f) else CategoryPickerOutline)
+                    ) {
+                        Text(
+                            "$enabledCount / 10 selected",
+                            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (selectionLimitReached) Color.White else CategoryPickerMuted
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        when {
+                            selectionLimitReached -> "Deselect one category to choose another"
+                            searchQuery.isNotBlank() -> "${filteredRaw.size} matching · $totalCount available"
+                            else -> "$totalCount categories available"
+                        },
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CategoryPickerMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 HorizontalDivider(
@@ -601,38 +715,35 @@ internal fun CategoryManagerDialog(
                                     .focusRequester(rowRequester)
                                     .onPreviewKeyEvent { event ->
                                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                        val targetIndex = when (event.key) {
-                                            Key.DirectionUp -> index - categoryColumns
-                                            Key.DirectionDown -> index + categoryColumns
-                                            Key.DirectionLeft -> index - 1
-                                            Key.DirectionRight -> index + 1
-                                            else -> return@onPreviewKeyEvent false
-                                        }
-                                        when {
-                                            event.key == Key.DirectionUp && targetIndex < 0 -> {
-                                                applyRequester.requestFocus(); true
+                                        when (event.key) {
+                                            Key.DirectionUp -> {
+                                                val targetIndex = index - categoryColumns
+                                                if (targetIndex < 0) {
+                                                    searchRequester.requestFocus()
+                                                } else {
+                                                    requestCategoryFocus(targetIndex)
+                                                }
+                                                true
                                             }
-                                            event.key == Key.DirectionDown && targetIndex >= filteredRaw.size -> {
-                                                searchRequester.requestFocus(); true
+                                            Key.DirectionDown -> {
+                                                val targetIndex = index + categoryColumns
+                                                if (targetIndex >= filteredRaw.size) {
+                                                    applyRequester.requestFocus()
+                                                } else {
+                                                    requestCategoryFocus(targetIndex)
+                                                }
+                                                true
                                             }
-                                            event.key == Key.DirectionRight &&
-                                                ((index + 1) % categoryColumns == 0 || index == filteredRaw.lastIndex) -> {
-                                                applyRequester.requestFocus(); true
+                                            Key.DirectionLeft -> {
+                                                if (index % categoryColumns > 0) requestCategoryFocus(index - 1)
+                                                true
                                             }
-                                            targetIndex in filteredRaw.indices -> {
-                                                val target = filteredRaw[targetIndex]
-                                                val targetRequester = categoryRequesters.getValue(target.id)
-                                                if (!runCatching { targetRequester.requestFocus() }.getOrDefault(false)) {
-                                                    scope.launch {
-                                                        gridState.scrollToItem((targetIndex - categoryColumns).coerceAtLeast(0))
-                                                        repeat(5) { attempt ->
-                                                            withFrameNanos { }
-                                                            if (runCatching { targetRequester.requestFocus() }.getOrDefault(false)) {
-                                                                return@launch
-                                                            }
-                                                            kotlinx.coroutines.delay(30L * (attempt + 1))
-                                                        }
-                                                    }
+                                            Key.DirectionRight -> {
+                                                val targetIndex = index + 1
+                                                if (index % categoryColumns < categoryColumns - 1 && targetIndex < filteredRaw.size) {
+                                                    requestCategoryFocus(targetIndex)
+                                                } else {
+                                                    applyRequester.requestFocus()
                                                 }
                                                 true
                                             }
@@ -640,11 +751,9 @@ internal fun CategoryManagerDialog(
                                         }
                                     }
                                     .focusProperties {
-                                        if (index < categoryColumns) up = applyRequester
-                                        if (index >= filteredRaw.size - categoryColumns) down = searchRequester
-                                        if ((index + 1) % categoryColumns == 0 || index == filteredRaw.lastIndex) {
-                                            right = applyRequester
-                                        }
+                                        if (index < categoryColumns) up = searchRequester
+                                        if (index >= filteredRaw.size - categoryColumns) down = applyRequester
+                                        if ((index + 1) % categoryColumns == 0 || index == filteredRaw.lastIndex) right = applyRequester
                                     }
                                     .onFocusChanged {
                                         if (it.isFocused) {
@@ -665,62 +774,27 @@ internal fun CategoryManagerDialog(
                                         .padding(horizontal = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Box(
-                                        Modifier
-                                            .size(22.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (selected) categoryAccent
-                                                else Color.Transparent
-                                            )
-                                            .border(
-                                                1.dp,
-                                                if (selected) categoryAccent
-                                                else CategoryPickerMuted.copy(alpha = 0.72f),
-                                                CircleShape
-                                            ),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (selected) {
-                                            Icon(
-                                                Icons.Default.Check,
-                                                null,
-                                                Modifier.size(14.dp),
-                                                tint = Color.White
-                                            )
-                                        }
-                                    }
-                                    Spacer(Modifier.width(10.dp))
-                                    Column(
-                                        Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(1.dp)
-                                    ) {
-                                        Text(
-                                            text = category.title,
-                                            style =
-                                                if (categoryIsTv) MaterialTheme.typography.bodyMedium
-                                                else MaterialTheme.typography.labelLarge,
-                                            fontWeight =
-                                                if (selected) FontWeight.SemiBold
-                                                else FontWeight.Medium,
-                                            color = when {
-                                                selected -> Color.White
-                                                selectionLimitReached -> Color(0xFF777D88)
-                                                else -> Color(0xFFE7E9EF)
-                                            },
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.fillMaxWidth().then(
-                                                if (rowFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
-                                            )
+                                    Text(
+                                        text = category.title,
+                                        style = if (categoryIsTv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelLarge,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                        color = when {
+                                            selected -> Color.White
+                                            selectionLimitReached -> Color(0xFF777D88)
+                                            else -> Color(0xFFE7E9EF)
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).then(
+                                            if (rowFocused) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier
                                         )
-                                        if (selected) {
-                                            Text(
-                                                "Selected · ${currentEnabledSet.indexOf(category.id) + 1} of 10",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = categoryAccent.copy(alpha = 0.92f),
-                                                maxLines = 1
-                                            )
+                                    )
+                                    if (selected) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Surface(Modifier.size(26.dp), shape = CircleShape, color = categoryAccent) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.Check, "Selected", Modifier.size(16.dp), tint = Color.White)
+                                            }
                                         }
                                     }
                                 }
@@ -729,118 +803,86 @@ internal fun CategoryManagerDialog(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(Modifier.weight(1.55f)) {
-                        Surface(
-                            Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            color = CategoryPickerSurface,
-                            border = BorderStroke(
-                                if (searchEditing || searchFocused) 3.dp else 1.dp,
-                                if (searchEditing || searchFocused) categoryAccent
-                                else CategoryPickerOutline
-                            )
-                        ) {
-                            Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Search,
-                                    null,
-                                    Modifier.size(20.dp),
-                                    tint =
-                                        if (searchEditing || searchFocused) categoryAccent
-                                        else CategoryPickerMuted
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                BasicTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    modifier = Modifier.weight(1f)
-                                        .focusRequester(searchRequester)
-                                        .focusProperties {
-                                            up = lastCategoryRequester ?: applyRequester
-                                            right = selectAllRequester
-                                            down = applyRequester
-                                        }
-                                        .onFocusChanged {
-                                            if (it.isFocused && !categoryIsTv) searchEditing = true
-                                            searchFocused = it.isFocused
-                                            if (!it.isFocused && searchEditing) {
-                                                searchEditing = false
-                                                keyboardController?.hide()
-                                            }
-                                        }
-                                        .onPreviewKeyEvent { event ->
-                                            if (!searchEditing && event.type == KeyEventType.KeyUp &&
-                                                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
-                                            ) {
-                                                activateSearch(); true
-                                            } else false
-                                        },
-                                    singleLine = true,
-                                    readOnly = categoryIsTv && !searchEditing,
-                                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                                    cursorBrush = SolidColor(categoryAccent),
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = {
-                                        searchEditing = false
-                                        keyboardController?.hide()
-                                    }),
-                                    decorationBox = { inner ->
-                                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                                            if (searchQuery.isEmpty()) {
-                                                Text(
-                                                    "Search categories",
-                                                    color = CategoryPickerMuted,
-                                                    maxLines = 1,
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                            }
-                                            inner()
-                                        }
-                                    }
-                                )
-                                if (searchQuery.isNotEmpty()) {
-                                    IconButton(onClick = { searchQuery = "" }, modifier = Modifier.focusProperties { canFocus = false }) {
-                                        Icon(Icons.Default.Close, "Clear search", tint = Color.LightGray)
-                                    }
-                                }
-                            }
-                        }
-                        if (categoryIsTv && !searchEditing) {
-                            Box(Modifier.matchParentSize().pointerInput(type) { detectTapGestures { activateSearch() } })
-                        }
-                    }
-                    CategoryDialogActionButton(
-                        text = "Select first 10",
-                        accent = categoryAccent,
-                        onClick = { updateCurrentSelection(raw.take(10).map { it.id }.toSet()) },
-                        modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
-                            left = searchRequester
-                            right = deselectAllRequester
-                            up = lastCategoryRequester ?: applyRequester
-                            down = applyRequester
-                        }
-                    )
-                    CategoryDialogActionButton(
-                        text = "Deselect All",
-                        accent = categoryAccent,
-                        onClick = { updateCurrentSelection(emptySet()) },
-                        modifier = Modifier.weight(1f).focusRequester(deselectAllRequester).focusProperties {
-                            left = selectAllRequester
-                            right = FocusRequester.Cancel
-                            up = lastCategoryRequester ?: applyRequester
-                            down = applyRequester
-                        }
-                    )
-                }
+
 
             }
 
+        }
+    }
+}
+@Composable
+private fun CategoryManagerSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    isTv: Boolean,
+    editing: Boolean,
+    onEditingChange: (Boolean) -> Unit,
+    focused: Boolean,
+    onFocusedChange: (Boolean) -> Unit,
+    accent: Color,
+    searchRequester: FocusRequester,
+    upRequester: FocusRequester,
+    downRequester: FocusRequester,
+    rightRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
+    fun activate() {
+        if (editing) return
+        onEditingChange(true)
+        scope.launch {
+            withFrameNanos { }
+            searchRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
+    Box(modifier) {
+        Surface(
+            Modifier.fillMaxWidth().height(48.dp),
+            shape = RoundedCornerShape(14.dp),
+            color = CategoryPickerSurface,
+            border = BorderStroke(if (editing || focused) 3.dp else 1.dp, if (editing || focused) accent else CategoryPickerOutline)
+        ) {
+            Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = if (editing || focused) accent else CategoryPickerMuted)
+                Spacer(Modifier.width(7.dp))
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(searchRequester)
+                        .focusProperties { up = upRequester; down = downRequester; right = rightRequester }
+                        .onFocusChanged {
+                            onFocusedChange(it.isFocused)
+                            if (!it.isFocused && editing) { onEditingChange(false); keyboard?.hide() }
+                        }
+                        .onPreviewKeyEvent { event ->
+                            if (!editing && event.type == KeyEventType.KeyUp && event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) { activate(); true } else false
+                        },
+                    singleLine = true,
+                    readOnly = !editing,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                    cursorBrush = SolidColor(accent),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onEditingChange(false); keyboard?.hide() }),
+                    decorationBox = { inner ->
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                            if (query.isEmpty()) Text("Search categories", color = CategoryPickerMuted, maxLines = 1, style = MaterialTheme.typography.bodySmall)
+                            inner()
+                        }
+                    }
+                )
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }, modifier = Modifier.focusProperties { canFocus = false }) {
+                        Icon(Icons.Default.Close, "Clear search", tint = CategoryPickerMuted)
+                    }
+                }
+            }
+        }
+        if (!editing) {
+            Box(Modifier.matchParentSize().pointerInput(editing) { detectTapGestures { activate() } })
         }
     }
 }

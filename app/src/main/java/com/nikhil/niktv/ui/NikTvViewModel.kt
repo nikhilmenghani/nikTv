@@ -3935,10 +3935,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 store.savePlaybackUrls(updated)
             }
         }
-        val playbackQueue =
-            if (directFullscreen && episodes.isEmpty()) {
-                listOf(item)
-            } else when (type) {
+        val playbackQueue = when (type) {
             CatalogType.SERIES -> episodes.sortedWith(
                 compareBy<MediaItem>(
                     { it.seasonNumber ?: Int.MAX_VALUE },
