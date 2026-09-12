@@ -126,6 +126,7 @@ internal fun ModernSeriesDetailScreen(
     toggleSeriesWatch: () -> Unit,
     loadSeriesSeason: (Int) -> Unit,
     setUseTmdbEpisodeMetadata: (Boolean) -> Unit,
+    refreshTmdbEpisodeCache: () -> Unit,
     downloadForOffline: (MediaItem, CatalogType, MediaItem?) -> Unit,
     removeOfflineDownload: (MediaItem, CatalogType) -> Unit,
     openSearch: () -> Unit,
@@ -530,6 +531,29 @@ internal fun ModernSeriesDetailScreen(
                                     onCheckedChange = null,
                                     modifier = Modifier.focusProperties { canFocus = false }
                                 )
+                            }
+                        }
+
+                        Surface(
+                            onClick = refreshTmdbEpisodeCache,
+                            enabled = !state.tmdbEpisodeCacheRefreshing,
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF1E2430),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                            contentColor = Color.White,
+                            modifier = Modifier.height(42.dp).remoteFocusFrame()
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                if (state.tmdbEpisodeCacheRefreshing) {
+                                    CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                                }
+                                Text("Refresh TMDB Cache", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                             }
                         }
 

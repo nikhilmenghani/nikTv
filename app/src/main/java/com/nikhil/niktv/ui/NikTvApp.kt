@@ -667,6 +667,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,setSeriesStartSeason = vm::setSeriesStartSeason
                     ,loadSeriesSeason = vm::loadSeriesSeason
                     ,setUseTmdbEpisodeMetadata = vm::setUseTmdbEpisodeMetadata
+                    ,refreshTmdbEpisodeCache = vm::forceRefreshTmdbEpisodeCache
                     ,downloadForOffline = vm::downloadForOffline
                     ,removeOfflineDownload = vm::removeOfflineDownload
                     ,removeAllOfflineDownloads = vm::removeAllOfflineDownloads

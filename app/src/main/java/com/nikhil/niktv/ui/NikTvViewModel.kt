@@ -74,6 +74,7 @@ data class NikTvState(
     val settingsOpen: Boolean = false,
     val selectedSeries: MediaItem? = null,
     val useTmdbEpisodeMetadata: Boolean = true,
+    val tmdbEpisodeCacheRefreshing: Boolean = false,
     val fullSearchItems: List<MediaItem>? = null,
     val fullSearchLoading: Boolean = false,
     val fullSearchCachedAtMillis: Long? = null,
@@ -156,6 +157,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var tmdbDashboardConfigs: Map<String, List<TmdbHomeSection>> = emptyMap()
     private val watchRefreshMutex = Mutex()
     private val favoriteSeriesMetadataMutex = Mutex()
+    private val favoriteEpisodeCacheRefreshMutex = Mutex()
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
@@ -1700,10 +1702,216 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setUseTmdbEpisodeMetadata(enabled: Boolean) {
         if (_state.value.useTmdbEpisodeMetadata == enabled) return
-        _state.update { it.copy(useTmdbEpisodeMetadata = enabled, items = emptyList()) }
-        task {
-            val series = requireNotNull(_state.value.selectedSeries)
-            loadSeriesEpisodes(series, _state.value.selectedSeriesSeason, forceRefresh = true)
+        _state.update { current ->
+            val series = current.selectedSeries
+            val cache = series?.let { selected ->
+                episodeSeasonCaches.firstOrNull { cached ->
+                    cached.profileKey == current.session?.profile?.cacheKey() &&
+                        cached.seriesId == selected.id &&
+                        (current.selectedSeriesSeason == null || cached.season == current.selectedSeriesSeason)
+                }
+            }
+            current.copy(
+                useTmdbEpisodeMetadata = enabled,
+                items = cache?.episodesForDisplay(enabled) ?: current.items
+            )
+        }
+    }
+
+    private fun MediaItem.tmdbEpisodeCacheKey(): String =
+        "${seasonNumber ?: -1}:${episodeNumber ?: title.episodeOrderFromTitle() ?: -1}:$id"
+
+    private fun EpisodeSeasonCache.rawIptvEpisodes(): List<MediaItem> =
+        iptvEpisodes.ifEmpty { episodes }
+
+    private fun EpisodeSeasonCache.episodesForDisplay(useTmdb: Boolean): List<MediaItem> =
+        if (useTmdb) episodes else rawIptvEpisodes()
+
+    private fun publishEpisodeCache(cache: EpisodeSeasonCache) {
+        val current = _state.value
+        if (current.selectedSeries?.id != cache.seriesId) return
+        _state.update {
+            it.copy(
+                items = cache.episodesForDisplay(it.useTmdbEpisodeMetadata),
+                availableSeriesSeasons = cache.availableSeasons,
+                selectedSeriesSeason = cache.season,
+                episodePage = cache.page,
+                episodeHasMore = cache.hasMore,
+                episodeLoadingMore = false
+            )
+        }
+    }
+
+    private suspend fun cacheSeason(cache: EpisodeSeasonCache) {
+        episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
+        store.saveEpisodeSeasonCache(cache)
+        publishEpisodeCache(cache)
+    }
+
+    private suspend fun enrichEpisodeCacheFromTmdb(
+        series: MediaItem,
+        source: EpisodeSeasonCache,
+        force: Boolean
+    ) {
+        if (!tmdb.configured || source.rawIptvEpisodes().isEmpty()) return
+        val profileKey = source.profileKey
+        val mappedId = source.tmdbSeriesId ?: store.tmdbMappings.first().firstOrNull { mapping ->
+            mapping.profileKey == profileKey && mapping.type == CatalogType.SERIES && mapping.media.id == series.id
+        }?.tmdbId
+        val matchedId = mappedId ?: runCatching {
+            tmdb.confidentlyMatchSeries(series)
+        }.onFailure { Log.w("NikTvEpisodeMetadata", "TMDB series lookup failed", it) }
+            .getOrNull()?.id ?: return
+
+        val raw = source.rawIptvEpisodes()
+        val targets = if (force) raw else raw.filter { it.tmdbEpisodeCacheKey() !in source.tmdbEpisodeKeys }
+        if (targets.isEmpty() && !force) return
+        val existing = if (force) emptyMap() else source.episodes.associateBy { it.id }
+        val fetched = if (force) {
+            val seasons = targets.mapNotNull { it.seasonNumber ?: source.season }.distinct()
+            val metadataByNumber = coroutineScope {
+                seasons.map { season ->
+                    async {
+                        runCatching { tmdb.seasonEpisodes(matchedId, season) }
+                            .getOrDefault(emptyList())
+                    }
+                }.awaitAll().flatten()
+            }.associateBy { it.seasonNumber to it.episodeNumber }
+            targets.associateWith { episode ->
+                val season = episode.seasonNumber ?: source.season
+                val number = episode.episodeNumber ?: episode.title.episodeOrderFromTitle()
+                if (season == null || number == null) null else metadataByNumber[season to number]
+            }
+        } else {
+            targets.chunked(4).flatMap { chunk ->
+                coroutineScope {
+                    chunk.map { episode ->
+                        async {
+                            val season = episode.seasonNumber ?: source.season
+                            val number = episode.episodeNumber ?: episode.title.episodeOrderFromTitle()
+                            val metadata = if (season != null && number != null) {
+                                runCatching { tmdb.episodeMetadata(matchedId, season, number) }
+                                    .onFailure { Log.w("NikTvEpisodeMetadata", "TMDB episode lookup failed for S${season}E${number}", it) }
+                                    .getOrNull()
+                            } else null
+                            episode to metadata
+                        }
+                    }.awaitAll()
+                }
+            }.toMap()
+        }
+        val enriched = raw.map { episode ->
+            val metadata = fetched[episode]
+            when {
+                metadata != null -> episode.copy(
+                    title = metadata.name ?: episode.title,
+                    logo = metadata.stillUrl ?: episode.logo,
+                    description = metadata.overview ?: episode.description,
+                    seasonNumber = metadata.seasonNumber,
+                    episodeNumber = metadata.episodeNumber,
+                    externalTmdbId = matchedId,
+                    episodeAirDate = metadata.airDate ?: episode.episodeAirDate
+                )
+                !force -> existing[episode.id] ?: episode
+                else -> episode
+            }
+        }
+        val checkedKeys = if (force) {
+            targets.mapTo(mutableSetOf()) { it.tmdbEpisodeCacheKey() }
+        } else {
+            source.tmdbEpisodeKeys + targets.map { it.tmdbEpisodeCacheKey() }
+        }
+        cacheSeason(
+            source.copy(
+                episodes = enriched,
+                iptvEpisodes = raw,
+                tmdbEpisodeKeys = checkedKeys,
+                tmdbSeriesId = matchedId,
+                tmdbCachedAtMillis = System.currentTimeMillis(),
+                metadataVersion = EPISODE_METADATA_VERSION
+            )
+        )
+    }
+
+    private suspend fun refreshEpisodeCache(
+        series: MediaItem,
+        requestedSeason: Int?,
+        previous: EpisodeSeasonCache?,
+        forceTmdb: Boolean,
+        backgroundTmdb: Boolean = false
+    ) {
+        val session = _state.value.session ?: return
+        val loaded = portal.episodeSeason(session, series, _state.value.seriesStartSeason, requestedSeason)
+        val raw = loaded.episodes.distinctBy { it.id }
+        val retained = previous?.episodes.orEmpty().associateBy { it.id }
+        val base = EpisodeSeasonCache(
+            profileKey = session.profile.cacheKey(),
+            seriesId = series.id,
+            season = loaded.selectedSeason,
+            availableSeasons = loaded.availableSeasons,
+            episodes = raw.map { retained[it.id] ?: it },
+            page = loaded.page,
+            hasMore = loaded.hasMore,
+            metadataVersion = EPISODE_METADATA_VERSION,
+            iptvEpisodes = raw,
+            tmdbEpisodeKeys = if (forceTmdb) emptySet() else previous?.tmdbEpisodeKeys.orEmpty(),
+            tmdbSeriesId = previous?.tmdbSeriesId,
+            tmdbCachedAtMillis = if (forceTmdb) 0L else previous?.tmdbCachedAtMillis ?: 0L
+        )
+        cacheSeason(base)
+        if (backgroundTmdb) {
+            viewModelScope.launch { enrichEpisodeCacheFromTmdb(series, base, forceTmdb) }
+        } else {
+            enrichEpisodeCacheFromTmdb(series, base, forceTmdb)
+        }
+    }
+
+    private suspend fun refreshFavoriteEpisodeCachesIfDue(profileKey: String) {
+        if (!favoriteEpisodeCacheRefreshMutex.tryLock()) return
+        try {
+            val maxAge = _state.value.cacheIntervalMinutes * 60_000L
+            val now = System.currentTimeMillis()
+            val favoritesById = _state.value.favorites
+                .filter { it.kind == FavoriteKind.SERIES }
+                .associateBy { it.media.id }
+            episodeSeasonCaches
+                .filter { cache ->
+                    cache.profileKey == profileKey &&
+                        cache.seriesId in favoritesById &&
+                        (cache.iptvEpisodes.isEmpty() ||
+                            now - cache.cachedAtMillis >= maxAge ||
+                            now - cache.tmdbCachedAtMillis >= maxAge)
+                }
+                .forEach { cache ->
+                    if (_state.value.session?.profile?.cacheKey() != profileKey) return
+                    val series = favoritesById.getValue(cache.seriesId).media
+                    runCatching {
+                        refreshEpisodeCache(
+                            series = series,
+                            requestedSeason = cache.season,
+                            previous = cache,
+                            forceTmdb = now - cache.tmdbCachedAtMillis >= maxAge
+                        )
+                    }.onFailure {
+                        Log.w("NikTvEpisodeMetadata", "Background favorite cache refresh failed for ${series.id}", it)
+                    }
+                }
+        } finally {
+            favoriteEpisodeCacheRefreshMutex.unlock()
+        }
+    }
+
+    fun forceRefreshTmdbEpisodeCache() {
+        val series = _state.value.selectedSeries ?: return
+        val season = _state.value.selectedSeriesSeason
+        viewModelScope.launch {
+            _state.update { it.copy(tmdbEpisodeCacheRefreshing = true) }
+            try {
+                val old = episodeSeasonCaches.firstOrNull { it.profileKey == _state.value.session?.profile?.cacheKey() && it.seriesId == series.id && (season == null || it.season == season) }
+                refreshEpisodeCache(series, season, old, forceTmdb = true)
+            } finally {
+                _state.update { it.copy(tmdbEpisodeCacheRefreshing = false) }
+            }
         }
     }
 
@@ -1714,92 +1922,34 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         // An explicit selection applies while navigating seasons. On a fresh series open,
         // honor the configured first/latest preference instead of an older remembered season.
         val desired = requestedSeason
-        val cached = if (forceRefresh) null else episodeSeasonCaches.firstOrNull { cache ->
+        val cached = episodeSeasonCaches.firstOrNull { cache ->
             cache.profileKey == profileKey && cache.seriesId == series.id &&
                 cache.metadataVersion == EPISODE_METADATA_VERSION &&
-                (desired == null || cache.season == desired) &&
-                System.currentTimeMillis() - cache.cachedAtMillis < maxAge
+                (desired == null || cache.season == desired)
         }
-        var result = cached?.let { EpisodeSeasonResult(it.episodes, it.availableSeasons, it.season, it.page, it.hasMore) }
-            ?: portal.episodeSeason(session, series, _state.value.seriesStartSeason, desired).also { loaded ->
-                val cache = EpisodeSeasonCache(profileKey, series.id, loaded.selectedSeason, loaded.availableSeasons, loaded.episodes, loaded.page, loaded.hasMore, EPISODE_METADATA_VERSION)
-                episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
-                store.saveEpisodeSeasonCache(cache)
-            }
-        val portalPageSize = result.episodes.size
-        while (result.hasMore && portalPageSize > 0 && result.episodes.size + portalPageSize <= INITIAL_EPISODE_BATCH_LIMIT) {
-            val next = portal.episodeSeason(
-                session,
-                series,
-                _state.value.seriesStartSeason,
-                result.selectedSeason,
-                result.page + 1,
-                result.episodes.firstOrNull()?.portalSeasonId
-            )
-            val combined = (result.episodes + next.episodes).distinctBy { it.id }
-            if (combined.size == result.episodes.size) {
-                result = result.copy(hasMore = false)
-                break
-            }
-            result = EpisodeSeasonResult(
-                episodes = combined,
-                availableSeasons = (result.availableSeasons + next.availableSeasons).distinct().sorted(),
-                selectedSeason = next.selectedSeason ?: result.selectedSeason,
-                page = next.page,
-                hasMore = next.hasMore
-            )
-        }
-        if (_state.value.useTmdbEpisodeMetadata && tmdb.configured && result.episodes.isNotEmpty()) {
-            val savedTmdbId = store.tmdbMappings.first().firstOrNull { mapping ->
-                mapping.profileKey == profileKey && mapping.type == CatalogType.SERIES && mapping.media.id == series.id
-            }?.tmdbId
-            val tmdbSeries = savedTmdbId?.let { series.copy(externalTmdbId = it) } ?: series
-            val matched = runCatching { tmdb.confidentlyMatchSeries(tmdbSeries) }
-                .onFailure { Log.w("NikTvEpisodeMetadata", "TMDB series lookup failed", it) }
-                .getOrNull()
-            Log.i("NikTvEpisodeMetadata", "TMDB series match: ${matched?.id ?: "none"}; season=${result.selectedSeason}")
-            if (matched != null) {
-                val requestedNumbers = result.episodes.mapNotNull { it.episodeNumber }.toSet()
-                val selectedSeason = result.selectedSeason ?: result.episodes.firstNotNullOfOrNull { it.seasonNumber }
-                val exactSeasonEpisodes = selectedSeason?.let { season ->
-                    runCatching { tmdb.seasonEpisodes(matched.id, season) }.getOrDefault(emptyList())
-                }.orEmpty()
-                val exactMatches = exactSeasonEpisodes.filter { it.episodeNumber in requestedNumbers }
-                val tmdbEpisodes = if (exactMatches.isNotEmpty() || selectedSeason == 1) {
-                    exactSeasonEpisodes
+        if (cached != null && !forceRefresh) {
+            publishEpisodeCache(cached)
+            cached.season?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
+            val now = System.currentTimeMillis()
+            viewModelScope.launch {
+                if (cached.iptvEpisodes.isEmpty() || now - cached.cachedAtMillis >= maxAge) {
+                    refreshEpisodeCache(series, desired ?: cached.season, cached, forceTmdb = now - cached.tmdbCachedAtMillis >= maxAge)
                 } else {
-                    // Long-running daily series are sometimes represented by TMDB as one
-                    // season with absolute episode numbers while IPTV groups them by year.
-                    runCatching { tmdb.seasonEpisodes(matched.id, 1) }.getOrDefault(emptyList())
+                    enrichEpisodeCacheFromTmdb(series, cached, force = false)
                 }
-                val specialKeys = result.episodes.mapNotNull { it.title.specialEpisodeKey() }.toSet()
-                val specialEpisodes = if (specialKeys.isNotEmpty()) {
-                    runCatching { tmdb.seasonEpisodes(matched.id, 0) }.getOrDefault(emptyList())
-                } else emptyList()
-                Log.i("NikTvEpisodeMetadata", "TMDB episode metadata candidates=${tmdbEpisodes.size}; IPTV episodes=${result.episodes.size}")
-                result = result.copy(episodes = result.episodes.map { episode ->
-                    val metadata = selectTmdbEpisodeMetadata(episode, tmdbEpisodes, specialEpisodes)
-                        ?: return@map episode
-                    episode.copy(
-                        title = metadata.name ?: episode.title,
-                        logo = metadata.stillUrl ?: episode.logo,
-                        description = metadata.overview ?: episode.description,
-                        // TMDB metadata enriches the portal episode; it must not
-                        // replace the portal's playback identity or visible numbering.
-                        seasonNumber = episode.seasonNumber ?: metadata.seasonNumber,
-                        episodeNumber = episode.episodeNumber ?: metadata.episodeNumber,
-                        externalTmdbId = matched.id,
-                        episodeAirDate = metadata.airDate ?: episode.episodeAirDate
-                    )
-                })
             }
+            return
         }
-        val expandedCache = EpisodeSeasonCache(profileKey, series.id, result.selectedSeason, result.availableSeasons, result.episodes, result.page, result.hasMore, EPISODE_METADATA_VERSION)
-        episodeSeasonCaches = listOf(expandedCache) + episodeSeasonCaches.filterNot { it.key == expandedCache.key }
-        store.saveEpisodeSeasonCache(expandedCache)
-        result.selectedSeason?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
-        _state.update { it.copy(items = result.episodes, availableSeriesSeasons = result.availableSeasons, selectedSeriesSeason = result.selectedSeason,
-            episodePage = result.page, episodeHasMore = result.hasMore, episodeLoadingMore = false) }
+
+        refreshEpisodeCache(
+            series,
+            desired,
+            cached,
+            forceTmdb = forceRefresh,
+            backgroundTmdb = true
+        )
+        episodeSeasonCaches.firstOrNull { it.profileKey == profileKey && it.seriesId == series.id && (desired == null || it.season == desired) }
+            ?.season?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
     }
 
     private fun String.hasSpecificEpisodeTitle(): Boolean {
@@ -1840,39 +1990,38 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 portal.episodeSeason(session, series, snapshot.seriesStartSeason, snapshot.selectedSeriesSeason,
                     snapshot.episodePage + 1, snapshot.items.firstOrNull()?.portalSeasonId)
             }.onSuccess { next ->
-                val combined = (snapshot.items + next.episodes).distinctBy { it.id }
-                val actuallyAdded = combined.size > snapshot.items.size
+                val previous = episodeSeasonCaches.firstOrNull {
+                    it.profileKey == session.profile.cacheKey() && it.seriesId == series.id &&
+                        (snapshot.selectedSeriesSeason == null || it.season == snapshot.selectedSeriesSeason)
+                }
+                val oldRaw = previous?.rawIptvEpisodes().orEmpty().ifEmpty { snapshot.items }
+                val combinedRaw = (oldRaw + next.episodes).distinctBy { it.id }
+                val actuallyAdded = combinedRaw.size > oldRaw.size
+                val enrichedById = previous?.episodes.orEmpty().associateBy { it.id }
+                val cache = EpisodeSeasonCache(
+                    profileKey = session.profile.cacheKey(),
+                    seriesId = series.id,
+                    season = next.selectedSeason ?: snapshot.selectedSeriesSeason,
+                    availableSeasons = next.availableSeasons.ifEmpty { snapshot.availableSeriesSeasons },
+                    episodes = combinedRaw.map { enrichedById[it.id] ?: it },
+                    page = next.page,
+                    hasMore = next.hasMore && actuallyAdded,
+                    metadataVersion = EPISODE_METADATA_VERSION,
+                    iptvEpisodes = combinedRaw,
+                    tmdbEpisodeKeys = previous?.tmdbEpisodeKeys.orEmpty(),
+                    tmdbSeriesId = previous?.tmdbSeriesId,
+                    tmdbCachedAtMillis = previous?.tmdbCachedAtMillis ?: 0L
+                )
+                cacheSeason(cache)
                 _state.update { current ->
-                    val active =
-                        current.nowPlaying
-
-                    val updatedPlaying =
-                        if (
-                            active != null &&
-                            active.catalogType == CatalogType.SERIES &&
-                            active.series?.id == series.id
-                        ) {
-                            active.withAppendedPlaybackQueue(
-                                next.episodes
-                            )
-                        } else {
-                            active
-                        }
-
+                    val active = current.nowPlaying
                     current.copy(
-                        items = combined,
-                        episodePage = next.page,
-                        episodeHasMore =
-                            next.hasMore && actuallyAdded,
-                        episodeLoadingMore = false,
-                        nowPlaying = updatedPlaying
+                        nowPlaying = if (active != null && active.catalogType == CatalogType.SERIES && active.series?.id == series.id) {
+                            active.withAppendedPlaybackQueue(next.episodes)
+                        } else active
                     )
                 }
-                val cache = EpisodeSeasonCache(session.profile.cacheKey(), series.id, next.selectedSeason,
-                    next.availableSeasons.ifEmpty { snapshot.availableSeriesSeasons }, combined, next.page, next.hasMore && actuallyAdded,
-                    EPISODE_METADATA_VERSION)
-                episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
-                store.saveEpisodeSeasonCache(cache)
+                enrichEpisodeCacheFromTmdb(series, cache, force = false)
             }.onFailure { error ->
                 _state.update { it.copy(episodeLoadingMore = false, error = error.message ?: "Could not load more episodes") }
             }
@@ -4707,6 +4856,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return
         viewModelScope.launch {
             enrichFavoriteSeriesPresentation(profileKey)
+        }
+        viewModelScope.launch {
+            refreshFavoriteEpisodeCachesIfDue(profileKey)
         }
     }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }

@@ -302,6 +302,27 @@ class TmdbClient {
         }
     }
 
+    suspend fun episodeMetadata(seriesId: Int, seasonNumber: Int, episodeNumber: Int): TmdbEpisode? =
+        withContext(Dispatchers.IO) {
+            if (!configured) return@withContext null
+            val episode = execute(
+                "/3/tv/$seriesId/season/$seasonNumber/episode/$episodeNumber",
+                emptyMap()
+            )
+            val number = episode["episode_number"]?.jsonPrimitive?.intOrNull
+                ?: return@withContext null
+            val season = episode["season_number"]?.jsonPrimitive?.intOrNull ?: seasonNumber
+            val still = episode["still_path"]?.jsonPrimitive?.contentOrNull
+            TmdbEpisode(
+                seasonNumber = season,
+                episodeNumber = number,
+                name = episode["name"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+                overview = episode["overview"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+                airDate = episode["air_date"]?.jsonPrimitive?.contentOrNull,
+                stillUrl = still?.let { "$BACKDROP_BASE_URL$it" }
+            )
+        }
+
     private fun kotlinx.serialization.json.JsonObject.toTmdbSeries(): TmdbSeries? {
         val id = this["id"]?.jsonPrimitive?.intOrNull ?: return null
         val name = this["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()

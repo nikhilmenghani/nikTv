@@ -248,7 +248,13 @@ data class EpisodeSeasonCache(
     val page: Int = 1,
     val hasMore: Boolean = false,
     val metadataVersion: Int = 0,
-    val cachedAtMillis: Long = System.currentTimeMillis()
+    val cachedAtMillis: Long = System.currentTimeMillis(),
+    /** Unmodified provider episodes, retained so the TMDB switch is local-only. */
+    val iptvEpisodes: List<MediaItem> = emptyList(),
+    /** IPTV episode identities for which TMDB was checked and cached. */
+    val tmdbEpisodeKeys: Set<String> = emptySet(),
+    val tmdbSeriesId: Int? = null,
+    val tmdbCachedAtMillis: Long = 0L
 ) {
     val key: String get() = "$profileKey|$seriesId|${season ?: -1}"
 }
