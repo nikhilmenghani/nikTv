@@ -1435,7 +1435,6 @@ fun PlayerScreen(
                                 .focusRequester(pictureModeFocusRequester)
                                 .focusProperties { left = resizeFocusRequester; right = moreFocusRequester; down = topDownRequester }
                                 .playerDpadFocusRoutes(resizeFocusRequester, moreFocusRequester, topDownRequester),
-                            selected = activeAppearanceProfile.id != "standard",
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -1492,7 +1491,10 @@ fun PlayerScreen(
                                         up = moreFocusRequester
                                         down = playPauseFocusRequester
                                     }
-                                    .playerControlFocus(RoundedCornerShape(14.dp)) { controlsFocused = it }
+                                    .playerControlFocus(
+                                        shape = RoundedCornerShape(14.dp),
+                                        scaleOnFocus = false
+                                    ) { controlsFocused = it }
                             )
                         } else if (media.catalogType == CatalogType.LIVE_TV) {
                             Row(
@@ -2143,7 +2145,7 @@ internal fun PlayerChromeIconButton(
         onClick = onClick,
         modifier = modifier
             .size(controlSize)
-            .playerControlFocus(shape, onFocused),
+            .playerControlFocus(shape = shape, onFocused = onFocused),
         shape = shape,
         color = if (selected) {
             Color(0xFF303A49)
@@ -2769,6 +2771,7 @@ private fun formatPlayerTime(milliseconds: Long): String {
 @Composable
 internal fun Modifier.playerControlFocus(
     shape: Shape = RoundedCornerShape(12.dp),
+    scaleOnFocus: Boolean = true,
     onFocused: (Boolean) -> Unit = {}
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
@@ -2792,8 +2795,8 @@ internal fun Modifier.playerControlFocus(
                 Modifier
                     .zIndex(1f)
                     .graphicsLayer {
-                        scaleX = 1.035f
-                        scaleY = 1.035f
+                        scaleX = if (scaleOnFocus) 1.035f else 1f
+                        scaleY = if (scaleOnFocus) 1.035f else 1f
                     }
                     .shadow(
                         7.dp,

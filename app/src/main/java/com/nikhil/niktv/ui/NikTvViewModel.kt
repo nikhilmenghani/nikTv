@@ -4967,6 +4967,38 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /** Returns a playable season queue immediately from cache, fetching it only on a cache miss. */
+    private suspend fun recentEpisodeQueue(
+        session: PortalSession,
+        series: MediaItem,
+        season: Int?
+    ): List<MediaItem> {
+        val cached = episodeSeasonCaches.firstOrNull { cache ->
+            cache.profileKey == session.profile.cacheKey() &&
+                cache.seriesId == series.id &&
+                (season == null || cache.season == season)
+        }
+        if (cached != null) return cached.episodesForDisplay(_state.value.useTmdbEpisodeMetadata)
+
+        val loaded = portal.episodeSeason(session, series, _state.value.seriesStartSeason, season)
+        val raw = loaded.episodes.distinctBy { it.id }
+        val cache = EpisodeSeasonCache(
+            profileKey = session.profile.cacheKey(),
+            seriesId = series.id,
+            season = loaded.selectedSeason,
+            availableSeasons = loaded.availableSeasons,
+            episodes = raw,
+            page = loaded.page,
+            hasMore = loaded.hasMore,
+            metadataVersion = EPISODE_METADATA_VERSION,
+            iptvEpisodes = raw
+        )
+        cacheSeason(cache)
+        viewModelScope.launch { enrichEpisodeCacheFromTmdb(series, cache, force = false) }
+        return raw
+    }
+
     fun openRecent(recent: RecentItem) {
         when (recent.kind) {
             FavoriteKind.CHANNEL -> task {
@@ -5000,22 +5032,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             FavoriteKind.EPISODE -> task {
                 val session = requireNotNull(_state.value.session)
                 val episodes = recent.series?.let { series ->
-                    episodeSeasonCaches.firstOrNull { cache ->
-                        cache.profileKey == session.profile.cacheKey() &&
-                            cache.seriesId == series.id &&
-                            (recent.media.seasonNumber == null || cache.season == recent.media.seasonNumber)
-                    }?.episodes
+                    runCatching { recentEpisodeQueue(session, series, recent.media.seasonNumber) }
+                        .getOrDefault(emptyList())
                 }.orEmpty().ifEmpty { listOf(recent.media) }
                 playInternal(recent.media, CatalogType.SERIES, recent.series, episodes)
             }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
                 val savedEpisode = recent.lastPlayed
-                val episodes = episodeSeasonCaches.firstOrNull { cache ->
-                    cache.profileKey == session.profile.cacheKey() &&
-                        cache.seriesId == recent.media.id &&
-                        (savedEpisode?.seasonNumber == null || cache.season == savedEpisode.seasonNumber)
-                }?.episodes.orEmpty().ifEmpty { listOfNotNull(savedEpisode) }
+                val episodes = savedEpisode?.let { episode ->
+                    runCatching { recentEpisodeQueue(session, recent.media, episode.seasonNumber) }
+                        .getOrDefault(emptyList())
+                }.orEmpty().ifEmpty { listOfNotNull(savedEpisode) }
                 val resumeEpisode = savedEpisode?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
                 if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes)
                 else {

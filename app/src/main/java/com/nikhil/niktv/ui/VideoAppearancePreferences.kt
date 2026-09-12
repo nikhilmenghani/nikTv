@@ -646,18 +646,24 @@ internal fun PlayerQueueOverlay(
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val loadMoreRequester = remember { FocusRequester() }
-    val gridState = rememberLazyGridState()
-
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
+    val initialVisibleRow =
+        (currentIndex / queueColumnCount) * queueColumnCount
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = initialVisibleRow
+    )
 
     var focusedIndex by remember(playingId) { mutableIntStateOf(currentIndex) }
     var previousItemCount by remember { mutableIntStateOf(uniqueItems.size) }
     var initialFocusApplied by remember(playingId) { mutableStateOf(false) }
+    var gridReady by remember(playingId, tvQueueGrid) {
+        mutableStateOf(!tvQueueGrid)
+    }
     var loadMoreRequested by remember { mutableStateOf(false) }
     var observedLoading by remember { mutableStateOf(false) }
     val renderedReveal by animateFloatAsState(
-        targetValue = revealProgress.coerceIn(0f, 1f),
+        targetValue = if (gridReady) revealProgress.coerceIn(0f, 1f) else 0f,
         animationSpec = if (revealDragging) snap() else tween(220),
         label = "playerQueueReveal"
     )
@@ -716,14 +722,19 @@ internal fun PlayerQueueOverlay(
             val target =
                 uniqueItems.indexOfFirst { it.id == playingId }
                     .coerceAtLeast(0)
-            gridState.scrollToItem(target)
             focusedIndex = target
-            delay(120L)
-            runCatching {
-                requesters.getOrPut(uniqueItems[target].id) {
-                    FocusRequester()
-                }.requestFocus()
+            gridState.scrollToItem(target)
+            val requester = requesters.getOrPut(uniqueItems[target].id) {
+                FocusRequester()
             }
+            repeat(4) {
+                withFrameNanos { }
+                if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
+                    gridReady = true
+                    return@LaunchedEffect
+                }
+            }
+            gridReady = true
         }
     }
 
@@ -1555,7 +1566,9 @@ internal fun PlayerPictureModeEditor(
                                     else -> false
                                 }
                             }
-                            .playerControlFocus { }
+                            .playerControlFocus(
+                                androidx.compose.foundation.shape.CircleShape
+                            ) { }
                     ) {
                         Text("Cancel")
                     }
@@ -1622,7 +1635,9 @@ internal fun PlayerPictureModeEditor(
                                     else -> false
                                 }
                             }
-                            .playerControlFocus { }
+                            .playerControlFocus(
+                                androidx.compose.foundation.shape.CircleShape
+                            ) { }
                     ) {
                         Text(
                             if (selected.id == "custom") {
@@ -1753,6 +1768,7 @@ private fun PlayerEditorSlider(
                 valueRange = range,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = if (compact) 5.dp else 8.dp)
                     .focusProperties { canFocus = false },
                 thumb = {
                     Box(

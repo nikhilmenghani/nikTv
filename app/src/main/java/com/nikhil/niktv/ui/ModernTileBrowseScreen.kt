@@ -1174,7 +1174,7 @@ private fun ModernDestinationTile(
     val scale =
         1f + (
             when {
-                isTv -> 0.09f
+                isTv -> 0.02f
                 isTablet -> 0.035f
                 else -> 0.025f
             } * visualProgress
@@ -1215,7 +1215,7 @@ private fun ModernDestinationTile(
                 elevation =
                     (
                         when {
-                            isTv -> 22f
+                            isTv -> 8f
                             isTablet -> 10f
                             else -> 6f
                         } * visualProgress
@@ -1322,7 +1322,7 @@ private fun ModernDestinationTile(
                     Text(
                         title,
                         style = when {
-                            isTv -> MaterialTheme.typography.titleLarge
+                            isTv -> MaterialTheme.typography.titleMedium
                             isPhone -> MaterialTheme.typography.bodyLarge
                             else -> MaterialTheme.typography.titleMedium
                         },
@@ -1333,7 +1333,7 @@ private fun ModernDestinationTile(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
+                    if (!(isTv && subtitle.startsWith("IPTV ·"))) Text(
                         subtitle,
                         style = when {
                             isTv -> MaterialTheme.typography.bodySmall
@@ -1520,7 +1520,7 @@ private fun ModernCompactMediaCard(
     val artworkScale =
         1f + (
             when {
-                isTv -> 0.085f
+                isTv -> 0.02f
                 isTablet -> 0.035f
                 else -> 0.025f
             } * visualProgress
@@ -1558,7 +1558,7 @@ private fun ModernCompactMediaCard(
                 elevation =
                     (
                         when {
-                            isTv -> 20f
+                            isTv -> 8f
                             isTablet -> 10f
                             else -> 6f
                         } * visualProgress
@@ -1637,7 +1637,7 @@ private fun ModernCompactMediaCard(
                     Text(
                         item.title,
                         style = if (isTv) {
-                            MaterialTheme.typography.titleMedium
+                            MaterialTheme.typography.bodyLarge
                         } else {
                             MaterialTheme.typography.titleSmall
                         },
@@ -1657,7 +1657,7 @@ private fun ModernCompactMediaCard(
                             } else {
                                 MaterialTheme.typography.labelSmall
                             },
-                            maxLines = 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

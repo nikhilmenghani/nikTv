@@ -962,7 +962,6 @@ internal fun VlcPlayerScreen(
                                 .focusRequester(pictureModeRequester)
                                 .focusProperties { left = resizeRequester; right = moreRequester; down = topDownRequester }
                                 .playerDpadFocusRoutes(resizeRequester, moreRequester, topDownRequester),
-                            selected = activeAppearanceProfile.id != "standard",
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -1019,7 +1018,10 @@ internal fun VlcPlayerScreen(
                                         up = moreRequester
                                         down = playRequester
                                     }
-                                    .playerControlFocus(RoundedCornerShape(14.dp)) { controlsFocused = it }
+                                    .playerControlFocus(
+                                        shape = RoundedCornerShape(14.dp),
+                                        scaleOnFocus = false
+                                    ) { controlsFocused = it }
                             )
                         } else {
                             Row(

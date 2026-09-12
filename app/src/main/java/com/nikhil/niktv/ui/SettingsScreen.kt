@@ -346,6 +346,7 @@ internal fun ModernSettingsScreen(
     var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     val updateDownloadRequester = remember { FocusRequester() }
     val versionRequester = remember { FocusRequester() }
+    val oneClickUpdateRequester = remember { FocusRequester() }
     val settingsEntryRequester = remember { FocusRequester() }
     var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
     var restoreVersionFocus by remember { mutableStateOf(false) }
@@ -440,10 +441,13 @@ internal fun ModernSettingsScreen(
                     }
                 }
                 .onFailure {
-                    updateMessage = "Could not check: ${it.message}"
-                    downloadActionMessage = it.message ?: "Could not check for updates"
+                    val message = updateCheckFailureMessage(it)
+                    updateMessage = message
+                    downloadActionMessage = message
                 }
             oneClickUpdating = false
+            delay(80L)
+            runCatching { oneClickUpdateRequester.requestFocus() }
         }
     }
     LaunchedEffect(pendingUpdate) {
@@ -1844,9 +1848,12 @@ internal fun ModernSettingsScreen(
                         }
                     },
                     modifier = Modifier
+                        .focusRequester(oneClickUpdateRequester)
                         .remoteFocusFrame(RoundedCornerShape(14.dp))
-                        .clickable(enabled = !oneClickUpdating && !checkingUpdate) {
-                            runOneClickUpdate()
+                        .clickable {
+                            if (!oneClickUpdating && !checkingUpdate) {
+                                runOneClickUpdate()
+                            }
                         },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
@@ -1863,16 +1870,22 @@ internal fun ModernSettingsScreen(
                     },
                     leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
                     trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
-                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(enabled = !checkingUpdate && !oneClickUpdating) {
-                        checkingUpdate = true; updateMessage = "Checking for updates…"
-                        scope.launch {
-                            runCatching { AppUpdates.check() }
-                                .onSuccess { update ->
-                                    availableUpdate = update
-                                    updateMessage = if (update == null) "You're up to date" else "Version ${update.version} is available"
+                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame(RoundedCornerShape(14.dp)).clickable {
+                        if (!checkingUpdate && !oneClickUpdating) {
+                            checkingUpdate = true; updateMessage = "Checking for updates…"
+                            scope.launch {
+                                runCatching { AppUpdates.check() }
+                                    .onSuccess { update ->
+                                        availableUpdate = update
+                                        updateMessage = if (update == null) "You're up to date" else "Version ${update.version} is available"
+                                    }
+                                    .onFailure { updateMessage = updateCheckFailureMessage(it) }
+                                checkingUpdate = false
+                                if (availableUpdate == null) {
+                                    delay(80L)
+                                    runCatching { versionRequester.requestFocus() }
                                 }
-                                .onFailure { updateMessage = "Could not check: ${it.message}" }
-                            checkingUpdate = false
+                            }
                         }
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -2106,6 +2119,15 @@ internal fun ModernSettingsScreen(
                 }
             }
         }
+    }
+}
+
+private fun updateCheckFailureMessage(error: Throwable): String {
+    val detail = error.message.orEmpty()
+    return if (detail.contains("HTTP 404", ignoreCase = true)) {
+        "The update is still being published. Try again shortly."
+    } else {
+        "Could not check for updates: ${detail.ifBlank { "Unknown error" }}"
     }
 }
 
