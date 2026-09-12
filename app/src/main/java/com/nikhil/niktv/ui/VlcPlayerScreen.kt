@@ -1216,6 +1216,10 @@ internal fun VlcPlayerScreen(
             profiles = appearanceProfiles,
             preview = activeAppearanceProfile,
             onPreview = { appearancePreview = it },
+            onSettings = {
+                pictureModePickerVisible = false
+                pictureEditorVisible = true
+            },
             onApply = {
                 VideoAppearancePreferences.setActive(context, activeAppearanceProfile.id)
                 pictureModePickerVisible = false

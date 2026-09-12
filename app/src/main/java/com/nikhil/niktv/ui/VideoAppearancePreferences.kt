@@ -1273,10 +1273,9 @@ internal fun PlayerPictureModeEditor(
             .fillMaxSize()
             .focusGroup()
             .padding(
-                end = if (compactMobileEditor) 10.dp else 24.dp,
-                bottom = if (compactMobileEditor) 8.dp else 20.dp
+                end = if (compactMobileEditor) 8.dp else 14.dp
             ),
-        contentAlignment = Alignment.BottomEnd
+        contentAlignment = Alignment.CenterEnd
     ) {
         /*
          * COMPACT_MOBILE_PICTURE_EDITOR_V39
@@ -1288,10 +1287,10 @@ internal fun PlayerPictureModeEditor(
         // PROFILE_SCREEN_VISUAL_LANGUAGE_V20
         Surface(
             modifier = Modifier
-                .fillMaxWidth(if (compactMobileEditor) .58f else .50f)
+                .fillMaxWidth(if (compactMobileEditor) .54f else .42f)
                 .widthIn(
-                    min = if (compactMobileEditor) 320.dp else 360.dp,
-                    max = if (compactMobileEditor) 560.dp else 660.dp
+                    min = if (compactMobileEditor) 300.dp else 340.dp,
+                    max = if (compactMobileEditor) 500.dp else 540.dp
                 ),
             color = Color(0xF2111317),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(
@@ -1305,8 +1304,8 @@ internal fun PlayerPictureModeEditor(
         ) {
             Column(
                 Modifier.padding(
-                    horizontal = if (compactMobileEditor) 14.dp else 20.dp,
-                    vertical = if (compactMobileEditor) 8.dp else 16.dp
+                    horizontal = if (compactMobileEditor) 12.dp else 16.dp,
+                    vertical = if (compactMobileEditor) 8.dp else 12.dp
                 ),
                 verticalArrangement = Arrangement.spacedBy(
                     if (compactMobileEditor) 2.dp else 6.dp

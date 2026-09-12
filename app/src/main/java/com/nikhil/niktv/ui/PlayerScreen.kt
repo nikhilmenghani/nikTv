@@ -1674,6 +1674,10 @@ fun PlayerScreen(
             profiles = appearanceProfiles,
             preview = activeAppearanceProfile,
             onPreview = { appearancePreview = it },
+            onSettings = {
+                pictureModePickerVisible = false
+                pictureEditorVisible = true
+            },
             onApply = {
                 VideoAppearancePreferences.setActive(context, activeAppearanceProfile.id)
                 pictureModePickerVisible = false
@@ -2349,11 +2353,13 @@ internal fun PictureModeQuickOverlay(
     profiles: List<VideoAppearanceProfile>,
     preview: VideoAppearanceProfile,
     onPreview: (VideoAppearanceProfile) -> Unit,
+    onSettings: () -> Unit,
     onApply: () -> Unit,
     onSkip: () -> Unit
 ) {
     val modeRequesters = remember(profiles.map { it.id }) { profiles.map { FocusRequester() } }
     val skipRequester = remember { FocusRequester() }
+    val settingsRequester = remember { FocusRequester() }
     val applyRequester = remember { FocusRequester() }
     LaunchedEffect(profiles, preview.id) {
         withFrameNanos { }
@@ -2401,7 +2407,12 @@ internal fun PictureModeQuickOverlay(
             }
         },
         dismissButton = {
-            TextButton(onClick = onSkip, modifier = Modifier.focusRequester(skipRequester).playerControlFocus { }) {
+            TextButton(onClick = onSettings, modifier = Modifier.focusRequester(settingsRequester).focusProperties { right = skipRequester }.playerControlFocus { }) {
+                Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Settings")
+            }
+            TextButton(onClick = onSkip, modifier = Modifier.focusRequester(skipRequester).focusProperties { left = settingsRequester; right = applyRequester }.playerControlFocus { }) {
                 Text("Skip")
             }
         },
