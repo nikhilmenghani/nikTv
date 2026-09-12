@@ -1206,7 +1206,10 @@ internal fun VlcPlayerScreen(
         if (pictureEditorVisible) PlayerPictureModeEditor(
             profiles = appearanceProfiles,
             selectedId = activeAppearanceProfile.id,
-            onDismiss = { pictureEditorVisible = false; appearancePreview = null; dpadInteraction++; showControls() },
+            onDismiss = {
+                pictureEditorVisible = false
+                pictureModePickerVisible = true
+            },
             onPreview = { appearancePreview = it },
             onSelected = {
                 VideoAppearancePreferences.setActive(context, it)

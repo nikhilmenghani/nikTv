@@ -1234,6 +1234,10 @@ internal fun PlayerPictureModeEditor(
     var coolness by remember(selected.id) { mutableFloatStateOf(selected.coolness) }
     var tint by remember(selected.id) { mutableFloatStateOf(selected.tint) }
     var dimming by remember(selected.id) { mutableFloatStateOf(selected.dimming) }
+    val restoreSelectionAndDismiss = {
+        onPreview(selected)
+        onDismiss()
+    }
     val profileRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val brightnessRequester = remember { FocusRequester() }
     val warmthRequester = remember { FocusRequester() }
@@ -1267,7 +1271,7 @@ internal fun PlayerPictureModeEditor(
             delay(50L * (attempt + 1))
         }
     }
-    BackHandler(onBack = onDismiss)
+    BackHandler(onBack = restoreSelectionAndDismiss)
     Box(
         Modifier
             .fillMaxSize()
@@ -1290,17 +1294,17 @@ internal fun PlayerPictureModeEditor(
                 .fillMaxWidth(if (compactMobileEditor) .54f else .42f)
                 .widthIn(
                     min = if (compactMobileEditor) 300.dp else 340.dp,
-                    max = if (compactMobileEditor) 500.dp else 540.dp
+                    max = if (compactMobileEditor) 440.dp else 460.dp
                 ),
-            color = Color(0xF2111317),
+            color = Color(0xF21A1A1A),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                if (compactMobileEditor) 16.dp else 22.dp
+                20.dp
             ),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
-                Color(0xFF30343B)
+                Color.White.copy(alpha = 0.10f)
             ),
-            shadowElevation = if (compactMobileEditor) 8.dp else 14.dp
+            shadowElevation = 0.dp
         ) {
             Column(
                 Modifier.padding(
@@ -1436,7 +1440,6 @@ internal fun PlayerPictureModeEditor(
                                 )
                                 .clickable {
                                     selected = profile
-                                    onSelected(profile.id)
                                 }
                                 .focusable(),
                             color = when {
@@ -1498,7 +1501,7 @@ internal fun PlayerPictureModeEditor(
                     horizontalArrangement = Arrangement.End
                 ) {
                     androidx.compose.material3.TextButton(
-                        onClick = onDismiss,
+                        onClick = restoreSelectionAndDismiss,
                         modifier = Modifier
                             .focusRequester(cancelRequester)
                             .focusProperties {
