@@ -1637,7 +1637,7 @@ private fun ModernCompactMediaCard(
                     Text(
                         item.title,
                         style = if (isTv) {
-                            MaterialTheme.typography.bodyLarge
+                            MaterialTheme.typography.bodyMedium
                         } else {
                             MaterialTheme.typography.titleSmall
                         },
@@ -1645,15 +1645,15 @@ private fun ModernCompactMediaCard(
                             if (active) FontWeight.Bold
                             else FontWeight.SemiBold,
                         color = Color.White,
-                        maxLines = 2,
+                        maxLines = if (isTv) 3 else 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (subtitle.isNotBlank()) {
+                    if (subtitle.isNotBlank() && !(isTv && subtitle == "Movie")) {
                         Text(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
                             style = if (isTv) {
-                                MaterialTheme.typography.labelMedium
+                                MaterialTheme.typography.labelSmall
                             } else {
                                 MaterialTheme.typography.labelSmall
                             },

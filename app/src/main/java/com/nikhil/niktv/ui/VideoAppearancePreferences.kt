@@ -70,6 +70,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import coil3.compose.AsyncImagePainter
@@ -771,11 +772,14 @@ internal fun PlayerQueueOverlay(
         val artwork = remember(item.id, item.title, item.logo) {
             artworkRequest(context, item)
         }
+        val cardShape =
+            androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
 
         Surface(
             Modifier
                 .fillMaxWidth()
                 .height(queueCardHeight)
+                .clip(cardShape)
                 .focusRequester(requester)
                 .onFocusChanged {
                     focused = it.isFocused
@@ -792,10 +796,7 @@ internal fun PlayerQueueOverlay(
             border = if (focused && tvQueueGrid) {
                 androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE7E9EF))
             } else null,
-            shape =
-                androidx.compose.foundation.shape.RoundedCornerShape(
-                    12.dp
-                )
+            shape = cardShape
         ) {
             Column(
                 Modifier.padding(8.dp),
@@ -974,10 +975,13 @@ internal fun PlayerQueueOverlay(
                         }
 
                         Key.DirectionDown -> {
-                            val target =
-                                focusedIndex + queueColumnCount
-                            if (target <= maxIndex) {
-                                focusAt(target)
+                            val nextRowStart =
+                                focusedIndex - currentColumn + queueColumnCount
+                            if (nextRowStart <= maxIndex) {
+                                focusAt(
+                                    (nextRowStart + currentColumn)
+                                        .coerceAtMost(maxIndex)
+                                )
                             }
                             true
                         }
@@ -1444,6 +1448,7 @@ internal fun PlayerPictureModeEditor(
                                 .onFocusChanged {
                                     focused = it.isFocused
                                 }
+                                .clip(profileChipShape)
                                 .then(
                                     if (focused) {
                                         Modifier.border(

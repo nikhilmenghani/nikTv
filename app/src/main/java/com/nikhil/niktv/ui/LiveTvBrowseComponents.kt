@@ -367,28 +367,77 @@ internal fun ModernSideRail(
     expanded: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val railConfiguration = LocalConfiguration.current
+    val railContext = LocalContext.current
+    val isTv = railContext.isTvLikeDevice(railConfiguration)
+    var profileFocused by remember { mutableStateOf(false) }
     Surface(modifier, color = Color(0xFF070707), shadowElevation = 12.dp) {
         Column(
             Modifier.verticalScroll(rememberScrollState())
                 .padding(horizontal = if (expanded) 10.dp else 6.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(
-                Modifier.fillMaxWidth()
-                    .clickable(onClick = openProfileSwitcher)
-                    .remoteFocusFrame(RoundedCornerShape(10.dp))
-                    .padding(horizontal = if (expanded) 12.dp else 0.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
-            ) {
-                Text(
-                    state.savedProfile?.name.orEmpty().ifBlank { "Profile" },
-                    color = Color.White,
-                    style = if (expanded) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            if (isTv) {
+                val profileShape = RoundedCornerShape(14.dp)
+                Surface(
+                    onClick = openProfileSwitcher,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .onFocusChanged { profileFocused = it.isFocused },
+                    shape = profileShape,
+                    color = if (profileFocused) Color(0xFF20242B) else Color(0xFF111318),
+                    border = BorderStroke(
+                        if (profileFocused) 2.dp else 1.dp,
+                        if (profileFocused) Color(0xFFF2F3F5) else Color(0xFF30343B)
+                    )
+                ) {
+                    Row(
+                        Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            Modifier.size(38.dp),
+                            shape = CircleShape,
+                            color = Color(0xFF303A49)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Person, null, Modifier.size(23.dp), tint = Color.White)
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("PROFILE", color = Color(0xFF9DA3AE), style = MaterialTheme.typography.labelSmall)
+                            Text(
+                                state.savedProfile?.name.orEmpty().ifBlank { "Profile" },
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(Icons.Default.ChevronRight, null, Modifier.size(18.dp), tint = Color(0xFF9DA3AE))
+                    }
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clickable(onClick = openProfileSwitcher)
+                        .remoteFocusFrame(RoundedCornerShape(10.dp))
+                        .padding(horizontal = if (expanded) 12.dp else 0.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+                ) {
+                    Text(
+                        state.savedProfile?.name.orEmpty().ifBlank { "Profile" },
+                        color = Color.White,
+                        style = if (expanded) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Home, "Home", state.homeOpen && !state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen, expanded, openHome)
