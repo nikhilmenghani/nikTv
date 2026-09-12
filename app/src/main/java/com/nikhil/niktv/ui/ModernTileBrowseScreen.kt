@@ -1051,7 +1051,7 @@ private fun ModernQuickActionTile(
                 scaleY = scale
             }
             .shadow(
-                elevation = ((if (isTv) 18f else 8f) * visualProgress).dp,
+                elevation = ((if (isTv) 0f else 8f) * visualProgress).dp,
                 shape = shape,
                 clip = false,
                 ambientColor = Color.Black.copy(alpha = 0.42f),
@@ -1215,7 +1215,7 @@ private fun ModernDestinationTile(
                 elevation =
                     (
                         when {
-                            isTv -> 8f
+                            isTv -> 0f
                             isTablet -> 10f
                             else -> 6f
                         } * visualProgress
@@ -1558,7 +1558,7 @@ private fun ModernCompactMediaCard(
                 elevation =
                     (
                         when {
-                            isTv -> 8f
+                            isTv -> 0f
                             isTablet -> 10f
                             else -> 6f
                         } * visualProgress
@@ -2699,7 +2699,7 @@ private fun ModernCollectionPoster(
                     elevation =
                         (
                             when {
-                                isTv -> 20f
+                                isTv -> 0f
                                 isTablet -> 10f
                                 else -> 6f
                             } * visualProgress

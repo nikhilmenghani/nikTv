@@ -660,7 +660,7 @@ internal fun ModernPosterCard(
                 .then(
                     if (focused || touchPressed) {
                         Modifier.shadow(
-                            if (isTv) 20.dp else if (isTablet) 10.dp else 6.dp,
+                            if (isTv) 0.dp else if (isTablet) 10.dp else 6.dp,
                             posterShape,
                             clip = false,
                             ambientColor =
@@ -851,7 +851,7 @@ internal fun ModernMediaListCard(
                 elevation =
                     (
                         when {
-                            isTv -> 20f
+                            isTv -> 0f
                             isTablet -> 10f
                             else -> 6f
                         } * visualProgress

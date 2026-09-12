@@ -2798,12 +2798,6 @@ internal fun Modifier.playerControlFocus(
                         scaleX = if (scaleOnFocus) 1.035f else 1f
                         scaleY = if (scaleOnFocus) 1.035f else 1f
                     }
-                    .shadow(
-                        7.dp,
-                        shape,
-                        ambientColor = Color(0x44000000),
-                        spotColor = Color(0x66000000)
-                    )
                     .border(2.dp, Color(0xFFE7E9EF), shape)
             } else {
                 Modifier

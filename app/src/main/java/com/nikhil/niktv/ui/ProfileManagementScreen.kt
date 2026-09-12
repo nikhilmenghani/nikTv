@@ -430,6 +430,10 @@ internal fun ProfileChooserTile(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val profileContext = LocalContext.current
+    val profileConfiguration = LocalConfiguration.current
+    val remoteNavigationActive =
+        profileContext.usesRemoteNavigation(profileConfiguration)
 
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
@@ -505,7 +509,7 @@ internal fun ProfileChooserTile(
                 scaleY = scale
             }
             .shadow(
-                elevation = (14f * focusProgress).dp,
+                elevation = if (remoteNavigationActive) 0.dp else (14f * focusProgress).dp,
                 shape = shape,
                 clip = false,
                 ambientColor = Color(0x66000000),

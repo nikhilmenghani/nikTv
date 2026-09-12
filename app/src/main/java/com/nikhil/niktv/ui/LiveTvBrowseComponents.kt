@@ -465,19 +465,7 @@ internal fun ModernRailButton(icon: ImageVector, label: String, selected: Boolea
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(50.dp).padding(vertical = 3.dp)
             .onFocusChanged { focused = it.isFocused }
-            .semantics { role = Role.Tab; this.selected = selected }
-            .then(
-                if (focusHighlight) {
-                    Modifier.shadow(
-                        12.dp,
-                        shape,
-                        ambientColor = Color(0xFFE50914),
-                        spotColor = Color(0xFFE50914)
-                    )
-                } else {
-                    Modifier
-                }
-            ),
+            .semantics { role = Role.Tab; this.selected = selected },
         shape = shape,
         color = when {
             focusHighlight -> Color(0xFF3A0A0D)
