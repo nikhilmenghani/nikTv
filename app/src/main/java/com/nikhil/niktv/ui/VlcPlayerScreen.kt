@@ -1214,7 +1214,6 @@ internal fun VlcPlayerScreen(
         )
         if (pictureModePickerVisible) PictureModeQuickOverlay(
             profiles = appearanceProfiles,
-            persisted = persistedAppearanceProfile,
             preview = activeAppearanceProfile,
             onPreview = { appearancePreview = it },
             onApply = {

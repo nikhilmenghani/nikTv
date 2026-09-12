@@ -12,6 +12,7 @@ import android.view.ScaleGestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import androidx.activity.compose.BackHandler
@@ -1671,7 +1672,6 @@ fun PlayerScreen(
         )
         if (pictureModePickerVisible) PictureModeQuickOverlay(
             profiles = appearanceProfiles,
-            persisted = persistedAppearanceProfile,
             preview = activeAppearanceProfile,
             onPreview = { appearancePreview = it },
             onApply = {
@@ -2228,7 +2228,7 @@ private fun PlayerEngineChoiceButton(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isTvLikeDevice(configuration)
-    val controlHeight = if (isTv) 56.dp else 48.dp
+    val controlHeight = if (isTv) 44.dp else 40.dp
     val shape = RoundedCornerShape(10.dp)
 
     Surface(
@@ -2347,7 +2347,6 @@ private fun PlayerPictureModeChoiceButton(
 @Composable
 internal fun PictureModeQuickOverlay(
     profiles: List<VideoAppearanceProfile>,
-    persisted: VideoAppearanceProfile,
     preview: VideoAppearanceProfile,
     onPreview: (VideoAppearanceProfile) -> Unit,
     onApply: () -> Unit,
@@ -2366,16 +2365,22 @@ internal fun PictureModeQuickOverlay(
         containerColor = Color(0xF21A1A1A),
         title = {
             val dialogView = LocalView.current
-            SideEffect { (dialogView.parent as? DialogWindowProvider)?.window?.setGravity(Gravity.END) }
+            SideEffect {
+                (dialogView.parent as? DialogWindowProvider)?.window?.apply {
+                    setGravity(Gravity.END)
+                    setDimAmount(0f)
+                    clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                }
+            }
             Column {
-                Text("Picture mode", color = Color.White)
-                Text("Previewing ${preview.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                Text("Picture mode", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                Text("Preview: ${preview.name}  •  Apply to save", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
         },
         text = {
-            Column(Modifier.widthIn(min = 320.dp, max = 500.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Column(Modifier.widthIn(min = 280.dp, max = 420.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 profiles.chunked(4).forEachIndexed { row, rowModes ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         rowModes.forEachIndexed { column, profile ->
                             val index = row * 4 + column
                             PlayerPictureModeChoiceButton(
@@ -2392,9 +2397,6 @@ internal fun PictureModeQuickOverlay(
                         }
                         repeat(4 - rowModes.size) { Spacer(Modifier.weight(1f)) }
                     }
-                }
-                if (preview.id != persisted.id) {
-                    Text("Preview only until Apply", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .65f))
                 }
             }
         },
