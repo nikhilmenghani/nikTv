@@ -774,10 +774,13 @@ internal fun PlayerQueueOverlay(
                 .focusable(),
             color = when {
                 focused && tvQueueGrid ->
-                    Color(0xFFE50914)
+                    Color(0xFF343841)
                 current -> Color(0xFF383838)
                 else -> Color(0xFF242424)
             },
+            border = if (focused && tvQueueGrid) {
+                androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE7E9EF))
+            } else null,
             shape =
                 androidx.compose.foundation.shape.RoundedCornerShape(
                     12.dp
@@ -1130,10 +1133,13 @@ internal fun PlayerQueueOverlay(
                                         focused &&
                                         tvQueueGrid
                                     ) {
-                                        Color(0xFFE50914)
+                                        Color(0xFF343841)
                                     } else {
                                         Color(0xFF303030)
                                     },
+                                border = if (focused && tvQueueGrid) {
+                                    androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE7E9EF))
+                                } else null,
                                 shape =
                                     androidx.compose.foundation.shape
                                         .RoundedCornerShape(12.dp)

@@ -2740,7 +2740,7 @@ private fun formatPlayerTime(milliseconds: Long): String {
 @Composable
 internal fun Modifier.playerControlFocus(
     shape: Shape = RoundedCornerShape(12.dp),
-    onFocused: (Boolean) -> Unit
+    onFocused: (Boolean) -> Unit = {}
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
@@ -2761,14 +2761,18 @@ internal fun Modifier.playerControlFocus(
         .then(
             if (focused && remoteNavigation) {
                 Modifier
+                    .zIndex(1f)
+                    .graphicsLayer {
+                        scaleX = 1.035f
+                        scaleY = 1.035f
+                    }
                     .shadow(
-                        18.dp,
+                        7.dp,
                         shape,
-                        ambientColor = Color(0xAAFFFFFF),
-                        spotColor = Color(0xFFFF4A54)
+                        ambientColor = Color(0x44000000),
+                        spotColor = Color(0x66000000)
                     )
-                    .background(Color(0xFF64151D), shape)
-                    .border(4.dp, Color.White, shape)
+                    .border(2.dp, Color(0xFFE7E9EF), shape)
             } else {
                 Modifier
             }

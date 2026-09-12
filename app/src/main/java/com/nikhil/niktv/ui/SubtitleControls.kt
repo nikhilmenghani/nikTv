@@ -280,7 +280,7 @@ internal fun SubtitleSelectionDialog(
                                     right = if (!searchMode && onDeleteDownloadedSubtitle != null) deleteFocusRequester else closeFocusRequester
                                     down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
                                 }
-                                .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                                .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                         ) {
                             Icon(if (searchMode) Icons.Default.Subtitles else Icons.Default.Search, null)
                             if (!compact) Text(if (searchMode) " Tracks" else " Online")
@@ -296,7 +296,7 @@ internal fun SubtitleSelectionDialog(
                                     right = closeFocusRequester
                                     down = trackFocusRequesters.first()
                                 }
-                                .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                                .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
                         ) {
                             Icon(
                                 Icons.Default.Delete,
@@ -318,7 +318,7 @@ internal fun SubtitleSelectionDialog(
                                 right = closeFocusRequester
                                 down = if (searchMode) queryFocusRequester else trackFocusRequesters.first()
                             }
-                            .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                            .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                     ) { Text("Close") }
                 }
                 if (internetSearch != null && onExternalSubtitle != null) {
@@ -424,7 +424,7 @@ internal fun SubtitleSelectionDialog(
                                     right = searchFocusRequester
                                     down = resultFocusRequesters.firstOrNull() ?: searchFocusRequester
                                 }
-                                .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                                .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
                         ) { Icon(Icons.Default.Search, "Search") }
                     }
                     if (searching) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
@@ -471,7 +471,7 @@ internal fun SubtitleSelectionDialog(
                                             else -> false
                                         }
                                     }
-                                    .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                                    .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                             ) {
                                 Text(subtitle.displayName, Modifier.weight(1f))
                                 if (downloadingId == subtitle.id) CircularProgressIndicator(Modifier.padding(4.dp))
@@ -628,7 +628,7 @@ internal fun SubtitleSelectionDialog(
                                     }
                                 }
                             }
-                            .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                            .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
                     ) {
                         Icon(Icons.Default.Remove, "Show subtitles earlier")
                     }
@@ -674,7 +674,7 @@ internal fun SubtitleSelectionDialog(
                                     }
                                 }
                             }
-                            .remoteFocusFrame(androidx.compose.foundation.shape.CircleShape)
+                            .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
                     ) {
                         Icon(Icons.Default.Add, "Show subtitles later")
                     }
@@ -704,7 +704,7 @@ internal fun SubtitleSelectionDialog(
                                 }
                             }
                         }
-                        .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Reset timing") }
                 if (!searchMode) TextButton(
                     onClick = { onAppearanceChange(appearance.next()) },
@@ -721,7 +721,7 @@ internal fun SubtitleSelectionDialog(
                                 requestSubtitleFocus(if (delayMs != 0L) resetFocusRequester else earlierFocusRequester)
                             } else false
                         }
-                        .remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        .playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                 ) { Text("Appearance: ${appearance.label}") }
                 if (!searchMode && hasSubtitleTracks && timingRequiresVlc && !compact) {
                     Text("Changing timing switches this playback session to VLC while preserving your position.")
@@ -741,7 +741,7 @@ private fun SubtitleTrackRow(
 ) {
     TextButton(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().remoteFocusFrame(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+        modifier = modifier.fillMaxWidth().playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
     ) {
         RadioButton(selected = selected, onClick = null)
         Text(label, Modifier.weight(1f).padding(start = 8.dp))
