@@ -848,6 +848,15 @@ fun PlayerScreen(
         }
     }
 
+    fun showEpisodeQueue() {
+        if (!focusMode || !hasPlaybackQueue) return
+        controlsVisible = false
+        controlsFocused = false
+        queueRevealDragging = false
+        queueRevealProgress = 1f
+        queueVisible = true
+    }
+
     /*
      * FULLSCREEN_COMPOSE_VIDEO_FOCUS_V19
      *
@@ -1252,10 +1261,18 @@ fun PlayerScreen(
                                 ComposeKey.Enter,
                                 ComposeKey.DirectionLeft,
                                 ComposeKey.DirectionRight,
-                                ComposeKey.DirectionUp,
-                                ComposeKey.DirectionDown -> {
+                                ComposeKey.DirectionUp -> {
                                     dpadInteraction++
                                     showControlsAndFocusPlayPause()
+                                    true
+                                }
+                                ComposeKey.DirectionDown -> {
+                                    dpadInteraction++
+                                    if (focusMode && hasPlaybackQueue) {
+                                        showEpisodeQueue()
+                                    } else {
+                                        showControlsAndFocusPlayPause()
+                                    }
                                     true
                                 }
                                 else -> false
@@ -1494,7 +1511,22 @@ fun PlayerScreen(
                         }
                         if (playbackError == null && !startupTimedOut) {
                             Row(
-                                Modifier.fillMaxWidth(),
+                                Modifier
+                                    .fillMaxWidth()
+                                    .onPreviewKeyEvent { event ->
+                                        if (
+                                            event.type == ComposeKeyEventType.KeyDown &&
+                                            event.key == ComposeKey.DirectionDown &&
+                                            focusMode &&
+                                            hasPlaybackQueue
+                                        ) {
+                                            dpadInteraction++
+                                            showEpisodeQueue()
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    },
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -2113,11 +2145,16 @@ internal fun PlayerChromeIconButton(
             .size(controlSize)
             .playerControlFocus(shape, onFocused),
         shape = shape,
-        color = if (primaryAction) {
+        color = if (selected) {
+            Color(0xFF303A49)
+        } else if (primaryAction) {
             Color.Black.copy(alpha = 0.64f)
         } else {
             Color.Black.copy(alpha = 0.46f)
         },
+        border = if (selected) {
+            androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF9AA9BD))
+        } else null,
         contentColor = Color.White
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -2141,7 +2178,7 @@ internal fun PlayerChromeIconButton(
                 icon,
                 contentDescription,
                 modifier = Modifier.size(iconSize),
-                tint = if (selected) MaterialTheme.colorScheme.primary else Color.White
+                tint = Color.White
             )
         }
     }
@@ -2245,14 +2282,14 @@ private fun PlayerEngineChoiceButton(
             .playerControlFocus(shape) {},
         shape = shape,
         color = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            Color(0xFF303A49)
         } else {
             Color.White.copy(alpha = 0.055f)
         },
         border = androidx.compose.foundation.BorderStroke(
             if (selected) 1.5.dp else 1.dp,
             if (selected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
+                Color(0xFF9AA9BD)
             } else {
                 Color.White.copy(alpha = 0.10f)
             }
@@ -2275,11 +2312,7 @@ private fun PlayerEngineChoiceButton(
                 } else {
                     androidx.compose.ui.text.font.FontWeight.Medium
                 },
-                color = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    Color.White.copy(alpha = 0.90f)
-                },
+                color = Color.White.copy(alpha = if (selected) 1f else 0.90f),
                 maxLines = 1,
                 softWrap = false
             )
@@ -2313,14 +2346,14 @@ private fun PlayerPictureModeChoiceButton(
             .playerControlFocus(shape) {},
         shape = shape,
         color = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            Color(0xFF303A49)
         } else {
             Color.White.copy(alpha = 0.055f)
         },
         border = androidx.compose.foundation.BorderStroke(
             if (selected) 1.5.dp else 1.dp,
             if (selected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
+                Color(0xFF9AA9BD)
             } else {
                 Color.White.copy(alpha = 0.10f)
             }
@@ -2339,11 +2372,7 @@ private fun PlayerPictureModeChoiceButton(
                 } else {
                     androidx.compose.ui.text.font.FontWeight.Medium
                 },
-                color = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    Color.White.copy(alpha = 0.90f)
-                },
+                color = Color.White.copy(alpha = if (selected) 1f else 0.90f),
                 maxLines = 1,
                 softWrap = false
             )

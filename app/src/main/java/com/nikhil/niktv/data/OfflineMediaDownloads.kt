@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Scheduler
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -216,6 +217,38 @@ object OfflineMediaDownloads {
         }
         persistedHlsOutput(context, requestId)?.let { return it }
         return sourceUrl.takeIf { it.isNotBlank() && status(context, requestId) == OfflineDownloadStatus.COMPLETE }
+    }
+
+    /** Returns a grantable URI for a completed, physical offline media file. */
+    fun shareableUri(
+        context: Context,
+        requestId: String,
+        downloadId: Long = -1L
+    ): Uri? {
+        if (status(context, requestId, downloadId) != OfflineDownloadStatus.COMPLETE) return null
+
+        val storedUri = when {
+            downloadId >= 0L -> context.applicationContext
+                .getSystemService(SystemDownloadManager::class.java)
+                .getUriForDownloadedFile(downloadId)
+            requestId.startsWith(HLS_WORK_PREFIX) -> persistedHlsOutput(context, requestId)?.let(Uri::parse)
+            else -> null
+        } ?: return null
+
+        return when (storedUri.scheme?.lowercase()) {
+            "content" -> storedUri
+            "file" -> {
+                val file = File(storedUri.path.orEmpty()).takeIf { it.isFile } ?: return null
+                runCatching {
+                    FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file
+                    )
+                }.getOrNull()
+            }
+            else -> null
+        }
     }
 
     fun remove(context: Context, requestId: String, downloadId: Long = -1L) {

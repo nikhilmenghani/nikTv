@@ -20,6 +20,15 @@
             </intent-filter>
         </activity>
         <receiver android:name=".update.UpdateActionReceiver" android:exported="false" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/niktv_share_paths" />
+        </provider>
         <service android:name=".data.NikTvDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

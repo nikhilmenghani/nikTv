@@ -1450,7 +1450,7 @@ internal fun PlayerPictureModeEditor(
                                 .focusable(),
                             color = when {
                                 focused -> Color(0xFF22252B)
-                                profile.id == selected.id -> Color(0xFF35191D)
+                                profile.id == selected.id -> Color(0xFF303A49)
                                 else -> Color(0xFF1B1D22)
                             },
                             shape = profileChipShape

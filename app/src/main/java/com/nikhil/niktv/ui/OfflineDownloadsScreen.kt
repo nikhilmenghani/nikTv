@@ -3,9 +3,11 @@ package com.nikhil.niktv.ui
 import android.Manifest
 import android.content.ClipData
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -256,8 +258,57 @@ internal fun OfflineDownloadsScreen(
                                         LinearProgressIndicator(progress = { it / 100f }, Modifier.fillMaxWidth().padding(top = 5.dp))
                                     }
                                 }
-                                IconButton(onClick = { pendingRemoval = entry }) {
-                                    Icon(Icons.Default.Delete, "Delete offline download")
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (info.status == OfflineDownloadStatus.COMPLETE) {
+                                        IconButton(
+                                            onClick = {
+                                                val uri = OfflineMediaDownloads.shareableUri(
+                                                    context,
+                                                    entry.requestId,
+                                                    entry.downloadId
+                                                )
+                                                if (uri == null) {
+                                                    Toast.makeText(
+                                                        context,
+                                                        "The offline file is not available to share",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                } else {
+                                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                                        setType("video/*")
+                                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                                        putExtra(Intent.EXTRA_TITLE, entry.media.title)
+                                                        clipData = ClipData.newUri(
+                                                            context.contentResolver,
+                                                            entry.media.title,
+                                                            uri
+                                                        )
+                                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                    }
+                                                    runCatching {
+                                                        context.startActivity(
+                                                            Intent.createChooser(sendIntent, "Share ${entry.media.title}")
+                                                        )
+                                                    }.onFailure {
+                                                        Toast.makeText(
+                                                            context,
+                                                            "No app is available to share this video",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                                        ) {
+                                            Icon(Icons.Default.Share, "Share offline download")
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { pendingRemoval = entry },
+                                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                                    ) {
+                                        Icon(Icons.Default.Delete, "Delete offline download")
+                                    }
                                 }
                             }
                         }
