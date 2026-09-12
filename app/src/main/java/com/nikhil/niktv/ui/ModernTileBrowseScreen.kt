@@ -140,6 +140,21 @@ private val ModernOutline = Color(0xFF2A2D36)
 private val ModernBrandAccent = Color(0xFF7C8CFF)
 private val ModernBrandViolet = Color(0xFFA275FF)
 
+private fun Modifier.touchTileShadow(
+    isTv: Boolean,
+    elevation: androidx.compose.ui.unit.Dp,
+    shape: androidx.compose.ui.graphics.Shape,
+    clip: Boolean,
+    ambientColor: Color,
+    spotColor: Color
+): Modifier = if (isTv) this else shadow(
+    elevation = elevation,
+    shape = shape,
+    clip = clip,
+    ambientColor = ambientColor,
+    spotColor = spotColor
+)
+
 @Composable
 internal fun ModernTileBrowseScreen(
     state: NikTvState,
@@ -881,7 +896,12 @@ private fun ModernHubQuickActions(
 ) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(top = 4.dp, end = 8.dp, bottom = 10.dp)
+        contentPadding = PaddingValues(
+            start = if (isTv) 6.dp else 0.dp,
+            top = 4.dp,
+            end = 8.dp,
+            bottom = 10.dp
+        )
     ) {
         item("quick-search") {
             ModernQuickActionTile(
@@ -1020,7 +1040,7 @@ private fun ModernQuickActionTile(
     val visualProgress = if (remoteNavigationActive) focusProgress else pressProgress
     val scale = 1f + (
         if (remoteNavigationActive) {
-            if (isTv) 0.055f else 0.035f
+            if (isTv) 0f else 0.035f
         } else if (isTablet) {
             0.025f
         } else {
@@ -1050,7 +1070,7 @@ private fun ModernQuickActionTile(
                 scaleX = scale
                 scaleY = scale
             }
-            .shadow(
+            .touchTileShadow(isTv = isTv,
                 elevation = ((if (isTv) 0f else 8f) * visualProgress).dp,
                 shape = shape,
                 clip = false,
@@ -1118,7 +1138,7 @@ private fun ModernQuickActionTile(
                 Text(
                     title,
                     style = when {
-                        isTv -> MaterialTheme.typography.titleMedium
+                        isTv -> MaterialTheme.typography.bodyMedium
                         isPhone -> MaterialTheme.typography.bodyMedium
                         else -> MaterialTheme.typography.titleSmall
                     },
@@ -1130,7 +1150,7 @@ private fun ModernQuickActionTile(
                 Text(
                     subtitle,
                     style =
-                        if (isTv) MaterialTheme.typography.labelMedium
+                        if (isTv) MaterialTheme.typography.labelSmall
                         else MaterialTheme.typography.labelSmall,
                     color = Color(0xFFA7ABB5),
                     maxLines = 1,
@@ -1174,7 +1194,7 @@ private fun ModernDestinationTile(
     val scale =
         1f + (
             when {
-                isTv -> 0.02f
+                isTv -> 0f
                 isTablet -> 0.035f
                 else -> 0.025f
             } * visualProgress
@@ -1211,7 +1231,7 @@ private fun ModernDestinationTile(
                 scaleX = scale
                 scaleY = scale
             }
-            .shadow(
+            .touchTileShadow(isTv = isTv,
                 elevation =
                     (
                         when {
@@ -1322,7 +1342,7 @@ private fun ModernDestinationTile(
                     Text(
                         title,
                         style = when {
-                            isTv -> MaterialTheme.typography.titleMedium
+                            isTv -> MaterialTheme.typography.bodyMedium
                             isPhone -> MaterialTheme.typography.bodyLarge
                             else -> MaterialTheme.typography.titleMedium
                         },
@@ -1336,7 +1356,7 @@ private fun ModernDestinationTile(
                     if (!(isTv && subtitle.startsWith("IPTV ·"))) Text(
                         subtitle,
                         style = when {
-                            isTv -> MaterialTheme.typography.bodySmall
+                            isTv -> MaterialTheme.typography.labelSmall
                             isPhone -> MaterialTheme.typography.labelSmall
                             else -> MaterialTheme.typography.labelMedium
                         },
@@ -1520,7 +1540,7 @@ private fun ModernCompactMediaCard(
     val artworkScale =
         1f + (
             when {
-                isTv -> 0.02f
+                isTv -> 0f
                 isTablet -> 0.035f
                 else -> 0.025f
             } * visualProgress
@@ -1554,7 +1574,7 @@ private fun ModernCompactMediaCard(
         modifier = modifier.then(returningTile.modifier)
             .width(collectionPosterWidth)
             .zIndex(visualProgress)
-            .shadow(
+            .touchTileShadow(isTv = isTv,
                 elevation =
                     (
                         when {
@@ -1637,7 +1657,7 @@ private fun ModernCompactMediaCard(
                     Text(
                         item.title,
                         style = if (isTv) {
-                            MaterialTheme.typography.bodyMedium
+                            MaterialTheme.typography.labelMedium
                         } else {
                             MaterialTheme.typography.titleSmall
                         },
@@ -2663,7 +2683,7 @@ private fun ModernCollectionPoster(
     val scale =
         1f + (
             when {
-                isTv -> 0.085f
+                isTv -> 0f
                 isTablet -> 0.035f
                 else -> 0.025f
             } * visualProgress
@@ -2695,7 +2715,7 @@ private fun ModernCollectionPoster(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .shadow(
+                .touchTileShadow(isTv = isTv,
                     elevation =
                         (
                             when {
