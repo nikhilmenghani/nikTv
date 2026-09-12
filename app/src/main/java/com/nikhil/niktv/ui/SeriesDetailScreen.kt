@@ -144,6 +144,7 @@ internal fun ModernSeriesDetailScreen(
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
     val episodeSearchCloseRequester = remember(series.id) { FocusRequester() }
     val returningEpisodeRequester = remember(series.id) { FocusRequester() }
+    val heroActionRequesters = remember(series.id) { List(8) { FocusRequester() } }
     val episodeListState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val episodeContext = LocalContext.current
@@ -320,30 +321,60 @@ internal fun ModernSeriesDetailScreen(
                         SeriesHeroActionIcon(
                             icon = Icons.AutoMirrored.Filled.ArrowBack,
                             description = "Back to browse",
-                            onClick = closeSeries
+                            onClick = closeSeries,
+                            modifier = Modifier.focusRequester(heroActionRequesters[0]).focusProperties { right = heroActionRequesters[1] }
                         )
                         Spacer(Modifier.weight(1f))
                         SeriesHeroActionIcon(
                             icon = Icons.Default.Search,
                             description = "Search episodes",
-                            onClick = { activateEpisodeSearch() }
+                            onClick = { activateEpisodeSearch() },
+                            modifier = Modifier.focusRequester(heroActionRequesters[1]).focusProperties { left = heroActionRequesters[0]; right = heroActionRequesters[2] }
                         )
                         SeriesHeroActionIcon(
                             icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             description = if (isFavorite) "Remove series from My List" else "Add series to My List",
                             onClick = { toggleFavorite(series) },
-                            tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White
+                            tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White,
+                            modifier = Modifier.focusRequester(heroActionRequesters[2]).focusProperties { left = heroActionRequesters[1]; right = heroActionRequesters[3] }
                         )
                         SeriesHeroActionIcon(
                             icon = if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
                             description = if (isWatched) "Stop watching for new episodes" else "Watch for new episodes",
                             onClick = toggleSeriesWatch,
-                            tint = if (isWatched) MaterialTheme.colorScheme.primary else Color.White
+                            tint = if (isWatched) MaterialTheme.colorScheme.primary else Color.White,
+                            modifier = Modifier.focusRequester(heroActionRequesters[3]).focusProperties { left = heroActionRequesters[2]; right = heroActionRequesters[4] }
                         )
                         SeriesHeroActionIcon(
                             icon = Icons.Default.Refresh,
                             description = "Refresh episodes",
-                            onClick = refreshCatalog
+                            onClick = refreshCatalog,
+                            modifier = Modifier.focusRequester(heroActionRequesters[4]).focusProperties { left = heroActionRequesters[3]; right = heroActionRequesters[5] }
+                        )
+                        SeriesHeroActionIcon(
+                            icon = Icons.AutoMirrored.Filled.Sort,
+                            description = if (episodeSortDescending) "Episodes: latest first" else "Episodes: oldest first",
+                            onClick = {
+                                val latestFirst = !episodeSortDescending
+                                episodeSortDescending = latestFirst
+                                availableSeasons.takeIf { it.isNotEmpty() }
+                                    ?.let { seasons -> loadSeriesSeason(if (latestFirst) seasons.last() else seasons.first()) }
+                            },
+                            modifier = Modifier.focusRequester(heroActionRequesters[5]).focusProperties { left = heroActionRequesters[4]; right = heroActionRequesters[6] }
+                        )
+                        SeriesHeroActionIcon(
+                            icon = if (state.useTmdbEpisodeMetadata) Icons.Default.ToggleOn else Icons.Default.ToggleOff,
+                            description = if (state.useTmdbEpisodeMetadata) "Episode data: TMDB" else "Episode data: IPTV",
+                            onClick = { setUseTmdbEpisodeMetadata(!state.useTmdbEpisodeMetadata) },
+                            tint = if (state.useTmdbEpisodeMetadata) MaterialTheme.colorScheme.primary else Color.White,
+                            modifier = Modifier.focusRequester(heroActionRequesters[6]).focusProperties { left = heroActionRequesters[5]; right = heroActionRequesters[7] }
+                        )
+                        SeriesHeroActionIcon(
+                            icon = Icons.Default.Cached,
+                            description = if (state.tmdbEpisodeCacheRefreshing) "Refreshing TMDB cache" else "Refresh TMDB cache",
+                            onClick = { if (!state.tmdbEpisodeCacheRefreshing) refreshTmdbEpisodeCache() },
+                            tint = if (state.tmdbEpisodeCacheRefreshing) Color.Gray else Color.White,
+                            modifier = Modifier.focusRequester(heroActionRequesters[7]).focusProperties { left = heroActionRequesters[6] }
                         )
                     }
 
@@ -475,85 +506,6 @@ internal fun ModernSeriesDetailScreen(
                                         )
                                     }
                                 }
-                            }
-                        }
-
-                        Surface(
-                            onClick = {
-                                val latestFirst = !episodeSortDescending
-                                episodeSortDescending = latestFirst
-                                availableSeasons
-                                    .takeIf { it.isNotEmpty() }
-                                    ?.let { seasons -> loadSeriesSeason(if (latestFirst) seasons.last() else seasons.first()) }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0xFF1E2430),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
-                            contentColor = Color.White,
-                            modifier = Modifier.height(42.dp).remoteFocusFrame()
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Sort,
-                                    null,
-                                    Modifier.size(18.dp),
-                                    tint = Color.White.copy(alpha = 0.85f)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = if (episodeSortDescending) "Latest First" else "Oldest First",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
-                                )
-                            }
-                        }
-
-                        Surface(
-                            onClick = { setUseTmdbEpisodeMetadata(!state.useTmdbEpisodeMetadata) },
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0xFF1E2430),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
-                            contentColor = Color.White,
-                            modifier = Modifier.height(42.dp).remoteFocusFrame()
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text("Use TMDB", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                                Switch(
-                                    checked = state.useTmdbEpisodeMetadata,
-                                    onCheckedChange = null,
-                                    modifier = Modifier.focusProperties { canFocus = false }
-                                )
-                            }
-                        }
-
-                        Surface(
-                            onClick = refreshTmdbEpisodeCache,
-                            enabled = !state.tmdbEpisodeCacheRefreshing,
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0xFF1E2430),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
-                            contentColor = Color.White,
-                            modifier = Modifier.height(42.dp).remoteFocusFrame()
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(7.dp)
-                            ) {
-                                if (state.tmdbEpisodeCacheRefreshing) {
-                                    CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
-                                } else {
-                                    Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
-                                }
-                                Text("Refresh TMDB Cache", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                             }
                         }
 

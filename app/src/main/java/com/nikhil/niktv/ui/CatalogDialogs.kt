@@ -942,7 +942,8 @@ internal fun SeriesHeroActionIcon(
     icon: ImageVector,
     description: String,
     onClick: () -> Unit,
-    tint: Color = Color.White
+    tint: Color = Color.White,
+    modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -950,8 +951,8 @@ internal fun SeriesHeroActionIcon(
     val showFocusHint = context.usesRemoteNavigation(configuration) && focused
 
     Box(
-        modifier = Modifier
-            .wrapContentSize()
+        modifier = modifier
+            .size(48.dp)
             .zIndex(if (showFocusHint) 1f else 0f)
     ) {
         IconButton(
