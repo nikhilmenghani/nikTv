@@ -598,15 +598,15 @@ internal fun ModernPosterCard(
     val touchPressed = !isTv && pressed
 
     /*
-     * ADAPTIVE_POSTER_TOUCH_V34
+     * TV_SAFE_POSTER_FOCUS_V80
      *
-     * TV retains the strong 8 percent D-pad lift. Touch devices get a smaller
-     * transient press lift: 3.5 percent on tablets, 2.5 percent on phones.
+     * TV keeps fixed card bounds so D-pad focus cannot crop or bounce a lazy
+     * row/grid. Touch devices retain the existing transient press lift.
      */
     val posterScale by androidx.compose.animation.core.animateFloatAsState(
         targetValue =
             if (isTv) {
-                if (focused) 1.08f else 1f
+                1f
             } else if (touchPressed) {
                 if (isTablet) 1.035f else 1.025f
             } else if (focused) {
@@ -659,16 +659,13 @@ internal fun ModernPosterCard(
             Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio)
                 .then(
                     if (focused || touchPressed) {
-                        Modifier.shadow(
-                            if (isTv) 0.dp else if (isTablet) 10.dp else 6.dp,
-                            posterShape,
+                        Modifier.touchTileShadow(
+                            isTv = isTv,
+                            elevation = if (isTablet) 10.dp else 6.dp,
+                            shape = posterShape,
                             clip = false,
-                            ambientColor =
-                                if (isTv) Color(0x88000000)
-                                else Color(0x55000000),
-                            spotColor =
-                                if (isTv) Color(0x66E50914)
-                                else Color(0x22E50914)
+                            ambientColor = Color(0x55000000),
+                            spotColor = Color(0x22E50914)
                         )
                     } else {
                         Modifier
@@ -721,10 +718,10 @@ internal fun ModernPosterCard(
                 modifier = if (focused && titleMaxLines == 1) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
                 color = Color.White,
                 style =
-                    if (titleMinLines > 1) {
-                        MaterialTheme.typography.titleSmall
-                    } else if (isTv) {
+                    if (isTv) {
                         MaterialTheme.typography.labelMedium
+                    } else if (titleMinLines > 1) {
+                        MaterialTheme.typography.titleSmall
                     } else {
                         MaterialTheme.typography.labelLarge
                     },
@@ -799,8 +796,7 @@ internal fun ModernMediaListCard(
     val scale =
         1f + (
             when {
-                isTv && channelStyle -> 0.075f
-                isTv -> 0.08f
+                isTv -> 0f
                 isTablet -> 0.035f
                 else -> 0.025f
             } * visualProgress
@@ -847,23 +843,19 @@ internal fun ModernMediaListCard(
                 scaleX = scale
                 scaleY = scale
             }
-            .shadow(
+            .touchTileShadow(
+                isTv = isTv,
                 elevation =
                     (
                         when {
-                            isTv -> 0f
                             isTablet -> 10f
                             else -> 6f
                         } * visualProgress
                     ).dp,
                 shape = shape,
                 clip = false,
-                ambientColor =
-                    if (isTv) Color(0x88000000)
-                    else Color(0x55000000),
-                spotColor =
-                    if (isTv) Color(0x66E50914)
-                    else Color(0x22E50914)
+                ambientColor = Color(0x55000000),
+                spotColor = Color(0x22E50914)
             )
             .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(
@@ -1034,7 +1026,9 @@ internal fun ModernMediaListCard(
                         if (active) Color.White
                         else Color(0xFFE1E3E7),
                     style =
-                        if (channelStyle) {
+                        if (isTv) {
+                            MaterialTheme.typography.labelMedium
+                        } else if (channelStyle) {
                             MaterialTheme.typography.titleSmall
                         } else if (compact) {
                             MaterialTheme.typography.titleSmall
@@ -1048,14 +1042,18 @@ internal fun ModernMediaListCard(
                             FontWeight.Medium
                         },
                     maxLines =
-                        if (channelStyle) 1
+                        if (isTv) 2
+                        else if (channelStyle) 1
                         else if (compact) 2
                         else 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
                 supportingText
-                    ?.takeIf { it.isNotBlank() }
+                    ?.takeIf { text ->
+                        text.isNotBlank() &&
+                            !(isTv && text.isRedundantTvTileSubtitle())
+                    }
                     ?.let { text ->
                         Text(
                             text = text,
@@ -1071,7 +1069,7 @@ internal fun ModernMediaListCard(
                                 } else {
                                     MaterialTheme.typography.bodySmall
                                 },
-                            maxLines = if (channelStyle) 1 else 2,
+                            maxLines = if (isTv || channelStyle) 1 else 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

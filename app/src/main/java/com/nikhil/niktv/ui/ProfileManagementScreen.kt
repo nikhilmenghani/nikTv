@@ -504,12 +504,19 @@ internal fun ProfileChooserTile(
             .width(tileWidth)
             .height(tileHeight)
             .zIndex(focusProgress)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .shadow(
-                elevation = if (remoteNavigationActive) 0.dp else (14f * focusProgress).dp,
+            .then(
+                if (remoteNavigationActive) {
+                    Modifier
+                } else {
+                    Modifier.graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                }
+            )
+            .touchTileShadow(
+                isTv = remoteNavigationActive,
+                elevation = (14f * focusProgress).dp,
                 shape = shape,
                 clip = false,
                 ambientColor = Color(0x66000000),

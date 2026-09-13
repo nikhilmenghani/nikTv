@@ -266,6 +266,38 @@ internal fun Modifier.remoteFocusFrame(
         )
 }
 
+// TV_SAFE_TOUCH_SHADOW_V80
+// Remote focus must never install a zero-elevation shadow/graphics layer.
+// Touch devices keep the existing press/focus shadow treatment.
+internal fun Modifier.touchTileShadow(
+    isTv: Boolean,
+    elevation: Dp,
+    shape: Shape,
+    clip: Boolean = false,
+    ambientColor: Color = Color.Black,
+    spotColor: Color = Color.Black
+): Modifier =
+    if (isTv) {
+        this
+    } else {
+        shadow(
+            elevation = elevation,
+            shape = shape,
+            clip = clip,
+            ambientColor = ambientColor,
+            spotColor = spotColor
+        )
+    }
+
+internal fun String.isRedundantTvTileSubtitle(): Boolean {
+    val value = trim()
+    return value.equals("Movie", ignoreCase = true) ||
+        value.equals("Movies", ignoreCase = true) ||
+        value.equals("Series", ignoreCase = true) ||
+        value.equals("Live TV", ignoreCase = true) ||
+        value.startsWith("IPTV ·", ignoreCase = true)
+}
+
 @Composable
 internal fun Modifier.mobileMainTabSwipe(
     enabled: Boolean,

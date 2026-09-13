@@ -140,20 +140,8 @@ private val ModernOutline = Color(0xFF2A2D36)
 private val ModernBrandAccent = Color(0xFF7C8CFF)
 private val ModernBrandViolet = Color(0xFFA275FF)
 
-private fun Modifier.touchTileShadow(
-    isTv: Boolean,
-    elevation: androidx.compose.ui.unit.Dp,
-    shape: androidx.compose.ui.graphics.Shape,
-    clip: Boolean,
-    ambientColor: Color,
-    spotColor: Color
-): Modifier = if (isTv) this else shadow(
-    elevation = elevation,
-    shape = shape,
-    clip = clip,
-    ambientColor = ambientColor,
-    spotColor = spotColor
-)
+// touchTileShadow is shared in NikTvApp.kt so TV focus never installs
+// a zero-elevation shadow layer while touch layouts keep their existing lift.
 
 @Composable
 internal fun ModernTileBrowseScreen(
@@ -1342,7 +1330,7 @@ private fun ModernDestinationTile(
                     Text(
                         title,
                         style = when {
-                            isTv -> MaterialTheme.typography.bodyMedium
+                            isTv -> MaterialTheme.typography.labelMedium
                             isPhone -> MaterialTheme.typography.bodyLarge
                             else -> MaterialTheme.typography.titleMedium
                         },
@@ -1350,7 +1338,7 @@ private fun ModernDestinationTile(
                             if (active) FontWeight.Black
                             else FontWeight.Bold,
                         color = Color.White,
-                        maxLines = 2,
+                        maxLines = if (isTv) 3 else 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (!(isTv && subtitle.startsWith("IPTV ·"))) Text(
@@ -1668,7 +1656,10 @@ private fun ModernCompactMediaCard(
                         maxLines = if (isTv) 3 else 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (subtitle.isNotBlank() && !(isTv && subtitle == "Movie")) {
+                    if (
+                        subtitle.isNotBlank() &&
+                        !(isTv && subtitle.isRedundantTvTileSubtitle())
+                    ) {
                         Text(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
@@ -1798,6 +1789,41 @@ private fun Modifier.modernGridVerticalFocus(
 
         moveFocus(targetIndex)
         true
+    }
+}
+
+/*
+ * TV_COLLECTION_INITIAL_FOCUS_V80
+ *
+ * Category grids are composed after the rail already owns focus. Give the
+ * existing per-tile return-focus hook time to restore playback focus first;
+ * otherwise focus the first available tile. Pagination is not keyed here, so
+ * appending a page cannot steal focus from the stable Load More flow.
+ */
+@Composable
+private fun TvCollectionInitialFocus(
+    enabled: Boolean,
+    focusKey: String,
+    hasItems: Boolean,
+    focusedIndex: () -> Int,
+    moveFocus: (Int) -> Unit
+) {
+    var seenWithItems by rememberSaveable(focusKey) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(enabled, focusKey, hasItems) {
+        if (!enabled || !hasItems) return@LaunchedEffect
+        val restoringExistingCollection = seenWithItems
+        seenWithItems = true
+        withFrameNanos { }
+        if (restoringExistingCollection) {
+            delay(420L)
+        } else {
+            delay(80L)
+        }
+        if (focusedIndex() < 0) {
+            moveFocus(0)
+        }
     }
 }
 
@@ -2202,7 +2228,13 @@ private fun ModernIptvCollection(
         }
     }
 
-
+    TvCollectionInitialFocus(
+        enabled = isTv,
+        focusKey = "${category.type.name}:${category.id}",
+        hasItems = focusIds.isNotEmpty(),
+        focusedIndex = { focusedPosterIndex },
+        moveFocus = moveFocusToIndex
+    )
 
     val appendPage = rememberCollectionPagination(
         state.items.map { it.id }, state.catalogLoadingMore, gridState,
@@ -2287,7 +2319,11 @@ private fun ModernIptvCollection(
         ) { index, media ->
             val tileModifier = Modifier
                 .onFocusChanged {
-                    if (it.hasFocus) focusedPosterIndex = index
+                    if (it.hasFocus) {
+                        focusedPosterIndex = index
+                    } else if (focusedPosterIndex == index) {
+                        focusedPosterIndex = -1
+                    }
                 }
                 .focusRequester(
                     itemFocusRequesters.getOrPut(media.id) {
@@ -2550,10 +2586,13 @@ private fun ModernLiveChannelTile(
                     Text(
                         item.title,
                         color = Color.White,
-                        style = if (isPhone) MaterialTheme.typography.bodyLarge
-                        else MaterialTheme.typography.titleMedium,
+                        style = when {
+                            isTv -> MaterialTheme.typography.labelMedium
+                            isPhone -> MaterialTheme.typography.bodyLarge
+                            else -> MaterialTheme.typography.titleMedium
+                        },
                         fontWeight = if (focused) FontWeight.Bold else FontWeight.SemiBold,
-                        maxLines = 2,
+                        maxLines = if (isTv) 3 else 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     programme?.title?.takeIf {
@@ -2854,18 +2893,25 @@ private fun ModernCollectionPoster(
                     fontWeight =
                         if (focused) FontWeight.SemiBold
                         else FontWeight.Medium,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
+                    style = if (isTv) {
+                        MaterialTheme.typography.labelMedium
+                    } else {
+                        MaterialTheme.typography.bodyMedium
+                    },
+                    maxLines = if (isTv) 3 else 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (subtitle.isNotBlank()) {
+                if (
+                    subtitle.isNotBlank() &&
+                    !(isTv && subtitle.isRedundantTvTileSubtitle())
+                ) {
                     Text(
                         subtitle,
                         color =
                             if (active) Color(0xFFBFC3CA)
                             else Color(0xFF858B94),
                         style = MaterialTheme.typography.labelSmall,
-                        maxLines = 2,
+                        maxLines = if (isTv) 1 else 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

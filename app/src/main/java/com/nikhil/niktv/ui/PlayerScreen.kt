@@ -2794,10 +2794,6 @@ internal fun Modifier.playerControlFocus(
             if (focused && remoteNavigation) {
                 Modifier
                     .zIndex(1f)
-                    .graphicsLayer {
-                        scaleX = if (scaleOnFocus) 1.035f else 1f
-                        scaleY = if (scaleOnFocus) 1.035f else 1f
-                    }
                     .border(2.dp, Color(0xFFE7E9EF), shape)
             } else {
                 Modifier
