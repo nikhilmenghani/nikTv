@@ -84,16 +84,17 @@ object LiveTvRecorder {
     internal fun update(value: LiveRecordingState) { mutableState.value = value }
 
     fun recordings(context: Context): List<RecordedLiveTvMedia> {
+        val collection = recordingCollectionUri()
         val projection = arrayOf(
-            MediaStore.Video.Media._ID,
-            MediaStore.Video.Media.DISPLAY_NAME,
-            MediaStore.Video.Media.SIZE,
-            MediaStore.Video.Media.DATE_ADDED
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_ADDED
         )
         val selection: String
         val args: Array<String>
         if (Build.VERSION.SDK_INT >= 29) {
-            selection = "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
+            selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
             args = arrayOf("${Environment.DIRECTORY_DOWNLOADS}/NikTV/Recordings%")
         } else {
             selection = "${MediaStore.Video.Media.DATA} LIKE ?"
@@ -101,18 +102,18 @@ object LiveTvRecorder {
         }
         return runCatching {
             context.contentResolver.query(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                collection,
                 projection, selection, args,
-                "${MediaStore.Video.Media.DATE_ADDED} DESC"
+                "${MediaStore.MediaColumns.DATE_ADDED} DESC"
             )?.use { cursor ->
                 buildList {
-                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                    val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                    val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
-                    val dateIndex = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
+                    val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                    val dateIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
                     while (cursor.moveToNext()) {
                         val uri = android.content.ContentUris.withAppendedId(
-                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                            collection,
                             cursor.getLong(idIndex)
                         )
                         add(
@@ -296,11 +297,11 @@ class LiveTvRecordingService : Service() {
         val safe = title.replace(Regex("[\\/:*?\"<>|]+"), "_").trim().take(72).ifBlank { "Live TV" }
         val name = "$safe-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())}.ts"
         val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp2t")
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp2t")
             if (Build.VERSION.SDK_INT >= 29) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/NikTV/Recordings")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/NikTV/Recordings")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
             } else {
                 val directory = java.io.File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
@@ -309,13 +310,13 @@ class LiveTvRecordingService : Service() {
                 put(MediaStore.Video.Media.DATA, java.io.File(directory, name).absolutePath)
             }
         }
-        return contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+        return contentResolver.insert(recordingCollectionUri(), values)
             ?: error("Unable to create recording file")
     }
 
     private fun finishOutput(uri: android.net.Uri) {
         if (Build.VERSION.SDK_INT >= 29) {
-            contentResolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+            contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
         }
     }
 
@@ -332,6 +333,9 @@ class LiveTvRecordingService : Service() {
 }
 
 private fun isHls(url: String) = url.substringBefore('?').endsWith(".m3u8", true)
+private fun recordingCollectionUri(): android.net.Uri =
+    if (Build.VERSION.SDK_INT >= 29) MediaStore.Downloads.EXTERNAL_CONTENT_URI
+    else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
 private fun resolve(base: String, child: String): String = URI(base).resolve(child).toString()
 private fun formatDuration(ms: Long): String {
     val seconds = (ms.coerceAtLeast(0L) / 1000L)
