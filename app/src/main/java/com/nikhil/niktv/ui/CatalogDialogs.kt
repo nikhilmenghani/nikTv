@@ -261,12 +261,12 @@ internal fun CategoryManagerDialog(
      */
     var currentEnabledSet by remember(profileKey, type, enabledIds, raw) {
         mutableStateOf(
-            enabledIds?.take(10)?.toSet()
+            enabledIds?.toSet()
                 ?: raw.take(10).map { it.id }.toSet()
         )
     }
     val updateCurrentSelection: (Set<String>) -> Unit = { selection ->
-        currentEnabledSet = selection.take(10).toSet()
+        currentEnabledSet = selection
     }
     var searchQuery by rememberSaveable(type) { mutableStateOf("") }
     val filteredRaw = remember(raw, searchQuery) {
@@ -528,8 +528,6 @@ internal fun CategoryManagerDialog(
 
                 val enabledCount = currentEnabledSet.size
                 val totalCount = raw.size
-                val selectionLimitReached = enabledCount >= 10
-
                 if (categoryIsCompact) {
                     CategoryManagerSearchField(
                         query = searchQuery,
@@ -552,16 +550,16 @@ internal fun CategoryManagerDialog(
                             CategoryDialogActionButton(
                                 text = "Matching",
                                 accent = categoryAccent,
-                                onClick = { updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet()) },
+                                onClick = { updateCurrentSelection(currentEnabledSet + filteredRaw.map { it.id }) },
                                 modifier = Modifier.weight(1f).focusRequester(selectMatchingRequester).focusProperties {
                                     left = searchRequester; right = selectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
                                 }
                             )
                         }
                         CategoryDialogActionButton(
-                            text = "First 10",
+                            text = "All",
                             accent = categoryAccent,
-                            onClick = { updateCurrentSelection(raw.take(10).map { it.id }.toSet()) },
+                            onClick = { updateCurrentSelection(raw.map { it.id }.toSet()) },
                             modifier = Modifier.weight(1f).focusRequester(selectAllRequester).focusProperties {
                                 left = if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) selectMatchingRequester else searchRequester
                                 right = deselectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
@@ -601,16 +599,16 @@ internal fun CategoryManagerDialog(
                             CategoryDialogActionButton(
                                 text = "Matching",
                                 accent = categoryAccent,
-                                onClick = { updateCurrentSelection((currentEnabledSet + filteredRaw.map { it.id }).take(10).toSet()) },
+                                onClick = { updateCurrentSelection(currentEnabledSet + filteredRaw.map { it.id }) },
                                 modifier = Modifier.weight(0.8f).focusRequester(selectMatchingRequester).focusProperties {
                                     left = searchRequester; right = selectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
                                 }
                             )
                         }
                         CategoryDialogActionButton(
-                            text = "First 10",
+                            text = "All",
                             accent = categoryAccent,
-                            onClick = { updateCurrentSelection(raw.take(10).map { it.id }.toSet()) },
+                            onClick = { updateCurrentSelection(raw.map { it.id }.toSet()) },
                             modifier = Modifier.weight(0.75f).focusRequester(selectAllRequester).focusProperties {
                                 left = if (searchQuery.isNotBlank() && filteredRaw.isNotEmpty()) selectMatchingRequester else searchRequester
                                 right = deselectAllRequester; up = applyRequester; down = firstCategoryRequester ?: applyRequester
@@ -631,24 +629,21 @@ internal fun CategoryManagerDialog(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         shape = CircleShape,
-                        color = if (selectionLimitReached) categoryAccent.copy(alpha = 0.18f) else CategoryPickerRaised,
-                        border = BorderStroke(1.dp, if (selectionLimitReached) categoryAccent.copy(alpha = 0.72f) else CategoryPickerOutline)
+                        color = CategoryPickerRaised,
+                        border = BorderStroke(1.dp, CategoryPickerOutline)
                     ) {
                         Text(
-                            "$enabledCount / 10 selected",
+                            "$enabledCount selected",
                             Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (selectionLimitReached) Color.White else CategoryPickerMuted
+                            color = CategoryPickerMuted
                         )
                     }
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        when {
-                            selectionLimitReached -> "Deselect one category to choose another"
-                            searchQuery.isNotBlank() -> "${filteredRaw.size} matching · $totalCount available"
-                            else -> "$totalCount categories available"
-                        },
+                        if (searchQuery.isNotBlank()) "${filteredRaw.size} matching · $totalCount available"
+                        else "$totalCount categories available",
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = CategoryPickerMuted,
@@ -684,24 +679,20 @@ internal fun CategoryManagerDialog(
                     ) {
                         itemsIndexed(filteredRaw, key = { _, category -> category.id }) { index, category ->
                             val selected = category.id in currentEnabledSet
-                            val selectionLimitReached = !selected && currentEnabledSet.size >= 10
                             val rowRequester = categoryRequesters.getValue(category.id)
                             val rowFocused = focusedCategoryId == category.id
                             Surface(
                                 onClick = {
-                                    if (!selectionLimitReached) {
-                                        updateCurrentSelection(
-                                            if (selected) currentEnabledSet - category.id
-                                            else currentEnabledSet + category.id
-                                        )
-                                    }
+                                    updateCurrentSelection(
+                                        if (selected) currentEnabledSet - category.id
+                                        else currentEnabledSet + category.id
+                                    )
                                 },
                                 shape = RoundedCornerShape(14.dp),
                                 color = when {
                                     rowFocused && selected -> categoryAccent.copy(alpha = 0.26f)
                                     rowFocused -> CategoryPickerRaised
                                     selected -> categoryAccent.copy(alpha = 0.16f)
-                                    selectionLimitReached -> CategoryPickerSurface.copy(alpha = 0.55f)
                                     else -> CategoryPickerSurface
                                 },
                                 border = when {
@@ -780,7 +771,6 @@ internal fun CategoryManagerDialog(
                                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                                         color = when {
                                             selected -> Color.White
-                                            selectionLimitReached -> Color(0xFF777D88)
                                             else -> Color(0xFFE7E9EF)
                                         },
                                         maxLines = 1,

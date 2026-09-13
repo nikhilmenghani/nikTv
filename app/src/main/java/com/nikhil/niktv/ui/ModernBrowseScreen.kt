@@ -930,7 +930,7 @@ internal fun ModernBrowseScreen(
                 item("section-category-controls-${state.selectedType}", span = gridSpan) {
                     ModernSectionHeader(
                         title = state.selectedType.title,
-                        subtitle = "${state.categories.take(10).size} dashboard categories · up to 10",
+                        subtitle = "${state.categories.size} dashboard categories",
                         action = {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 TextButton(onClick = { openCategoryManager(state.selectedType) }, modifier = Modifier.remoteFocusFrame()) {

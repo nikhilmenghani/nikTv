@@ -42,6 +42,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
@@ -53,6 +54,7 @@ import androidx.compose.material.icons.filled.HeartBroken
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -441,6 +443,17 @@ private fun ModernDestinationHub(
     modifier: Modifier = Modifier
 ) {
     val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val profileKey = state.savedProfile?.cacheKey().orEmpty()
+    var pinnedLiveCategories by remember(profileKey) {
+        mutableStateOf(IptvPinPreferences.pinnedCategories(context, profileKey, CatalogType.LIVE_TV))
+    }
+    var pinnedMovieCategories by remember(profileKey) {
+        mutableStateOf(IptvPinPreferences.pinnedCategories(context, profileKey, CatalogType.MOVIES))
+    }
+    var pinnedSeriesCategories by remember(profileKey) {
+        mutableStateOf(IptvPinPreferences.pinnedCategories(context, profileKey, CatalogType.SERIES))
+    }
     /*
      * PROFILE_TILE_VISUAL_LANGUAGE_V33
      *
@@ -483,7 +496,7 @@ private fun ModernDestinationHub(
             state.modernVisibleIptvCategories(
                 CatalogType.LIVE_TV,
                 requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
-            )
+            ).sortedBy { it.id !in pinnedLiveCategories }
         } else {
             emptyList()
         }
@@ -492,7 +505,7 @@ private fun ModernDestinationHub(
             state.modernVisibleIptvCategories(
                 CatalogType.MOVIES,
                 requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
-            )
+            ).sortedBy { it.id !in pinnedMovieCategories }
         } else {
             emptyList()
         }
@@ -501,7 +514,7 @@ private fun ModernDestinationHub(
             state.modernVisibleIptvCategories(
                 CatalogType.SERIES,
                 requireExplicitSelection = dashboardSurface == DashboardSurface.HOME
-            )
+            ).sortedBy { it.id !in pinnedSeriesCategories }
         } else {
             emptyList()
         }
@@ -696,6 +709,12 @@ private fun ModernDestinationHub(
                     icon = Icons.Default.LiveTv,
                     seed = "live:${category.id}:${category.title}",
                     isTv = isTv,
+                    pinned = category.id in pinnedLiveCategories,
+                    onTogglePin = {
+                        pinnedLiveCategories = IptvPinPreferences.toggleCategory(
+                            context, profileKey, CatalogType.LIVE_TV, category.id
+                        )
+                    },
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -718,6 +737,12 @@ private fun ModernDestinationHub(
                     icon = Icons.Default.SmartDisplay,
                     seed = "movie:${category.id}:${category.title}",
                     isTv = isTv,
+                    pinned = category.id in pinnedMovieCategories,
+                    onTogglePin = {
+                        pinnedMovieCategories = IptvPinPreferences.toggleCategory(
+                            context, profileKey, CatalogType.MOVIES, category.id
+                        )
+                    },
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -740,6 +765,12 @@ private fun ModernDestinationHub(
                     icon = Icons.Default.Tv,
                     seed = "series:${category.id}:${category.title}",
                     isTv = isTv,
+                    pinned = category.id in pinnedSeriesCategories,
+                    onTogglePin = {
+                        pinnedSeriesCategories = IptvPinPreferences.toggleCategory(
+                            context, profileKey, CatalogType.SERIES, category.id
+                        )
+                    },
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -1184,6 +1215,8 @@ private fun ModernDestinationTile(
     icon: ImageVector,
     seed: String,
     isTv: Boolean,
+    pinned: Boolean = false,
+    onTogglePin: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -1308,7 +1341,8 @@ private fun ModernDestinationTile(
             Row(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .padding(end = if (onTogglePin != null) 38.dp else 0.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
@@ -1384,6 +1418,23 @@ private fun ModernDestinationTile(
                             },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            onTogglePin?.let { togglePin ->
+                IconButton(
+                    onClick = togglePin,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(34.dp)
+                        .remoteFocusFrame(CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.PushPin,
+                        if (pinned) "Unpin $title" else "Pin $title",
+                        modifier = Modifier.size(18.dp),
+                        tint = if (pinned) ModernBrandAccent else Color.White.copy(alpha = 0.62f)
                     )
                 }
             }
@@ -1580,11 +1631,11 @@ private fun ModernCompactMediaCard(
         }
 
     /*
-     * HOME_MEDIA_COMPACT_METADATA_V52
+     * HOME_MEDIA_READABLE_METADATA_V53
      *
-     * Home rails keep poster-first artwork and a concise two-line text
-     * hierarchy. Full episode metadata remains available after opening the
-     * title; Home prioritizes scanability and playback progress.
+     * Keep metadata inside the poster, but do not force episode details into
+     * one line. Responsive compact type gives phones, tablets and TVs enough
+     * room for the series title and the episode name without hiding artwork.
      */
     Box(
         modifier = modifier.then(returningTile.modifier)
@@ -1672,16 +1723,22 @@ private fun ModernCompactMediaCard(
                 ) {
                     Text(
                         item.title,
-                        style = if (isTv) {
-                            modernTvTileTitleStyle(shadowed = true)
-                        } else {
-                            MaterialTheme.typography.titleSmall
+                        style = when {
+                            isTv -> modernTvTileTitleStyle(shadowed = true)
+                            isTablet -> MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 14.sp
+                            )
+                            else -> MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 11.sp,
+                                lineHeight = 13.sp
+                            )
                         },
                         fontWeight =
                             if (active) FontWeight.Bold
                             else FontWeight.SemiBold,
                         color = Color.White,
-                        maxLines = 2,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (
@@ -1691,12 +1748,18 @@ private fun ModernCompactMediaCard(
                         Text(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
-                            style = if (isTv) {
-                                modernTvTileSubtitleStyle(shadowed = true)
-                            } else {
-                                MaterialTheme.typography.labelSmall
+                            style = when {
+                                isTv -> modernTvTileSubtitleStyle(shadowed = true)
+                                isTablet -> MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    lineHeight = 12.sp
+                                )
+                                else -> MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 9.sp,
+                                    lineHeight = 11.sp
+                                )
                             },
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -1742,7 +1805,9 @@ private fun ModernTileActionsMenu(
     isFavorite: Boolean,
     dismiss: () -> Unit,
     toggleFavorite: () -> Unit,
-    clear: (() -> Unit)?
+    clear: (() -> Unit)?,
+    isPinned: Boolean = false,
+    togglePin: (() -> Unit)? = null
 ) {
     DropdownMenu(
         expanded = expanded,
@@ -1767,6 +1832,16 @@ private fun ModernTileActionsMenu(
                 toggleFavorite()
             }
         )
+        togglePin?.let { pinAction ->
+            DropdownMenuItem(
+                text = { Text(if (isPinned) "Unpin" else "Pin to top") },
+                leadingIcon = { Icon(Icons.Default.PushPin, null) },
+                onClick = {
+                    dismiss()
+                    pinAction()
+                }
+            )
+        }
         clear?.let { clearAction ->
             DropdownMenuItem(
                 text = { Text("Clear from this list") },
@@ -2191,6 +2266,13 @@ private fun ModernIptvCollection(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isLiveTv = category.type == CatalogType.LIVE_TV
+    val profileKey = state.savedProfile?.cacheKey().orEmpty()
+    var pinnedChannelIds by remember(profileKey, category.id) {
+        mutableStateOf(IptvPinPreferences.pinnedChannels(context, profileKey, category.id))
+    }
+    val displayedItems = remember(state.items, pinnedChannelIds) {
+        state.items.sortedBy { it.id !in pinnedChannelIds }
+    }
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val liveTilePreferences = remember(context) {
         context.getSharedPreferences("modern_live_tv_tiles", Context.MODE_PRIVATE)
@@ -2216,7 +2298,7 @@ private fun ModernIptvCollection(
         CatalogType.SERIES -> FavoriteKind.SERIES
         CatalogType.RADIO -> FavoriteKind.CHANNEL
     }
-    val focusIds = state.items.map { it.id }
+    val focusIds = displayedItems.map { it.id }
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
@@ -2273,7 +2355,7 @@ private fun ModernIptvCollection(
     )
 
     val appendPage = rememberCollectionPagination(
-        state.items.map { it.id }, state.catalogLoadingMore, gridState,
+        displayedItems.map { it.id }, state.catalogLoadingMore, gridState,
         itemFocusRequesters, loadMore
     )
 
@@ -2348,7 +2430,7 @@ private fun ModernIptvCollection(
         }
 
         gridItemsIndexed(
-            items = state.items,
+            items = displayedItems,
             key = { _, media ->
                 "modern-iptv-${category.type.name}-${media.id}"
             }
@@ -2392,6 +2474,12 @@ private fun ModernIptvCollection(
                     themed = themedLiveTiles,
                     isFavorite = favorite,
                     onFavorite = favoriteAction,
+                    isPinned = media.id in pinnedChannelIds,
+                    onTogglePin = {
+                        pinnedChannelIds = IptvPinPreferences.toggleChannel(
+                            context, profileKey, category.id, media.id
+                        )
+                    },
                     onClick = { openItem(media) },
                     modifier = tileModifier,
                     isTv = isTv
@@ -2499,6 +2587,8 @@ private fun ModernLiveChannelTile(
     themed: Boolean,
     isFavorite: Boolean,
     onFavorite: () -> Unit,
+    isPinned: Boolean,
+    onTogglePin: () -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     isTv: Boolean
@@ -2700,6 +2790,14 @@ private fun ModernLiveChannelTile(
                         tint = Color.White.copy(alpha = if (focused) 1f else .62f)
                     )
                 }
+                if (isPinned) {
+                    Icon(
+                        Icons.Default.PushPin,
+                        "Pinned channel",
+                        modifier = Modifier.size(18.dp),
+                        tint = ModernBrandAccent
+                    )
+                }
             }
         }
         ModernTileActionsMenu(
@@ -2707,7 +2805,9 @@ private fun ModernLiveChannelTile(
             isFavorite = isFavorite,
             dismiss = { menuOpen = false },
             toggleFavorite = onFavorite,
-            clear = null
+            clear = null,
+            isPinned = isPinned,
+            togglePin = onTogglePin
         )
     }
 }
