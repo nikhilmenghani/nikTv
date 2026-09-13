@@ -1675,10 +1675,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setPlaybackEngine(engine: PlaybackEngine) {
+        val canonicalEngine = if (engine == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else engine
         // Reflect in-player changes immediately so the label, next cycle step,
         // and Settings selection cannot lag behind the newly created engine.
-        _state.update { it.copy(playbackEngine = engine) }
-        viewModelScope.launch { store.setPlaybackEngine(engine) }
+        _state.update { it.copy(playbackEngine = canonicalEngine) }
+        viewModelScope.launch { store.setPlaybackEngine(canonicalEngine) }
     }
 
     fun setSeriesStartSeason(value: SeriesStartSeason) = viewModelScope.launch {

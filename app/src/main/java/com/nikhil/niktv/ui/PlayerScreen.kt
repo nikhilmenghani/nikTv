@@ -114,13 +114,13 @@ internal fun Modifier.playerActivityObserver(onActivity: () -> Unit): Modifier =
 internal fun PlaybackEngine.nextPlayerChoice(): PlaybackEngine = when (this) {
     PlaybackEngine.AUTO -> PlaybackEngine.MEDIA3
     PlaybackEngine.MEDIA3 -> PlaybackEngine.VLC
-    PlaybackEngine.VLC -> PlaybackEngine.EXOPLAYER
-    PlaybackEngine.EXOPLAYER -> PlaybackEngine.AUTO
+    PlaybackEngine.VLC -> PlaybackEngine.AUTO
+    PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
 }
 
 internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
     PlaybackEngine.AUTO -> "Auto"
-    PlaybackEngine.MEDIA3 -> "Media3"
+    PlaybackEngine.MEDIA3 -> "ExoPlayer"
     PlaybackEngine.VLC -> "VLC"
     PlaybackEngine.EXOPLAYER -> "ExoPlayer"
 }
@@ -128,8 +128,7 @@ internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
 internal val PLAYER_ENGINE_OPTIONS = listOf(
     PlaybackEngine.AUTO,
     PlaybackEngine.MEDIA3,
-    PlaybackEngine.VLC,
-    PlaybackEngine.EXOPLAYER
+    PlaybackEngine.VLC
 )
 
 /*
@@ -223,8 +222,7 @@ internal fun PlayerControlsTimeoutButton(
 
 private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
     PlaybackEngine.VLC -> "VLC"
-    PlaybackEngine.EXOPLAYER -> "ExoPlayer"
-    else -> "Media3"
+    else -> "ExoPlayer"
 }
 
 private fun PlaybackEngine.resolvePlayerEngine(
@@ -234,6 +232,7 @@ private fun PlaybackEngine.resolvePlayerEngine(
     PlaybackEngine.AUTO ->
         if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
         else PlaybackEngine.MEDIA3
+    PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
     else -> this
 }
 
@@ -270,6 +269,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val liveRecording by LiveTvRecorder.state.collectAsState()
+    val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
     val playerConfiguration = LocalConfiguration.current
     val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
@@ -308,7 +308,7 @@ fun PlayerScreen(
     val configuredEngine = if (media.offlinePlayback) PlaybackEngine.MEDIA3 else when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
-        PlaybackEngine.EXOPLAYER -> PlaybackEngine.EXOPLAYER
+        PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
         PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
     val effectiveEngine = sessionEngineOverride ?: configuredEngine
@@ -482,6 +482,7 @@ fun PlayerScreen(
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
     val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val recordingPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -523,8 +524,7 @@ fun PlayerScreen(
                 setEnableDecoderFallback(true)
                 setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope))
             }
-            // ExoPlayer compatibility mode intentionally retains the device's
-            // native decoder order and default fallback behavior.
+            // The single ExoPlayer mode uses NikTV's learned decoder policy.
         }
         val builder = ExoPlayer.Builder(context, renderersFactory)
         if (media.offlinePlayback) {
@@ -1334,11 +1334,11 @@ fun PlayerScreen(
                         modifier = Modifier
                             .focusRequester(backFocusRequester)
                             .focusProperties {
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester
+                                right = if (recordingThisChannel) recordingPauseFocusRequester else downloadFocusRequester
                                 down = topDownRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester,
+                                right = if (recordingThisChannel) recordingPauseFocusRequester else downloadFocusRequester,
                                 down = topDownRequester
                             ),
                         onFocused = { controlsFocused = it }
@@ -1364,7 +1364,10 @@ fun PlayerScreen(
                             )
                         }
                         PlayerDateTime(compact = compactMobileControls)
-                        PlayerDownloadStatusPill(offlineDownloadProgressText.orEmpty())
+                        PlayerDownloadStatusPill(
+                            if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)
+                            else offlineDownloadProgressText.orEmpty()
+                        )
                     }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
@@ -1392,7 +1395,22 @@ fun PlayerScreen(
                                 onFocused = { controlsFocused = it }
                             )
                         } else {
-                            val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
+                            if (recordingThisChannel) {
+                                PlayerChromeIconButton(
+                                    icon = if (liveRecording.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                    contentDescription = if (liveRecording.paused) "Resume recording" else "Pause recording",
+                                    onClick = {
+                                        if (liveRecording.paused) LiveTvRecorder.resume(context)
+                                        else LiveTvRecorder.pause(context)
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(recordingPauseFocusRequester)
+                                        .focusProperties { left = backFocusRequester; right = downloadFocusRequester; down = topDownRequester }
+                                        .playerDpadFocusRoutes(backFocusRequester, downloadFocusRequester, topDownRequester),
+                                    selected = false,
+                                    onFocused = { controlsFocused = it }
+                                )
+                            }
                             PlayerChromeIconButton(
                                 icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
                                 contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
@@ -1402,8 +1420,8 @@ fun PlayerScreen(
                                 },
                                 modifier = Modifier
                                     .focusRequester(downloadFocusRequester)
-                                    .focusProperties { left = backFocusRequester; right = subtitleFocusRequester; down = topDownRequester }
-                                    .playerDpadFocusRoutes(backFocusRequester, subtitleFocusRequester, topDownRequester),
+                                    .focusProperties { left = if (recordingThisChannel) recordingPauseFocusRequester else backFocusRequester; right = subtitleFocusRequester; down = topDownRequester }
+                                    .playerDpadFocusRoutes(if (recordingThisChannel) recordingPauseFocusRequester else backFocusRequester, subtitleFocusRequester, topDownRequester),
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )

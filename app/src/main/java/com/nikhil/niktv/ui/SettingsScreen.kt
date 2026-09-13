@@ -2907,9 +2907,8 @@ internal fun PlaybackEngineSettingsSection(
             Text("Auto learns compatibility per series. You can force a specific engine here.", color = Color.Gray)
             val engines = listOf(
                 Triple(PlaybackEngine.AUTO, "Auto", "Learns failures and uses VLC when needed"),
-                Triple(PlaybackEngine.MEDIA3, "Media3", "NikTV decoder fallback and recovery"),
-                Triple(PlaybackEngine.VLC, "VLC player", "Software decoding and broad compatibility"),
-                Triple(PlaybackEngine.EXOPLAYER, "ExoPlayer", "Native device decoder order")
+                Triple(PlaybackEngine.MEDIA3, "ExoPlayer", "NikTV decoder fallback and recovery"),
+                Triple(PlaybackEngine.VLC, "VLC player", "Software decoding and broad compatibility")
             )
             FlowRow(
                 Modifier.fillMaxWidth(),

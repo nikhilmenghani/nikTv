@@ -114,6 +114,7 @@ class ProfileStore(private val context: Context) {
     }
     val playbackEngine: Flow<PlaybackEngine> = context.dataStore.data.map { prefs ->
         prefs[playbackEngineKey]?.let { runCatching { PlaybackEngine.valueOf(it) }.getOrNull() }
+            ?.let { if (it == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else it }
             ?: PlaybackEngine.AUTO
     }
     val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
@@ -272,7 +273,7 @@ class ProfileStore(private val context: Context) {
         it[modernUiEnabledKey] = if (enabled) 1 else 0
     }
     suspend fun setPlaybackEngine(engine: PlaybackEngine) = context.dataStore.edit {
-        it[playbackEngineKey] = engine.name
+        it[playbackEngineKey] = if (engine == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3.name else engine.name
     }
     suspend fun setSeriesStartSeason(value: SeriesStartSeason) = context.dataStore.edit { it[seriesStartSeasonKey] = value.name }
     suspend fun saveWatchedSeries(items: List<WatchedSeries>) = context.dataStore.edit {

@@ -91,6 +91,7 @@ internal fun VlcPlayerScreen(
 ) {
     val context = LocalContext.current
     val liveRecording by LiveTvRecorder.state.collectAsState()
+    val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
     LaunchedEffect(downloadRequested, offlineDownloadInProgress) {
         if (offlineDownloadInProgress) {
@@ -193,6 +194,7 @@ internal fun VlcPlayerScreen(
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
     val downloadRequester = remember(media.progressKey) { FocusRequester() }
+    val recordingPauseRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleRequester = remember(media.progressKey) { FocusRequester() }
     val fullscreenRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
@@ -875,11 +877,11 @@ internal fun VlcPlayerScreen(
                         modifier = Modifier
                             .focusRequester(backRequester)
                             .focusProperties {
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else subtitleRequester
+                                right = if (recordingThisChannel) recordingPauseRequester else downloadRequester
                                 down = topDownRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else subtitleRequester,
+                                right = if (recordingThisChannel) recordingPauseRequester else downloadRequester,
                                 down = topDownRequester
                             ),
                         onFocused = { controlsFocused = it }
@@ -905,7 +907,10 @@ internal fun VlcPlayerScreen(
                             )
                         }
                         PlayerDateTime(compact = compactMobileControls)
-                        PlayerDownloadStatusPill(offlineDownloadProgressText.orEmpty())
+                        PlayerDownloadStatusPill(
+                            if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)
+                            else offlineDownloadProgressText.orEmpty()
+                        )
                     }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
@@ -933,7 +938,22 @@ internal fun VlcPlayerScreen(
                                 onFocused = { controlsFocused = it }
                             )
                         } else {
-                            val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
+                            if (recordingThisChannel) {
+                                PlayerChromeIconButton(
+                                    icon = if (liveRecording.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                    contentDescription = if (liveRecording.paused) "Resume recording" else "Pause recording",
+                                    onClick = {
+                                        if (liveRecording.paused) LiveTvRecorder.resume(context)
+                                        else LiveTvRecorder.pause(context)
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(recordingPauseRequester)
+                                        .focusProperties { left = backRequester; right = downloadRequester; down = topDownRequester }
+                                        .playerDpadFocusRoutes(backRequester, downloadRequester, topDownRequester),
+                                    selected = false,
+                                    onFocused = { controlsFocused = it }
+                                )
+                            }
                             PlayerChromeIconButton(
                                 icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
                                 contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
@@ -943,8 +963,8 @@ internal fun VlcPlayerScreen(
                                 },
                                 modifier = Modifier
                                     .focusRequester(downloadRequester)
-                                    .focusProperties { left = backRequester; right = subtitleRequester; down = topDownRequester }
-                                    .playerDpadFocusRoutes(backRequester, subtitleRequester, topDownRequester),
+                                    .focusProperties { left = if (recordingThisChannel) recordingPauseRequester else backRequester; right = subtitleRequester; down = topDownRequester }
+                                    .playerDpadFocusRoutes(if (recordingThisChannel) recordingPauseRequester else backRequester, subtitleRequester, topDownRequester),
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )

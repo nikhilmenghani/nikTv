@@ -33,9 +33,11 @@ import okhttp3.Request
 
 data class LiveRecordingState(
     val active: Boolean = false,
+    val paused: Boolean = false,
     val sourceUrl: String = "",
     val title: String = "",
     val startedAtMillis: Long = 0L,
+    val recordedDurationMillis: Long = 0L,
     val bytesWritten: Long = 0L,
     val error: String? = null
 )
@@ -81,7 +83,21 @@ object LiveTvRecorder {
         }
     }
 
+    fun pause(context: Context) = sendControl(context, LiveTvRecordingService.ACTION_PAUSE)
+    fun resume(context: Context) = sendControl(context, LiveTvRecordingService.ACTION_RESUME)
+
+    private fun sendControl(context: Context, action: String) {
+        runCatching {
+            context.startService(Intent(context, LiveTvRecordingService::class.java).setAction(action))
+        }.onFailure {
+            mutableState.value = mutableState.value.copy(error = it.message ?: "Recording control failed")
+        }
+    }
+
     internal fun update(value: LiveRecordingState) { mutableState.value = value }
+
+    fun statusText(value: LiveRecordingState): String = if (!value.active) "" else
+        "${if (value.paused) "Paused" else "REC"} · ${formatDuration(value.recordedDurationMillis)} · ${formatBytes(value.bytesWritten)}"
 
     fun recordings(context: Context): List<RecordedLiveTvMedia> {
         val collection = recordingCollectionUri()
@@ -137,6 +153,10 @@ object LiveTvRecorder {
 class LiveTvRecordingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recordingJob: Job? = null
+    private var statusJob: Job? = null
+    @Volatile private var paused = false
+    private var accumulatedDurationMillis = 0L
+    private var lastResumedAtMillis = 0L
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -158,6 +178,8 @@ class LiveTvRecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> stopRecording()
+            ACTION_PAUSE -> setPaused(true)
+            ACTION_RESUME -> setPaused(false)
             ACTION_START -> {
                 val url = intent.getStringExtra(EXTRA_URL).orEmpty()
                 val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Live TV" }
@@ -169,16 +191,30 @@ class LiveTvRecordingService : Service() {
 
     private fun startRecording(title: String, sourceUrl: String) {
         val startedAt = System.currentTimeMillis()
-        val initial = LiveRecordingState(true, sourceUrl, title, startedAt)
+        paused = false
+        accumulatedDurationMillis = 0L
+        lastResumedAtMillis = startedAt
+        val initial = LiveRecordingState(
+            active = true,
+            sourceUrl = sourceUrl,
+            title = title,
+            startedAtMillis = startedAt
+        )
         LiveTvRecorder.update(initial)
         startForeground(NOTIFICATION_ID, notification(initial))
+        statusJob = scope.launch {
+            while (isActive) {
+                delay(1_000L)
+                publishProgress(LiveTvRecorder.state.value.bytesWritten)
+            }
+        }
         recordingJob = scope.launch {
             var outputUri: android.net.Uri? = null
             try {
                 outputUri = createOutput(title)
                 contentResolver.openOutputStream(outputUri, "w")!!.use { output ->
-                    if (isHls(sourceUrl)) recordHls(sourceUrl, output, initial)
-                    else copyStream(sourceUrl, output, initial)
+                    if (isHls(sourceUrl)) recordHls(sourceUrl, output)
+                    else copyStream(sourceUrl, output)
                 }
                 finishOutput(outputUri)
                 LiveTvRecorder.update(LiveRecordingState(error = null))
@@ -191,6 +227,7 @@ class LiveTvRecordingService : Service() {
                     LiveTvRecorder.update(LiveRecordingState(error = error.message ?: "Recording failed"))
                 }
             } finally {
+                statusJob?.cancel()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -198,6 +235,8 @@ class LiveTvRecordingService : Service() {
     }
 
     private fun stopRecording() {
+        if (!paused) accumulatedDurationMillis += (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L)
+        statusJob?.cancel()
         recordingJob?.cancel()
         client.dispatcher.cancelAll()
         recordingJob = null
@@ -206,7 +245,22 @@ class LiveTvRecordingService : Service() {
         stopSelf()
     }
 
-    private suspend fun recordHls(initialUrl: String, output: java.io.OutputStream, initial: LiveRecordingState) {
+    private fun setPaused(value: Boolean) {
+        if (recordingJob?.isActive != true || paused == value) return
+        val now = System.currentTimeMillis()
+        if (value) {
+            accumulatedDurationMillis += (now - lastResumedAtMillis).coerceAtLeast(0L)
+        } else {
+            lastResumedAtMillis = now
+        }
+        paused = value
+        publishProgress(LiveTvRecorder.state.value.bytesWritten)
+    }
+
+    private fun recordedDurationMillis(): Long = accumulatedDurationMillis +
+        if (!paused && recordingJob?.isActive == true) (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L) else 0L
+
+    private suspend fun recordHls(initialUrl: String, output: java.io.OutputStream) {
         var playlistUrl = resolveMediaPlaylist(initialUrl)
         val written = LinkedHashSet<String>()
         var bytes = 0L
@@ -221,8 +275,10 @@ class LiveTvRecordingService : Service() {
             }
             for (segment in segments) {
                 if (!written.add(segment)) continue
-                bytes += appendUrl(segment, output)
-                publishProgress(initial, bytes)
+                if (!paused) {
+                    bytes += appendUrl(segment, output)
+                    publishProgress(bytes)
+                }
             }
             if (lines.any { it == "#EXT-X-ENDLIST" }) return
             val targetSeconds = lines.firstOrNull { it.startsWith("#EXT-X-TARGETDURATION:") }
@@ -240,7 +296,7 @@ class LiveTvRecordingService : Service() {
         return variants.lastOrNull()?.let { resolve(url, it) } ?: url
     }
 
-    private fun copyStream(url: String, output: java.io.OutputStream, initial: LiveRecordingState) {
+    private fun copyStream(url: String, output: java.io.OutputStream) {
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").build()
         client.newCall(request).execute().use { response ->
             check(response.isSuccessful) { "Stream returned HTTP ${response.code}" }
@@ -250,9 +306,11 @@ class LiveTvRecordingService : Service() {
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                output.write(buffer, 0, count)
-                bytes += count
-                if (bytes % (1024 * 1024) < count) publishProgress(initial, bytes)
+                if (!paused) {
+                    output.write(buffer, 0, count)
+                    bytes += count
+                    if (bytes % (1024 * 1024) < count) publishProgress(bytes)
+                }
             }
         }
     }
@@ -273,8 +331,14 @@ class LiveTvRecordingService : Service() {
         }
     }
 
-    private fun publishProgress(initial: LiveRecordingState, bytes: Long) {
-        val value = initial.copy(bytesWritten = bytes)
+    private fun publishProgress(bytes: Long) {
+        val current = LiveTvRecorder.state.value
+        if (!current.active) return
+        val value = current.copy(
+            paused = paused,
+            bytesWritten = bytes,
+            recordedDurationMillis = recordedDurationMillis()
+        )
         LiveTvRecorder.update(value)
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(value))
     }
@@ -284,11 +348,23 @@ class LiveTvRecordingService : Service() {
             this, 0, Intent(this, LiveTvRecordingService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val pauseIntent = PendingIntent.getService(
+            this, 1,
+            Intent(this, LiveTvRecordingService::class.java).setAction(
+                if (state.paused) ACTION_RESUME else ACTION_PAUSE
+            ),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.presence_video_online)
-            .setContentTitle("Recording ${state.title}")
-            .setContentText("${formatDuration(System.currentTimeMillis() - state.startedAtMillis)} · ${formatBytes(state.bytesWritten)}")
+            .setContentTitle("${if (state.paused) "Recording paused" else "Recording"} · ${state.title}")
+            .setContentText("${formatDuration(state.recordedDurationMillis)} · ${formatBytes(state.bytesWritten)}")
             .setOnlyAlertOnce(true).setOngoing(true)
+            .addAction(
+                if (state.paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
+                if (state.paused) "Resume" else "Pause",
+                pauseIntent
+            )
             .addAction(android.R.drawable.ic_media_pause, "Stop", stopIntent)
             .build()
     }
@@ -325,6 +401,8 @@ class LiveTvRecordingService : Service() {
     companion object {
         const val ACTION_START = "com.nikhil.niktv.action.START_LIVE_RECORDING"
         const val ACTION_STOP = "com.nikhil.niktv.action.STOP_LIVE_RECORDING"
+        const val ACTION_PAUSE = "com.nikhil.niktv.action.PAUSE_LIVE_RECORDING"
+        const val ACTION_RESUME = "com.nikhil.niktv.action.RESUME_LIVE_RECORDING"
         const val EXTRA_TITLE = "title"
         const val EXTRA_URL = "url"
         private const val CHANNEL_ID = "niktv_live_recordings"
