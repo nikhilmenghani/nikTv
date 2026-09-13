@@ -3043,6 +3043,16 @@ private fun ModernLoadMoreButton(
     loading: Boolean,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val remoteNavigationActive =
+        context.usesRemoteNavigation(LocalConfiguration.current)
+    var focused by remember { mutableStateOf(false) }
+    val focusScale by animateFloatAsState(
+        targetValue = if (remoteNavigationActive && focused) 1.09f else 1f,
+        animationSpec = tween(durationMillis = 150),
+        label = "loadMoreFocusScale"
+    )
+    val shape = RoundedCornerShape(50)
     Box(
         Modifier
             .fillMaxWidth()
@@ -3051,14 +3061,32 @@ private fun ModernLoadMoreButton(
     ) {
         Button(
             onClick = onClick,
+            modifier = Modifier
+                .zIndex(if (focused) 1f else 0f)
+                .graphicsLayer {
+                    scaleX = focusScale
+                    scaleY = focusScale
+                }
+                .onFocusChanged { focused = it.isFocused },
             // Retain focus while pagination is running. Disabling this
             // button removes it from the TV focus graph and lets focus jump
             // to the navigation rail before the new tiles are composed.
             enabled = true,
             colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFE50914),
+                containerColor = if (remoteNavigationActive && focused) {
+                    Color(0xFFFF2532)
+                } else {
+                    Color(0xFFE50914)
+                },
                 contentColor = Color.White
-            )
+            ),
+            shape = shape,
+            border = if (remoteNavigationActive && focused) {
+                BorderStroke(3.dp, Color.White)
+            } else {
+                null
+            },
+            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 13.dp)
         ) {
             if (loading) {
                 CircularProgressIndicator(
