@@ -147,6 +147,16 @@ internal fun VlcPlayerScreen(
     val activeAppearanceProfile =
         appearancePreview ?: persistedAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
+    var previousLiveRecordingActive by remember { mutableStateOf(liveRecording.active) }
+    LaunchedEffect(liveRecording.active, liveRecording.error, media.url) {
+        modeFeedback = when {
+            liveRecording.error != null -> "Recording failed · ${liveRecording.error}"
+            liveRecording.active && liveRecording.sourceUrl == media.url -> "Recording started · ${liveRecording.title}"
+            previousLiveRecordingActive && !liveRecording.active -> "Recording stopped and saved"
+            else -> modeFeedback
+        }
+        previousLiveRecordingActive = liveRecording.active
+    }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }

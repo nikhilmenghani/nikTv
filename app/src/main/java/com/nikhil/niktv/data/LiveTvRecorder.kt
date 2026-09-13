@@ -52,18 +52,33 @@ object LiveTvRecorder {
     val state: StateFlow<LiveRecordingState> = mutableState.asStateFlow()
 
     fun start(context: Context, title: String, url: String) {
+        mutableState.value = LiveRecordingState(
+            active = true,
+            sourceUrl = url,
+            title = title,
+            startedAtMillis = System.currentTimeMillis()
+        )
         val intent = Intent(context, LiveTvRecordingService::class.java)
             .setAction(LiveTvRecordingService.ACTION_START)
             .putExtra(LiveTvRecordingService.EXTRA_TITLE, title)
             .putExtra(LiveTvRecordingService.EXTRA_URL, url)
-        ContextCompat.startForegroundService(context, intent)
+        runCatching { ContextCompat.startForegroundService(context, intent) }
+            .onFailure {
+                mutableState.value = LiveRecordingState(
+                    error = it.message ?: "Unable to start recording"
+                )
+            }
     }
 
     fun stop(context: Context) {
-        context.startService(
+        val previous = mutableState.value
+        mutableState.value = LiveRecordingState()
+        runCatching { context.startService(
             Intent(context, LiveTvRecordingService::class.java)
                 .setAction(LiveTvRecordingService.ACTION_STOP)
-        )
+        ) }.onFailure {
+            mutableState.value = previous.copy(error = it.message ?: "Unable to stop recording")
+        }
     }
 
     internal fun update(value: LiveRecordingState) { mutableState.value = value }
@@ -171,7 +186,9 @@ class LiveTvRecordingService : Service() {
                 LiveTvRecorder.update(LiveRecordingState())
             } catch (error: Throwable) {
                 outputUri?.let(::finishOutput)
-                LiveTvRecorder.update(LiveRecordingState(error = error.message ?: "Recording failed"))
+                if (LiveTvRecorder.state.value.active) {
+                    LiveTvRecorder.update(LiveRecordingState(error = error.message ?: "Recording failed"))
+                }
             } finally {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -181,8 +198,11 @@ class LiveTvRecordingService : Service() {
 
     private fun stopRecording() {
         recordingJob?.cancel()
+        client.dispatcher.cancelAll()
         recordingJob = null
         LiveTvRecorder.update(LiveRecordingState())
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private suspend fun recordHls(initialUrl: String, output: java.io.OutputStream, initial: LiveRecordingState) {
