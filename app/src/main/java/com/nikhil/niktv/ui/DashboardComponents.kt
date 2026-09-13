@@ -369,6 +369,9 @@ internal fun <T> ModernRail(
     isFavorite: (T) -> Boolean = { false },
     toggleFavorite: ((T) -> Unit)? = null
 ) {
+    val railContext = LocalContext.current
+    val railConfiguration = LocalConfiguration.current
+    val railIsTv = railContext.isTvLikeDevice(railConfiguration)
     var focusedDetails by remember(title) { mutableStateOf<Pair<String, String>?>(null) }
     val maximum = maximumDisplayCount.coerceAtLeast(1)
     val cappedMaximum = minOf(entries.size, maximum)
@@ -422,20 +425,33 @@ internal fun <T> ModernRail(
                         .focusRequester(itemFocusRequesters.getOrPut(itemKey) { FocusRequester() }),
                     progress = progress(entry),
                     onClick = { open(entry) },
-                    titleMaxLines = 2,
-                    titleMinLines = 2,
+                    titleMaxLines = titleMaxLines.coerceAtLeast(1),
+                    titleMinLines = minOf(2, titleMaxLines.coerceAtLeast(1)),
                     focusedScale = 1.08f,
                     isFavorite = isFavorite(entry),
                     toggleFavorite = toggleFavorite?.let { action -> { action(entry) } },
                     removeAction = remove?.let { action -> { action(entry) } }
                 ) {
-                    subtitle(entry).orEmpty().let {
+                    subtitle(entry).orEmpty().let { rawSubtitle ->
+                        val displayedSubtitle =
+                            if (railIsTv) {
+                                rawSubtitle.replace(" · ", "\n")
+                            } else {
+                                rawSubtitle
+                            }
                         Text(
-                            it,
+                            displayedSubtitle,
                             color = Color.Gray,
-                            style = MaterialTheme.typography.labelSmall,
-                            minLines = 2,
-                            maxLines = 2,
+                            style = if (railIsTv) {
+                                MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 8.sp,
+                                    lineHeight = 9.sp
+                                )
+                            } else {
+                                MaterialTheme.typography.labelSmall
+                            },
+                            minLines = minOf(2, subtitleMaxLines.coerceAtLeast(1)),
+                            maxLines = subtitleMaxLines.coerceAtLeast(1),
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -719,7 +735,10 @@ internal fun ModernPosterCard(
                 color = Color.White,
                 style =
                     if (isTv) {
-                        MaterialTheme.typography.labelMedium
+                        MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            lineHeight = 11.sp
+                        )
                     } else if (titleMinLines > 1) {
                         MaterialTheme.typography.titleSmall
                     } else {

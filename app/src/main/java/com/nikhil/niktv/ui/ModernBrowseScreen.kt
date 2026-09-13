@@ -807,6 +807,8 @@ internal fun ModernBrowseScreen(
                         aspectRatio = { 2f / 3f },
                         progress = { recent -> state.playbackProgress.progressFor(recent.lastPlayed ?: recent.media) },
                         remove = removeRecent,
+                        titleMaxLines = 3,
+                        subtitleMaxLines = 3,
                         isFavorite = { recent -> state.favorites.any { it.kind == recent.kind && it.media.id == recent.media.id } },
                         toggleFavorite = { recent ->
                             toggleFavoriteEntry(FavoriteItem(recent.kind, recent.media, recent.series))
