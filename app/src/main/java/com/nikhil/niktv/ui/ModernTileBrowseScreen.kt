@@ -1403,7 +1403,7 @@ private fun ModernDestinationTile(
                         maxLines = if (isTv) 3 else 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (!(isTv && subtitle.startsWith("IPTV ·"))) Text(
+                    Text(
                         subtitle,
                         style = when {
                             isTv -> MaterialTheme.typography.labelSmall
@@ -1741,10 +1741,7 @@ private fun ModernCompactMediaCard(
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (
-                        subtitle.isNotBlank() &&
-                        !(isTv && subtitle.isRedundantTvTileSubtitle())
-                    ) {
+                    if (subtitle.isNotBlank()) {
                         Text(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
@@ -3040,10 +3037,7 @@ private fun ModernCollectionPoster(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (
-                    subtitle.isNotBlank() &&
-                    !(isTv && subtitle.isRedundantTvTileSubtitle())
-                ) {
+                if (subtitle.isNotBlank()) {
                     Text(
                         subtitle,
                         color =

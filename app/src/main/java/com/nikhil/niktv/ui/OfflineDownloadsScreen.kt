@@ -183,6 +183,9 @@ internal fun OfflineDownloadsScreen(
                         Text("Recordings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
                     }
                     items(recordings, key = { it.uri.toString() }) { recording ->
+                        val rowRequester = remember(recording.uri) { FocusRequester() }
+                        val shareRequester = remember(recording.uri) { FocusRequester() }
+                        val deleteRequester = remember(recording.uri) { FocusRequester() }
                         Surface(
                             onClick = {
                                 val view = Intent(Intent.ACTION_VIEW).apply {
@@ -195,7 +198,11 @@ internal fun OfflineDownloadsScreen(
                             },
                             shape = RoundedCornerShape(14.dp),
                             color = Color(0xFF151820),
-                            modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(14.dp))
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusProperties { right = shareRequester }
+                                .focusRequester(rowRequester)
+                                .remoteFocusFrame(RoundedCornerShape(14.dp))
                         ) {
                             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Surface(
@@ -231,11 +238,24 @@ internal fun OfflineDownloadsScreen(
                                             runCatching { context.startActivity(Intent.createChooser(send, "Share ${recording.title}")) }
                                                 .onFailure { Toast.makeText(context, "No app is available to share this recording", Toast.LENGTH_SHORT).show() }
                                         },
-                                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                                        modifier = Modifier
+                                            .focusProperties {
+                                                left = rowRequester
+                                                right = deleteRequester
+                                                down = deleteRequester
+                                            }
+                                            .focusRequester(shareRequester)
+                                            .remoteFocusFrame(CircleShape)
                                     ) { Icon(Icons.Default.Share, "Share recording") }
                                     IconButton(
                                         onClick = { pendingRecordingRemoval = recording },
-                                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                                        modifier = Modifier
+                                            .focusProperties {
+                                                left = rowRequester
+                                                up = shareRequester
+                                            }
+                                            .focusRequester(deleteRequester)
+                                            .remoteFocusFrame(CircleShape)
                                     ) { Icon(Icons.Default.Delete, "Delete recording") }
                                 }
                             }
@@ -253,11 +273,21 @@ internal fun OfflineDownloadsScreen(
                         val info = remember(entry.requestId, state.offlineDownloadRevision) {
                             OfflineMediaDownloads.info(context, entry.requestId, entry.downloadId)
                         }
+                        val rowRequester = remember(entry.key) { FocusRequester() }
+                        val shareRequester = remember(entry.key) { FocusRequester() }
+                        val deleteRequester = remember(entry.key) { FocusRequester() }
+                        val shareAvailable = info.status == OfflineDownloadStatus.COMPLETE
                         Surface(
                             onClick = { play(entry) },
                             shape = RoundedCornerShape(14.dp),
                             color = Color(0xFF151820),
-                            modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(14.dp))
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusProperties {
+                                    right = if (shareAvailable) shareRequester else deleteRequester
+                                }
+                                .focusRequester(rowRequester)
+                                .remoteFocusFrame(RoundedCornerShape(14.dp))
                         ) {
                             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 SubcomposeAsyncImage(
@@ -372,14 +402,27 @@ internal fun OfflineDownloadsScreen(
                                                     }
                                                 }
                                             },
-                                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                                            modifier = Modifier
+                                                .focusProperties {
+                                                    left = rowRequester
+                                                    right = deleteRequester
+                                                    down = deleteRequester
+                                                }
+                                                .focusRequester(shareRequester)
+                                                .remoteFocusFrame(CircleShape)
                                         ) {
                                             Icon(Icons.Default.Share, "Share offline download")
                                         }
                                     }
                                     IconButton(
                                         onClick = { pendingRemoval = entry },
-                                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                                        modifier = Modifier
+                                            .focusProperties {
+                                                left = rowRequester
+                                                if (shareAvailable) up = shareRequester
+                                            }
+                                            .focusRequester(deleteRequester)
+                                            .remoteFocusFrame(CircleShape)
                                     ) {
                                         Icon(Icons.Default.Delete, "Delete offline download")
                                     }
