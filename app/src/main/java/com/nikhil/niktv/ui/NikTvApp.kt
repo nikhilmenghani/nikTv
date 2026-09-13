@@ -417,7 +417,8 @@ internal fun Modifier.mobileMainTabSwipe(
 @Composable
 internal fun Modifier.remoteCombinedClickable(
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)?,
+    onLongClick: (() -> Unit)? = null,
+    enabled: Boolean = true,
     interactionSource: MutableInteractionSource? = null
 ): Modifier {
     val scope = rememberCoroutineScope()
@@ -430,6 +431,7 @@ internal fun Modifier.remoteCombinedClickable(
 
     return this
         .onPreviewKeyEvent { event ->
+            if (!enabled) return@onPreviewKeyEvent false
             if (event.key !in menuActivationKeys) return@onPreviewKeyEvent false
             when (event.type) {
                 KeyEventType.KeyDown -> {
@@ -466,6 +468,7 @@ internal fun Modifier.remoteCombinedClickable(
                 // platform indication is rectangular and leaks beyond
                 // rounded poster corners while focused.
                 indication = if (remoteNavigationActive) null else LocalIndication.current,
+                enabled = enabled,
                 onClick = onClick,
                 onLongClick = onLongClick
             )
@@ -621,6 +624,16 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.progressLabel(),
                     onPlayItem = vm::openMedia,
+                    queueFavoriteIds = state.favorites
+                        .asSequence()
+                        .filter { it.kind == FavoriteKind.CHANNEL }
+                        .map { it.media.id }
+                        .toSet(),
+                    onToggleQueueFavorite = { item ->
+                        vm.toggleFavorite(
+                            FavoriteItem(FavoriteKind.CHANNEL, item)
+                        )
+                    },
                     queueHasMore = state.playbackQueueHasMore,
                     queueLoadingMore = state.playbackQueueLoadingMore,
                     onLoadMoreQueue = vm::loadMorePlaybackQueue,

@@ -62,6 +62,8 @@ internal fun VlcPlayerScreen(
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onPlayItem: (MediaItem) -> Unit,
+    queueFavoriteIds: Set<String> = emptySet(),
+    onToggleQueueFavorite: ((MediaItem) -> Unit)? = null,
     onProgress: (String, Long, Long) -> Unit,
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
@@ -1271,6 +1273,12 @@ internal fun VlcPlayerScreen(
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
             playingId = media.media.id,
+            favoriteIds = queueFavoriteIds,
+            onToggleFavorite = if (media.catalogType == CatalogType.LIVE_TV) {
+                onToggleQueueFavorite
+            } else {
+                null
+            },
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,
             onLoadMore = onLoadMoreQueue,

@@ -1379,8 +1379,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val prefetchKey = playbackQueuePrefetchKey(scope, requestedPage)
                     val prefetched = playbackQueuePrefetches.remove(prefetchKey)
                     val startedAt = SystemClock.elapsedRealtime()
-                    val prefetchedResult = prefetched?.let {
-                        runCatching { it.await() }
+                    val prefetchedResult = prefetched?.let { deferred ->
+                        val result = runCatching {
+                            withTimeoutOrNull(5_000L) {
+                                deferred.await()
+                            }
+                        }
                             .onFailure { error ->
                                 Log.w(
                                     PLAYBACK_QUEUE_LOG_TAG,
@@ -1389,6 +1393,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 )
                             }
                             .getOrNull()
+                        if (result == null && !deferred.isCompleted) {
+                            deferred.cancel()
+                            Log.i(
+                                PLAYBACK_QUEUE_LOG_TAG,
+                                "Prefetch wait exceeded 5s; fetching page $requestedPage in foreground"
+                            )
+                        }
+                        result
                     }
                     val result = prefetchedResult
                         ?: fetchNextUniquePlaybackPage(
