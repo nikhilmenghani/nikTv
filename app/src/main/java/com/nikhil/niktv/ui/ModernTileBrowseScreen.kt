@@ -1911,6 +1911,14 @@ private fun ModernTmdbCollection(
         }
     }
 
+    TvCollectionInitialFocus(
+        enabled = isTv,
+        focusKey = "tmdb:${section.name}",
+        hasItems = focusIds.isNotEmpty(),
+        focusedIndex = { focusedPosterIndex },
+        moveFocus = moveFocusToIndex
+    )
+
 
 
     LazyVerticalGrid(
@@ -2592,7 +2600,7 @@ private fun ModernLiveChannelTile(
                             else -> MaterialTheme.typography.titleMedium
                         },
                         fontWeight = if (focused) FontWeight.Bold else FontWeight.SemiBold,
-                        maxLines = if (isTv) 3 else 2,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     programme?.title?.takeIf {
@@ -2601,7 +2609,7 @@ private fun ModernLiveChannelTile(
                         Text(
                             "Now · $title",
                             color = Color(0xFFF1C7CB),
-                            style = MaterialTheme.typography.bodySmall,
+                            style = if (isTv) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -2614,7 +2622,7 @@ private fun ModernLiveChannelTile(
                             Text(
                                 description,
                                 color = Color.White.copy(alpha = .72f),
-                                style = MaterialTheme.typography.bodySmall,
+                                style = if (isTv) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -2898,7 +2906,7 @@ private fun ModernCollectionPoster(
                     } else {
                         MaterialTheme.typography.bodyMedium
                     },
-                    maxLines = if (isTv) 3 else 2,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (

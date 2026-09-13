@@ -948,8 +948,9 @@ internal fun VlcPlayerScreen(
                             },
                             contentDescription = "Video fit: ${resizeMode.label}",
                             onClick = {
-                                resizeMode = resizeMode.next()
-                                modeFeedback = "Video fit · ${resizeMode.label}"
+                                val nextMode = resizeMode.next()
+                                resizeMode = nextMode
+                                modeFeedback = "Video fit · ${nextMode.label}"
                             },
                             modifier = Modifier
                                 .focusRequester(resizeRequester)
@@ -963,8 +964,11 @@ internal fun VlcPlayerScreen(
                                     right = pictureModeRequester,
                                     down = topDownRequester
                                 ),
-                            selected = resizeMode != VideoResizeMode.FIT,
-                            onFocused = { controlsFocused = it }
+                            selected = false,
+                            onFocused = {
+                                controlsFocused = it
+                                if (it) modeFeedback = "Video fit · ${resizeMode.label}"
+                            }
                         )
                         PlayerChromeIconButton(
                             icon = videoAppearanceIcon(activeAppearanceProfile.id),
@@ -1051,7 +1055,26 @@ internal fun VlcPlayerScreen(
                             }
                         }
                         Row(
-                            Modifier.fillMaxWidth(),
+                            Modifier
+                                .fillMaxWidth()
+                                .onPreviewKeyEvent { event ->
+                                    if (
+                                        event.type == KeyEventType.KeyDown &&
+                                        event.key == ComposeKey.DirectionDown &&
+                                        focusMode &&
+                                        hasPlaybackQueue
+                                    ) {
+                                        dpadInteraction++
+                                        queueRevealProgress = 1f
+                                        queueRevealDragging = false
+                                        queueVisible = true
+                                        controlsVisible = false
+                                        controlsFocused = false
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                },
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {

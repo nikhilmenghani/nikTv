@@ -1407,10 +1407,11 @@ fun PlayerScreen(
                             },
                             contentDescription = "Video fit: ${resizeMode.label}",
                             onClick = {
-                                resizeMode = resizeMode.next()
+                                val nextMode = resizeMode.next()
+                                resizeMode = nextMode
                                 videoScale = 1f
                                 videoOffset = Offset.Zero
-                                modeFeedback = "Video fit · ${resizeMode.label}"
+                                modeFeedback = "Video fit · ${nextMode.label}"
                             },
                             modifier = Modifier
                                 .focusRequester(resizeFocusRequester)
@@ -1424,8 +1425,11 @@ fun PlayerScreen(
                                     right = pictureModeFocusRequester,
                                     down = topDownRequester
                                 ),
-                            selected = resizeMode != VideoResizeMode.FIT,
-                            onFocused = { controlsFocused = it }
+                            selected = false,
+                            onFocused = {
+                                controlsFocused = it
+                                if (it) modeFeedback = "Video fit · ${resizeMode.label}"
+                            }
                         )
                         PlayerChromeIconButton(
                             icon = videoAppearanceIcon(activeAppearanceProfile.id),
