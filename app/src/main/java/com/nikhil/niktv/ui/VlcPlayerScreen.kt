@@ -674,7 +674,14 @@ internal fun VlcPlayerScreen(
                                     focusMode &&
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
-                                        event.y >= layout.height * 0.72f
+                                        if (compactMobileControls) {
+                                            event.x >= layout.width * 0.39f &&
+                                                event.x <= layout.width * 0.61f &&
+                                                event.y >= layout.height * 0.54f &&
+                                                event.y <= layout.height * 0.78f
+                                        } else {
+                                            event.y >= layout.height * 0.72f
+                                        }
                                 gestureStartValue = when {
                                     !levelGestureEligible -> 0f
                                     brightnessGesture -> {
@@ -867,6 +874,23 @@ internal fun VlcPlayerScreen(
         }
 
         VideoAppearanceOverlay(activeAppearanceProfile)
+        MobileQueueSwipeHandle(
+            visible =
+                compactMobileControls &&
+                    focusMode &&
+                    hasPlaybackQueue &&
+                    !queueVisible &&
+                    !pictureEditorVisible &&
+                    !inPictureInPicture,
+            controlsVisible = controlsVisible,
+            onOpen = {
+                controlsVisible = false
+                controlsFocused = false
+                queueRevealDragging = false
+                queueRevealProgress = 1f
+                queueVisible = true
+            }
+        )
 
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val topDownRequester = if (seekable) progressRequester else playRequester
@@ -893,7 +917,7 @@ internal fun VlcPlayerScreen(
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
                             horizontal = if (compactMobileControls) 10.dp else 20.dp,
-                            vertical = if (compactMobileControls) 8.dp else 14.dp
+                            vertical = if (compactMobileControls) 4.dp else 14.dp
                         ),
                     verticalAlignment = Alignment.Top
                 ) {
@@ -1091,9 +1115,9 @@ internal fun VlcPlayerScreen(
                     Column(
                         Modifier.padding(
                             horizontal = if (compactMobileControls) 10.dp else 16.dp,
-                            vertical = if (compactMobileControls) 8.dp else 11.dp
+                            vertical = if (compactMobileControls) 4.dp else 11.dp
                         ),
-                        verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 5.dp else 8.dp)
+                        verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
                     ) {
                         if (seekable) {
                             PlaybackProgressBar(

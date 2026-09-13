@@ -493,6 +493,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
 
     // APP_WIDE_ORIENTATION_OWNER_V12
     ApplyUiOrientation(orientationMode)
+    ApplyAppBrightness()
 
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmPlayerDownloadRemoval by remember { mutableStateOf(false) }

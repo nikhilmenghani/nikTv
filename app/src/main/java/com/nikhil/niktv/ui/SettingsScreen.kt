@@ -199,6 +199,9 @@ internal fun ModernSettingsScreen(
     val profile = state.savedProfile
     BackHandler(onBack = closeSettings)
     val context = LocalContext.current
+    var appBrightness by remember(context) {
+        mutableFloatStateOf(AppBrightnessPreferences.get(context))
+    }
     val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
     val preconfiguredProfiles = remember(generatedIdentity) {
         listOf(
@@ -984,6 +987,29 @@ internal fun ModernSettingsScreen(
             }
         }
         SettingsSection("Display and screen") {
+            ListItem(
+                headlineContent = { Text("App brightness") },
+                supportingContent = {
+                    Text("${(appBrightness * 100).toInt()}% · Applies only while NikTV is open")
+                },
+                leadingContent = { Icon(Icons.Default.Brightness6, null) },
+                trailingContent = {
+                    Slider(
+                        value = appBrightness,
+                        onValueChange = {
+                            appBrightness = it
+                            AppBrightnessPreferences.set(context, it)
+                        },
+                        valueRange = AppBrightnessPreferences.MIN..AppBrightnessPreferences.MAX,
+                        steps = 16,
+                        modifier = Modifier
+                            .width(220.dp)
+                            .remoteFocusFrame(RoundedCornerShape(12.dp))
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+            HorizontalDivider()
             ListItem(
                 headlineContent = {
                     Text("Only keep screen awake during playback")

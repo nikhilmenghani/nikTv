@@ -1200,7 +1200,14 @@ fun PlayerScreen(
                                     focusMode &&
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
-                                        event.y >= playerView.height * 0.72f
+                                        if (compactMobileControls) {
+                                            event.x >= playerView.width * 0.39f &&
+                                                event.x <= playerView.width * 0.61f &&
+                                                event.y >= playerView.height * 0.54f &&
+                                                event.y <= playerView.height * 0.78f
+                                        } else {
+                                            event.y >= playerView.height * 0.72f
+                                        }
                                 gestureStartValue = when {
                                     !levelGestureEligible -> 0f
                                     brightnessGesture -> {
@@ -1365,6 +1372,23 @@ fun PlayerScreen(
         }
 
         VideoAppearanceOverlay(activeAppearanceProfile)
+        MobileQueueSwipeHandle(
+            visible =
+                compactMobileControls &&
+                    focusMode &&
+                    hasPlaybackQueue &&
+                    !queueVisible &&
+                    !pictureEditorVisible &&
+                    !inPictureInPicture,
+            controlsVisible = controlsVisible,
+            onOpen = {
+                controlsVisible = false
+                controlsFocused = false
+                queueRevealDragging = false
+                queueRevealProgress = 1f
+                queueVisible = true
+            }
+        )
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
@@ -1392,7 +1416,7 @@ fun PlayerScreen(
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
                             horizontal = if (compactMobileControls) 10.dp else 20.dp,
-                            vertical = if (compactMobileControls) 8.dp else 14.dp
+                            vertical = if (compactMobileControls) 4.dp else 14.dp
                         ),
                     verticalAlignment = Alignment.Top
                 ) {
@@ -1592,9 +1616,9 @@ fun PlayerScreen(
                     Column(
                         Modifier.padding(
                             horizontal = if (compactMobileControls) 10.dp else 16.dp,
-                            vertical = if (compactMobileControls) 8.dp else 11.dp
+                            vertical = if (compactMobileControls) 4.dp else 11.dp
                         ),
-                        verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 5.dp else 8.dp)
+                        verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
                     ) {
                         if (seekable) {
                             PlaybackProgressBar(
@@ -2800,7 +2824,7 @@ internal fun PlaybackProgressBar(
     val total = formatPlayerTime(safeDuration)
     Column(
         modifier
-            .height(if (compact) 48.dp else 58.dp)
+            .height(if (compact) 40.dp else 58.dp)
             .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
             .onPreviewKeyEvent { event ->
                 val direction = when (event.key) {
@@ -2848,7 +2872,7 @@ internal fun PlaybackProgressBar(
             onValueChangeFinished = { dragging = false; revision++ },
             enabled = safeDuration > 0L,
             valueRange = 0f..safeDuration.coerceAtLeast(1L).toFloat(),
-            modifier = Modifier.fillMaxWidth().height(if (compact) 24.dp else 28.dp),
+            modifier = Modifier.fillMaxWidth().height(if (compact) 20.dp else 28.dp),
             thumb = {
                 Box(
                     Modifier

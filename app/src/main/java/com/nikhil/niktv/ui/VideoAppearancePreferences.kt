@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -566,6 +567,53 @@ internal fun PlayerModeFeedback(label: String) {
                 style = MaterialTheme.typography.titleMedium
             )
         }
+    }
+}
+
+@Composable
+internal fun MobileQueueSwipeHandle(
+    visible: Boolean,
+    controlsVisible: Boolean,
+    onOpen: () -> Unit
+) {
+    if (!visible) return
+
+    var upwardDrag by remember { mutableFloatStateOf(0f) }
+    var opened by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = if (controlsVisible) 108.dp else 18.dp)
+                .width(112.dp)
+                .height(38.dp)
+                .pointerInput(onOpen) {
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            upwardDrag = 0f
+                            opened = false
+                        },
+                        onVerticalDrag = { change, amount ->
+                            if (amount < 0f) upwardDrag -= amount
+                            if (!opened && upwardDrag >= 40.dp.toPx()) {
+                                opened = true
+                                change.consume()
+                                onOpen()
+                            }
+                        },
+                        onDragEnd = {
+                            upwardDrag = 0f
+                            opened = false
+                        },
+                        onDragCancel = {
+                            upwardDrag = 0f
+                            opened = false
+                        }
+                    )
+                }
+        )
     }
 }
 
