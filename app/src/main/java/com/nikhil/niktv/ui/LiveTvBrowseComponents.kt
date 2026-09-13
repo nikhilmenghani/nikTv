@@ -446,6 +446,10 @@ internal fun ModernSideRail(
             }
             ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen, expanded, openFavorites)
             ModernRailButton(Icons.Default.DownloadDone, "Offline", state.offlineDownloadsOpen, expanded, openOfflineDownloads)
+            AppBrightnessQuickButton(
+                modifier = Modifier.fillMaxWidth(),
+                showLabel = expanded
+            )
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
         }

@@ -1045,6 +1045,7 @@ internal fun VlcPlayerScreen(
                                 VideoResizeMode.ZOOM -> Icons.Default.ZoomIn
                                 VideoResizeMode.STRETCH -> Icons.Default.AspectRatio
                             },
+                            badgeText = resizeMode.badge,
                             contentDescription = "Video fit: ${resizeMode.label}",
                             onClick = {
                                 val nextMode = resizeMode.next()
@@ -1066,7 +1067,6 @@ internal fun VlcPlayerScreen(
                             selected = false,
                             onFocused = {
                                 controlsFocused = it
-                                if (it) modeFeedback = "Video fit · ${resizeMode.label}"
                             }
                         )
                         PlayerChromeIconButton(

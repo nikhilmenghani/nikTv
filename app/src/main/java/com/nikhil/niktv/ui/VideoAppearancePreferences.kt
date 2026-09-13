@@ -85,8 +85,11 @@ import coil3.compose.SubcomposeAsyncImageContent
 import kotlinx.coroutines.launch
 import com.nikhil.niktv.data.artworkRequest
 
-internal enum class VideoResizeMode(val label: String) {
-    FIT("Fit"), FILL("Fill"), ZOOM("Zoom"), STRETCH("Stretch");
+internal enum class VideoResizeMode(val label: String, val badge: String) {
+    FIT("Fit", "FIT"),
+    FILL("Fill", "FILL"),
+    ZOOM("Zoom", "ZOOM"),
+    STRETCH("Stretch 16:9", "16:9");
     fun next() = entries[(ordinal + 1) % entries.size]
 }
 

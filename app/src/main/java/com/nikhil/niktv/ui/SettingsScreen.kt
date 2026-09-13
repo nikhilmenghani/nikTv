@@ -202,6 +202,9 @@ internal fun ModernSettingsScreen(
     var appBrightness by remember(context) {
         mutableFloatStateOf(AppBrightnessPreferences.get(context))
     }
+    var followSystemBrightness by remember(context) {
+        mutableStateOf(AppBrightnessPreferences.followsSystem(context))
+    }
     val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
     val preconfiguredProfiles = remember(generatedIdentity) {
         listOf(
@@ -988,14 +991,40 @@ internal fun ModernSettingsScreen(
         }
         SettingsSection("Display and screen") {
             ListItem(
+                headlineContent = { Text("Follow system brightness") },
+                supportingContent = {
+                    Text("Use the brightness configured by this device or TV")
+                },
+                leadingContent = { Icon(Icons.Default.BrightnessAuto, null) },
+                trailingContent = {
+                    Switch(
+                        checked = followSystemBrightness,
+                        onCheckedChange = {
+                            followSystemBrightness = it
+                            AppBrightnessPreferences.setFollowsSystem(context, it)
+                        },
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(16.dp))
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+            HorizontalDivider()
+            ListItem(
                 headlineContent = { Text("App brightness") },
                 supportingContent = {
-                    Text("${(appBrightness * 100).toInt()}% · Applies only while NikTV is open")
+                    Text(
+                        if (followSystemBrightness) {
+                            "System controlled"
+                        } else {
+                            "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open"
+                        }
+                    )
                 },
                 leadingContent = { Icon(Icons.Default.Brightness6, null) },
                 trailingContent = {
                     Slider(
                         value = appBrightness,
+                        enabled = !followSystemBrightness,
                         onValueChange = {
                             appBrightness = it
                             AppBrightnessPreferences.set(context, it)

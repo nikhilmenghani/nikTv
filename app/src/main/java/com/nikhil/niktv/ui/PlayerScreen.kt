@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -1299,19 +1300,30 @@ fun PlayerScreen(
             },
             update = { playerView ->
                 if (playerView.player !== player) playerView.player = player
-                playerView.resizeMode = when (resizeMode) {
+                val requestedResizeMode = when (resizeMode) {
                     VideoResizeMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                     VideoResizeMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     VideoResizeMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     VideoResizeMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                 }
-                playerView.videoSurfaceView?.apply {
-                    val modeScale = if (resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
-                    scaleX = videoScale * modeScale
-                    scaleY = videoScale * modeScale
-                    translationX = videoOffset.x
-                    translationY = videoOffset.y
+                val applyVideoSizing = {
+                    playerView.resizeMode = requestedResizeMode
+                    playerView.requestLayout()
+                    playerView.invalidate()
+                    playerView.videoSurfaceView?.apply {
+                        val modeScale = if (resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
+                        scaleX = videoScale * modeScale
+                        scaleY = videoScale * modeScale
+                        translationX = videoOffset.x
+                        translationY = videoOffset.y
+                        requestLayout()
+                        invalidate()
+                    }
                 }
+                applyVideoSizing()
+                // PlayerView can compose before its SurfaceView/TextureView is attached.
+                // Reapply on the next UI turn so a resize choice is never silently lost.
+                playerView.post { applyVideoSizing() }
             },
                 modifier = Modifier
                     .fillMaxSize()
@@ -1544,6 +1556,7 @@ fun PlayerScreen(
                                 VideoResizeMode.ZOOM -> Icons.Default.ZoomIn
                                 VideoResizeMode.STRETCH -> Icons.Default.AspectRatio
                             },
+                            badgeText = resizeMode.badge,
                             contentDescription = "Video fit: ${resizeMode.label}",
                             onClick = {
                                 val nextMode = resizeMode.next()
@@ -1567,7 +1580,6 @@ fun PlayerScreen(
                             selected = false,
                             onFocused = {
                                 controlsFocused = it
-                                if (it) modeFeedback = "Video fit · ${resizeMode.label}"
                             }
                         )
                         PlayerChromeIconButton(
@@ -2277,6 +2289,7 @@ internal fun PlayerChromeIconButton(
     primaryAction: Boolean = false,
     progress: Float? = null,
     indeterminateProgress: Boolean = false,
+    badgeText: String? = null,
     size: Dp = if (primaryAction) 56.dp else 48.dp,
     iconSize: Dp = if (primaryAction) 28.dp else 23.dp,
     onFocused: (Boolean) -> Unit = {}
@@ -2328,9 +2341,23 @@ internal fun PlayerChromeIconButton(
             Icon(
                 icon,
                 contentDescription,
-                modifier = Modifier.size(iconSize),
+                modifier = Modifier
+                    .size(iconSize)
+                    .offset(y = if (badgeText == null) 0.dp else (-5).dp),
                 tint = Color.White
             )
+            badgeText?.let { label ->
+                Text(
+                    text = label,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 4.dp),
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = 8.sp,
+                    lineHeight = 8.sp,
+                    maxLines = 1
+                )
+            }
         }
     }
 }
