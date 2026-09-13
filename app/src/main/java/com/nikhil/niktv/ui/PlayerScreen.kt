@@ -270,6 +270,50 @@ fun PlayerScreen(
     onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val transportActivity = remember(context) {
+        context.findActivity() as? MainActivity
+    }
+    val channelTransportEnabled =
+        media.catalogType == CatalogType.LIVE_TV &&
+            media.episodeQueue.distinctBy { it.id }.size > 1
+    DisposableEffect(
+        transportActivity,
+        channelTransportEnabled,
+        onPlayPrevious,
+        onPlayNext
+    ) {
+        val handler: (KeyEvent) -> Boolean = { event ->
+            if (!channelTransportEnabled) {
+                false
+            } else {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                    KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                        if (
+                            event.action == KeyEvent.ACTION_DOWN &&
+                            event.repeatCount == 0
+                        ) onPlayNext()
+                        true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_REWIND,
+                    KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                        if (
+                            event.action == KeyEvent.ACTION_DOWN &&
+                            event.repeatCount == 0
+                        ) onPlayPrevious()
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+        transportActivity?.playerTransportKeyHandler = handler
+        onDispose {
+            if (transportActivity?.playerTransportKeyHandler === handler) {
+                transportActivity.playerTransportKeyHandler = null
+            }
+        }
+    }
     val liveRecording by LiveTvRecorder.state.collectAsState()
     val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
     val playerConfiguration = LocalConfiguration.current
@@ -1053,6 +1097,13 @@ fun PlayerScreen(
                     setOnKeyListener { _, keyCode, keyEvent ->
                         if (keyEvent.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
                         if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && keyEvent.repeatCount > 0) return@setOnKeyListener true
+                        if (
+                            keyCode in setOf(
+                                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                                KeyEvent.KEYCODE_MEDIA_REWIND
+                            ) &&
+                            keyEvent.repeatCount > 0
+                        ) return@setOnKeyListener true
                         if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER,
@@ -1079,14 +1130,28 @@ fun PlayerScreen(
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                                val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-                                player.seekTo((player.currentPosition + 10_000L).coerceAtMost(maxPosition))
-                                controlsVisible = true
+                                if (
+                                    media.catalogType == CatalogType.LIVE_TV &&
+                                    hasPlaybackQueue
+                                ) {
+                                    onPlayNext()
+                                } else {
+                                    val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                    player.seekTo((player.currentPosition + 10_000L).coerceAtMost(maxPosition))
+                                    controlsVisible = true
+                                }
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                                player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
-                                controlsVisible = true
+                                if (
+                                    media.catalogType == CatalogType.LIVE_TV &&
+                                    hasPlaybackQueue
+                                ) {
+                                    onPlayPrevious()
+                                } else {
+                                    player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                    controlsVisible = true
+                                }
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_RIGHT,

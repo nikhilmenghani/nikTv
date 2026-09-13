@@ -743,6 +743,13 @@ internal fun VlcPlayerScreen(
                     layout.setOnKeyListener { _, keyCode, event ->
                         if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
                         if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && event.repeatCount > 0) return@setOnKeyListener true
+                        if (
+                            keyCode in setOf(
+                                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                                KeyEvent.KEYCODE_MEDIA_REWIND
+                            ) &&
+                            event.repeatCount > 0
+                        ) return@setOnKeyListener true
                         if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
@@ -760,10 +767,28 @@ internal fun VlcPlayerScreen(
                                 player.pause(); showControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                                if (seekable) player.time = (player.time - 10_000L).coerceAtLeast(0L); showControls(); true
+                                if (
+                                    media.catalogType == CatalogType.LIVE_TV &&
+                                    hasPlaybackQueue
+                                ) {
+                                    onPlayPrevious()
+                                } else {
+                                    if (seekable) player.time = (player.time - 10_000L).coerceAtLeast(0L)
+                                    showControls()
+                                }
+                                true
                             }
                             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                                if (seekable) player.time = (player.time + 10_000L).coerceAtMost(duration); showControls(); true
+                                if (
+                                    media.catalogType == CatalogType.LIVE_TV &&
+                                    hasPlaybackQueue
+                                ) {
+                                    onPlayNext()
+                                } else {
+                                    if (seekable) player.time = (player.time + 10_000L).coerceAtMost(duration)
+                                    showControls()
+                                }
+                                true
                             }
                             KeyEvent.KEYCODE_BACK -> false
                             else -> { showControls(); true }
