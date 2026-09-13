@@ -110,6 +110,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -142,6 +143,30 @@ private val ModernCardSurface = Color(0xFF151720)
 private val ModernOutline = Color(0xFF2A2D36)
 private val ModernBrandAccent = Color(0xFF7C8CFF)
 private val ModernBrandViolet = Color(0xFFA275FF)
+
+@Composable
+private fun modernTvTileTitleStyle(shadowed: Boolean = false): TextStyle =
+    MaterialTheme.typography.labelMedium.copy(
+        fontSize = 12.sp,
+        lineHeight = 15.sp,
+        shadow = if (shadowed) Shadow(
+            color = Color.Black.copy(alpha = 0.95f),
+            offset = Offset(1f, 1f),
+            blurRadius = 4f
+        ) else null
+    )
+
+@Composable
+private fun modernTvTileSubtitleStyle(shadowed: Boolean = false): TextStyle =
+    MaterialTheme.typography.labelSmall.copy(
+        fontSize = 10.sp,
+        lineHeight = 12.sp,
+        shadow = if (shadowed) Shadow(
+            color = Color.Black,
+            offset = Offset(1f, 1f),
+            blurRadius = 3f
+        ) else null
+    )
 
 // touchTileShadow is shared in NikTvApp.kt so TV focus never installs
 // a zero-elevation shadow layer while touch layouts keep their existing lift.
@@ -1648,15 +1673,7 @@ private fun ModernCompactMediaCard(
                     Text(
                         item.title,
                         style = if (isTv) {
-                            MaterialTheme.typography.labelMedium.copy(
-                                fontSize = 12.sp,
-                                lineHeight = 15.sp,
-                                shadow = Shadow(
-                                    color = Color.Black.copy(alpha = 0.95f),
-                                    offset = Offset(1f, 1f),
-                                    blurRadius = 4f
-                                )
-                            )
+                            modernTvTileTitleStyle(shadowed = true)
                         } else {
                             MaterialTheme.typography.titleSmall
                         },
@@ -1675,15 +1692,7 @@ private fun ModernCompactMediaCard(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
                             style = if (isTv) {
-                                MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.sp,
-                                    lineHeight = 12.sp,
-                                    shadow = Shadow(
-                                        color = Color.Black,
-                                        offset = Offset(1f, 1f),
-                                        blurRadius = 3f
-                                    )
-                                )
+                                modernTvTileSubtitleStyle(shadowed = true)
                             } else {
                                 MaterialTheme.typography.labelSmall
                             },
@@ -2191,7 +2200,7 @@ private fun ModernIptvCollection(
     }
     val columns = when {
         isLiveTv && isPhone -> 1
-        isLiveTv && themedLiveTiles && isTv -> 3
+        isLiveTv && isTv -> 2
         isLiveTv && themedLiveTiles && configuration.screenWidthDp >= 800 -> 3
         isLiveTv && themedLiveTiles -> 2
         else -> modernPosterColumns(configuration, isTv)
@@ -2541,11 +2550,12 @@ private fun ModernLiveChannelTile(
         item.streamType,
         item.catchupAvailable,
         item.epgChannelId,
-        categoryTitle
+        categoryTitle,
+        isTv
     ) {
         buildList {
             item.channelNumber?.let { add("CH $it") }
-            add(categoryTitle)
+            if (!isTv) add(categoryTitle)
             item.streamType?.takeIf { it.isNotBlank() }?.let { add(it.uppercase()) }
             if (item.catchupAvailable == true) add("Catch-up")
             if (!item.epgChannelId.isNullOrBlank()) add("EPG")
@@ -2556,7 +2566,7 @@ private fun ModernLiveChannelTile(
         Surface(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
-                .heightIn(min = if (isPhone) 102.dp else 118.dp)
+                .heightIn(min = if (isPhone) 102.dp else if (isTv) 106.dp else 118.dp)
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
@@ -2579,12 +2589,12 @@ private fun ModernLiveChannelTile(
                             Brush.linearGradient(listOf(Color(0xFF171A20), Color(0xFF101216)))
                         }
                     )
-                    .padding(if (isPhone) 10.dp else 14.dp),
+                    .padding(if (isPhone) 10.dp else if (isTv) 11.dp else 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(if (isPhone) 11.dp else 14.dp)
             ) {
                 Surface(
-                    modifier = Modifier.size(if (isPhone) 58.dp else 72.dp),
+                    modifier = Modifier.size(if (isPhone) 58.dp else if (isTv) 60.dp else 72.dp),
                     shape = RoundedCornerShape(if (isPhone) 11.dp else 13.dp),
                     color = Color.Black.copy(alpha = .30f)
                 ) {
@@ -2614,7 +2624,7 @@ private fun ModernLiveChannelTile(
                         item.title,
                         color = Color.White,
                         style = when {
-                            isTv -> MaterialTheme.typography.labelMedium
+                            isTv -> modernTvTileTitleStyle()
                             isPhone -> MaterialTheme.typography.bodyLarge
                             else -> MaterialTheme.typography.titleMedium
                         },
@@ -2628,7 +2638,7 @@ private fun ModernLiveChannelTile(
                         Text(
                             "Now · $title",
                             color = Color(0xFFF1C7CB),
-                            style = if (isTv) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+                            style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -2641,7 +2651,7 @@ private fun ModernLiveChannelTile(
                             Text(
                                 description,
                                 color = Color.White.copy(alpha = .72f),
-                                style = if (isTv) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+                                style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -2651,7 +2661,7 @@ private fun ModernLiveChannelTile(
                         Text(
                             it,
                             color = Color.White.copy(alpha = .68f),
-                            style = MaterialTheme.typography.labelSmall
+                            style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.labelSmall
                         )
                     }
                     upcomingProgramme?.let { next ->
@@ -2662,7 +2672,7 @@ private fun ModernLiveChannelTile(
                         Text(
                             listOfNotNull("Next", start, next.title).joinToString(" · "),
                             color = Color.White.copy(alpha = .62f),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -2678,16 +2688,18 @@ private fun ModernLiveChannelTile(
                     Text(
                         technicalSummary,
                         color = Color.White.copy(alpha = .58f),
-                        style = MaterialTheme.typography.labelSmall,
+                        style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Icon(
-                    Icons.Default.PlayArrow,
-                    null,
-                    tint = Color.White.copy(alpha = if (focused) 1f else .62f)
-                )
+                if (!isTv) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        null,
+                        tint = Color.White.copy(alpha = if (focused) 1f else .62f)
+                    )
+                }
             }
         }
         ModernTileActionsMenu(
@@ -2921,7 +2933,7 @@ private fun ModernCollectionPoster(
                         if (focused) FontWeight.SemiBold
                         else FontWeight.Medium,
                     style = if (isTv) {
-                        MaterialTheme.typography.labelMedium
+                        modernTvTileTitleStyle()
                     } else {
                         MaterialTheme.typography.bodyMedium
                     },
@@ -2937,7 +2949,7 @@ private fun ModernCollectionPoster(
                         color =
                             if (active) Color(0xFFBFC3CA)
                             else Color(0xFF858B94),
-                        style = MaterialTheme.typography.labelSmall,
+                        style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.labelSmall,
                         maxLines = if (isTv) 1 else 2,
                         overflow = TextOverflow.Ellipsis
                     )

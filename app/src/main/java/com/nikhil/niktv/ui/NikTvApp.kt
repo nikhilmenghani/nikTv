@@ -423,6 +423,7 @@ internal fun Modifier.remoteCombinedClickable(
     val scope = rememberCoroutineScope()
     val remoteNavigationActive =
         LocalContext.current.usesRemoteNavigation(LocalConfiguration.current)
+    val resolvedInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
     var keyIsDown by remember { mutableStateOf(false) }
     var longPressReached by remember { mutableStateOf(false) }
     var longPressJob by remember { mutableStateOf<Job?>(null) }
@@ -459,22 +460,15 @@ internal fun Modifier.remoteCombinedClickable(
             }
         }
         .then(
-            if (interactionSource != null) {
-                Modifier.combinedClickable(
-                    interactionSource = interactionSource,
-                    // TV cards draw their own shape-aware focus border. The
-                    // platform indication is rectangular and leaks beyond
-                    // rounded poster corners while focused.
-                    indication = if (remoteNavigationActive) null else LocalIndication.current,
-                    onClick = onClick,
-                    onLongClick = onLongClick
-                )
-            } else {
-                Modifier.combinedClickable(
-                    onClick = onClick,
-                    onLongClick = onLongClick
-                )
-            }
+            Modifier.combinedClickable(
+                interactionSource = resolvedInteractionSource,
+                // TV cards draw their own shape-aware focus border. The
+                // platform indication is rectangular and leaks beyond
+                // rounded poster corners while focused.
+                indication = if (remoteNavigationActive) null else LocalIndication.current,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
         )
 }
 internal fun String.withoutConfigurationQuotes(): String = trim().let { value ->
