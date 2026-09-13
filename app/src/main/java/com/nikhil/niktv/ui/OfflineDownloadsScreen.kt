@@ -112,6 +112,8 @@ import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
 import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
+import com.nikhil.niktv.data.LiveTvRecorder
+import com.nikhil.niktv.data.RecordedLiveTvMedia
 import com.nikhil.niktv.data.AppStorageSnapshot
 import com.nikhil.niktv.data.appStorageSnapshot
 import com.nikhil.niktv.data.clearArtworkCache
@@ -123,6 +125,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 internal fun OfflineDownloadsScreen(
@@ -136,6 +140,9 @@ internal fun OfflineDownloadsScreen(
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
     val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
     var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
+    var pendingRecordingRemoval by remember { mutableStateOf<RecordedLiveTvMedia?>(null) }
+    var recordings by remember { mutableStateOf<List<RecordedLiveTvMedia>>(emptyList()) }
+    val liveRecording by LiveTvRecorder.state.collectAsState()
     var pendingClear by remember { mutableStateOf<String?>(null) }
     var storageRevision by remember { mutableLongStateOf(0L) }
     var storage by remember { mutableStateOf<AppStorageSnapshot?>(null) }
@@ -143,6 +150,9 @@ internal fun OfflineDownloadsScreen(
     val scope = rememberCoroutineScope()
     LaunchedEffect(state.offlineDownloadRevision, storageRevision) {
         storage = runCatching { appStorageSnapshot(context, state.offlineDownloads) }.getOrNull()
+    }
+    LaunchedEffect(storageRevision, liveRecording.active) {
+        recordings = withContext(Dispatchers.IO) { LiveTvRecorder.recordings(context) }
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
         ModernScreenTopBar("Offline downloads", close)
@@ -154,12 +164,12 @@ internal fun OfflineDownloadsScreen(
             onClearSubtitles = { pendingClear = "subtitles" },
             onClearTemporary = { pendingClear = "temporary" }
         )
-        if (entries.isEmpty()) {
+        if (entries.isEmpty() && recordings.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Default.DownloadDone, null, Modifier.size(54.dp), tint = Color.Gray)
-                    Text("No offline downloads", style = MaterialTheme.typography.titleLarge)
-                    Text("Downloaded movies and episodes remain available without internet.", color = Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Text("No offline media", style = MaterialTheme.typography.titleLarge)
+                    Text("Downloaded movies, episodes, and Live TV recordings will appear here.", color = Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
             }
         } else {
@@ -168,6 +178,70 @@ internal fun OfflineDownloadsScreen(
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                if (recordings.isNotEmpty()) {
+                    item("recordings-header") {
+                        Text("Recordings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+                    }
+                    items(recordings, key = { it.uri.toString() }) { recording ->
+                        Surface(
+                            onClick = {
+                                val view = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(recording.uri, "video/*")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                runCatching { context.startActivity(view) }.onFailure {
+                                    Toast.makeText(context, "No video player is available", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xFF151820),
+                            modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(14.dp))
+                        ) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Surface(
+                                    modifier = Modifier.size(112.dp, 64.dp),
+                                    shape = RoundedCornerShape(9.dp),
+                                    color = Color(0xFF272A31)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.FiberManualRecord, null, tint = Color(0xFFE50914), modifier = Modifier.size(30.dp))
+                                    }
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(recording.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                    Text("Live TV recording · MPEG-TS", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                    Text(
+                                        "${formatOfflineBytes(recording.sizeBytes)} · Download/NikTV/Recordings",
+                                        color = Color.Gray,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    IconButton(
+                                        onClick = {
+                                            val send = Intent(Intent.ACTION_SEND).apply {
+                                                type = "video/*"
+                                                putExtra(Intent.EXTRA_STREAM, recording.uri)
+                                                putExtra(Intent.EXTRA_TITLE, recording.title)
+                                                clipData = ClipData.newUri(context.contentResolver, recording.title, recording.uri)
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            runCatching { context.startActivity(Intent.createChooser(send, "Share ${recording.title}")) }
+                                                .onFailure { Toast.makeText(context, "No app is available to share this recording", Toast.LENGTH_SHORT).show() }
+                                        },
+                                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                                    ) { Icon(Icons.Default.Share, "Share recording") }
+                                    IconButton(
+                                        onClick = { pendingRecordingRemoval = recording },
+                                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                                    ) { Icon(Icons.Default.Delete, "Delete recording") }
+                                }
+                            }
+                        }
+                    }
+                }
                 listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach { type ->
                     val group = entries.filter { it.catalogType == type }
                     if (group.isNotEmpty()) {
@@ -324,6 +398,22 @@ internal fun OfflineDownloadsScreen(
             text = { Text("Remove “${entry.media.title}” from offline downloads?") },
             dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Keep") } },
             confirmButton = { Button(onClick = { remove(entry.media, entry.catalogType); pendingRemoval = null }) { Text("Remove") } }
+        )
+    }
+    pendingRecordingRemoval?.let { recording ->
+        AlertDialog(
+            onDismissRequest = { pendingRecordingRemoval = null },
+            title = { Text("Delete recording?") },
+            text = { Text("Remove “${recording.title}” from this device?") },
+            dismissButton = { TextButton(onClick = { pendingRecordingRemoval = null }) { Text("Keep") } },
+            confirmButton = {
+                Button(onClick = {
+                    LiveTvRecorder.delete(context, recording)
+                    recordings = recordings.filterNot { it.uri == recording.uri }
+                    storageRevision++
+                    pendingRecordingRemoval = null
+                }) { Text("Delete") }
+            }
         )
     }
     pendingClear?.let { target ->

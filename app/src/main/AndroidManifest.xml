@@ -30,6 +30,7 @@
                 android:resource="@xml/niktv_share_paths" />
         </provider>
         <service android:name=".data.NikTvDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".data.LiveTvRecordingService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"

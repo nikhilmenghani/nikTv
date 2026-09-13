@@ -82,6 +82,7 @@ import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.MediaItem as NikMediaItem
 import com.nikhil.niktv.data.OfflineMediaDownloads
+import com.nikhil.niktv.data.LiveTvRecorder
 import com.nikhil.niktv.data.SubtitleSearchRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -268,6 +269,7 @@ fun PlayerScreen(
     onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val liveRecording by LiveTvRecorder.state.collectAsState()
     val playerConfiguration = LocalConfiguration.current
     val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
@@ -1379,6 +1381,22 @@ fun PlayerScreen(
                                 indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
                                 onFocused = { controlsFocused = it }
                             )
+                        } else {
+                            val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
+                            PlayerChromeIconButton(
+                                icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
+                                contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
+                                onClick = {
+                                    if (liveRecording.active) LiveTvRecorder.stop(context)
+                                    else LiveTvRecorder.start(context, media.media.title, media.url)
+                                },
+                                modifier = Modifier
+                                    .focusRequester(downloadFocusRequester)
+                                    .focusProperties { left = backFocusRequester; right = subtitleFocusRequester; down = topDownRequester }
+                                    .playerDpadFocusRoutes(backFocusRequester, subtitleFocusRequester, topDownRequester),
+                                selected = false,
+                                onFocused = { controlsFocused = it }
+                            )
                         }
                         PlayerChromeIconButton(
                             icon = Icons.Default.Subtitles,
@@ -1387,12 +1405,12 @@ fun PlayerScreen(
                             modifier = Modifier
                                 .focusRequester(subtitleFocusRequester)
                                 .focusProperties {
-                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester
+                                    left = downloadFocusRequester
                                     right = resizeFocusRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadFocusRequester else backFocusRequester,
+                                    left = downloadFocusRequester,
                                     right = resizeFocusRequester,
                                     down = topDownRequester
                                 ),

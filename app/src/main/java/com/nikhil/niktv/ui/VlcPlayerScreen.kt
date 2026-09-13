@@ -44,6 +44,7 @@ import com.nikhil.niktv.model.PlayingMedia
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.data.SubtitleSearchRequest
+import com.nikhil.niktv.data.LiveTvRecorder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.LibVLC
@@ -89,6 +90,7 @@ internal fun VlcPlayerScreen(
     onPlayerSwitchFocusRestored: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val liveRecording by LiveTvRecorder.state.collectAsState()
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
     LaunchedEffect(downloadRequested, offlineDownloadInProgress) {
         if (offlineDownloadInProgress) {
@@ -920,6 +922,22 @@ internal fun VlcPlayerScreen(
                                 indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
                                 onFocused = { controlsFocused = it }
                             )
+                        } else {
+                            val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
+                            PlayerChromeIconButton(
+                                icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
+                                contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
+                                onClick = {
+                                    if (liveRecording.active) LiveTvRecorder.stop(context)
+                                    else LiveTvRecorder.start(context, media.media.title, media.url)
+                                },
+                                modifier = Modifier
+                                    .focusRequester(downloadRequester)
+                                    .focusProperties { left = backRequester; right = subtitleRequester; down = topDownRequester }
+                                    .playerDpadFocusRoutes(backRequester, subtitleRequester, topDownRequester),
+                                selected = false,
+                                onFocused = { controlsFocused = it }
+                            )
                         }
                         PlayerChromeIconButton(
                             icon = Icons.Default.Subtitles,
@@ -928,12 +946,12 @@ internal fun VlcPlayerScreen(
                             modifier = Modifier
                                 .focusRequester(subtitleRequester)
                                 .focusProperties {
-                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester
+                                    left = downloadRequester
                                     right = resizeRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = if (media.catalogType != CatalogType.LIVE_TV) downloadRequester else backRequester,
+                                    left = downloadRequester,
                                     right = resizeRequester,
                                     down = topDownRequester
                                 ),
