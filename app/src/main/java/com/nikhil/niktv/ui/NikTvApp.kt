@@ -421,6 +421,8 @@ internal fun Modifier.remoteCombinedClickable(
     interactionSource: MutableInteractionSource? = null
 ): Modifier {
     val scope = rememberCoroutineScope()
+    val remoteNavigationActive =
+        LocalContext.current.usesRemoteNavigation(LocalConfiguration.current)
     var keyIsDown by remember { mutableStateOf(false) }
     var longPressReached by remember { mutableStateOf(false) }
     var longPressJob by remember { mutableStateOf<Job?>(null) }
@@ -460,7 +462,10 @@ internal fun Modifier.remoteCombinedClickable(
             if (interactionSource != null) {
                 Modifier.combinedClickable(
                     interactionSource = interactionSource,
-                    indication = LocalIndication.current,
+                    // TV cards draw their own shape-aware focus border. The
+                    // platform indication is rectangular and leaks beyond
+                    // rounded poster corners while focused.
+                    indication = if (remoteNavigationActive) null else LocalIndication.current,
                     onClick = onClick,
                     onLongClick = onLongClick
                 )

@@ -99,16 +99,19 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImage
 import com.nikhil.niktv.data.TrendingMovie
@@ -1645,7 +1648,15 @@ private fun ModernCompactMediaCard(
                     Text(
                         item.title,
                         style = if (isTv) {
-                            MaterialTheme.typography.labelMedium
+                            MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 15.sp,
+                                shadow = Shadow(
+                                    color = Color.Black.copy(alpha = 0.95f),
+                                    offset = Offset(1f, 1f),
+                                    blurRadius = 4f
+                                )
+                            )
                         } else {
                             MaterialTheme.typography.titleSmall
                         },
@@ -1653,7 +1664,7 @@ private fun ModernCompactMediaCard(
                             if (active) FontWeight.Bold
                             else FontWeight.SemiBold,
                         color = Color.White,
-                        maxLines = if (isTv) 3 else 2,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (
@@ -1664,7 +1675,15 @@ private fun ModernCompactMediaCard(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
                             style = if (isTv) {
-                                MaterialTheme.typography.labelSmall
+                                MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    lineHeight = 12.sp,
+                                    shadow = Shadow(
+                                        color = Color.Black,
+                                        offset = Offset(1f, 1f),
+                                        blurRadius = 3f
+                                    )
+                                )
                             } else {
                                 MaterialTheme.typography.labelSmall
                             },
