@@ -657,7 +657,7 @@ internal fun ModernBrowseScreen(
     ) {
             if (!isWide) item("modern-top", span = gridSpan) {
                 if (mobileUiDesign.usesYouTubeOn(configuration)) {
-                    YouTubeStyleTopBar(state, openSearch, openSettings, openProfileSwitcher)
+                    YouTubeStyleTopBar(state, openFavorites, openSearch, openSettings, openProfileSwitcher)
                 } else {
                     ModernTopBar(state, home, openHome, selectType, openFavorites, openSearch, openSettings, openProfileSwitcher)
                 }

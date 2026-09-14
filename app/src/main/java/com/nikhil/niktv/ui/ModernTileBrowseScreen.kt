@@ -317,6 +317,9 @@ private fun ModernTilePhoneHeader(
                 modifier = Modifier.size(32.dp)
             )
             Spacer(Modifier.width(9.dp))
+            IconButton(onClick = openProfileSwitcher) {
+                Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
+            }
             Text(
                 "NikTV",
                 style = MaterialTheme.typography.titleLarge,
@@ -326,17 +329,11 @@ private fun ModernTilePhoneHeader(
             IconButton(onClick = openSearch) {
                 Icon(Icons.Default.Search, "Search")
             }
+            IconButton(onClick = openFavorites) {
+                Icon(Icons.Default.FavoriteBorder, "My List")
+            }
             IconButton(onClick = openSettings) {
                 Icon(Icons.Default.Settings, "Settings")
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (!youtubeNavigation) {
-                    Text(state.savedProfile?.name.orEmpty(), style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.width(4.dp))
-                }
-                IconButton(onClick = openProfileSwitcher) {
-                    Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
-                }
             }
         }
 

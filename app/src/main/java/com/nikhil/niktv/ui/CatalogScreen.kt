@@ -442,21 +442,6 @@ internal fun CatalogScreen(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
-            if (
-                !state.settingsOpen &&
-                !state.searchOpen &&
-                state.movieMatchSelection == null &&
-                state.seriesMatchSelection == null
-            ) {
-                AppBrightnessQuickButton(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(
-                            end = 12.dp,
-                            bottom = if (showYouTubeNavigation) 82.dp else 12.dp
-                        )
-                )
-            }
         }
     }
 

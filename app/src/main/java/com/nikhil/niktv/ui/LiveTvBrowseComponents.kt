@@ -370,6 +370,9 @@ internal fun ModernSideRail(
     val railConfiguration = LocalConfiguration.current
     val railContext = LocalContext.current
     val isTv = railContext.isTvLikeDevice(railConfiguration)
+    // The side rail is only used on TVs and wide tablets. Keep their profile
+    // entry visually consistent, rather than falling back to the phone label.
+    val usesLargeProfileCard = isTv || railConfiguration.screenWidthDp >= 720
     var profileFocused by remember { mutableStateOf(false) }
     Surface(modifier, color = Color(0xFF070707), shadowElevation = 12.dp) {
         Column(
@@ -377,7 +380,7 @@ internal fun ModernSideRail(
                 .padding(horizontal = if (expanded) 10.dp else 6.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (isTv) {
+            if (usesLargeProfileCard) {
                 val profileShape = RoundedCornerShape(14.dp)
                 Surface(
                     onClick = openProfileSwitcher,
@@ -446,10 +449,12 @@ internal fun ModernSideRail(
             }
             ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen, expanded, openFavorites)
             ModernRailButton(Icons.Default.DownloadDone, "Offline", state.offlineDownloadsOpen, expanded, openOfflineDownloads)
-            AppBrightnessQuickButton(
-                modifier = Modifier.fillMaxWidth(),
-                showLabel = expanded
-            )
+            if (isTv) {
+                AppBrightnessQuickButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    showLabel = expanded
+                )
+            }
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
         }
@@ -504,6 +509,7 @@ internal fun ModernRailButton(icon: ImageVector, label: String, selected: Boolea
 @Composable
 internal fun YouTubeStyleTopBar(
     state: NikTvState,
+    openFavorites: () -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
     openProfileSwitcher: () -> Unit
@@ -514,12 +520,13 @@ internal fun YouTubeStyleTopBar(
     ) {
         Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.size(34.dp))
         Spacer(Modifier.width(9.dp))
-        Text("NikTV", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
-        IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
-        IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
         IconButton(onClick = openProfileSwitcher) {
             Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
         }
+        Text("NikTV", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+        IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
+        IconButton(onClick = openFavorites) { Icon(Icons.Default.FavoriteBorder, "My List") }
+        IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
     }
 }
 
