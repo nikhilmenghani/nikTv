@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -641,12 +642,12 @@ internal fun PlayerQueueOverlay(
     val configuration = LocalConfiguration.current
     val focusManager = LocalFocusManager.current
     /*
-     * PLAYER_QUEUE_GRID_V40
+     * PLAYER_QUEUE_LAYOUT_V41
      *
-     * Keep one shared queue surface for Media3/ExoPlayer and VLC, but present
-     * the queue as a vertically scrollable grid instead of a horizontal rail.
-     * Columns adapt to the available player width while D-pad navigation is
-     * explicit so vertical movement stays in the same column.
+     * Media3/ExoPlayer and VLC continue to share one queue surface. Phones use
+     * a touch-first, single-row horizontal rail so the swipe-up queue keeps
+     * more video visible. Tablets and TV devices keep the existing vertical
+     * grid and its explicit same-column D-pad navigation.
      */
     val tvQueueGrid =
         context.packageManager.hasSystemFeature(
@@ -728,6 +729,7 @@ internal fun PlayerQueueOverlay(
         compactQueueGrid -> 112.dp
         else -> 124.dp
     }
+    val compactQueueCardWidth = 176.dp
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
@@ -735,10 +737,14 @@ internal fun PlayerQueueOverlay(
     val loadMoreRequester = remember { FocusRequester() }
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
-    val initialVisibleRow =
-        (currentIndex / queueColumnCount) * queueColumnCount
+    val initialVisibleItem =
+        if (compactQueueGrid) {
+            currentIndex
+        } else {
+            (currentIndex / queueColumnCount) * queueColumnCount
+        }
     val gridState = rememberLazyGridState(
-        initialFirstVisibleItemIndex = initialVisibleRow
+        initialFirstVisibleItemIndex = initialVisibleItem
     )
 
     var focusedIndex by remember(playingId) { mutableIntStateOf(currentIndex) }
@@ -902,9 +908,15 @@ internal fun PlayerQueueOverlay(
         Box {
             Surface(
                 Modifier
-                .fillMaxWidth()
-                .height(queueCardHeight)
-                .clip(cardShape)
+                    .then(
+                        if (compactQueueGrid) {
+                            Modifier.width(compactQueueCardWidth)
+                        } else {
+                            Modifier.fillMaxWidth()
+                        }
+                    )
+                    .height(queueCardHeight)
+                    .clip(cardShape)
                 .focusRequester(requester)
                 .onFocusChanged {
                     focused = it.isFocused
@@ -1131,54 +1143,82 @@ internal fun PlayerQueueOverlay(
                         } else {
                             uniqueItems.lastIndex
                         }
-                    val currentColumn =
-                        if (focusedIndex >= 0) {
-                            focusedIndex % queueColumnCount
-                        } else {
-                            0
-                        }
-
-                    when (event.key) {
-                        Key.DirectionUp -> {
-                            if (focusedIndex < queueColumnCount) {
+                    if (compactQueueGrid) {
+                        when (event.key) {
+                            Key.DirectionUp -> {
                                 onDismiss()
+                                true
+                            }
+
+                            Key.DirectionLeft -> {
+                                if (focusedIndex > 0) {
+                                    focusAt(focusedIndex - 1)
+                                }
+                                true
+                            }
+
+                            Key.DirectionRight -> {
+                                val target = focusedIndex + 1
+                                if (target <= maxIndex) {
+                                    focusAt(target)
+                                }
+                                true
+                            }
+
+                            Key.DirectionDown -> true
+
+                            else -> false
+                        }
+                    } else {
+                        val currentColumn =
+                            if (focusedIndex >= 0) {
+                                focusedIndex % queueColumnCount
                             } else {
-                                focusAt(focusedIndex - queueColumnCount)
+                                0
                             }
-                            true
-                        }
 
-                        Key.DirectionLeft -> {
-                            if (currentColumn > 0) {
-                                focusAt(focusedIndex - 1)
+                        when (event.key) {
+                            Key.DirectionUp -> {
+                                if (focusedIndex < queueColumnCount) {
+                                    onDismiss()
+                                } else {
+                                    focusAt(focusedIndex - queueColumnCount)
+                                }
+                                true
                             }
-                            true
-                        }
 
-                        Key.DirectionRight -> {
-                            val target = focusedIndex + 1
-                            if (
-                                currentColumn < queueColumnCount - 1 &&
-                                target <= maxIndex
-                            ) {
-                                focusAt(target)
+                            Key.DirectionLeft -> {
+                                if (currentColumn > 0) {
+                                    focusAt(focusedIndex - 1)
+                                }
+                                true
                             }
-                            true
-                        }
 
-                        Key.DirectionDown -> {
-                            val nextRowStart =
-                                focusedIndex - currentColumn + queueColumnCount
-                            if (nextRowStart <= maxIndex) {
-                                focusAt(
-                                    (nextRowStart + currentColumn)
-                                        .coerceAtMost(maxIndex)
-                                )
+                            Key.DirectionRight -> {
+                                val target = focusedIndex + 1
+                                if (
+                                    currentColumn < queueColumnCount - 1 &&
+                                    target <= maxIndex
+                                ) {
+                                    focusAt(target)
+                                }
+                                true
                             }
-                            true
-                        }
 
-                        else -> false
+                            Key.DirectionDown -> {
+                                val nextRowStart =
+                                    focusedIndex - currentColumn + queueColumnCount
+                                if (nextRowStart <= maxIndex) {
+                                    focusAt(
+                                        (nextRowStart + currentColumn)
+                                            .coerceAtMost(maxIndex)
+                                    )
+                                }
+                                true
+                            }
+
+                            else -> false
+                        }
                     }
                 }
             }
@@ -1196,9 +1236,12 @@ internal fun PlayerQueueOverlay(
                             start = change.position
                             tracking = true
                             startedAtGridTop =
-                                gridState.firstVisibleItemIndex == 0 &&
-                                    gridState
-                                        .firstVisibleItemScrollOffset == 0
+                                compactQueueGrid ||
+                                    (
+                                        gridState.firstVisibleItemIndex == 0 &&
+                                            gridState
+                                                .firstVisibleItemScrollOffset == 0
+                                    )
                         } else if (
                             !change.pressed &&
                             change.previousPressed &&
@@ -1271,10 +1314,13 @@ internal fun PlayerQueueOverlay(
                     color = Color.White
                 )
                 Text(
-                    if (tvQueueGrid) {
-                        "D-pad browse  •  ↑ from top closes  •  OK Play"
-                    } else {
-                        "Swipe to browse  •  Swipe down at top to close"
+                    when {
+                        tvQueueGrid ->
+                            "D-pad browse  •  ↑ from top closes  •  OK Play"
+                        compactQueueGrid ->
+                            "Swipe sideways to browse  •  Swipe down to close"
+                        else ->
+                            "Swipe to browse  •  Swipe down at top to close"
                     },
                     style =
                         if (compactQueueGrid || tvQueueGrid) {
@@ -1286,22 +1332,8 @@ internal fun PlayerQueueOverlay(
                 )
                 Spacer(Modifier.height(queueHeaderSpacer))
 
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(queueColumnCount),
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .clipToBounds(),
-                    state = gridState,
-                    horizontalArrangement =
-                        Arrangement.spacedBy(
-                            queueGridHorizontalSpacing
-                        ),
-                    verticalArrangement =
-                        Arrangement.spacedBy(
-                            queueGridVerticalSpacing
-                        )
-                ) {
+                val queueGridContent:
+                    androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit = {
                     items(
                         count = uniqueItems.size,
                         key = { index ->
@@ -1325,7 +1357,13 @@ internal fun PlayerQueueOverlay(
 
                             Surface(
                                 Modifier
-                                    .fillMaxWidth()
+                                    .then(
+                                        if (compactQueueGrid) {
+                                            Modifier.width(compactQueueCardWidth)
+                                        } else {
+                                            Modifier.fillMaxWidth()
+                                        }
+                                    )
                                     .height(queueCardHeight)
                                     .clip(loadMoreShape)
                                     .focusRequester(loadMoreRequester)
@@ -1423,6 +1461,44 @@ internal fun PlayerQueueOverlay(
                             }
                         }
                     }
+                }
+
+                if (compactQueueGrid) {
+                    LazyHorizontalGrid(
+                        rows = GridCells.Fixed(1),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clipToBounds(),
+                        state = gridState,
+                        horizontalArrangement =
+                            Arrangement.spacedBy(
+                                queueGridHorizontalSpacing
+                            ),
+                        verticalArrangement =
+                            Arrangement.spacedBy(
+                                queueGridVerticalSpacing
+                            ),
+                        content = queueGridContent
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(queueColumnCount),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clipToBounds(),
+                        state = gridState,
+                        horizontalArrangement =
+                            Arrangement.spacedBy(
+                                queueGridHorizontalSpacing
+                            ),
+                        verticalArrangement =
+                            Arrangement.spacedBy(
+                                queueGridVerticalSpacing
+                            ),
+                        content = queueGridContent
+                    )
                 }
             }
         }
