@@ -506,6 +506,7 @@ internal fun ModernRailButton(icon: ImageVector, label: String, selected: Boolea
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 internal fun YouTubeStyleTopBar(
     state: NikTvState,
@@ -515,18 +516,105 @@ internal fun YouTubeStyleTopBar(
     openProfileSwitcher: () -> Unit
 ) {
     Row(
-        Modifier.fillMaxWidth().background(Color(0xFF090909)).padding(horizontal = 14.dp, vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF090909))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.size(34.dp))
+        Image(
+            painterResource(R.drawable.niktv_logo_foreground),
+            "NikTV",
+            Modifier.size(34.dp)
+        )
         Spacer(Modifier.width(9.dp))
+        Text(
+            "NikTV",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = openSearch) {
+            Icon(Icons.Default.Search, "Search")
+        }
         IconButton(onClick = openProfileSwitcher) {
             Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
         }
-        Text("NikTV", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
-        IconButton(onClick = openSearch) { Icon(Icons.Default.Search, "Search") }
-        IconButton(onClick = openFavorites) { Icon(Icons.Default.FavoriteBorder, "My List") }
-        IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
+    }
+}
+
+@Composable
+internal fun MobileLibrarySwitcher(
+    downloadsSelected: Boolean,
+    openFavorites: () -> Unit,
+    openOfflineDownloads: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color(0xFF090909)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            MobileLibraryTab(
+                label = "My List",
+                icon = Icons.Default.FavoriteBorder,
+                selected = !downloadsSelected,
+                onClick = openFavorites
+            )
+            MobileLibraryTab(
+                label = "Downloads",
+                icon = Icons.Default.DownloadDone,
+                selected = downloadsSelected,
+                onClick = openOfflineDownloads
+            )
+        }
+    }
+}
+
+@Composable
+private fun RowScope.MobileLibraryTab(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .weight(1f)
+            .height(42.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) Color(0xFF241012) else Color(0xFF17191E),
+        border = BorderStroke(
+            1.dp,
+            if (selected) Color(0xFFE50914) else Color(0xFF2D3036)
+        )
+    ) {
+        Row(
+            Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = if (selected) Color.White else Color(0xFFAEB0B6)
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (selected) Color.White else Color(0xFFAEB0B6),
+                maxLines = 1
+            )
+        }
     }
 }
 
@@ -536,23 +624,60 @@ internal fun YouTubeStyleBottomBar(
     selectPage: (MobileMainPage) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(modifier = modifier.fillMaxWidth(), color = Color(0xFF101216), tonalElevation = 8.dp) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color(0xFF101216),
+        tonalElevation = 8.dp
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 9.dp)
-                .animateContentSize(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                .height(72.dp)
+                .padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            MobileMainPage.entries.forEach { page ->
-                ExpressiveBottomNavigationItem(
-                    icon = page.icon,
-                    label = page.title,
-                    selected = currentPage == page,
-                    onClick = { selectPage(page) },
-                    inactiveWidth = 48.dp
-                )
-            }
+            MobileMainPage.entries
+                .filterNot { it == MobileMainPage.DOWNLOADS }
+                .forEach { page ->
+                    val selected =
+                        currentPage == page ||
+                            (
+                                page == MobileMainPage.LIBRARY &&
+                                    currentPage == MobileMainPage.DOWNLOADS
+                            )
+
+                    NavigationBarItem(
+                        selected = selected,
+                        onClick = {
+                            if (!(page == MobileMainPage.LIBRARY && currentPage == MobileMainPage.DOWNLOADS)) {
+                                selectPage(page)
+                            }
+                        },
+                        icon = {
+                            Icon(
+                                page.icon,
+                                contentDescription = page.title,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                page.title,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1
+                            )
+                        },
+                        alwaysShowLabel = true,
+                        modifier = Modifier.weight(1f),
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.White,
+                            selectedTextColor = Color.White,
+                            indicatorColor = Color(0xFF5A171C),
+                            unselectedIconColor = Color(0xFFAEB0B6),
+                            unselectedTextColor = Color(0xFFAEB0B6)
+                        )
+                    )
+                }
         }
     }
 }

@@ -421,20 +421,32 @@ internal fun CatalogScreen(
             val showYouTubeNavigation = mobileUiDesign.usesYouTubeOn(configuration) && !state.settingsOpen && !state.searchOpen
             val mainTabSwipeEnabled =
                 showYouTubeNavigation &&
+                    !state.favoritesOpen &&
+                    !state.offlineDownloadsOpen &&
                     state.movieMatchSelection == null &&
                     state.seriesMatchSelection == null &&
                     state.selectedSeries == null &&
                     !modernSectionOpen
-            MainContent(
-                Modifier
-                    .fillMaxSize()
-                    .padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
-                    .mobileMainTabSwipe(
-                        enabled = mainTabSwipeEnabled,
-                        currentPage = mobileMainPage,
-                        onPageSelected = ::selectMobileMainPage
+            Column(Modifier.fillMaxSize()) {
+                if (showYouTubeNavigation && (state.favoritesOpen || state.offlineDownloadsOpen)) {
+                    MobileLibrarySwitcher(
+                        downloadsSelected = state.offlineDownloadsOpen,
+                        openFavorites = openFavorites,
+                        openOfflineDownloads = openOfflineDownloads
                     )
-            )
+                }
+                MainContent(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
+                        .mobileMainTabSwipe(
+                            enabled = mainTabSwipeEnabled,
+                            currentPage = mobileMainPage,
+                            onPageSelected = ::selectMobileMainPage
+                        )
+                )
+            }
             if (showYouTubeNavigation) {
                 YouTubeStyleBottomBar(
                     currentPage = mobileMainPage,
