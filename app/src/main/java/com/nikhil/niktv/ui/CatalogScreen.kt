@@ -427,7 +427,21 @@ internal fun CatalogScreen(
                     state.seriesMatchSelection == null &&
                     state.selectedSeries == null &&
                     !modernSectionOpen
-            Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
+            ) {
+                MainContent(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .mobileMainTabSwipe(
+                            enabled = mainTabSwipeEnabled,
+                            currentPage = mobileMainPage,
+                            onPageSelected = ::selectMobileMainPage
+                        )
+                )
                 if (showYouTubeNavigation && (state.favoritesOpen || state.offlineDownloadsOpen)) {
                     MobileLibrarySwitcher(
                         downloadsSelected = state.offlineDownloadsOpen,
@@ -435,17 +449,6 @@ internal fun CatalogScreen(
                         openOfflineDownloads = openOfflineDownloads
                     )
                 }
-                MainContent(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(bottom = if (showYouTubeNavigation) 72.dp else 0.dp)
-                        .mobileMainTabSwipe(
-                            enabled = mainTabSwipeEnabled,
-                            currentPage = mobileMainPage,
-                            onPageSelected = ::selectMobileMainPage
-                        )
-                )
             }
             if (showYouTubeNavigation) {
                 YouTubeStyleBottomBar(
