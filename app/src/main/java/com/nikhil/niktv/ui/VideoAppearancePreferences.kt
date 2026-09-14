@@ -739,10 +739,11 @@ internal fun PlayerQueueOverlay(
     }
     val queueCardHeight = when {
         tvQueueGrid -> 112.dp
-        else -> (touchQueueSheetHeight - 54.dp).coerceAtLeast(82.dp)
+        else -> (touchQueueSheetHeight - 40.dp).coerceAtLeast(96.dp)
     }
     val compactQueueCardWidth =
-        if (compactQueueGrid) 174.dp else 232.dp
+        if (compactQueueGrid) queueCardHeight * 1.15f
+        else queueCardHeight * 1.25f
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
@@ -779,6 +780,36 @@ internal fun PlayerQueueOverlay(
     )
 
     val showLoadMore = hasMore || loadingMore || loadMoreRequested
+    val isEpisodeQueue = uniqueItems.any {
+        it.seasonNumber != null || it.episodeNumber != null
+    }
+
+    /*
+     * Season pages can arrive newest-first from IPTV while the player presents
+     * them chronologically. Reaching the earliest loaded episode therefore
+     * requests the next provider page, which reveals older episode numbers on
+     * the left instead of requiring a right-side Load More detour.
+     */
+    LaunchedEffect(
+        focusedIndex,
+        isEpisodeQueue,
+        hasMore,
+        loadingMore,
+        loadMoreRequested
+    ) {
+        if (
+            isEpisodeQueue &&
+            focusedIndex == 0 &&
+            hasMore &&
+            !loadingMore &&
+            !loadMoreRequested &&
+            !focusFirstLoadedItem
+        ) {
+            focusFirstLoadedItem = true
+            loadMoreRequested = onLoadMore()
+            if (!loadMoreRequested) focusFirstLoadedItem = false
+        }
+    }
 
     fun focusAt(index: Int) {
         val maxIndex =
@@ -852,7 +883,7 @@ internal fun PlayerQueueOverlay(
             } else if (observedLoading) {
                 loadMoreRequested = false
                 observedLoading = false
-                if (focusFirstLoadedItem) {
+                if (focusFirstLoadedItem && !isEpisodeQueue) {
                     focusFirstLoadedItem = false
                     delay(40L)
                     if (uniqueItems.isNotEmpty()) {
@@ -871,6 +902,7 @@ internal fun PlayerQueueOverlay(
 
     LaunchedEffect(uniqueItems.map { it.id }) {
         val oldIds = previousItemIds
+        val oldFirstId = oldIds.firstOrNull()
         val firstNewIndex = uniqueItems.indexOfFirst { it.id !in oldIds }
         previousItemIds = uniqueItems.mapTo(linkedSetOf()) { it.id }
 
@@ -878,9 +910,16 @@ internal fun PlayerQueueOverlay(
             focusFirstLoadedItem = false
             loadMoreRequested = false
             observedLoading = false
-            focusedIndex = firstNewIndex
+            val targetIndex = if (isEpisodeQueue && oldFirstId != null) {
+                (uniqueItems.indexOfFirst { it.id == oldFirstId } - 1)
+                    .takeIf { it >= 0 }
+                    ?: firstNewIndex
+            } else {
+                firstNewIndex
+            }
+            focusedIndex = targetIndex
             val requester = requesters.getOrPut(
-                uniqueItems[firstNewIndex].id
+                uniqueItems[targetIndex].id
             ) { FocusRequester() }
             repeat(4) {
                 if (
@@ -1015,11 +1054,11 @@ internal fun PlayerQueueOverlay(
                                 )
                         )
 
-                        if (current && !compactQueueGrid) {
+                        if (current) {
                             Surface(
                                 Modifier
                                     .align(Alignment.TopStart)
-                                    .padding(8.dp),
+                                    .padding(6.dp),
                                 color = Color.Black.copy(alpha = .78f),
                                 shape =
                                     androidx.compose.foundation.shape
@@ -1027,8 +1066,8 @@ internal fun PlayerQueueOverlay(
                             ) {
                                 Row(
                                     Modifier.padding(
-                                        horizontal = 7.dp,
-                                        vertical = 3.dp
+                                        horizontal = 6.dp,
+                                        vertical = 2.dp
                                     ),
                                     verticalAlignment =
                                         Alignment.CenterVertically
@@ -1036,16 +1075,17 @@ internal fun PlayerQueueOverlay(
                                     Icon(
                                         Icons.Default.PlayArrow,
                                         null,
-                                        Modifier.size(14.dp),
+                                        Modifier.size(12.dp),
                                         tint = Color.White
                                     )
                                     Spacer(Modifier.width(3.dp))
                                     Text(
                                         "PLAYING",
                                         color = Color.White,
-                                        style =
-                                            MaterialTheme.typography
-                                                .labelSmall
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 9.sp,
+                                            lineHeight = 10.sp
+                                        )
                                     )
                                 }
                             }
@@ -1078,7 +1118,7 @@ internal fun PlayerQueueOverlay(
                                 .padding(
                                     start = 10.dp,
                                     end = 10.dp,
-                                    bottom = 9.dp
+                                    bottom = 7.dp
                                 ),
                             verticalArrangement =
                                 Arrangement.spacedBy(3.dp)
@@ -1106,7 +1146,7 @@ internal fun PlayerQueueOverlay(
                                             fontSize = 10.sp,
                                             lineHeight = 12.sp
                                         ),
-                                    maxLines = if (compactQueueGrid) 2 else 3,
+                                    maxLines = if (compactQueueGrid) 1 else 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -1439,7 +1479,7 @@ internal fun PlayerQueueOverlay(
             .background(
                 Color.Black.copy(
                     alpha =
-                        (if (tvQueueGrid) .24f else .76f) *
+                        (if (tvQueueGrid) .24f else .30f) *
                             renderedReveal
                 )
             )
@@ -1471,35 +1511,34 @@ internal fun PlayerQueueOverlay(
                     .fillMaxSize()
                     .padding(queueSheetPadding)
             ) {
-                Text(
-                    "Choose what to play",
-                    style =
-                        if (tvQueueGrid) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    Text(
+                        "Choose what to play",
+                        style = if (tvQueueGrid) {
                             MaterialTheme.typography.titleSmall
-                        } else if (compactQueueGrid) {
+                        } else {
                             MaterialTheme.typography.titleMedium
-                        } else {
-                            MaterialTheme.typography.headlineSmall
                         },
-                    color = Color.White
-                )
-                Text(
-                    when {
-                        tvQueueGrid ->
-                            "D-pad browse  •  ↑ from top closes  •  OK Play"
-                        touchQueueRail ->
-                            "Swipe sideways to browse  •  Swipe down to close"
-                        else ->
-                            "Swipe to browse  •  Swipe down at top to close"
-                    },
-                    style =
-                        if (touchQueueRail || tvQueueGrid) {
-                            MaterialTheme.typography.labelSmall
-                        } else {
-                            MaterialTheme.typography.bodySmall
+                        color = Color.White,
+                        maxLines = 1
+                    )
+                    Text(
+                        when {
+                            tvQueueGrid -> "D-pad browse  •  ↑ closes  •  OK Play"
+                            touchQueueRail -> "Swipe sideways to browse  •  Swipe down to close"
+                            else -> "Swipe to browse  •  Swipe down to close"
                         },
-                    color = Color.LightGray
-                )
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.LightGray,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Spacer(Modifier.height(queueHeaderSpacer))
 
                 val queueGridContent:

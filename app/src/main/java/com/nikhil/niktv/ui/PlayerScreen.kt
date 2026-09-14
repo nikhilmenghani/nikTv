@@ -2613,7 +2613,8 @@ internal fun PictureModeQuickOverlay(
     val compactPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val columns = if (compactPhone) 2 else 4
     val actionShape = RoundedCornerShape(12.dp)
-    val actionWidth = if (compactPhone) 88.dp else 104.dp
+    val secondaryActionWidth = if (compactPhone) 76.dp else 96.dp
+    val settingsActionWidth = if (compactPhone) 108.dp else 112.dp
     val actionHeight = 44.dp
     val modeRequesters = remember(profiles.map { it.id }) { profiles.map { FocusRequester() } }
     val skipRequester = remember { FocusRequester() }
@@ -2673,7 +2674,7 @@ internal fun PictureModeQuickOverlay(
         dismissButton = {
             OutlinedButton(
                 onClick = onSettings,
-                modifier = Modifier.width(actionWidth).height(actionHeight).focusRequester(settingsRequester)
+                modifier = Modifier.width(settingsActionWidth).height(actionHeight).focusRequester(settingsRequester)
                     .focusProperties { right = skipRequester }
                     .playerControlFocus(actionShape) {},
                 shape = actionShape,
@@ -2681,27 +2682,27 @@ internal fun PictureModeQuickOverlay(
             ) {
                 Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Settings")
+                Text("Settings", maxLines = 1, softWrap = false)
             }
             OutlinedButton(
                 onClick = onSkip,
-                modifier = Modifier.width(actionWidth).height(actionHeight).focusRequester(skipRequester)
+                modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(skipRequester)
                     .focusProperties { left = settingsRequester; right = applyRequester }
                     .playerControlFocus(actionShape) {},
                 shape = actionShape
             ) {
-                Text("Skip")
+                Text("Skip", maxLines = 1, softWrap = false)
             }
         },
         confirmButton = {
             Button(
                 onClick = onApply,
-                modifier = Modifier.width(actionWidth).height(actionHeight).focusRequester(applyRequester)
+                modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(applyRequester)
                     .focusProperties { left = skipRequester }
                     .playerControlFocus(actionShape) {},
                 shape = actionShape
             ) {
-                Text("Apply")
+                Text("Apply", maxLines = 1, softWrap = false)
             }
         }
     )

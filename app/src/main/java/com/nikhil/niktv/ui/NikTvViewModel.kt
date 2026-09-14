@@ -960,6 +960,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val updatedQueue =
             (baseQueue + additions)
                 .distinctBy { it.id }
+                .let { queue ->
+                    if (catalogType == CatalogType.SERIES) {
+                        queue.sortedWith(
+                            compareBy<MediaItem>(
+                                { it.seasonNumber ?: Int.MAX_VALUE },
+                                { it.episodeNumber ?: it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE },
+                                { it.title.lowercase() }
+                            )
+                        )
+                    } else {
+                        queue
+                    }
+                }
 
         val currentIndex =
             updatedQueue.indexOfFirst {
@@ -1215,6 +1228,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val mergedQueue =
                         (oldQueue + next.episodes)
                             .distinctBy { it.id }
+                            .sortedWith(
+                                compareBy<MediaItem>(
+                                    { it.seasonNumber ?: Int.MAX_VALUE },
+                                    { it.episodeNumber ?: it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE },
+                                    { it.title.lowercase() }
+                                )
+                            )
 
                     val actuallyAdded =
                         mergedQueue.size > oldQueue.size
@@ -1279,12 +1299,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                     playbackQueueLoadingMore = false,
                                     items =
                                         if (browseMatches) {
-                                            (
-                                                current.items +
-                                                    next.episodes
-                                            ).distinctBy {
-                                                it.id
-                                            }
+                                            (current.items + next.episodes)
+                                                .distinctBy { it.id }
+                                                .sortedWith(
+                                                    compareBy<MediaItem>(
+                                                        { it.seasonNumber ?: Int.MAX_VALUE },
+                                                        { it.episodeNumber ?: it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE },
+                                                        { it.title.lowercase() }
+                                                    )
+                                                )
                                         } else {
                                             current.items
                                         },
