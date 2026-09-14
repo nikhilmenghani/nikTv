@@ -1443,6 +1443,9 @@ fun PlayerScreen(
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
+            val lowerQuickActionsOffset =
+                (playerConfiguration.screenHeightDp -
+                    if (compactMobileControls) 105 else 112).coerceAtLeast(0).dp
             val playbackDetailLines = buildList {
                 videoDetails.takeIf { it.isNotBlank() }?.let { add(it) }
                 add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
@@ -1464,6 +1467,7 @@ fun PlayerScreen(
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .zIndex(2f)
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
                             horizontal = if (compactMobileControls) 10.dp else 20.dp,
@@ -1514,6 +1518,7 @@ fun PlayerScreen(
                         )
                     }
                     Row(
+                        modifier = Modifier.offset(y = lowerQuickActionsOffset),
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1627,8 +1632,16 @@ fun PlayerScreen(
                             onClick = { pictureModePickerVisible = true },
                             modifier = Modifier
                                 .focusRequester(pictureModeFocusRequester)
-                                .focusProperties { left = resizeFocusRequester; right = moreFocusRequester; down = topDownRequester }
-                                .playerDpadFocusRoutes(resizeFocusRequester, moreFocusRequester, topDownRequester),
+                                .focusProperties {
+                                    left = resizeFocusRequester
+                                    right = if (pipAvailable) pipFocusRequester else moreFocusRequester
+                                    down = topDownRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    resizeFocusRequester,
+                                    if (pipAvailable) pipFocusRequester else moreFocusRequester,
+                                    topDownRequester
+                                ),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -1636,6 +1649,7 @@ fun PlayerScreen(
                             contentDescription = "More playback options",
                             onClick = { moreOptionsOpen = true },
                             modifier = Modifier
+                                .offset(y = -lowerQuickActionsOffset)
                                 .focusRequester(moreFocusRequester)
                                 .focusProperties {
                                     left = pictureModeFocusRequester
@@ -1810,11 +1824,7 @@ fun PlayerScreen(
                                 }
                                 if (pipAvailable) {
                                     Spacer(Modifier.weight(1f))
-                                    val pipLeftRequester = when {
-                                        media.nextEpisode != null -> nextFocusRequester
-                                        seekable -> forwardFocusRequester
-                                        else -> playPauseFocusRequester
-                                    }
+                                    val pipLeftRequester = pictureModeFocusRequester
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.PictureInPictureAlt,
                                         contentDescription = "Picture in Picture",

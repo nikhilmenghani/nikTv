@@ -904,6 +904,9 @@ internal fun VlcPlayerScreen(
 
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val topDownRequester = if (seekable) progressRequester else playRequester
+            val lowerQuickActionsOffset =
+                (playerConfiguration.screenHeightDp -
+                    if (compactMobileControls) 105 else 112).coerceAtLeast(0).dp
             val playbackDetailLines = buildList {
                 add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · VLC · Video fit · ${resizeMode.label}")
@@ -924,6 +927,7 @@ internal fun VlcPlayerScreen(
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .zIndex(2f)
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
                             horizontal = if (compactMobileControls) 10.dp else 20.dp,
@@ -974,6 +978,7 @@ internal fun VlcPlayerScreen(
                         )
                     }
                     Row(
+                        modifier = Modifier.offset(y = lowerQuickActionsOffset),
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1085,8 +1090,16 @@ internal fun VlcPlayerScreen(
                             onClick = { pictureModePickerVisible = true },
                             modifier = Modifier
                                 .focusRequester(pictureModeRequester)
-                                .focusProperties { left = resizeRequester; right = moreRequester; down = topDownRequester }
-                                .playerDpadFocusRoutes(resizeRequester, moreRequester, topDownRequester),
+                                .focusProperties {
+                                    left = resizeRequester
+                                    right = if (pipAvailable) pipRequester else moreRequester
+                                    down = topDownRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    resizeRequester,
+                                    if (pipAvailable) pipRequester else moreRequester,
+                                    topDownRequester
+                                ),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -1094,6 +1107,7 @@ internal fun VlcPlayerScreen(
                             contentDescription = "More playback options",
                             onClick = { onMoreOptionsOpenChanged(true) },
                             modifier = Modifier
+                                .offset(y = -lowerQuickActionsOffset)
                                 .focusRequester(moreRequester)
                                 .focusProperties {
                                     left = pictureModeRequester
@@ -1271,11 +1285,7 @@ internal fun VlcPlayerScreen(
                             }
                             if (pipAvailable) {
                                 Spacer(Modifier.weight(1f))
-                                val pipLeftRequester = when {
-                                    media.nextEpisode != null -> nextRequester
-                                    seekable -> forwardRequester
-                                    else -> playRequester
-                                }
+                                val pipLeftRequester = pictureModeRequester
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.PictureInPictureAlt,
                                     contentDescription = "Picture in Picture",
