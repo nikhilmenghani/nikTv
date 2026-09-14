@@ -1778,10 +1778,8 @@ fun PlayerScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
-                                val utilityButtonCount = 2 + if (pipAvailable) 1 else 0
-                                Spacer(Modifier.width((utilityButtonSize.value * utilityButtonCount).dp))
-                                Spacer(Modifier.weight(1f))
-                                Row(horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 8.dp else 16.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                                val isTv = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
+                                Row(horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 0.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                                     if (media.previousEpisode != null) {
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.SkipPrevious,
