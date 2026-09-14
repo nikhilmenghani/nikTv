@@ -569,6 +569,7 @@ fun PlayerScreen(
     var inPictureInPicture by remember { mutableStateOf(false) }
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val castFocusRequester = remember(media.progressKey) { FocusRequester() }
     val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1485,11 +1486,12 @@ fun PlayerScreen(
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
-            val firstQuickActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
+            val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseFocusRequester
             } else {
                 downloadFocusRequester
             }
+            val firstQuickActionRequester = castFocusRequester
             val lastPlaybackActionRequester = when {
                 media.nextEpisode != null -> nextFocusRequester
                 seekable -> forwardFocusRequester
@@ -1580,7 +1582,20 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        com.nikhil.niktv.ui.components.CastButton()
+                        com.nikhil.niktv.ui.components.CastButton(
+                            modifier = Modifier
+                                .focusRequester(castFocusRequester)
+                                .focusProperties {
+                                    left = lastPlaybackActionRequester
+                                    right = firstMediaActionRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    left = lastPlaybackActionRequester,
+                                    right = firstMediaActionRequester,
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
+                                )
+                        )
                         if (media.catalogType != CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
@@ -1592,12 +1607,12 @@ fun PlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadFocusRequester)
                                     .focusProperties {
-                                        left = lastPlaybackActionRequester
+                                        left = castFocusRequester
                                         right = subtitleFocusRequester
                                         up = if (seekable) progressFocusRequester else backFocusRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = lastPlaybackActionRequester,
+                                        left = castFocusRequester,
                                         right = subtitleFocusRequester,
                                         up = if (seekable) progressFocusRequester else backFocusRequester
                                     ),
@@ -1618,12 +1633,12 @@ fun PlayerScreen(
                                     modifier = Modifier
                                         .focusRequester(recordingPauseFocusRequester)
                                         .focusProperties {
-                                            left = lastPlaybackActionRequester
+                                            left = castFocusRequester
                                             right = downloadFocusRequester
                                             up = backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = lastPlaybackActionRequester,
+                                            left = castFocusRequester,
                                             right = downloadFocusRequester,
                                             up = backFocusRequester
                                         ),
@@ -1641,12 +1656,12 @@ fun PlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadFocusRequester)
                                     .focusProperties {
-                                        left = if (recordingThisChannel) recordingPauseFocusRequester else lastPlaybackActionRequester
+                                        left = if (recordingThisChannel) recordingPauseFocusRequester else castFocusRequester
                                         right = subtitleFocusRequester
                                         up = backFocusRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = if (recordingThisChannel) recordingPauseFocusRequester else lastPlaybackActionRequester,
+                                        left = if (recordingThisChannel) recordingPauseFocusRequester else castFocusRequester,
                                         right = subtitleFocusRequester,
                                         up = backFocusRequester
                                     ),

@@ -195,6 +195,7 @@ internal fun VlcPlayerScreen(
     }
 
     val backRequester = remember(media.progressKey) { FocusRequester() }
+    val castRequester = remember(media.progressKey) { FocusRequester() }
     val downloadRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleRequester = remember(media.progressKey) { FocusRequester() }
@@ -892,11 +893,12 @@ internal fun VlcPlayerScreen(
 
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val topDownRequester = if (seekable) progressRequester else playRequester
-            val firstQuickActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
+            val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseRequester
             } else {
                 downloadRequester
             }
+            val firstQuickActionRequester = castRequester
             val lastPlaybackActionRequester = when {
                 media.nextEpisode != null -> nextRequester
                 seekable -> forwardRequester
@@ -986,6 +988,23 @@ internal fun VlcPlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        com.nikhil.niktv.ui.components.CastButton(
+                            modifier = Modifier
+                                .focusRequester(castRequester)
+                                .focusProperties {
+                                    left = lastPlaybackActionRequester
+                                    right = firstMediaActionRequester
+                                    up = if (seekable) progressRequester else backRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    left = lastPlaybackActionRequester,
+                                    right = firstMediaActionRequester,
+                                    up = if (seekable) progressRequester else backRequester
+                                ),
+                            onCastRequested = {
+                                onSelectPlayer(PlaybackEngine.MEDIA3, player.time.coerceAtLeast(0L))
+                            }
+                        )
                         if (media.catalogType != CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
@@ -997,12 +1016,12 @@ internal fun VlcPlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadRequester)
                                     .focusProperties {
-                                        left = lastPlaybackActionRequester
+                                        left = castRequester
                                         right = subtitleRequester
                                         up = if (seekable) progressRequester else backRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = lastPlaybackActionRequester,
+                                        left = castRequester,
                                         right = subtitleRequester,
                                         up = if (seekable) progressRequester else backRequester
                                     ),
@@ -1023,12 +1042,12 @@ internal fun VlcPlayerScreen(
                                     modifier = Modifier
                                         .focusRequester(recordingPauseRequester)
                                         .focusProperties {
-                                            left = lastPlaybackActionRequester
+                                            left = castRequester
                                             right = downloadRequester
                                             up = backRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = lastPlaybackActionRequester,
+                                            left = castRequester,
                                             right = downloadRequester,
                                             up = backRequester
                                         ),
@@ -1046,12 +1065,12 @@ internal fun VlcPlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadRequester)
                                     .focusProperties {
-                                        left = if (recordingThisChannel) recordingPauseRequester else lastPlaybackActionRequester
+                                        left = if (recordingThisChannel) recordingPauseRequester else castRequester
                                         right = subtitleRequester
                                         up = backRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = if (recordingThisChannel) recordingPauseRequester else lastPlaybackActionRequester,
+                                        left = if (recordingThisChannel) recordingPauseRequester else castRequester,
                                         right = subtitleRequester,
                                         up = backRequester
                                     ),

@@ -19,7 +19,10 @@ import com.google.android.gms.cast.CastMediaControlIntent
 import com.nikhil.niktv.ui.PlayerChromeIconButton
 
 @Composable
-fun CastButton(modifier: Modifier = Modifier) {
+fun CastButton(
+    modifier: Modifier = Modifier,
+    onCastRequested: (() -> Unit)? = null
+) {
     val context = LocalContext.current
     var isCastConnected by remember { mutableStateOf(false) }
     val selector = remember {
@@ -61,6 +64,7 @@ fun CastButton(modifier: Modifier = Modifier) {
         selected = isCastConnected,
         onClick = {
             try {
+                onCastRequested?.invoke()
                 val mediaRouter = MediaRouter.getInstance(context)
                 if (isCastConnected) {
                     // Already connected — show the controller dialog (disconnect / volume)
