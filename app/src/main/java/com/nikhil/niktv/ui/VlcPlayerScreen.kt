@@ -857,22 +857,10 @@ internal fun VlcPlayerScreen(
                                 ComposeKey.Enter,
                                 ComposeKey.DirectionLeft,
                                 ComposeKey.DirectionRight,
-                                ComposeKey.DirectionUp -> {
-                                    dpadInteraction++
-                                    showControls()
-                                    true
-                                }
+                                ComposeKey.DirectionUp,
                                 ComposeKey.DirectionDown -> {
                                     dpadInteraction++
-                                    if (focusMode && hasPlaybackQueue) {
-                                        queueRevealProgress = 1f
-                                        queueRevealDragging = false
-                                        queueVisible = true
-                                        controlsVisible = false
-                                        controlsFocused = false
-                                    } else {
-                                        showControls()
-                                    }
+                                    showControls()
                                     true
                                 }
                                 else -> false

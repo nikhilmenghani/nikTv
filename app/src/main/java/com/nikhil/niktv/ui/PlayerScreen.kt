@@ -1400,18 +1400,10 @@ fun PlayerScreen(
                                 ComposeKey.Enter,
                                 ComposeKey.DirectionLeft,
                                 ComposeKey.DirectionRight,
-                                ComposeKey.DirectionUp -> {
-                                    dpadInteraction++
-                                    showControlsAndFocusPlayPause()
-                                    true
-                                }
+                                ComposeKey.DirectionUp,
                                 ComposeKey.DirectionDown -> {
                                     dpadInteraction++
-                                    if (focusMode && hasPlaybackQueue) {
-                                        showEpisodeQueue()
-                                    } else {
-                                        showControlsAndFocusPlayPause()
-                                    }
+                                    showControlsAndFocusPlayPause()
                                     true
                                 }
                                 else -> false
