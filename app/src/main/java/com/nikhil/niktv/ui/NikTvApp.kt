@@ -306,19 +306,40 @@ internal fun Modifier.mobileMainTabSwipe(
 ): Modifier {
     val latestOnPageSelected by rememberUpdatedState(onPageSelected)
     if (!enabled) return this
+
+    // DOWNLOADS is a Library sub-tab, not a sixth primary destination.
+    // Treat both Library states as the same primary page for horizontal
+    // navigation so swiping right from either My List or Downloads returns
+    // to Series instead of getting trapped inside Library.
+    val swipePages = remember {
+        MobileMainPage.entries.filterNot { it == MobileMainPage.DOWNLOADS }
+    }
+    val swipeCurrentPage =
+        if (currentPage == MobileMainPage.DOWNLOADS) {
+            MobileMainPage.LIBRARY
+        } else {
+            currentPage
+        }
+
     val swipeScope = rememberCoroutineScope()
     var swipeOffsetTarget by remember { mutableFloatStateOf(0f) }
     var swipeDragging by remember { mutableStateOf(false) }
     val swipeOffset by animateFloatAsState(
         targetValue = swipeOffsetTarget,
-        animationSpec = if (swipeDragging) snap() else tween(260, easing = FastOutSlowInEasing),
+        animationSpec =
+            if (swipeDragging) {
+                snap()
+            } else {
+                tween(140, easing = FastOutSlowInEasing)
+            },
         label = "mainTabSwipeOffset"
     )
 
     return graphicsLayer { translationX = swipeOffset }
-        .pointerInput(enabled, currentPage) {
-        val distanceThreshold = 72.dp.toPx()
+        .pointerInput(enabled, swipeCurrentPage) {
+        val distanceThreshold = 56.dp.toPx()
         val directionRatio = 1.25f
+        val destinationEntryOffset = 28.dp.toPx()
 
         awaitPointerEventScope {
             while (true) {
@@ -362,7 +383,10 @@ internal fun Modifier.mobileMainTabSwipe(
                     if (horizontalDragLocked) {
                         change.consume()
                         swipeDragging = true
-                        swipeOffsetTarget = totalX.coerceIn(-size.width * 0.42f, size.width * 0.42f)
+                        swipeOffsetTarget = totalX.coerceIn(
+                            -size.width * 0.28f,
+                            size.width * 0.28f
+                        )
                     }
 
                     if (!change.pressed) break
@@ -385,22 +409,38 @@ internal fun Modifier.mobileMainTabSwipe(
                     continue
                 }
 
-                val pages = MobileMainPage.entries
-                val currentIndex = pages.indexOf(currentPage)
+                val currentIndex = swipePages.indexOf(swipeCurrentPage)
                 val targetIndex =
                     if (totalX < 0f) currentIndex + 1
                     else currentIndex - 1
-                val target = pages.getOrNull(targetIndex)
+                val target = swipePages.getOrNull(targetIndex)
+
                 if (target != null) {
-                    // Replace the outgoing page at the opposite edge, then
-                    // animate the destination into place. A leftward gesture
-                    // therefore visibly brings the right-hand tab in from
-                    // the right, matching a conventional pager.
+                    /*
+                     * Keep the destination transition intentionally short.
+                     *
+                     * The old implementation teleported the new page a full
+                     * screen width away, waited a fixed 16 ms, then animated
+                     * it for 260 ms. That made a successful swipe feel as if
+                     * navigation paused after finger-up, especially when the
+                     * destination was also recomposing a large browse grid.
+                     *
+                     * Put the destination only 28 dp off-center and settle on
+                     * the next Compose frame. The page change still has clear
+                     * directional motion without adding a quarter-second wait.
+                     */
                     swipeDragging = true
-                    swipeOffsetTarget = if (totalX < 0f) size.width.toFloat() else -size.width.toFloat()
+                    swipeOffsetTarget =
+                        if (totalX < 0f) {
+                            destinationEntryOffset
+                        } else {
+                            -destinationEntryOffset
+                        }
+
                     latestOnPageSelected(target)
+
                     swipeScope.launch {
-                        delay(16L)
+                        withFrameNanos { }
                         swipeDragging = false
                         swipeOffsetTarget = 0f
                     }

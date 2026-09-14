@@ -421,8 +421,6 @@ internal fun CatalogScreen(
             val showYouTubeNavigation = mobileUiDesign.usesYouTubeOn(configuration) && !state.settingsOpen && !state.searchOpen
             val mainTabSwipeEnabled =
                 showYouTubeNavigation &&
-                    !state.favoritesOpen &&
-                    !state.offlineDownloadsOpen &&
                     state.movieMatchSelection == null &&
                     state.seriesMatchSelection == null &&
                     state.selectedSeries == null &&
