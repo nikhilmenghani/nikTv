@@ -754,8 +754,15 @@ internal fun PlayerQueueOverlay(
     val isEpisodeQueue = uniqueItems.any {
         it.seasonNumber != null || it.episodeNumber != null
     }
-    val showLoadMore = hasMore || loadingMore
-    val leadingLoadPrevious = touchQueueRail && isEpisodeQueue && showLoadMore
+    val earliestEpisodeNumber = if (isEpisodeQueue) {
+        uniqueItems.mapNotNull { it.episodeNumber }.minOrNull()
+    } else null
+    val hasEarlierEpisodes = earliestEpisodeNumber != null && earliestEpisodeNumber > 1
+    val effectiveHasMore = hasMore || hasEarlierEpisodes
+    val showLoadMore = effectiveHasMore || loadingMore
+    val leadingLoadPrevious = isEpisodeQueue && (
+        hasEarlierEpisodes || (earliestEpisodeNumber == null && touchQueueRail && showLoadMore)
+    )
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val loadMoreRequester = remember { FocusRequester() }
     val currentIndex =
@@ -993,15 +1000,14 @@ internal fun PlayerQueueOverlay(
                     )
                     .focusable(),
                 color = when {
-                    focused && tvQueueGrid ->
-                        Color(0xFF343841)
+                    focused -> Color(0xFF3B4D68)
                     current -> Color(0xFF383838)
                     else -> Color(0xFF242424)
                 },
-                border = if (focused && tvQueueGrid) {
+                border = if (focused) {
                     androidx.compose.foundation.BorderStroke(
-                        2.dp,
-                        Color(0xFFE7E9EF)
+                        2.5.dp,
+                        Color.White
                     )
                 } else {
                     null
@@ -1389,16 +1395,18 @@ internal fun PlayerQueueOverlay(
                             else -> false
                         }
                     } else {
+                        val layoutIndex =
+                            focusedIndex + if (leadingLoadPrevious) 1 else 0
                         val currentColumn =
-                            if (focusedIndex >= 0) {
-                                focusedIndex % queueColumnCount
+                            if (layoutIndex >= 0) {
+                                layoutIndex % queueColumnCount
                             } else {
                                 0
                             }
 
                         when (event.key) {
                             Key.DirectionUp -> {
-                                if (focusedIndex < queueColumnCount) {
+                                if (layoutIndex < queueColumnCount) {
                                     onDismiss()
                                 } else {
                                     focusAt(focusedIndex - queueColumnCount)
@@ -1407,7 +1415,7 @@ internal fun PlayerQueueOverlay(
                             }
 
                             Key.DirectionLeft -> {
-                                if (currentColumn > 0) {
+                                if (currentColumn > 0 && focusedIndex > if (leadingLoadPrevious) -1 else 0) {
                                     focusAt(focusedIndex - 1)
                                 }
                                 true
@@ -1425,13 +1433,9 @@ internal fun PlayerQueueOverlay(
                             }
 
                             Key.DirectionDown -> {
-                                val nextRowStart =
-                                    focusedIndex - currentColumn + queueColumnCount
-                                if (nextRowStart <= maxIndex) {
-                                    focusAt(
-                                        (nextRowStart + currentColumn)
-                                            .coerceAtMost(maxIndex)
-                                    )
+                                val target = focusedIndex + queueColumnCount
+                                if (target <= maxIndex) {
+                                    focusAt(target)
                                 }
                                 true
                             }
@@ -1558,7 +1562,13 @@ internal fun PlayerQueueOverlay(
                             val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
                             Surface(
                                 modifier = Modifier
-                                    .width(compactQueueCardWidth)
+                                    .then(
+                                        if (touchQueueRail) {
+                                            Modifier.width(compactQueueCardWidth)
+                                        } else {
+                                            Modifier.fillMaxWidth()
+                                        }
+                                    )
                                     .height(queueCardHeight)
                                     .clip(shape)
                                     .focusRequester(loadMoreRequester)
@@ -1567,7 +1577,7 @@ internal fun PlayerQueueOverlay(
                                         if (it.isFocused) focusedIndex = -1
                                     }
                                     .remoteCombinedClickable(
-                                        enabled = hasMore && !loadingMore && !loadMoreRequested,
+                                        enabled = effectiveHasMore && !loadingMore && !loadMoreRequested,
                                         onClick = {
                                             focusManager.clearFocus(force = true)
                                             focusFirstLoadedItem = true
@@ -1576,8 +1586,8 @@ internal fun PlayerQueueOverlay(
                                         }
                                     )
                                     .focusable(),
-                                color = if (focused) Color(0xFF343841) else Color(0xFF303030),
-                                border = if (focused) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE7E9EF)) else null,
+                                color = if (focused) Color(0xFF3B4D68) else Color(0xFF303030),
+                                border = if (focused) androidx.compose.foundation.BorderStroke(2.5.dp, Color.White) else null,
                                 shape = shape
                             ) {
                                 Column(
@@ -1665,18 +1675,8 @@ internal fun PlayerQueueOverlay(
                                         }
                                     )
                                     .focusable(),
-                                color =
-                                    if (
-                                        focused &&
-                                        tvQueueGrid
-                                    ) {
-                                        Color(0xFF343841)
-                                    } else {
-                                        Color(0xFF303030)
-                                    },
-                                border = if (focused && tvQueueGrid) {
-                                    androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE7E9EF))
-                                } else null,
+                                color = if (focused) Color(0xFF3B4D68) else Color(0xFF303030),
+                                border = if (focused) androidx.compose.foundation.BorderStroke(2.5.dp, Color.White) else null,
                                 shape = loadMoreShape
                             ) {
                                 Column(

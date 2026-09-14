@@ -1177,9 +1177,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             selectedSeriesSeason = snapshot.selectedSeriesSeason
         ) ?: return false
 
+        val earliestLoadedEpisode = if (playing.catalogType == CatalogType.SERIES) {
+            playing.episodeQueue.mapNotNull { it.episodeNumber }.minOrNull()
+        } else null
+        val hasEarlierEpisodes = earliestLoadedEpisode != null && earliestLoadedEpisode > 1
+        val canLoadMore = snapshot.playbackQueueHasMore || hasEarlierEpisodes
+
         if (
             snapshot.playbackQueueLoadingMore ||
-            !snapshot.playbackQueueHasMore
+            !canLoadMore
         ) {
             return false
         }
@@ -1205,6 +1211,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     playing.media.seasonNumber
                         ?: snapshot.selectedSeriesSeason
 
+                val cachedSeason = episodeSeasonCaches.firstOrNull {
+                    it.profileKey == session.profile.cacheKey() &&
+                        it.seriesId == series.id &&
+                        (season == null || it.season == season)
+                }
+                val targetPage = maxOf(snapshot.playbackQueuePage, cachedSeason?.page ?: 1) + 1
+
                 runCatching {
                     withTimeout(45_000L) {
                         portal.episodeSeason(
@@ -1212,11 +1225,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             series,
                             snapshot.seriesStartSeason,
                             season,
-                            snapshot.playbackQueuePage + 1,
+                            targetPage,
                             playing.media.portalSeasonId
                                 ?: playing.episodeQueue
                                     .firstOrNull()
                                     ?.portalSeasonId
+                                ?: cachedSeason?.episodes?.firstOrNull()?.portalSeasonId
                         )
                     }
                 }.onSuccess { next ->
@@ -1239,8 +1253,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val actuallyAdded =
                         mergedQueue.size > oldQueue.size
 
+                    val stillHasEarlier = mergedQueue
+                        .mapNotNull { it.episodeNumber }
+                        .minOrNull()
+                        ?.let { it > 1 } == true
+
                     val hasMore =
-                        next.hasMore && actuallyAdded
+                        (next.hasMore && actuallyAdded) || (next.hasMore && stillHasEarlier)
 
                     val cache =
                         EpisodeSeasonCache(
@@ -1251,7 +1270,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 snapshot.availableSeriesSeasons
                             },
                             mergedQueue,
-                            next.page,
+                            maxOf(next.page, targetPage),
                             hasMore,
                             EPISODE_METADATA_VERSION
                         )
@@ -1294,7 +1313,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
                                 current.copy(
                                     nowPlaying = updatedPlaying,
-                                    playbackQueuePage = next.page,
+                                    playbackQueuePage = maxOf(next.page, targetPage),
                                     playbackQueueHasMore = hasMore,
                                     playbackQueueLoadingMore = false,
                                     items =
@@ -4197,6 +4216,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 paginationSnapshot.selectedCategory?.id ==
                     item.portalCategoryId
 
+        val cachedSeriesSeason = if (type == CatalogType.SERIES && series != null) {
+            val sNum = item.seasonNumber ?: paginationSnapshot.selectedSeriesSeason
+            episodeSeasonCaches.firstOrNull {
+                it.profileKey == session.profile.cacheKey() &&
+                    it.seriesId == series.id &&
+                    (sNum == null || it.season == sNum)
+            }
+        } else null
+
+        val hasEarlierEpisodes = type == CatalogType.SERIES &&
+            playbackQueue.mapNotNull { it.episodeNumber }.minOrNull()?.let { it > 1 } == true
+
         val initialPlaybackPage =
             when {
                 preservePlaybackPagination ->
@@ -4204,6 +4235,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
                 selectedSeriesMatches ->
                     paginationSnapshot.episodePage
+
+                cachedSeriesSeason != null ->
+                    cachedSeriesSeason.page
 
                 selectedCatalogMatches ->
                     paginationSnapshot.catalogPage
@@ -4220,8 +4254,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 selectedSeriesMatches ->
                     paginationSnapshot.episodeHasMore
 
+                cachedSeriesSeason != null ->
+                    cachedSeriesSeason.hasMore || hasEarlierEpisodes
+
+                hasEarlierEpisodes ->
+                    true
+
                 selectedCatalogMatches ->
                     paginationSnapshot.catalogHasMore
+
+                type == CatalogType.SERIES &&
+                    session.profile.portalType ==
+                        PortalType.STALKER &&
+                    playbackQueue.isNotEmpty() ->
+                    true
 
                 type in setOf(
                     CatalogType.LIVE_TV,
