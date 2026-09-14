@@ -1235,128 +1235,134 @@ internal fun VlcPlayerScreen(
                                         false
                                     }
                                 },
-                            horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 8.dp else 16.dp, Alignment.CenterHorizontally),
+                            horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
-                            if (media.previousEpisode != null) {
+                                val utilityButtonCount = 2 + if (pipAvailable) 1 else 0
+                                Spacer(Modifier.width((utilityButtonSize.value * utilityButtonCount).dp))
+                                Spacer(Modifier.weight(1f))
+                                Row(horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 8.dp else 16.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                                if (media.previousEpisode != null) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.SkipPrevious,
+                                        contentDescription = "Previous",
+                                        onClick = { if (!advancing) { advancing = true; onPlayPrevious() } },
+                                        modifier = Modifier.focusRequester(previousRequester)
+                                            .focusProperties {
+                                                up = if (seekable) progressRequester else backRequester
+                                                right = if (seekable) rewindRequester else playRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                right = if (seekable) rewindRequester else playRequester,
+                                                up = if (seekable) progressRequester else backRequester
+                                            ),
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                                if (seekable) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.Replay10,
+                                        contentDescription = "Back 10 seconds",
+                                        onClick = { player.time = (player.time - 10_000L).coerceAtLeast(0L) },
+                                        modifier = Modifier.focusRequester(rewindRequester)
+                                            .focusProperties {
+                                                up = progressRequester
+                                                left = if (media.previousEpisode != null) previousRequester else FocusRequester.Default
+                                                right = playRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                left = if (media.previousEpisode != null) previousRequester else null,
+                                                right = playRequester,
+                                                up = progressRequester
+                                            ),
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
                                 PlayerChromeIconButton(
-                                    icon = Icons.Default.SkipPrevious,
-                                    contentDescription = "Previous",
-                                    onClick = { if (!advancing) { advancing = true; onPlayPrevious() } },
-                                    modifier = Modifier.focusRequester(previousRequester)
+                                    icon = if (playbackRequested) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (playbackRequested) "Pause" else "Play",
+                                    onClick = {
+                                        playbackRequested = !playbackRequested
+                                        if (playbackRequested) player.play() else player.pause()
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(playRequester)
                                         .focusProperties {
                                             up = if (seekable) progressRequester else backRequester
-                                            right = if (seekable) rewindRequester else playRequester
+                                            left = when {
+                                                seekable -> rewindRequester
+                                                media.previousEpisode != null -> previousRequester
+                                                else -> FocusRequester.Default
+                                            }
+                                            right = when {
+                                                seekable -> forwardRequester
+                                                media.nextEpisode != null -> nextRequester
+                                                else -> firstQuickActionRequester
+                                            }
                                         }
                                         .playerDpadFocusRoutes(
-                                            right = if (seekable) rewindRequester else playRequester,
+                                            left = when {
+                                                seekable -> rewindRequester
+                                                media.previousEpisode != null -> previousRequester
+                                                else -> null
+                                            },
+                                            right = when {
+                                                seekable -> forwardRequester
+                                                media.nextEpisode != null -> nextRequester
+                                                else -> firstQuickActionRequester
+                                            },
                                             up = if (seekable) progressRequester else backRequester
                                         ),
-                                    size = if (compactMobileControls) 44.dp else 48.dp,
+                                    primaryAction = true,
+                                    size = if (compactMobileControls) 50.dp else 58.dp,
+                                    iconSize = if (compactMobileControls) 27.dp else 30.dp,
                                     onFocused = { controlsFocused = it }
                                 )
-                            }
-                            if (seekable) {
-                                PlayerChromeIconButton(
-                                    icon = Icons.Default.Replay10,
-                                    contentDescription = "Back 10 seconds",
-                                    onClick = { player.time = (player.time - 10_000L).coerceAtLeast(0L) },
-                                    modifier = Modifier.focusRequester(rewindRequester)
-                                        .focusProperties {
-                                            up = progressRequester
-                                            left = if (media.previousEpisode != null) previousRequester else FocusRequester.Default
-                                            right = playRequester
-                                        }
-                                        .playerDpadFocusRoutes(
-                                            left = if (media.previousEpisode != null) previousRequester else null,
-                                            right = playRequester,
-                                            up = progressRequester
-                                        ),
-                                    size = if (compactMobileControls) 44.dp else 48.dp,
-                                    onFocused = { controlsFocused = it }
-                                )
-                            }
-                            PlayerChromeIconButton(
-                                icon = if (playbackRequested) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (playbackRequested) "Pause" else "Play",
-                                onClick = {
-                                    playbackRequested = !playbackRequested
-                                    if (playbackRequested) player.play() else player.pause()
-                                },
-                                modifier = Modifier
-                                    .focusRequester(playRequester)
-                                    .focusProperties {
-                                        up = if (seekable) progressRequester else backRequester
-                                        left = when {
-                                            seekable -> rewindRequester
-                                            media.previousEpisode != null -> previousRequester
-                                            else -> FocusRequester.Default
-                                        }
-                                        right = when {
-                                            seekable -> forwardRequester
-                                            media.nextEpisode != null -> nextRequester
-                                            else -> firstQuickActionRequester
-                                        }
-                                    }
-                                    .playerDpadFocusRoutes(
-                                        left = when {
-                                            seekable -> rewindRequester
-                                            media.previousEpisode != null -> previousRequester
-                                            else -> null
-                                        },
-                                        right = when {
-                                            seekable -> forwardRequester
-                                            media.nextEpisode != null -> nextRequester
-                                            else -> firstQuickActionRequester
-                                        },
-                                        up = if (seekable) progressRequester else backRequester
-                                    ),
-                                primaryAction = true,
-                                size = if (compactMobileControls) 50.dp else 58.dp,
-                                iconSize = if (compactMobileControls) 27.dp else 30.dp,
-                                onFocused = { controlsFocused = it }
-                            )
-                            if (seekable) {
-                                PlayerChromeIconButton(
-                                    icon = Icons.Default.Forward10,
-                                    contentDescription = "Forward 10 seconds",
-                                    onClick = { player.time = (player.time + 10_000L).coerceAtMost(duration) },
-                                    modifier = Modifier.focusRequester(forwardRequester)
-                                        .focusProperties {
-                                            up = progressRequester
-                                            left = playRequester
-                                            right = if (media.nextEpisode != null) nextRequester else firstQuickActionRequester
-                                        }
-                                        .playerDpadFocusRoutes(
-                                            left = playRequester,
-                                            right = if (media.nextEpisode != null) nextRequester else firstQuickActionRequester,
-                                            up = progressRequester
-                                        ),
-                                    size = if (compactMobileControls) 44.dp else 48.dp,
-                                    onFocused = { controlsFocused = it }
-                                )
-                            }
-                            if (media.nextEpisode != null) {
-                                PlayerChromeIconButton(
-                                    icon = Icons.Default.SkipNext,
-                                    contentDescription = "Next",
-                                    onClick = { if (!advancing) { advancing = true; onPlayNext() } },
-                                    modifier = Modifier.focusRequester(nextRequester)
-                                        .focusProperties {
-                                            up = if (seekable) progressRequester else backRequester
-                                            left = if (seekable) forwardRequester else playRequester
-                                            right = firstQuickActionRequester
-                                        }
-                                        .playerDpadFocusRoutes(
-                                            left = if (seekable) forwardRequester else playRequester,
-                                            right = firstQuickActionRequester,
-                                            up = if (seekable) progressRequester else backRequester
-                                        ),
-                                    size = if (compactMobileControls) 44.dp else 48.dp,
-                                    onFocused = { controlsFocused = it }
-                                )
-                            }
+                                if (seekable) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.Forward10,
+                                        contentDescription = "Forward 10 seconds",
+                                        onClick = { player.time = (player.time + 10_000L).coerceAtMost(duration) },
+                                        modifier = Modifier.focusRequester(forwardRequester)
+                                            .focusProperties {
+                                                up = progressRequester
+                                                left = playRequester
+                                                right = if (media.nextEpisode != null) nextRequester else firstQuickActionRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                left = playRequester,
+                                                right = if (media.nextEpisode != null) nextRequester else firstQuickActionRequester,
+                                                up = progressRequester
+                                            ),
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                                if (media.nextEpisode != null) {
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.SkipNext,
+                                        contentDescription = "Next",
+                                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                                        modifier = Modifier.focusRequester(nextRequester)
+                                            .focusProperties {
+                                                up = if (seekable) progressRequester else backRequester
+                                                left = if (seekable) forwardRequester else playRequester
+                                                right = firstQuickActionRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                left = if (seekable) forwardRequester else playRequester,
+                                                right = firstQuickActionRequester,
+                                                up = if (seekable) progressRequester else backRequester
+                                            ),
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                                }
+
                             Spacer(Modifier.weight(1f))
                             if (pipAvailable) {
                                 val pipLeftRequester = moreRequester
