@@ -1001,7 +1001,7 @@ internal fun VlcPlayerScreen(
                                     right = firstMediaActionRequester,
                                     up = if (seekable) progressRequester else backRequester
                                 ),
-                            onCastRequested = {
+                            onCastConnected = {
                                 onSelectPlayer(PlaybackEngine.MEDIA3, player.time.coerceAtLeast(0L))
                             }
                         )

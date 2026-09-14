@@ -21,7 +21,7 @@ import com.nikhil.niktv.ui.PlayerChromeIconButton
 @Composable
 fun CastButton(
     modifier: Modifier = Modifier,
-    onCastRequested: (() -> Unit)? = null
+    onCastConnected: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var isCastConnected by remember { mutableStateOf(false) }
@@ -40,7 +40,9 @@ fun CastButton(
         val mediaRouter = try { MediaRouter.getInstance(context) } catch (_: Exception) { null }
         val callback = object : MediaRouter.Callback() {
             override fun onRouteSelected(router: MediaRouter, route: MediaRouter.RouteInfo, reason: Int) {
-                isCastConnected = !route.isDefault && route.matchesSelector(selector)
+                val connected = !route.isDefault && route.matchesSelector(selector)
+                isCastConnected = connected
+                if (connected) onCastConnected?.invoke()
             }
             override fun onRouteUnselected(router: MediaRouter, route: MediaRouter.RouteInfo, reason: Int) {
                 isCastConnected = false
@@ -64,7 +66,6 @@ fun CastButton(
         selected = isCastConnected,
         onClick = {
             try {
-                onCastRequested?.invoke()
                 val mediaRouter = MediaRouter.getInstance(context)
                 if (isCastConnected) {
                     // Already connected — show the controller dialog (disconnect / volume)
