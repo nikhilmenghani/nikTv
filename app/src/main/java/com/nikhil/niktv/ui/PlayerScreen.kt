@@ -2378,22 +2378,30 @@ internal fun PlayerChromeIconButton(
             Icon(
                 icon,
                 contentDescription,
-                modifier = Modifier
-                    .size(iconSize)
-                    .offset(y = if (badgeText == null) 0.dp else (-5).dp),
+                // A mode badge must never shift the glyph away from the common
+                // center line shared by the surrounding player controls.
+                modifier = Modifier.size(iconSize),
                 tint = Color.White
             )
             badgeText?.let { label ->
-                Text(
-                    text = label,
+                Surface(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 4.dp),
-                    color = Color.White.copy(alpha = 0.82f),
-                    fontSize = 8.sp,
-                    lineHeight = 8.sp,
-                    maxLines = 1
-                )
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 3.dp, bottom = 3.dp),
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color.Black.copy(alpha = 0.82f),
+                    contentColor = Color.White
+                ) {
+                    Text(
+                        text = label,
+                        modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp),
+                        color = Color.White.copy(alpha = 0.92f),
+                        fontSize = 7.sp,
+                        lineHeight = 8.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
             }
         }
     }
