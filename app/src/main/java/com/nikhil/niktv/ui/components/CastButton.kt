@@ -1,26 +1,82 @@
 package com.nikhil.niktv.ui.components
 
-import android.content.Context
-import android.view.ContextThemeWrapper
-import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.mediarouter.app.MediaRouteButton
-import com.google.android.gms.cast.framework.CastButtonFactory
-import com.nikhil.niktv.R
+import androidx.compose.ui.platform.LocalContext
+import androidx.mediarouter.app.MediaRouteChooserDialog
+import androidx.mediarouter.app.MediaRouteControllerDialog
+import androidx.mediarouter.media.MediaRouteSelector
+import androidx.mediarouter.media.MediaRouter
+import com.google.android.gms.cast.CastMediaControlIntent
+import com.nikhil.niktv.ui.PlayerChromeIconButton
 
 @Composable
 fun CastButton(modifier: Modifier = Modifier) {
-    AndroidView(
-        modifier = modifier.size(48.dp),
-        factory = { context ->
-            val themedContext = ContextThemeWrapper(context, androidx.mediarouter.R.style.Theme_MediaRouter)
-            MediaRouteButton(themedContext).apply {
-                CastButtonFactory.setUpMediaRouteButton(context.applicationContext, this)
-                this.setAlwaysVisible(true)
+    val context = LocalContext.current
+    var isCastConnected by remember { mutableStateOf(false) }
+    val selector = remember {
+        MediaRouteSelector.Builder()
+            .addControlCategory(
+                CastMediaControlIntent.categoryForCast(
+                    CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID
+                )
+            )
+            .build()
+    }
+
+    // Watch route changes so icon updates live when user connects/disconnects
+    DisposableEffect(Unit) {
+        val mediaRouter = try { MediaRouter.getInstance(context) } catch (_: Exception) { null }
+        val callback = object : MediaRouter.Callback() {
+            override fun onRouteSelected(router: MediaRouter, route: MediaRouter.RouteInfo, reason: Int) {
+                isCastConnected = !route.isDefault && route.matchesSelector(selector)
+            }
+            override fun onRouteUnselected(router: MediaRouter, route: MediaRouter.RouteInfo, reason: Int) {
+                isCastConnected = false
             }
         }
+
+        mediaRouter?.addCallback(selector, callback, MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+        // Check initial state
+        isCastConnected = mediaRouter?.selectedRoute?.let {
+            !it.isDefault && it.matchesSelector(selector)
+        } == true
+
+        onDispose {
+            mediaRouter?.removeCallback(callback)
+        }
+    }
+
+    PlayerChromeIconButton(
+        icon = if (isCastConnected) Icons.Default.CastConnected else Icons.Default.Cast,
+        contentDescription = if (isCastConnected) "Cast connected" else "Cast to a device",
+        selected = isCastConnected,
+        onClick = {
+            try {
+                val mediaRouter = MediaRouter.getInstance(context)
+                if (isCastConnected) {
+                    // Already connected — show the controller dialog (disconnect / volume)
+                    val dialog = MediaRouteControllerDialog(context)
+                    dialog.show()
+                } else {
+                    // Not connected — show the chooser dialog to pick a device
+                    val dialog = MediaRouteChooserDialog(context).apply {
+                        routeSelector = selector
+                    }
+                    dialog.show()
+                }
+            } catch (e: Exception) {
+                // Cast framework not available on this device (e.g. Fire TV)
+            }
+        },
+        modifier = modifier
     )
 }

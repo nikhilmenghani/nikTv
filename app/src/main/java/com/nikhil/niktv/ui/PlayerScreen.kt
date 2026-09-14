@@ -65,6 +65,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.cast.CastPlayer
 import androidx.media3.cast.SessionAvailabilityListener
@@ -605,6 +607,17 @@ fun PlayerScreen(
     }
     val castContext = remember { CastContext.getSharedInstance(context) }
     val castPlayer = remember(castContext) { CastPlayer(castContext) }
+    val castMediaItem = remember(media.url, media.media.title, media.playbackFormat) {
+        MediaItem.Builder()
+            .setUri(media.url)
+            .setMimeType(
+                if (media.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true) ||
+                    media.playbackFormat.contains("HLS", ignoreCase = true)
+                ) MimeTypes.APPLICATION_M3U8 else null
+            )
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(media.media.title).build())
+            .build()
+    }
     
     val createLocalPlayer = {
         val renderersFactory = DefaultRenderersFactory(context).apply {
@@ -632,13 +645,13 @@ fun PlayerScreen(
     var localPlayer by remember(media.progressKey, effectiveEngine, media.url) { mutableStateOf(createLocalPlayer()) }
     var activePlayer: Player by remember { mutableStateOf(if (castPlayer.isCastSessionAvailable) castPlayer else localPlayer) }
     
-    DisposableEffect(castPlayer, media.url) {
+    DisposableEffect(castPlayer, castMediaItem) {
         val listener = object : SessionAvailabilityListener {
             override fun onCastSessionAvailable() {
                 val currentPos = localPlayer.currentPosition
                 localPlayer.release()
                 activePlayer = castPlayer
-                castPlayer.setMediaItem(MediaItem.Builder().setUri(media.url).build(), currentPos)
+                castPlayer.setMediaItem(castMediaItem, currentPos)
                 castPlayer.prepare()
                 castPlayer.play()
             }

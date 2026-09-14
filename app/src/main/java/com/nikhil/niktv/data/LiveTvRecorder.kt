@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import okhttp3.Call
 import okhttp3.Request
 
 data class LiveRecordingState(
@@ -155,6 +156,7 @@ class LiveTvRecordingService : Service() {
     private var recordingJob: Job? = null
     private var statusJob: Job? = null
     @Volatile private var paused = false
+    @Volatile private var activeStreamCall: Call? = null
     private var accumulatedDurationMillis = 0L
     private var lastResumedAtMillis = 0L
     private val client = OkHttpClient.Builder()
@@ -254,6 +256,7 @@ class LiveTvRecordingService : Service() {
             lastResumedAtMillis = now
         }
         paused = value
+        if (value) activeStreamCall?.cancel()
         publishProgress(LiveTvRecorder.state.value.bytesWritten)
     }
 
@@ -296,22 +299,37 @@ class LiveTvRecordingService : Service() {
         return variants.lastOrNull()?.let { resolve(url, it) } ?: url
     }
 
-    private fun copyStream(url: String, output: java.io.OutputStream) {
+    private suspend fun copyStream(url: String, output: java.io.OutputStream) {
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").build()
-        client.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "Stream returned HTTP ${response.code}" }
-            val input = response.body?.byteStream() ?: error("Stream returned no data")
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE * 8)
-            var bytes = 0L
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                if (!paused) {
-                    output.write(buffer, 0, count)
-                    bytes += count
-                    if (bytes % (1024 * 1024) < count) publishProgress(bytes)
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE * 8)
+        var bytes = LiveTvRecorder.state.value.bytesWritten
+        while (scope.isActive) {
+            while (paused && scope.isActive) delay(100L)
+            if (!scope.isActive) return
+
+            val call = client.newCall(request)
+            activeStreamCall = call
+            try {
+                call.execute().use { response ->
+                    check(response.isSuccessful) { "Stream returned HTTP ${response.code}" }
+                    val input = response.body?.byteStream() ?: error("Stream returned no data")
+                    while (scope.isActive && !paused) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        bytes += count
+                        if (bytes % (1024 * 1024) < count) publishProgress(bytes)
+                    }
                 }
+            } catch (error: java.io.IOException) {
+                if (!paused && scope.isActive) throw error
+            } finally {
+                if (activeStreamCall === call) activeStreamCall = null
             }
+
+            // A resumed live stream must reconnect at its current live edge.
+            // Do not consume and discard network bytes while paused.
+            if (!paused && scope.isActive) delay(350L)
         }
     }
 
@@ -319,7 +337,16 @@ class LiveTvRecordingService : Service() {
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").build()
         client.newCall(request).execute().use { response ->
             check(response.isSuccessful) { "Segment returned HTTP ${response.code}" }
-            return response.body?.byteStream()?.use { it.copyTo(output) } ?: 0L
+            val input = response.body?.byteStream() ?: return 0L
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE * 8)
+            var written = 0L
+            while (!paused) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count)
+                written += count
+            }
+            return written
         }
     }
 
