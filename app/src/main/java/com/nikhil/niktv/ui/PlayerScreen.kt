@@ -1445,7 +1445,13 @@ fun PlayerScreen(
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
             val lowerQuickActionsOffset =
                 (playerConfiguration.screenHeightDp -
-                    if (compactMobileControls) 105 else 112).coerceAtLeast(0).dp
+                    if (compactMobileControls) 60 else 87).coerceAtLeast(0).dp
+            val lowerQuickActionsShift = when {
+                pipAvailable && compactMobileControls -> 144.dp
+                pipAvailable -> 168.dp
+                compactMobileControls -> 96.dp
+                else -> 112.dp
+            }
             val playbackDetailLines = buildList {
                 videoDetails.takeIf { it.isNotBlank() }?.let { add(it) }
                 add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
@@ -1518,7 +1524,7 @@ fun PlayerScreen(
                         )
                     }
                     Row(
-                        modifier = Modifier.offset(y = lowerQuickActionsOffset),
+                        modifier = Modifier.offset(x = -lowerQuickActionsShift, y = lowerQuickActionsOffset),
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1634,29 +1640,30 @@ fun PlayerScreen(
                                 .focusRequester(pictureModeFocusRequester)
                                 .focusProperties {
                                     left = resizeFocusRequester
-                                    right = if (pipAvailable) pipFocusRequester else moreFocusRequester
+                                    right = moreFocusRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     resizeFocusRequester,
-                                    if (pipAvailable) pipFocusRequester else moreFocusRequester,
+                                    moreFocusRequester,
                                     topDownRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
-                            icon = Icons.Default.MoreHoriz,
-                            contentDescription = "More playback options",
+                            icon = Icons.Default.Settings,
+                            contentDescription = "Playback settings",
                             onClick = { moreOptionsOpen = true },
                             modifier = Modifier
-                                .offset(y = -lowerQuickActionsOffset)
                                 .focusRequester(moreFocusRequester)
                                 .focusProperties {
                                     left = pictureModeFocusRequester
+                                    right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = pictureModeFocusRequester,
+                                    right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
                                     down = topDownRequester
                                 ),
                             onFocused = { controlsFocused = it }
@@ -1740,10 +1747,10 @@ fun PlayerScreen(
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (pipAvailable) {
-                                    Spacer(Modifier.size(if (compactMobileControls) 44.dp else 48.dp))
-                                    Spacer(Modifier.weight(1f))
-                                }
+                                val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
+                                val utilityButtonCount = 2 + if (pipAvailable) 1 else 0
+                                Spacer(Modifier.width((utilityButtonSize.value * utilityButtonCount).dp))
+                                Spacer(Modifier.weight(1f))
                                 if (media.previousEpisode != null) {
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.SkipPrevious,
@@ -1786,7 +1793,7 @@ fun PlayerScreen(
                                                 seekable -> forwardFocusRequester
                                                 media.nextEpisode != null -> nextFocusRequester
                                                 pipAvailable -> pipFocusRequester
-                                                else -> FocusRequester.Default
+                                                else -> playerSwitchFocusRequester
                                             }
                                         },
                                     primaryAction = true,
@@ -1802,7 +1809,7 @@ fun PlayerScreen(
                                         modifier = Modifier.focusRequester(forwardFocusRequester)
                                             .focusProperties {
                                                 up = progressFocusRequester
-                                                if (media.nextEpisode == null && pipAvailable) right = pipFocusRequester
+                                                if (media.nextEpisode == null) right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
                                             },
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
@@ -1816,15 +1823,15 @@ fun PlayerScreen(
                                         modifier = Modifier.focusRequester(nextFocusRequester)
                                             .focusProperties {
                                                 up = if (seekable) progressFocusRequester else moreFocusRequester
-                                                if (pipAvailable) right = pipFocusRequester
+                                                right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
                                             },
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
                                 }
+                                Spacer(Modifier.weight(1f))
                                 if (pipAvailable) {
-                                    Spacer(Modifier.weight(1f))
-                                    val pipLeftRequester = pictureModeFocusRequester
+                                    val pipLeftRequester = moreFocusRequester
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.PictureInPictureAlt,
                                         contentDescription = "Picture in Picture",
@@ -1837,12 +1844,65 @@ fun PlayerScreen(
                                             .focusRequester(pipFocusRequester)
                                             .focusProperties {
                                                 left = pipLeftRequester
+                                                right = playerSwitchFocusRequester
                                                 up = if (seekable) progressFocusRequester else moreFocusRequester
                                             },
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
                                 }
+                                PlayerChromeIconButton(
+                                    icon = Icons.Default.SmartDisplay,
+                                    badgeText = selectedPlayerChoice.playerChoiceBadge(),
+                                    contentDescription = "Player: ${selectedPlayerChoice.playerChoiceLabel()}",
+                                    onClick = {
+                                        val selectedEngine = selectedPlayerChoice.nextPlayerChoice()
+                                        selectedPlayerChoice = selectedEngine
+                                        modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
+                                        engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                                        onPlaybackEngineChanged(selectedEngine)
+                                        sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(playerSwitchFocusRequester)
+                                        .focusProperties {
+                                            left = if (pipAvailable) pipFocusRequester else moreFocusRequester
+                                            right = fullscreenFocusRequester
+                                            up = if (seekable) progressFocusRequester else moreFocusRequester
+                                        },
+                                    size = utilityButtonSize,
+                                    selected = false,
+                                    onFocused = { controlsFocused = it }
+                                )
+                                PlayerChromeIconButton(
+                                    icon = if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                    contentDescription = if (focusMode) "Exit fullscreen" else "Fullscreen",
+                                    onClick = {
+                                        val enteringFullscreen = !focusMode
+                                        if (startFullscreen && !enteringFullscreen) {
+                                            onBack()
+                                        } else {
+                                            focusMode = enteringFullscreen
+                                            onFullscreenChanged?.invoke(enteringFullscreen)
+                                            controlsVisible = !enteringFullscreen
+                                            controlsFocused = false
+                                            if (enteringFullscreen) {
+                                                runCatching { videoSurfaceFocusRequester.requestFocus() }
+                                            } else {
+                                                showControlsAndFocusPlayPause()
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(fullscreenFocusRequester)
+                                        .focusProperties {
+                                            left = playerSwitchFocusRequester
+                                            up = if (seekable) progressFocusRequester else moreFocusRequester
+                                        },
+                                    size = utilityButtonSize,
+                                    selected = false,
+                                    onFocused = { controlsFocused = it }
+                                )
                             }
                         }
                     }
@@ -1851,52 +1911,10 @@ fun PlayerScreen(
             if (moreOptionsOpen) {
                 PlayerMoreOptionsDialog(
                     detailLines = playbackDetailLines,
-                    selectedPlayer = selectedPlayerChoice,
-                    onSelectPlayer = { selectedEngine ->
-                        if (selectedEngine != selectedPlayerChoice) {
-                            selectedPlayerChoice = selectedEngine
-                            modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
-                            engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
-                            onPlaybackEngineChanged(selectedEngine)
-                            sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
-                        }
-                    },
-                    pictureModes = appearanceProfiles,
-                    pictureMode = activeAppearanceProfile,
-                    onSelectPictureMode = { selectedMode ->
-                        if (selectedMode.id != activeAppearanceProfile.id) {
-                            VideoAppearancePreferences.setActive(context, selectedMode.id)
-                            modeFeedback = "Picture mode · ${selectedMode.name}"
-                        }
-                    },
-                    onEditPictureMode = {
-                        moreOptionsOpen = false
-                        queueVisible = false
-                        pictureEditorVisible = true
-                        appearancePreview = null
-                    },
                     controlsTimeoutSeconds = controlsTimeoutSeconds,
                     onControlsTimeoutChanged = { seconds ->
                         onControlsTimeoutChanged(seconds)
                         modeFeedback = playerControlsTimeoutFeedback(seconds)
-                    },
-                    fullscreen = focusMode,
-                    onToggleFullscreen = {
-                        moreOptionsOpen = false
-                        val enteringFullscreen = !focusMode
-                        if (startFullscreen && !enteringFullscreen) {
-                            onBack()
-                        } else {
-                            focusMode = enteringFullscreen
-                            onFullscreenChanged?.invoke(enteringFullscreen)
-                            controlsVisible = !enteringFullscreen
-                            controlsFocused = false
-                            if (enteringFullscreen) {
-                                runCatching { videoSurfaceFocusRequester.requestFocus() }
-                            } else {
-                                showControlsAndFocusPlayPause()
-                            }
-                        }
                     },
                     onDismiss = {
                         moreOptionsOpen = false
@@ -2162,6 +2180,12 @@ fun PlayerScreen(
             )
         }
     }
+}
+
+internal fun PlaybackEngine.playerChoiceBadge(): String = when (this) {
+    PlaybackEngine.AUTO -> "AUTO"
+    PlaybackEngine.MEDIA3, PlaybackEngine.EXOPLAYER -> "EXO"
+    PlaybackEngine.VLC -> "VLC"
 }
 
 private object FailedDecoderRegistry {
@@ -2810,16 +2834,8 @@ internal fun PictureModeQuickOverlay(
 @Composable
 internal fun PlayerMoreOptionsDialog(
     detailLines: List<String>,
-    selectedPlayer: PlaybackEngine,
-    onSelectPlayer: (PlaybackEngine) -> Unit,
-    pictureModes: List<VideoAppearanceProfile>,
-    pictureMode: VideoAppearanceProfile,
-    onSelectPictureMode: (VideoAppearanceProfile) -> Unit,
-    onEditPictureMode: () -> Unit,
     controlsTimeoutSeconds: Int,
     onControlsTimeoutChanged: (Int) -> Unit,
-    fullscreen: Boolean,
-    onToggleFullscreen: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -2828,18 +2844,12 @@ internal fun PlayerMoreOptionsDialog(
             configuration.screenWidthDp > configuration.screenHeightDp
     val optionsBodyMaxHeight =
         (configuration.screenHeightDp * if (compactLandscape) .55f else .68f).dp
-    val playerRequesters = remember { PLAYER_ENGINE_OPTIONS.map { FocusRequester() } }
-    val pictureModeIds = pictureModes.map { it.id }
-    val pictureRequesters = remember(pictureModeIds) {
-        pictureModeIds.map { FocusRequester() }
-    }
-    val finalOptionRequester = remember { FocusRequester() }
+    val controlsOptionRequester = remember { FocusRequester() }
     val closeRequester = remember { FocusRequester() }
 
-    LaunchedEffect(selectedPlayer) {
+    LaunchedEffect(Unit) {
         delay(100L)
-        val index = PLAYER_ENGINE_OPTIONS.indexOf(selectedPlayer).coerceAtLeast(0)
-        runCatching { playerRequesters[index].requestFocus() }
+        runCatching { controlsOptionRequester.requestFocus() }
     }
 
     AlertDialog(
@@ -2888,83 +2898,18 @@ internal fun PlayerMoreOptionsDialog(
                     }
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color.White.copy(alpha = 0.035f)
-                ) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.SmartDisplay,
-                                null,
-                                Modifier.size(22.dp),
-                                tint = Color.White.copy(alpha = 0.92f)
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "Player",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                selectedPlayer.playerChoiceLabel(),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            PLAYER_ENGINE_OPTIONS.forEachIndexed { index, engine ->
-                                val leftRequester = playerRequesters.getOrNull(index - 1)
-                                val rightRequester = playerRequesters.getOrNull(index + 1)
-                                PlayerEngineChoiceButton(
-                                    engine = engine,
-                                    selected = engine == selectedPlayer,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .focusRequester(playerRequesters[index])
-                                        .playerDpadFocusRoutes(
-                                            left = leftRequester,
-                                            right = rightRequester
-                                        ),
-                                    onClick = {
-                                        if (engine != selectedPlayer) {
-                                            onSelectPlayer(engine)
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
                 PlayerMoreOptionRow(
                     icon = Icons.Default.Timer,
                     label = "Controls timeout",
                     value = playerControlsTimeoutLabel(controlsTimeoutSeconds),
+                    modifier = Modifier
+                        .focusRequester(controlsOptionRequester)
+                        .focusProperties { down = closeRequester },
                     onClick = {
                         onControlsTimeoutChanged(
                             nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
                         )
                     }
-                )
-                PlayerMoreOptionRow(
-                    icon = if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                    label = if (fullscreen) "Exit fullscreen" else "Fullscreen",
-                    modifier = Modifier
-                        .focusRequester(finalOptionRequester)
-                        .focusProperties { down = closeRequester },
-                    onClick = onToggleFullscreen
                 )
             }
         },
@@ -2973,7 +2918,7 @@ internal fun PlayerMoreOptionsDialog(
                 onClick = onDismiss,
                 modifier = Modifier
                     .focusRequester(closeRequester)
-                    .focusProperties { up = finalOptionRequester }
+                    .focusProperties { up = controlsOptionRequester }
                     .playerControlFocus(RoundedCornerShape(12.dp)) {},
                 shape = RoundedCornerShape(12.dp)
             ) {

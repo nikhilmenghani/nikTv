@@ -906,7 +906,13 @@ internal fun VlcPlayerScreen(
             val topDownRequester = if (seekable) progressRequester else playRequester
             val lowerQuickActionsOffset =
                 (playerConfiguration.screenHeightDp -
-                    if (compactMobileControls) 105 else 112).coerceAtLeast(0).dp
+                    if (compactMobileControls) 60 else 87).coerceAtLeast(0).dp
+            val lowerQuickActionsShift = when {
+                pipAvailable && compactMobileControls -> 144.dp
+                pipAvailable -> 168.dp
+                compactMobileControls -> 96.dp
+                else -> 112.dp
+            }
             val playbackDetailLines = buildList {
                 add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · VLC · Video fit · ${resizeMode.label}")
@@ -978,7 +984,7 @@ internal fun VlcPlayerScreen(
                         )
                     }
                     Row(
-                        modifier = Modifier.offset(y = lowerQuickActionsOffset),
+                        modifier = Modifier.offset(x = -lowerQuickActionsShift, y = lowerQuickActionsOffset),
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1092,29 +1098,30 @@ internal fun VlcPlayerScreen(
                                 .focusRequester(pictureModeRequester)
                                 .focusProperties {
                                     left = resizeRequester
-                                    right = if (pipAvailable) pipRequester else moreRequester
+                                    right = moreRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     resizeRequester,
-                                    if (pipAvailable) pipRequester else moreRequester,
+                                    moreRequester,
                                     topDownRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
-                            icon = Icons.Default.MoreHoriz,
-                            contentDescription = "More playback options",
+                            icon = Icons.Default.Settings,
+                            contentDescription = "Playback settings",
                             onClick = { onMoreOptionsOpenChanged(true) },
                             modifier = Modifier
-                                .offset(y = -lowerQuickActionsOffset)
                                 .focusRequester(moreRequester)
                                 .focusProperties {
                                     left = pictureModeRequester
+                                    right = if (pipAvailable) pipRequester else playerSwitchRequester
                                     down = topDownRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = pictureModeRequester,
+                                    right = if (pipAvailable) pipRequester else playerSwitchRequester,
                                     down = topDownRequester
                                 ),
                             onFocused = { controlsFocused = it }
@@ -1201,10 +1208,10 @@ internal fun VlcPlayerScreen(
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (pipAvailable) {
-                                Spacer(Modifier.size(if (compactMobileControls) 44.dp else 48.dp))
-                                Spacer(Modifier.weight(1f))
-                            }
+                            val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
+                            val utilityButtonCount = 2 + if (pipAvailable) 1 else 0
+                            Spacer(Modifier.width((utilityButtonSize.value * utilityButtonCount).dp))
+                            Spacer(Modifier.weight(1f))
                             if (media.previousEpisode != null) {
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.SkipPrevious,
@@ -1247,7 +1254,7 @@ internal fun VlcPlayerScreen(
                                             seekable -> forwardRequester
                                             media.nextEpisode != null -> nextRequester
                                             pipAvailable -> pipRequester
-                                            else -> FocusRequester.Default
+                                            else -> playerSwitchRequester
                                         }
                                     },
                                 primaryAction = true,
@@ -1263,7 +1270,7 @@ internal fun VlcPlayerScreen(
                                     modifier = Modifier.focusRequester(forwardRequester)
                                         .focusProperties {
                                             up = progressRequester
-                                            if (media.nextEpisode == null && pipAvailable) right = pipRequester
+                                            if (media.nextEpisode == null) right = if (pipAvailable) pipRequester else playerSwitchRequester
                                         },
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
@@ -1277,15 +1284,15 @@ internal fun VlcPlayerScreen(
                                     modifier = Modifier.focusRequester(nextRequester)
                                         .focusProperties {
                                             up = if (seekable) progressRequester else moreRequester
-                                            if (pipAvailable) right = pipRequester
+                                            right = if (pipAvailable) pipRequester else playerSwitchRequester
                                         },
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
                             }
+                            Spacer(Modifier.weight(1f))
                             if (pipAvailable) {
-                                Spacer(Modifier.weight(1f))
-                                val pipLeftRequester = pictureModeRequester
+                                val pipLeftRequester = moreRequester
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.PictureInPictureAlt,
                                     contentDescription = "Picture in Picture",
@@ -1298,12 +1305,62 @@ internal fun VlcPlayerScreen(
                                         .focusRequester(pipRequester)
                                         .focusProperties {
                                             left = pipLeftRequester
+                                            right = playerSwitchRequester
                                             up = if (seekable) progressRequester else moreRequester
                                         },
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
                             }
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.SmartDisplay,
+                                badgeText = configuredEngine.playerChoiceBadge(),
+                                contentDescription = "Player: ${configuredEngine.playerChoiceLabel()}",
+                                onClick = {
+                                    val selectedEngine = configuredEngine.nextPlayerChoice()
+                                    modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
+                                    onSelectPlayer(selectedEngine, player.time.coerceAtLeast(0L))
+                                },
+                                modifier = Modifier
+                                    .focusRequester(playerSwitchRequester)
+                                    .focusProperties {
+                                        left = if (pipAvailable) pipRequester else moreRequester
+                                        right = fullscreenRequester
+                                        up = if (seekable) progressRequester else moreRequester
+                                    },
+                                size = utilityButtonSize,
+                                selected = false,
+                                onFocused = { controlsFocused = it }
+                            )
+                            PlayerChromeIconButton(
+                                icon = if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                contentDescription = if (focusMode) "Exit fullscreen" else "Fullscreen",
+                                onClick = {
+                                    val entering = !focusMode
+                                    if (startFullscreen && !entering) {
+                                        onBack()
+                                    } else {
+                                        focusMode = entering
+                                        onFullscreenChanged?.invoke(entering)
+                                        controlsVisible = !entering
+                                        controlsFocused = false
+                                        if (entering) {
+                                            runCatching { videoSurfaceFocusRequester.requestFocus() }
+                                        } else {
+                                            showControls()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .focusRequester(fullscreenRequester)
+                                    .focusProperties {
+                                        left = playerSwitchRequester
+                                        up = if (seekable) progressRequester else moreRequester
+                                    },
+                                size = utilityButtonSize,
+                                selected = false,
+                                onFocused = { controlsFocused = it }
+                            )
                         }
                     }
                 }
@@ -1311,52 +1368,10 @@ internal fun VlcPlayerScreen(
             if (moreOptionsOpen) {
                 PlayerMoreOptionsDialog(
                     detailLines = playbackDetailLines,
-                    selectedPlayer = configuredEngine,
-                    onSelectPlayer = { selectedEngine ->
-                        if (selectedEngine != configuredEngine) {
-                            modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
-                            onSelectPlayer(
-                                selectedEngine,
-                                player.time.coerceAtLeast(0L)
-                            )
-                        }
-                    },
-                    pictureModes = appearanceProfiles,
-                    pictureMode = activeAppearanceProfile,
-                    onSelectPictureMode = { selectedMode ->
-                        if (selectedMode.id != activeAppearanceProfile.id) {
-                            VideoAppearancePreferences.setActive(context, selectedMode.id)
-                            modeFeedback = "Picture mode · ${selectedMode.name}"
-                        }
-                    },
-                    onEditPictureMode = {
-                        onMoreOptionsOpenChanged(false)
-                        queueVisible = false
-                        pictureEditorVisible = true
-                        appearancePreview = null
-                    },
                     controlsTimeoutSeconds = controlsTimeoutSeconds,
                     onControlsTimeoutChanged = { seconds ->
                         onControlsTimeoutChanged(seconds)
                         modeFeedback = playerControlsTimeoutFeedback(seconds)
-                    },
-                    fullscreen = focusMode,
-                    onToggleFullscreen = {
-                        onMoreOptionsOpenChanged(false)
-                        val entering = !focusMode
-                        if (startFullscreen && !entering) {
-                            onBack()
-                        } else {
-                            focusMode = entering
-                            onFullscreenChanged?.invoke(entering)
-                            controlsVisible = !entering
-                            controlsFocused = false
-                            if (entering) {
-                                runCatching { videoSurfaceFocusRequester.requestFocus() }
-                            } else {
-                                showControls()
-                            }
-                        }
                     },
                     onDismiss = {
                         onMoreOptionsOpenChanged(false)
