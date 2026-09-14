@@ -144,6 +144,22 @@ private val ModernAppBackground = Color(0xFF0B0B0F)
 private val ModernChromeSurface = Color(0xFF101116)
 private val ModernCardSurface = Color(0xFF151720)
 private val ModernOutline = Color(0xFF2A2D36)
+
+private data class ModernCollectionViewport(val index: Int, val offset: Int)
+
+/** Keeps category viewports alive while the fullscreen player replaces browse UI. */
+private object ModernCollectionViewportMemory {
+    private val viewports = mutableMapOf<String, ModernCollectionViewport>()
+
+    fun get(key: String): ModernCollectionViewport? = viewports[key]
+
+    fun put(key: String, index: Int, offset: Int) {
+        viewports[key] = ModernCollectionViewport(
+            index = index.coerceAtLeast(0),
+            offset = offset.coerceAtLeast(0)
+        )
+    }
+}
 private val ModernBrandAccent = Color(0xFF7C8CFF)
 private val ModernBrandViolet = Color(0xFFA275FF)
 
@@ -2331,7 +2347,23 @@ private fun ModernIptvCollection(
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
-    val gridState = rememberLazyGridState()
+    val viewportKey = "$profileKey:${category.type.name}:${category.id}"
+    val restoredViewport = remember(viewportKey) {
+        ModernCollectionViewportMemory.get(viewportKey)
+    }
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = restoredViewport?.index
+            ?.coerceAtMost(displayedItems.size)
+            ?: 0,
+        initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
+    )
+    LaunchedEffect(viewportKey, gridState) {
+        snapshotFlow {
+            gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+        }.collect { (index, offset) ->
+            ModernCollectionViewportMemory.put(viewportKey, index, offset)
+        }
+    }
     val itemFocusRequesters =
         remember(category.id) {
             mutableMapOf<String, FocusRequester>()
