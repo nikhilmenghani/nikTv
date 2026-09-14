@@ -121,8 +121,10 @@ internal data class VideoAppearanceSchedule(
         return entries.firstOrNull { it.contains(minutesOfDay) }
     }
 
-    fun profileAt(minutesOfDay: Int): String? =
-        activeEntryAt(minutesOfDay)?.profileId
+    fun profileAt(minutesOfDay: Int): String? {
+        if (!enabled) return null
+        return activeEntryAt(minutesOfDay)?.profileId ?: fallbackProfileId
+    }
 }
 
 private fun VideoAppearanceScheduleEntry.contains(minutesOfDay: Int): Boolean = when {
@@ -543,13 +545,15 @@ internal fun PlayerVisualButtons(
 internal fun Modifier.playerDpadFocusRoutes(
     left: FocusRequester? = null,
     right: FocusRequester? = null,
-    down: FocusRequester? = null
+    down: FocusRequester? = null,
+    up: FocusRequester? = null
 ): Modifier = onPreviewKeyEvent { event ->
     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
     val destination = when (event.key) {
         Key.DirectionLeft -> left
         Key.DirectionRight -> right
         Key.DirectionDown -> down
+        Key.DirectionUp -> up
         else -> null
     } ?: return@onPreviewKeyEvent false
     runCatching { destination.requestFocus() }.getOrDefault(false)

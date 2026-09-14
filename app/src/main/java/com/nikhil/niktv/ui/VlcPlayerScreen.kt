@@ -904,6 +904,16 @@ internal fun VlcPlayerScreen(
 
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val topDownRequester = if (seekable) progressRequester else playRequester
+            val firstQuickActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
+                recordingPauseRequester
+            } else {
+                downloadRequester
+            }
+            val lastPlaybackActionRequester = when {
+                media.nextEpisode != null -> nextRequester
+                seekable -> forwardRequester
+                else -> playRequester
+            }
             val lowerQuickActionsOffset =
                 (playerConfiguration.screenHeightDp -
                     if (compactMobileControls) 64 else 91).coerceAtLeast(0).dp
@@ -948,11 +958,11 @@ internal fun VlcPlayerScreen(
                         modifier = Modifier
                             .focusRequester(backRequester)
                             .focusProperties {
-                                right = if (recordingThisChannel) recordingPauseRequester else downloadRequester
+                                right = firstQuickActionRequester
                                 down = topDownRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (recordingThisChannel) recordingPauseRequester else downloadRequester,
+                                right = firstQuickActionRequester,
                                 down = topDownRequester
                             ),
                         onFocused = { controlsFocused = it }
@@ -999,11 +1009,15 @@ internal fun VlcPlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadRequester)
                                     .focusProperties {
-                                        left = backRequester
+                                        left = lastPlaybackActionRequester
                                         right = subtitleRequester
-                                        down = topDownRequester
+                                        up = if (seekable) progressRequester else backRequester
                                     }
-                                    .playerDpadFocusRoutes(backRequester, subtitleRequester, topDownRequester),
+                                    .playerDpadFocusRoutes(
+                                        left = lastPlaybackActionRequester,
+                                        right = subtitleRequester,
+                                        up = if (seekable) progressRequester else backRequester
+                                    ),
                                 selected = offlineDownloadPresent,
                                 progress = offlineDownloadProgress.takeIf { displayedDownloadInProgress },
                                 indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
@@ -1020,8 +1034,16 @@ internal fun VlcPlayerScreen(
                                     },
                                     modifier = Modifier
                                         .focusRequester(recordingPauseRequester)
-                                        .focusProperties { left = backRequester; right = downloadRequester; down = topDownRequester }
-                                        .playerDpadFocusRoutes(backRequester, downloadRequester, topDownRequester),
+                                        .focusProperties {
+                                            left = lastPlaybackActionRequester
+                                            right = downloadRequester
+                                            up = backRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = lastPlaybackActionRequester,
+                                            right = downloadRequester,
+                                            up = backRequester
+                                        ),
                                     selected = false,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1035,8 +1057,16 @@ internal fun VlcPlayerScreen(
                                 },
                                 modifier = Modifier
                                     .focusRequester(downloadRequester)
-                                    .focusProperties { left = if (recordingThisChannel) recordingPauseRequester else backRequester; right = subtitleRequester; down = topDownRequester }
-                                    .playerDpadFocusRoutes(if (recordingThisChannel) recordingPauseRequester else backRequester, subtitleRequester, topDownRequester),
+                                    .focusProperties {
+                                        left = if (recordingThisChannel) recordingPauseRequester else lastPlaybackActionRequester
+                                        right = subtitleRequester
+                                        up = backRequester
+                                    }
+                                    .playerDpadFocusRoutes(
+                                        left = if (recordingThisChannel) recordingPauseRequester else lastPlaybackActionRequester,
+                                        right = subtitleRequester,
+                                        up = backRequester
+                                    ),
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
@@ -1050,12 +1080,12 @@ internal fun VlcPlayerScreen(
                                 .focusProperties {
                                     left = downloadRequester
                                     right = resizeRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = downloadRequester,
                                     right = resizeRequester,
-                                    down = topDownRequester
+                                    up = if (seekable) progressRequester else backRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
@@ -1078,12 +1108,12 @@ internal fun VlcPlayerScreen(
                                 .focusProperties {
                                     left = subtitleRequester
                                     right = pictureModeRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = subtitleRequester,
                                     right = pictureModeRequester,
-                                    down = topDownRequester
+                                    up = if (seekable) progressRequester else backRequester
                                 ),
                             selected = false,
                             onFocused = {
@@ -1099,12 +1129,12 @@ internal fun VlcPlayerScreen(
                                 .focusProperties {
                                     left = resizeRequester
                                     right = moreRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    resizeRequester,
-                                    moreRequester,
-                                    topDownRequester
+                                    left = resizeRequester,
+                                    right = moreRequester,
+                                    up = if (seekable) progressRequester else backRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
@@ -1117,12 +1147,12 @@ internal fun VlcPlayerScreen(
                                 .focusProperties {
                                     left = pictureModeRequester
                                     right = if (pipAvailable) pipRequester else playerSwitchRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = pictureModeRequester,
                                     right = if (pipAvailable) pipRequester else playerSwitchRequester,
-                                    down = topDownRequester
+                                    up = if (seekable) progressRequester else backRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
@@ -1161,7 +1191,7 @@ internal fun VlcPlayerScreen(
                                     .fillMaxWidth()
                                     .focusRequester(progressRequester)
                                     .focusProperties {
-                                        up = moreRequester
+                                        up = backRequester
                                         down = playRequester
                                     }
                                     .playerControlFocus(
@@ -1215,7 +1245,14 @@ internal fun VlcPlayerScreen(
                                     contentDescription = "Previous",
                                     onClick = { if (!advancing) { advancing = true; onPlayPrevious() } },
                                     modifier = Modifier.focusRequester(previousRequester)
-                                        .focusProperties { up = if (seekable) progressRequester else moreRequester },
+                                        .focusProperties {
+                                            up = if (seekable) progressRequester else backRequester
+                                            right = if (seekable) rewindRequester else playRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            right = if (seekable) rewindRequester else playRequester,
+                                            up = if (seekable) progressRequester else backRequester
+                                        ),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1226,7 +1263,16 @@ internal fun VlcPlayerScreen(
                                     contentDescription = "Back 10 seconds",
                                     onClick = { player.time = (player.time - 10_000L).coerceAtLeast(0L) },
                                     modifier = Modifier.focusRequester(rewindRequester)
-                                        .focusProperties { up = progressRequester },
+                                        .focusProperties {
+                                            up = progressRequester
+                                            left = if (media.previousEpisode != null) previousRequester else FocusRequester.Default
+                                            right = playRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = if (media.previousEpisode != null) previousRequester else null,
+                                            right = playRequester,
+                                            up = progressRequester
+                                        ),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1241,7 +1287,7 @@ internal fun VlcPlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(playRequester)
                                     .focusProperties {
-                                        up = if (seekable) progressRequester else moreRequester
+                                        up = if (seekable) progressRequester else backRequester
                                         left = when {
                                             seekable -> rewindRequester
                                             media.previousEpisode != null -> previousRequester
@@ -1250,10 +1296,22 @@ internal fun VlcPlayerScreen(
                                         right = when {
                                             seekable -> forwardRequester
                                             media.nextEpisode != null -> nextRequester
-                                            pipAvailable -> pipRequester
-                                            else -> playerSwitchRequester
+                                            else -> firstQuickActionRequester
                                         }
-                                    },
+                                    }
+                                    .playerDpadFocusRoutes(
+                                        left = when {
+                                            seekable -> rewindRequester
+                                            media.previousEpisode != null -> previousRequester
+                                            else -> null
+                                        },
+                                        right = when {
+                                            seekable -> forwardRequester
+                                            media.nextEpisode != null -> nextRequester
+                                            else -> firstQuickActionRequester
+                                        },
+                                        up = if (seekable) progressRequester else backRequester
+                                    ),
                                 primaryAction = true,
                                 size = if (compactMobileControls) 50.dp else 58.dp,
                                 iconSize = if (compactMobileControls) 27.dp else 30.dp,
@@ -1267,8 +1325,14 @@ internal fun VlcPlayerScreen(
                                     modifier = Modifier.focusRequester(forwardRequester)
                                         .focusProperties {
                                             up = progressRequester
-                                            if (media.nextEpisode == null) right = if (pipAvailable) pipRequester else playerSwitchRequester
-                                        },
+                                            left = playRequester
+                                            right = if (media.nextEpisode != null) nextRequester else firstQuickActionRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = playRequester,
+                                            right = if (media.nextEpisode != null) nextRequester else firstQuickActionRequester,
+                                            up = progressRequester
+                                        ),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1280,9 +1344,15 @@ internal fun VlcPlayerScreen(
                                     onClick = { if (!advancing) { advancing = true; onPlayNext() } },
                                     modifier = Modifier.focusRequester(nextRequester)
                                         .focusProperties {
-                                            up = if (seekable) progressRequester else moreRequester
-                                            right = if (pipAvailable) pipRequester else playerSwitchRequester
-                                        },
+                                            up = if (seekable) progressRequester else backRequester
+                                            left = if (seekable) forwardRequester else playRequester
+                                            right = firstQuickActionRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = if (seekable) forwardRequester else playRequester,
+                                            right = firstQuickActionRequester,
+                                            up = if (seekable) progressRequester else backRequester
+                                        ),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1303,8 +1373,13 @@ internal fun VlcPlayerScreen(
                                         .focusProperties {
                                             left = pipLeftRequester
                                             right = playerSwitchRequester
-                                            up = if (seekable) progressRequester else moreRequester
-                                        },
+                                            up = if (seekable) progressRequester else backRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = pipLeftRequester,
+                                            right = playerSwitchRequester,
+                                            up = if (seekable) progressRequester else backRequester
+                                        ),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1323,8 +1398,13 @@ internal fun VlcPlayerScreen(
                                     .focusProperties {
                                         left = if (pipAvailable) pipRequester else moreRequester
                                         right = fullscreenRequester
-                                        up = if (seekable) progressRequester else moreRequester
-                                    },
+                                        up = if (seekable) progressRequester else backRequester
+                                    }
+                                    .playerDpadFocusRoutes(
+                                        left = if (pipAvailable) pipRequester else moreRequester,
+                                        right = fullscreenRequester,
+                                        up = if (seekable) progressRequester else backRequester
+                                    ),
                                 size = utilityButtonSize,
                                 selected = false,
                                 onFocused = { controlsFocused = it }
@@ -1352,8 +1432,12 @@ internal fun VlcPlayerScreen(
                                     .focusRequester(fullscreenRequester)
                                     .focusProperties {
                                         left = playerSwitchRequester
-                                        up = if (seekable) progressRequester else moreRequester
-                                    },
+                                        up = if (seekable) progressRequester else backRequester
+                                    }
+                                    .playerDpadFocusRoutes(
+                                        left = playerSwitchRequester,
+                                        up = if (seekable) progressRequester else backRequester
+                                    ),
                                 size = utilityButtonSize,
                                 selected = false,
                                 onFocused = { controlsFocused = it }

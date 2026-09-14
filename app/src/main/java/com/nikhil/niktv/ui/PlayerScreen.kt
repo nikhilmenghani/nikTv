@@ -1443,6 +1443,16 @@ fun PlayerScreen(
         if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
+            val firstQuickActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
+                recordingPauseFocusRequester
+            } else {
+                downloadFocusRequester
+            }
+            val lastPlaybackActionRequester = when {
+                media.nextEpisode != null -> nextFocusRequester
+                seekable -> forwardFocusRequester
+                else -> playPauseFocusRequester
+            }
             val lowerQuickActionsOffset =
                 (playerConfiguration.screenHeightDp -
                     if (compactMobileControls) 64 else 91).coerceAtLeast(0).dp
@@ -1488,11 +1498,11 @@ fun PlayerScreen(
                         modifier = Modifier
                             .focusRequester(backFocusRequester)
                             .focusProperties {
-                                right = if (recordingThisChannel) recordingPauseFocusRequester else downloadFocusRequester
+                                right = firstQuickActionRequester
                                 down = topDownRequester
                             }
                             .playerDpadFocusRoutes(
-                                right = if (recordingThisChannel) recordingPauseFocusRequester else downloadFocusRequester,
+                                right = firstQuickActionRequester,
                                 down = topDownRequester
                             ),
                         onFocused = { controlsFocused = it }
@@ -1539,11 +1549,15 @@ fun PlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadFocusRequester)
                                     .focusProperties {
-                                        left = backFocusRequester
+                                        left = lastPlaybackActionRequester
                                         right = subtitleFocusRequester
-                                        down = topDownRequester
+                                        up = if (seekable) progressFocusRequester else backFocusRequester
                                     }
-                                    .playerDpadFocusRoutes(backFocusRequester, subtitleFocusRequester, topDownRequester),
+                                    .playerDpadFocusRoutes(
+                                        left = lastPlaybackActionRequester,
+                                        right = subtitleFocusRequester,
+                                        up = if (seekable) progressFocusRequester else backFocusRequester
+                                    ),
                                 selected = offlineDownloadPresent,
                                 progress = offlineDownloadProgress.takeIf { displayedDownloadInProgress },
                                 indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
@@ -1560,8 +1574,16 @@ fun PlayerScreen(
                                     },
                                     modifier = Modifier
                                         .focusRequester(recordingPauseFocusRequester)
-                                        .focusProperties { left = backFocusRequester; right = downloadFocusRequester; down = topDownRequester }
-                                        .playerDpadFocusRoutes(backFocusRequester, downloadFocusRequester, topDownRequester),
+                                        .focusProperties {
+                                            left = lastPlaybackActionRequester
+                                            right = downloadFocusRequester
+                                            up = backFocusRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = lastPlaybackActionRequester,
+                                            right = downloadFocusRequester,
+                                            up = backFocusRequester
+                                        ),
                                     selected = false,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1575,8 +1597,16 @@ fun PlayerScreen(
                                 },
                                 modifier = Modifier
                                     .focusRequester(downloadFocusRequester)
-                                    .focusProperties { left = if (recordingThisChannel) recordingPauseFocusRequester else backFocusRequester; right = subtitleFocusRequester; down = topDownRequester }
-                                    .playerDpadFocusRoutes(if (recordingThisChannel) recordingPauseFocusRequester else backFocusRequester, subtitleFocusRequester, topDownRequester),
+                                    .focusProperties {
+                                        left = if (recordingThisChannel) recordingPauseFocusRequester else lastPlaybackActionRequester
+                                        right = subtitleFocusRequester
+                                        up = backFocusRequester
+                                    }
+                                    .playerDpadFocusRoutes(
+                                        left = if (recordingThisChannel) recordingPauseFocusRequester else lastPlaybackActionRequester,
+                                        right = subtitleFocusRequester,
+                                        up = backFocusRequester
+                                    ),
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
@@ -1590,12 +1620,12 @@ fun PlayerScreen(
                                 .focusProperties {
                                     left = downloadFocusRequester
                                     right = resizeFocusRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = downloadFocusRequester,
                                     right = resizeFocusRequester,
-                                    down = topDownRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
@@ -1620,12 +1650,12 @@ fun PlayerScreen(
                                 .focusProperties {
                                     left = subtitleFocusRequester
                                     right = pictureModeFocusRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = subtitleFocusRequester,
                                     right = pictureModeFocusRequester,
-                                    down = topDownRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 ),
                             selected = false,
                             onFocused = {
@@ -1641,12 +1671,12 @@ fun PlayerScreen(
                                 .focusProperties {
                                     left = resizeFocusRequester
                                     right = moreFocusRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    resizeFocusRequester,
-                                    moreFocusRequester,
-                                    topDownRequester
+                                    left = resizeFocusRequester,
+                                    right = moreFocusRequester,
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
@@ -1659,12 +1689,12 @@ fun PlayerScreen(
                                 .focusProperties {
                                     left = pictureModeFocusRequester
                                     right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
-                                    down = topDownRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = pictureModeFocusRequester,
                                     right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
-                                    down = topDownRequester
+                                    up = if (seekable) progressFocusRequester else backFocusRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
@@ -1703,7 +1733,7 @@ fun PlayerScreen(
                                     .fillMaxWidth()
                                     .focusRequester(progressFocusRequester)
                                     .focusProperties {
-                                        up = moreFocusRequester
+                                        up = backFocusRequester
                                         down = playPauseFocusRequester
                                     }
                                     .playerControlFocus(
@@ -1754,7 +1784,14 @@ fun PlayerScreen(
                                         contentDescription = "Previous",
                                         onClick = { if (!advancing) { advancing = true; onPlayPrevious() } },
                                         modifier = Modifier.focusRequester(previousFocusRequester)
-                                            .focusProperties { up = if (seekable) progressFocusRequester else moreFocusRequester },
+                                            .focusProperties {
+                                                up = if (seekable) progressFocusRequester else backFocusRequester
+                                                right = if (seekable) rewindFocusRequester else playPauseFocusRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                right = if (seekable) rewindFocusRequester else playPauseFocusRequester,
+                                                up = if (seekable) progressFocusRequester else backFocusRequester
+                                            ),
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
@@ -1765,7 +1802,16 @@ fun PlayerScreen(
                                         contentDescription = "Back 10 seconds",
                                         onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) },
                                         modifier = Modifier.focusRequester(rewindFocusRequester)
-                                            .focusProperties { up = progressFocusRequester },
+                                            .focusProperties {
+                                                up = progressFocusRequester
+                                                left = if (media.previousEpisode != null) previousFocusRequester else FocusRequester.Default
+                                                right = playPauseFocusRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                left = if (media.previousEpisode != null) previousFocusRequester else null,
+                                                right = playPauseFocusRequester,
+                                                up = progressFocusRequester
+                                            ),
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
@@ -1780,7 +1826,7 @@ fun PlayerScreen(
                                     modifier = Modifier
                                         .focusRequester(playPauseFocusRequester)
                                         .focusProperties {
-                                            up = if (seekable) progressFocusRequester else moreFocusRequester
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
                                             left = when {
                                                 seekable -> rewindFocusRequester
                                                 media.previousEpisode != null -> previousFocusRequester
@@ -1789,10 +1835,22 @@ fun PlayerScreen(
                                             right = when {
                                                 seekable -> forwardFocusRequester
                                                 media.nextEpisode != null -> nextFocusRequester
-                                                pipAvailable -> pipFocusRequester
-                                                else -> playerSwitchFocusRequester
+                                                else -> firstQuickActionRequester
                                             }
-                                        },
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = when {
+                                                seekable -> rewindFocusRequester
+                                                media.previousEpisode != null -> previousFocusRequester
+                                                else -> null
+                                            },
+                                            right = when {
+                                                seekable -> forwardFocusRequester
+                                                media.nextEpisode != null -> nextFocusRequester
+                                                else -> firstQuickActionRequester
+                                            },
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                        ),
                                     primaryAction = true,
                                     size = if (compactMobileControls) 50.dp else 58.dp,
                                     iconSize = if (compactMobileControls) 27.dp else 30.dp,
@@ -1806,8 +1864,14 @@ fun PlayerScreen(
                                         modifier = Modifier.focusRequester(forwardFocusRequester)
                                             .focusProperties {
                                                 up = progressFocusRequester
-                                                if (media.nextEpisode == null) right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
-                                            },
+                                                left = playPauseFocusRequester
+                                                right = if (media.nextEpisode != null) nextFocusRequester else firstQuickActionRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                left = playPauseFocusRequester,
+                                                right = if (media.nextEpisode != null) nextFocusRequester else firstQuickActionRequester,
+                                                up = progressFocusRequester
+                                            ),
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
@@ -1819,9 +1883,15 @@ fun PlayerScreen(
                                         onClick = { if (!advancing) { advancing = true; onPlayNext() } },
                                         modifier = Modifier.focusRequester(nextFocusRequester)
                                             .focusProperties {
-                                                up = if (seekable) progressFocusRequester else moreFocusRequester
-                                                right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
-                                            },
+                                                up = if (seekable) progressFocusRequester else backFocusRequester
+                                                left = if (seekable) forwardFocusRequester else playPauseFocusRequester
+                                                right = firstQuickActionRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                left = if (seekable) forwardFocusRequester else playPauseFocusRequester,
+                                                right = firstQuickActionRequester,
+                                                up = if (seekable) progressFocusRequester else backFocusRequester
+                                            ),
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
@@ -1842,8 +1912,13 @@ fun PlayerScreen(
                                             .focusProperties {
                                                 left = pipLeftRequester
                                                 right = playerSwitchFocusRequester
-                                                up = if (seekable) progressFocusRequester else moreFocusRequester
-                                            },
+                                                up = if (seekable) progressFocusRequester else backFocusRequester
+                                            }
+                                            .playerDpadFocusRoutes(
+                                                left = pipLeftRequester,
+                                                right = playerSwitchFocusRequester,
+                                                up = if (seekable) progressFocusRequester else backFocusRequester
+                                            ),
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
@@ -1865,8 +1940,13 @@ fun PlayerScreen(
                                         .focusProperties {
                                             left = if (pipAvailable) pipFocusRequester else moreFocusRequester
                                             right = fullscreenFocusRequester
-                                            up = if (seekable) progressFocusRequester else moreFocusRequester
-                                        },
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = if (pipAvailable) pipFocusRequester else moreFocusRequester,
+                                            right = fullscreenFocusRequester,
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                        ),
                                     size = utilityButtonSize,
                                     selected = false,
                                     onFocused = { controlsFocused = it }
@@ -1894,8 +1974,12 @@ fun PlayerScreen(
                                         .focusRequester(fullscreenFocusRequester)
                                         .focusProperties {
                                             left = playerSwitchFocusRequester
-                                            up = if (seekable) progressFocusRequester else moreFocusRequester
-                                        },
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = playerSwitchFocusRequester,
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                        ),
                                     size = utilityButtonSize,
                                     selected = false,
                                     onFocused = { controlsFocused = it }
@@ -2402,18 +2486,25 @@ internal fun PlayerChromeIconButton(
     }
     val controlSize = if (size < minimumFocusSize) minimumFocusSize else size
     val shape = RoundedCornerShape(if (primaryAction) 16.dp else 12.dp)
+    var isFocused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
         modifier = modifier
             .size(controlSize)
-            .playerControlFocus(shape = shape, onFocused = onFocused),
+            .playerControlFocus(
+                shape = shape,
+                scaleOnFocus = true,
+                onFocused = {
+                    isFocused = it
+                    onFocused(it)
+                }
+            ),
         shape = shape,
-        color = if (selected) {
-            Color(0xFF303A49)
-        } else if (primaryAction) {
-            Color.Black.copy(alpha = 0.64f)
-        } else {
-            Color.Black.copy(alpha = 0.46f)
+        color = when {
+            isFocused -> Color(0xFF3B4D68)
+            selected -> Color(0xFF303A49)
+            primaryAction -> Color.Black.copy(alpha = 0.64f)
+            else -> Color.Black.copy(alpha = 0.46f)
         },
         border = if (selected) {
             androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF9AA9BD))
@@ -3072,7 +3163,6 @@ internal fun Modifier.playerControlFocus(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isTvLikeDevice(configuration)
-    val remoteNavigation = context.usesRemoteNavigation(configuration)
     val minimumSize = when {
         isTv -> 56.dp
         configuration.smallestScreenWidthDp < 600 -> 44.dp
@@ -3085,10 +3175,17 @@ internal fun Modifier.playerControlFocus(
             onFocused(it.isFocused)
         }
         .then(
-            if (focused && remoteNavigation) {
+            if (focused) {
                 Modifier
-                    .zIndex(1f)
-                    .border(2.dp, Color(0xFFE7E9EF), shape)
+                    .zIndex(2f)
+                    .then(
+                        if (scaleOnFocus) Modifier.graphicsLayer {
+                            scaleX = 1.10f
+                            scaleY = 1.10f
+                        } else Modifier
+                    )
+                    .border(2.5.dp, Color.White, shape)
+                    .background(Color.White.copy(alpha = 0.15f), shape)
             } else {
                 Modifier
             }
