@@ -1813,7 +1813,7 @@ private fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
-        DropdownMenuItem(
+        NikDropdownMenuItem(
             text = {
                 Text(if (isFavorite) "Remove from My List" else "Add to My List")
             },
@@ -1830,7 +1830,7 @@ private fun ModernTileActionsMenu(
             }
         )
         togglePin?.let { pinAction ->
-            DropdownMenuItem(
+            NikDropdownMenuItem(
                 text = { Text(if (isPinned) "Unpin" else "Pin to top") },
                 leadingIcon = { Icon(Icons.Default.PushPin, null) },
                 onClick = {
@@ -1840,7 +1840,7 @@ private fun ModernTileActionsMenu(
             )
         }
         clear?.let { clearAction ->
-            DropdownMenuItem(
+            NikDropdownMenuItem(
                 text = { Text("Clear from this list") },
                 leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
                 onClick = {

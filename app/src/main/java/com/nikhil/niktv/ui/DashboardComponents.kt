@@ -758,14 +758,14 @@ internal fun ModernPosterCard(
             shape = RoundedCornerShape(12.dp)
         ) {
             toggleFavorite?.let { action ->
-                DropdownMenuItem(
+                NikDropdownMenuItem(
                     text = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
                     leadingIcon = { Icon(if (isFavorite) Icons.Default.HeartBroken else Icons.Default.FavoriteBorder, null) },
                     onClick = { menuOpen = false; action() }
                 )
             }
             removeAction?.let { action ->
-                DropdownMenuItem(
+                NikDropdownMenuItem(
                     text = { Text("Remove from recent") },
                     leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
                     onClick = { menuOpen = false; action() }
@@ -1110,7 +1110,7 @@ internal fun ModernMediaListCard(
             containerColor = Color(0xFF202020),
             shape = RoundedCornerShape(12.dp)
         ) {
-            DropdownMenuItem(
+            NikDropdownMenuItem(
                 text = {
                     Text(
                         if (isFavorite) {

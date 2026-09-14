@@ -499,7 +499,7 @@ internal fun ModernSeriesDetailScreen(
                                 ) {
                                     val orderedSeasons = if (episodeSortDescending) availableSeasons.reversed() else availableSeasons
                                     orderedSeasons.forEach { season ->
-                                        DropdownMenuItem(
+                                        NikDropdownMenuItem(
                                             text = { Text("Season $season") },
                                             onClick = { loadSeriesSeason(season); seasonDropdownExpanded = false },
                                             trailingIcon = if (selectedSeason == season) {{ Icon(Icons.Default.Check, null) }} else null

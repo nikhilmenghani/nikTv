@@ -1768,7 +1768,7 @@ private fun SearchFavoriteMenu(
         containerColor = SearchRaised,
         shape = RoundedCornerShape(12.dp)
     ) {
-        DropdownMenuItem(
+        NikDropdownMenuItem(
             text = {
                 Text(
                     if (isFavorite) {

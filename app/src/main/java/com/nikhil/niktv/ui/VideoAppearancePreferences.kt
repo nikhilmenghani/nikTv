@@ -1085,7 +1085,7 @@ internal fun PlayerQueueOverlay(
                 containerColor = Color(0xFF202020),
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
             ) {
-                DropdownMenuItem(
+                NikDropdownMenuItem(
                     text = {
                         Text(
                             if (item.id in favoriteIds) {
