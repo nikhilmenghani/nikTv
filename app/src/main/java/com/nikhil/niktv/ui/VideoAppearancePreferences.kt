@@ -52,6 +52,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
@@ -670,9 +671,17 @@ internal fun PlayerQueueOverlay(
         configuration.screenWidthDp < 900 -> 4
         else -> 5
     }
+    /*
+     * COMPACT_PLAYER_QUEUE_CARD_V42
+     *
+     * The phone queue is a single row, so it should size to that row instead
+     * of retaining the old multi-row sheet height. The wider/taller card gives
+     * episode artwork a useful canvas and enough room for readable metadata.
+     */
+    val compactQueueSheetHeight = 232.dp
     val queueSheetMinHeight = when {
         tvQueueGrid -> 200.dp
-        compactQueueGrid -> 210.dp
+        compactQueueGrid -> compactQueueSheetHeight
         else -> 260.dp
     }
     val desiredQueueSheetMaxHeight =
@@ -684,12 +693,12 @@ internal fun PlayerQueueOverlay(
                     else -> .54f
                 }
             ).dp
-    val queueSheetMaxHeight =
-        if (desiredQueueSheetMaxHeight > queueSheetMinHeight) {
+    val queueSheetMaxHeight = when {
+        compactQueueGrid -> compactQueueSheetHeight
+        desiredQueueSheetMaxHeight > queueSheetMinHeight ->
             desiredQueueSheetMaxHeight
-        } else {
-            queueSheetMinHeight
-        }
+        else -> queueSheetMinHeight
+    }
     val queueOuterHorizontalPadding = when {
         tvQueueGrid -> 18.dp
         compactQueueGrid -> 8.dp
@@ -704,19 +713,19 @@ internal fun PlayerQueueOverlay(
         queueSheetMaxHeight + queueOuterVerticalPadding
     val queueSheetPadding = when {
         tvQueueGrid -> 10.dp
-        compactQueueGrid -> 12.dp
+        compactQueueGrid -> 10.dp
         else -> 20.dp
     }
     val queueSheetCornerRadius =
         if (compactQueueGrid) 18.dp else 24.dp
     val queueHeaderSpacer = when {
         tvQueueGrid -> 4.dp
-        compactQueueGrid -> 8.dp
+        compactQueueGrid -> 4.dp
         else -> 14.dp
     }
     val queueGridHorizontalSpacing = when {
         tvQueueGrid -> 8.dp
-        compactQueueGrid -> 8.dp
+        compactQueueGrid -> 10.dp
         else -> 12.dp
     }
     val queueGridVerticalSpacing = when {
@@ -726,10 +735,10 @@ internal fun PlayerQueueOverlay(
     }
     val queueCardHeight = when {
         tvQueueGrid -> 96.dp
-        compactQueueGrid -> 112.dp
+        compactQueueGrid -> 164.dp
         else -> 124.dp
     }
-    val compactQueueCardWidth = 176.dp
+    val compactQueueCardWidth = 244.dp
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
@@ -903,7 +912,9 @@ internal fun PlayerQueueOverlay(
             artworkRequest(context, item)
         }
         val cardShape =
-            androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+            androidx.compose.foundation.shape.RoundedCornerShape(
+                if (compactQueueGrid) 14.dp else 12.dp
+            )
 
         Box {
             Surface(
@@ -917,56 +928,52 @@ internal fun PlayerQueueOverlay(
                     )
                     .height(queueCardHeight)
                     .clip(cardShape)
-                .focusRequester(requester)
-                .onFocusChanged {
-                    focused = it.isFocused
-                    if (it.isFocused) focusedIndex = index
-                }
-                .remoteCombinedClickable(
-                    onClick = { onSelect(item) },
-                    onLongClick = onToggleFavorite?.let {
-                        { favoriteMenuItemId = item.id }
+                    .focusRequester(requester)
+                    .onFocusChanged {
+                        focused = it.isFocused
+                        if (it.isFocused) focusedIndex = index
                     }
-                )
-                .focusable(),
-            color = when {
-                focused && tvQueueGrid ->
-                    Color(0xFF343841)
-                current -> Color(0xFF383838)
-                else -> Color(0xFF242424)
-            },
-            border = if (focused && tvQueueGrid) {
-                androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE7E9EF))
-            } else null,
-            shape = cardShape
+                    .remoteCombinedClickable(
+                        onClick = { onSelect(item) },
+                        onLongClick = onToggleFavorite?.let {
+                            { favoriteMenuItemId = item.id }
+                        }
+                    )
+                    .focusable(),
+                color = when {
+                    focused && tvQueueGrid ->
+                        Color(0xFF343841)
+                    current -> Color(0xFF383838)
+                    else -> Color(0xFF242424)
+                },
+                border = if (focused && tvQueueGrid) {
+                    androidx.compose.foundation.BorderStroke(
+                        2.dp,
+                        Color(0xFFE7E9EF)
+                    )
+                } else {
+                    null
+                },
+                shape = cardShape
             ) {
-                Column(
-                Modifier.padding(if (tvQueueGrid) 5.dp else 8.dp),
-                verticalArrangement = Arrangement.spacedBy(
-                    if (tvQueueGrid) 4.dp else 8.dp
-                )
-            ) {
-                Surface(
-                    Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (tvQueueGrid) {
-                                Modifier.height(45.dp)
-                            } else {
-                                Modifier.weight(1f)
-                            }
-                        ),
-                    shape =
-                        androidx.compose.foundation.shape.RoundedCornerShape(
-                            8.dp
-                        ),
-                    color = Color(0xFF111111)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
+                if (compactQueueGrid) {
+                    /*
+                     * Match the Home media-card visual language on phones:
+                     * artwork is the card, while title/subtitle sit over a
+                     * bottom readability gradient instead of consuming a
+                     * separate strip below the image.
+                     */
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(Color(0xFF111111)),
+                        contentAlignment = Alignment.Center
+                    ) {
                         if (item.logo.isNullOrBlank()) {
                             Icon(
                                 Icons.Default.Movie,
                                 null,
+                                Modifier.size(34.dp),
                                 tint = Color.LightGray
                             )
                         } else {
@@ -982,26 +989,41 @@ internal fun PlayerQueueOverlay(
                                     else -> Icon(
                                         Icons.Default.Movie,
                                         null,
+                                        Modifier.size(34.dp),
                                         tint = Color.LightGray
                                     )
                                 }
                             }
                         }
 
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            Color.Black.copy(alpha = 0.05f),
+                                            Color.Black.copy(alpha = 0.50f),
+                                            Color.Black.copy(alpha = 0.96f)
+                                        )
+                                    )
+                                )
+                        )
+
                         if (current) {
                             Surface(
                                 Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(5.dp),
-                                color =
-                                    Color.Black.copy(alpha = .78f),
+                                    .align(Alignment.TopStart)
+                                    .padding(8.dp),
+                                color = Color.Black.copy(alpha = .78f),
                                 shape =
                                     androidx.compose.foundation.shape
-                                        .RoundedCornerShape(5.dp)
+                                        .RoundedCornerShape(6.dp)
                             ) {
                                 Row(
                                     Modifier.padding(
-                                        horizontal = 6.dp,
+                                        horizontal = 7.dp,
                                         vertical = 3.dp
                                     ),
                                     verticalAlignment =
@@ -1013,6 +1035,7 @@ internal fun PlayerQueueOverlay(
                                         Modifier.size(14.dp),
                                         tint = Color.White
                                     )
+                                    Spacer(Modifier.width(3.dp))
                                     Text(
                                         "PLAYING",
                                         color = Color.White,
@@ -1023,70 +1046,213 @@ internal fun PlayerQueueOverlay(
                                 }
                             }
                         }
-                    }
-                }
 
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(
-                        if (tvQueueGrid) 1.dp else 4.dp
-                    )
-                ) {
-                    Text(
-                        item.title,
-                        color = Color.White,
-                        style = if (tvQueueGrid) {
-                            MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 10.sp,
-                                lineHeight = 11.sp
-                            )
-                        } else {
-                            MaterialTheme.typography.titleSmall
-                        },
-                        maxLines = when {
-                            tvQueueGrid -> 3
-                            compactQueueGrid -> 2
-                            else -> 2
-                        },
-                        overflow = TextOverflow.Ellipsis
-                    )
+                        val episodeLabel = listOfNotNull(
+                            item.seasonNumber?.let { "Season $it" },
+                            item.episodeNumber?.let { "Episode $it" }
+                        ).joinToString(" · ")
+                        val description =
+                            item.description
+                                ?.trim()
+                                ?.takeIf {
+                                    it.isNotBlank() &&
+                                        !it.equals(
+                                            item.title.trim(),
+                                            ignoreCase = true
+                                        )
+                                }
+                        val subtitle =
+                            listOfNotNull(
+                                episodeLabel.takeIf { it.isNotBlank() },
+                                description
+                            ).joinToString(" · ")
 
-                    val episodeLabel = listOfNotNull(
-                        item.seasonNumber?.let { "Season $it" },
-                        item.episodeNumber?.let { "Episode $it" }
-                    ).joinToString(" · ")
-
-                    if (episodeLabel.isNotBlank() && !tvQueueGrid) {
-                        Text(
-                            episodeLabel,
-                            color = Color.White.copy(alpha = .76f),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    item.description
-                        ?.trim()
-                        ?.takeIf {
-                            it.isNotBlank() &&
-                                !it.equals(
-                                    item.title.trim(),
-                                    ignoreCase = true
-                                )
-                        }
-                        ?.takeUnless { tvQueueGrid }
-                        ?.let {
+                        Column(
+                            Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .padding(
+                                    start = 10.dp,
+                                    end = 10.dp,
+                                    bottom = 9.dp
+                                ),
+                            verticalArrangement =
+                                Arrangement.spacedBy(3.dp)
+                        ) {
                             Text(
-                                it,
-                                color =
-                                    Color.White.copy(alpha = .68f),
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
+                                item.title,
+                                color = Color.White,
+                                style =
+                                    MaterialTheme.typography.labelLarge.copy(
+                                        fontSize = 12.sp,
+                                        lineHeight = 14.sp
+                                    ),
+                                fontWeight =
+                                    androidx.compose.ui.text.font
+                                        .FontWeight.SemiBold,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (subtitle.isNotBlank()) {
+                                Text(
+                                    subtitle,
+                                    color = Color.White.copy(alpha = .80f),
+                                    style =
+                                        MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 10.sp,
+                                            lineHeight = 12.sp
+                                        ),
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
-                }
+                    }
+                } else {
+                    Column(
+                        Modifier.padding(if (tvQueueGrid) 5.dp else 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(
+                            if (tvQueueGrid) 4.dp else 8.dp
+                        )
+                    ) {
+                        Surface(
+                            Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (tvQueueGrid) {
+                                        Modifier.height(45.dp)
+                                    } else {
+                                        Modifier.weight(1f)
+                                    }
+                                ),
+                            shape =
+                                androidx.compose.foundation.shape
+                                    .RoundedCornerShape(8.dp),
+                            color = Color(0xFF111111)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (item.logo.isNullOrBlank()) {
+                                    Icon(
+                                        Icons.Default.Movie,
+                                        null,
+                                        tint = Color.LightGray
+                                    )
+                                } else {
+                                    SubcomposeAsyncImage(
+                                        model = artwork,
+                                        contentDescription = item.title,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    ) {
+                                        when (painter.state.value) {
+                                            is AsyncImagePainter.State.Success ->
+                                                SubcomposeAsyncImageContent()
+                                            else -> Icon(
+                                                Icons.Default.Movie,
+                                                null,
+                                                tint = Color.LightGray
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (current) {
+                                    Surface(
+                                        Modifier
+                                            .align(Alignment.BottomStart)
+                                            .padding(5.dp),
+                                        color = Color.Black.copy(alpha = .78f),
+                                        shape =
+                                            androidx.compose.foundation.shape
+                                                .RoundedCornerShape(5.dp)
+                                    ) {
+                                        Row(
+                                            Modifier.padding(
+                                                horizontal = 6.dp,
+                                                vertical = 3.dp
+                                            ),
+                                            verticalAlignment =
+                                                Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.PlayArrow,
+                                                null,
+                                                Modifier.size(14.dp),
+                                                tint = Color.White
+                                            )
+                                            Text(
+                                                "PLAYING",
+                                                color = Color.White,
+                                                style =
+                                                    MaterialTheme.typography
+                                                        .labelSmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(
+                                if (tvQueueGrid) 1.dp else 4.dp
+                            )
+                        ) {
+                            Text(
+                                item.title,
+                                color = Color.White,
+                                style = if (tvQueueGrid) {
+                                    MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        lineHeight = 11.sp
+                                    )
+                                } else {
+                                    MaterialTheme.typography.titleSmall
+                                },
+                                maxLines = if (tvQueueGrid) 3 else 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            val episodeLabel = listOfNotNull(
+                                item.seasonNumber?.let { "Season $it" },
+                                item.episodeNumber?.let { "Episode $it" }
+                            ).joinToString(" · ")
+
+                            if (
+                                episodeLabel.isNotBlank() &&
+                                !tvQueueGrid
+                            ) {
+                                Text(
+                                    episodeLabel,
+                                    color = Color.White.copy(alpha = .76f),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            item.description
+                                ?.trim()
+                                ?.takeIf {
+                                    it.isNotBlank() &&
+                                        !it.equals(
+                                            item.title.trim(),
+                                            ignoreCase = true
+                                        )
+                                }
+                                ?.takeUnless { tvQueueGrid }
+                                ?.let {
+                                    Text(
+                                        it,
+                                        color = Color.White.copy(alpha = .68f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                        }
+                    }
                 }
             }
 
@@ -1467,7 +1633,7 @@ internal fun PlayerQueueOverlay(
                     LazyHorizontalGrid(
                         rows = GridCells.Fixed(1),
                         modifier = Modifier
-                            .weight(1f)
+                            .height(queueCardHeight)
                             .fillMaxWidth()
                             .clipToBounds(),
                         state = gridState,
