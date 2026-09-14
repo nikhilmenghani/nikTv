@@ -1235,7 +1235,7 @@ internal fun VlcPlayerScreen(
                                         false
                                     }
                                 },
-                            horizontalArrangement = Arrangement.Center,
+                            horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 8.dp else 16.dp, Alignment.CenterHorizontally),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
