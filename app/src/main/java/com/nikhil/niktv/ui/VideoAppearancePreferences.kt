@@ -747,13 +747,18 @@ internal fun PlayerQueueOverlay(
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
+    val isEpisodeQueue = uniqueItems.any {
+        it.seasonNumber != null || it.episodeNumber != null
+    }
+    val showLoadMore = hasMore || loadingMore
+    val leadingLoadPrevious = touchQueueRail && isEpisodeQueue && showLoadMore
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val loadMoreRequester = remember { FocusRequester() }
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
     val initialVisibleItem =
         if (touchQueueRail) {
-            currentIndex
+            currentIndex + if (leadingLoadPrevious) 1 else 0
         } else {
             (currentIndex / queueColumnCount) * queueColumnCount
         }
@@ -779,10 +784,7 @@ internal fun PlayerQueueOverlay(
         label = "playerQueueReveal"
     )
 
-    val showLoadMore = hasMore || loadingMore || loadMoreRequested
-    val isEpisodeQueue = uniqueItems.any {
-        it.seasonNumber != null || it.episodeNumber != null
-    }
+    val showPaginationTile = showLoadMore || loadMoreRequested
 
     /*
      * Season pages can arrive newest-first from IPTV while the player presents
@@ -800,6 +802,7 @@ internal fun PlayerQueueOverlay(
         if (
             isEpisodeQueue &&
             focusedIndex == 0 &&
+            !leadingLoadPrevious &&
             hasMore &&
             !loadingMore &&
             !loadMoreRequested &&
@@ -813,23 +816,25 @@ internal fun PlayerQueueOverlay(
 
     fun focusAt(index: Int) {
         val maxIndex =
-            if (showLoadMore) uniqueItems.size else uniqueItems.lastIndex
+            if (showPaginationTile && !leadingLoadPrevious) uniqueItems.size else uniqueItems.lastIndex
         if (maxIndex < 0) return
 
-        val target = index.coerceIn(0, maxIndex)
+        val minIndex = if (leadingLoadPrevious) -1 else 0
+        val target = index.coerceIn(minIndex, maxIndex)
         focusedIndex = target
 
         val requester =
-            if (target < uniqueItems.size) {
+            if (target < 0 || target >= uniqueItems.size) {
+                loadMoreRequester
+            } else {
                 requesters.getOrPut(uniqueItems[target].id) {
                     FocusRequester()
                 }
-            } else {
-                loadMoreRequester
             }
+        val layoutIndex = target + if (leadingLoadPrevious) 1 else 0
         val alreadyVisible =
             gridState.layoutInfo.visibleItemsInfo.any {
-                it.index == target
+                it.index == layoutIndex
             }
 
         if (
@@ -840,7 +845,7 @@ internal fun PlayerQueueOverlay(
         }
 
         scope.launch {
-            gridState.scrollToItem(target)
+            gridState.scrollToItem(layoutIndex)
             repeat(4) {
                 withFrameNanos { }
                 if (
@@ -861,7 +866,7 @@ internal fun PlayerQueueOverlay(
                 uniqueItems.indexOfFirst { it.id == playingId }
                     .coerceAtLeast(0)
             focusedIndex = target
-            gridState.scrollToItem(target)
+            gridState.scrollToItem(target + if (leadingLoadPrevious) 1 else 0)
             val requester = requesters.getOrPut(uniqueItems[target].id) {
                 FocusRequester()
             }
@@ -934,9 +939,9 @@ internal fun PlayerQueueOverlay(
         }
     }
 
-    LaunchedEffect(showLoadMore, uniqueItems.size) {
+    LaunchedEffect(showPaginationTile, uniqueItems.size) {
         if (
-            !showLoadMore &&
+            !showPaginationTile &&
             uniqueItems.isNotEmpty() &&
             focusedIndex >= uniqueItems.size
         ) {
@@ -1348,7 +1353,7 @@ internal fun PlayerQueueOverlay(
                     false
                 } else {
                     val maxIndex =
-                        if (showLoadMore) {
+                        if (showPaginationTile && !leadingLoadPrevious) {
                             uniqueItems.size
                         } else {
                             uniqueItems.lastIndex
@@ -1361,7 +1366,7 @@ internal fun PlayerQueueOverlay(
                             }
 
                             Key.DirectionLeft -> {
-                                if (focusedIndex > 0) {
+                                if (focusedIndex > if (leadingLoadPrevious) -1 else 0) {
                                     focusAt(focusedIndex - 1)
                                 }
                                 true
@@ -1543,6 +1548,63 @@ internal fun PlayerQueueOverlay(
 
                 val queueGridContent:
                     androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit = {
+                    if (leadingLoadPrevious) {
+                        item(key = "player-queue-load-previous") {
+                            var focused by remember { mutableStateOf(false) }
+                            val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                            Surface(
+                                modifier = Modifier
+                                    .width(compactQueueCardWidth)
+                                    .height(queueCardHeight)
+                                    .clip(shape)
+                                    .focusRequester(loadMoreRequester)
+                                    .onFocusChanged {
+                                        focused = it.isFocused
+                                        if (it.isFocused) focusedIndex = -1
+                                    }
+                                    .remoteCombinedClickable(
+                                        enabled = hasMore && !loadingMore && !loadMoreRequested,
+                                        onClick = {
+                                            focusManager.clearFocus(force = true)
+                                            focusFirstLoadedItem = true
+                                            loadMoreRequested = onLoadMore()
+                                            if (!loadMoreRequested) focusFirstLoadedItem = false
+                                        }
+                                    )
+                                    .focusable(),
+                                color = if (focused) Color(0xFF343841) else Color(0xFF303030),
+                                border = if (focused) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE7E9EF)) else null,
+                                shape = shape
+                            ) {
+                                Column(
+                                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    if (loadingMore || loadMoreRequested) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            color = Color.White,
+                                            strokeWidth = 3.dp
+                                        )
+                                    } else {
+                                        Icon(Icons.Default.Add, null, tint = Color.White)
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        if (loadingMore || loadMoreRequested) "Loading previous…" else "Load previous",
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+                                    Text(
+                                        "Earlier episodes",
+                                        color = Color.White.copy(alpha = .70f),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+                    }
                     items(
                         count = uniqueItems.size,
                         key = { index ->
@@ -1555,7 +1617,7 @@ internal fun PlayerQueueOverlay(
                         )
                     }
 
-                    if (showLoadMore) {
+                    if (showPaginationTile && !leadingLoadPrevious) {
                         item(key = "player-queue-load-more") {
                             var focused by remember {
                                 mutableStateOf(false)
