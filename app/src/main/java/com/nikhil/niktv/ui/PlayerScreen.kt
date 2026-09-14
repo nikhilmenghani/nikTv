@@ -20,6 +20,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
@@ -2622,8 +2624,8 @@ private fun PlayerPictureModeActionButton(
         modifier = modifier.onFocusChanged { focused = it.isFocused },
         shape = shape,
         color = when {
-            focused -> Color(0xFF303A49)
             primary -> MaterialTheme.colorScheme.primary
+            focused -> Color(0xFF303A49)
             else -> Color.White.copy(alpha = 0.055f)
         },
         border = androidx.compose.foundation.BorderStroke(
@@ -2701,9 +2703,15 @@ internal fun PictureModeQuickOverlay(
         },
         text = {
             Column(
-                Modifier.widthIn(
-                    min = if (compactPhone) 260.dp else 280.dp,
-                    max = if (compactPhone) 330.dp else 420.dp
+                Modifier.then(
+                    if (compactPhone) {
+                        Modifier.widthIn(min = 260.dp, max = 330.dp)
+                    } else {
+                        // Match the mode grid to the dialog/action width on
+                        // tablets and TVs. A fixed 420dp grid left an empty
+                        // column directly above the right-aligned Apply button.
+                        Modifier.fillMaxWidth()
+                    }
                 ),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
@@ -2728,29 +2736,33 @@ internal fun PictureModeQuickOverlay(
                 }
             }
         },
-        dismissButton = {
-            PlayerPictureModeActionButton(
-                label = "Settings",
-                icon = Icons.Default.Tune,
-                modifier = Modifier.width(settingsActionWidth).height(actionHeight).focusRequester(settingsRequester)
-                    .focusProperties { right = skipRequester },
-                onClick = onSettings
-            )
-            PlayerPictureModeActionButton(
-                label = "Skip",
-                modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(skipRequester)
-                    .focusProperties { left = settingsRequester; right = applyRequester },
-                onClick = onSkip
-            )
-        },
         confirmButton = {
-            PlayerPictureModeActionButton(
-                label = "Apply",
-                primary = true,
-                modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(applyRequester)
-                    .focusProperties { left = skipRequester },
-                onClick = onApply
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PlayerPictureModeActionButton(
+                    label = "Settings",
+                    icon = Icons.Default.Tune,
+                    modifier = Modifier.width(settingsActionWidth).height(actionHeight).focusRequester(settingsRequester)
+                        .focusProperties { right = skipRequester },
+                    onClick = onSettings
+                )
+                PlayerPictureModeActionButton(
+                    label = "Skip",
+                    modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(skipRequester)
+                        .focusProperties { left = settingsRequester; right = applyRequester },
+                    onClick = onSkip
+                )
+                PlayerPictureModeActionButton(
+                    label = "Apply",
+                    primary = true,
+                    modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(applyRequester)
+                        .focusProperties { left = skipRequester },
+                    onClick = onApply
+                )
+            }
         }
     )
 }
@@ -2773,6 +2785,12 @@ internal fun PlayerMoreOptionsDialog(
     onToggleFullscreen: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val configuration = LocalConfiguration.current
+    val compactLandscape =
+        configuration.smallestScreenWidthDp < 600 &&
+            configuration.screenWidthDp > configuration.screenHeightDp
+    val optionsBodyMaxHeight =
+        (configuration.screenHeightDp * if (compactLandscape) .55f else .68f).dp
     val playerRequesters = remember { PLAYER_ENGINE_OPTIONS.map { FocusRequester() } }
     val pictureModeIds = pictureModes.map { it.id }
     val pictureRequesters = remember(pictureModeIds) {
@@ -2807,7 +2825,10 @@ internal fun PlayerMoreOptionsDialog(
         },
         text = {
             Column(
-                Modifier.widthIn(min = 300.dp, max = 520.dp),
+                Modifier
+                    .widthIn(min = 300.dp, max = 520.dp)
+                    .heightIn(max = optionsBodyMaxHeight)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (detailLines.any { it.isNotBlank() }) {
