@@ -906,7 +906,7 @@ internal fun VlcPlayerScreen(
             val topDownRequester = if (seekable) progressRequester else playRequester
             val lowerQuickActionsOffset =
                 (playerConfiguration.screenHeightDp -
-                    if (compactMobileControls) 60 else 87).coerceAtLeast(0).dp
+                    if (compactMobileControls) 64 else 91).coerceAtLeast(0).dp
             val lowerQuickActionsShift = when {
                 pipAvailable && compactMobileControls -> 144.dp
                 pipAvailable -> 168.dp
