@@ -110,6 +110,36 @@ internal fun AppBrightnessQuickButton(
     modifier: Modifier = Modifier,
     showLabel: Boolean = false
 ) {
+    AppBrightnessControl { open ->
+        Box(modifier) {
+            if (showLabel) {
+                Row(
+                    Modifier
+                        .remoteCombinedClickable(onClick = open)
+                        .remoteFocusFrame(RoundedCornerShape(10.dp))
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Brightness6, null, Modifier.size(24.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("Brightness", style = MaterialTheme.typography.titleMedium)
+                }
+            } else {
+                IconButton(
+                    onClick = open,
+                    modifier = Modifier.remoteFocusFrame(CircleShape)
+                ) {
+                    Icon(Icons.Default.Brightness6, "App brightness")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun AppBrightnessControl(
+    trigger: @Composable (open: () -> Unit) -> Unit
+) {
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     var brightness by remember(context) {
@@ -137,28 +167,8 @@ internal fun AppBrightnessQuickButton(
         AppBrightnessPreferences.set(context, brightness)
     }
 
-    Box(modifier) {
-        if (showLabel) {
-            Row(
-                Modifier
-                    .remoteCombinedClickable(onClick = { expanded = true })
-                    .remoteFocusFrame(RoundedCornerShape(10.dp))
-                    .padding(horizontal = 14.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.Brightness6, null, Modifier.size(24.dp))
-                Spacer(Modifier.width(14.dp))
-                Text("Brightness", style = MaterialTheme.typography.titleMedium)
-            }
-        } else {
-            IconButton(
-                onClick = { expanded = true },
-                modifier = Modifier.remoteFocusFrame(CircleShape)
-            ) {
-                Icon(Icons.Default.Brightness6, "App brightness")
-            }
-        }
-
+    Box {
+        trigger { expanded = true }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },

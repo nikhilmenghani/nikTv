@@ -46,6 +46,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Downloading
@@ -956,6 +957,20 @@ private fun ModernHubQuickActions(
                 isTv = isTv,
                 onClick = openSearch
             )
+        }
+        if (dashboardSurface == DashboardSurface.HOME) {
+            item("quick-brightness") {
+                AppBrightnessControl { open ->
+                    ModernQuickActionTile(
+                        title = "Brightness",
+                        subtitle = "System or app level",
+                        icon = Icons.Default.Brightness6,
+                        accent = Color(0xFFFFC857),
+                        isTv = isTv,
+                        onClick = open
+                    )
+                }
+            }
         }
         if (dashboardSurface != DashboardSurface.LIVE_TV) {
             item("quick-tmdb") {
