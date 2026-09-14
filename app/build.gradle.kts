@@ -144,6 +144,10 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
+    implementation("androidx.media3:media3-cast:1.8.0")
+    implementation("com.google.android.gms:play-services-cast-framework:21.4.0")
+    implementation("androidx.mediarouter:mediarouter:1.7.0")
+
     implementation("androidx.media3:media3-database:1.8.0")
     implementation("androidx.media3:media3-transformer:1.8.0")
     implementation("org.videolan.android:libvlc-all:3.6.5")

@@ -66,6 +66,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.cast.CastPlayer
+import androidx.media3.cast.SessionAvailabilityListener
+import com.google.android.gms.cast.framework.CastContext
 import androidx.media3.common.Player
 import androidx.media3.common.C
 import androidx.media3.common.TrackSelectionOverride
@@ -600,14 +603,15 @@ fun PlayerScreen(
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
-    val player = remember(media.progressKey, effectiveEngine, media.url) {
+    val castContext = remember { CastContext.getSharedInstance(context) }
+    val castPlayer = remember(castContext) { CastPlayer(castContext) }
+    
+    val createLocalPlayer = {
         val renderersFactory = DefaultRenderersFactory(context).apply {
             if (effectiveEngine == PlaybackEngine.MEDIA3) {
-                // Media3 mode applies NikTV's learned decoder policy.
                 setEnableDecoderFallback(true)
                 setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope))
             }
-            // The single ExoPlayer mode uses NikTV's learned decoder policy.
         }
         val builder = ExoPlayer.Builder(context, renderersFactory)
         if (media.offlinePlayback) {
@@ -624,6 +628,37 @@ fun PlayerScreen(
             repeatMode = Player.REPEAT_MODE_OFF
         }
     }
+    
+    var localPlayer by remember(media.progressKey, effectiveEngine, media.url) { mutableStateOf(createLocalPlayer()) }
+    var activePlayer: Player by remember { mutableStateOf(if (castPlayer.isCastSessionAvailable) castPlayer else localPlayer) }
+    
+    DisposableEffect(castPlayer, media.url) {
+        val listener = object : SessionAvailabilityListener {
+            override fun onCastSessionAvailable() {
+                val currentPos = localPlayer.currentPosition
+                localPlayer.release()
+                activePlayer = castPlayer
+                castPlayer.setMediaItem(MediaItem.Builder().setUri(media.url).build(), currentPos)
+                castPlayer.prepare()
+                castPlayer.play()
+            }
+            override fun onCastSessionUnavailable() {
+                val currentPos = castPlayer.currentPosition
+                localPlayer = createLocalPlayer()
+                localPlayer.seekTo(currentPos)
+                activePlayer = localPlayer
+            }
+        }
+        castPlayer.setSessionAvailabilityListener(listener)
+        if (castPlayer.isCastSessionAvailable && activePlayer !== castPlayer) {
+            listener.onCastSessionAvailable()
+        }
+        onDispose {
+            castPlayer.setSessionAvailabilityListener(null)
+        }
+    }
+    
+    val player = activePlayer
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -761,7 +796,9 @@ fun PlayerScreen(
     DisposableEffect(player) {
         onDispose {
             onProgress(media.progressKey, player.currentPosition, player.duration)
-            player.release()
+            if (player !== castPlayer) {
+                player.release()
+            }
         }
     }
     DisposableEffect(pipActivity) {
@@ -829,7 +866,7 @@ fun PlayerScreen(
             delay(1_000)
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
-            videoDetails = player.videoFormat?.let { format ->
+            videoDetails = (player as? androidx.media3.exoplayer.ExoPlayer)?.videoFormat?.let { format ->
                 buildList {
                     if (format.width > 0 && format.height > 0) add("${format.width}×${format.height}")
                     format.sampleMimeType?.substringAfter('/')?.uppercase(Locale.ROOT)?.let(::add)
@@ -1525,6 +1562,9 @@ fun PlayerScreen(
                             else offlineDownloadProgressText.orEmpty()
                         )
                     }
+                    com.nikhil.niktv.ui.components.CastButton(
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
                     Row(
                         modifier = Modifier.offset(x = -lowerQuickActionsShift, y = lowerQuickActionsOffset),
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
