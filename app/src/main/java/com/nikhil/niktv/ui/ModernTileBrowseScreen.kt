@@ -1266,12 +1266,12 @@ private fun ModernDestinationTile(
     val palette = remember(seed) {
         destinationPalette(seed)
     }
+    var pinMenuOpen by remember { mutableStateOf(false) }
 
-    Surface(
-        onClick = returningTile.open,
-        interactionSource = interactionSource,
-        modifier = returningTile.modifier
-            .fillMaxWidth()
+    Box(Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = returningTile.modifier
+                .fillMaxWidth()
             .zIndex(visualProgress)
             .graphicsLayer {
                 scaleX = scale
@@ -1295,21 +1295,26 @@ private fun ModernDestinationTile(
                     if (isTv) ModernBrandViolet.copy(alpha = 0.34f)
                     else ModernBrandAccent.copy(alpha = 0.18f)
             )
-            .onFocusChanged {
-                focused = it.isFocused
-            },
-        shape = shape,
-        color = Color.Transparent,
-        border = BorderStroke(
-            when {
-                isTv && focused -> 3.dp
-                !isTv && focused -> 2.dp
-                else -> 1.dp
-            },
-            borderColor
-        )
-    ) {
-        Box(
+                .onFocusChanged {
+                    focused = it.isFocused
+                }
+                .remoteCombinedClickable(
+                    interactionSource = interactionSource,
+                    onClick = returningTile.open,
+                    onLongClick = onTogglePin?.let { { pinMenuOpen = true } }
+                ),
+            shape = shape,
+            color = Color.Transparent,
+            border = BorderStroke(
+                when {
+                    isTv && focused -> 3.dp
+                    !isTv && focused -> 2.dp
+                    else -> 1.dp
+                },
+                borderColor
+            )
+        ) {
+            Box(
             Modifier
                 .fillMaxWidth()
                 .then(
@@ -1419,19 +1424,16 @@ private fun ModernDestinationTile(
                 }
             }
 
-            onTogglePin?.let { togglePin ->
-                IconButton(
-                    onClick = togglePin,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .size(34.dp)
-                        .remoteFocusFrame(CircleShape)
+            if (pinned) {
+                Box(
+                    modifier = Modifier.align(Alignment.TopEnd).size(34.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         Icons.Default.PushPin,
-                        if (pinned) "Unpin $title" else "Pin $title",
+                        "Pinned $title",
                         modifier = Modifier.size(18.dp),
-                        tint = if (pinned) ModernBrandAccent else Color.White.copy(alpha = 0.62f)
+                        tint = ModernBrandAccent
                     )
                 }
             }
@@ -1443,6 +1445,24 @@ private fun ModernDestinationTile(
                         .width(72.dp)
                         .height(4.dp)
                         .background(ModernBrandAccent)
+                )
+            }
+        }
+        }
+        onTogglePin?.let { togglePin ->
+            DropdownMenu(
+                expanded = pinMenuOpen,
+                onDismissRequest = { pinMenuOpen = false },
+                containerColor = Color(0xFF202020),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                NikDropdownMenuItem(
+                    text = { Text(if (pinned) "Unpin category" else "Pin category to top") },
+                    leadingIcon = { Icon(Icons.Default.PushPin, null) },
+                    onClick = {
+                        pinMenuOpen = false
+                        togglePin()
+                    }
                 )
             }
         }
@@ -2778,13 +2798,18 @@ private fun ModernLiveChannelTile(
                     )
                 }
                 if (!isTv) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        null,
-                        tint = Color.White.copy(alpha = if (focused) 1f else .62f)
-                    )
+                    IconButton(
+                        onClick = onTogglePin,
+                        modifier = Modifier.size(40.dp).remoteFocusFrame(CircleShape)
+                    ) {
+                        Icon(
+                            Icons.Default.PushPin,
+                            if (isPinned) "Unpin ${item.title}" else "Pin ${item.title}",
+                            tint = if (isPinned) ModernBrandAccent else Color.White.copy(alpha = .68f)
+                        )
+                    }
                 }
-                if (isPinned) {
+                if (isPinned && isTv) {
                     Icon(
                         Icons.Default.PushPin,
                         "Pinned channel",

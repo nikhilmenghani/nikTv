@@ -2607,6 +2607,56 @@ private fun PlayerPictureModeChoiceButton(
 }
 
 @Composable
+private fun PlayerPictureModeActionButton(
+    label: String,
+    modifier: Modifier,
+    primary: Boolean = false,
+    icon: ImageVector? = null,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(12.dp)
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
+        shape = shape,
+        color = when {
+            focused -> Color(0xFF303A49)
+            primary -> MaterialTheme.colorScheme.primary
+            else -> Color.White.copy(alpha = 0.055f)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            if (focused) 2.dp else 1.dp,
+            if (focused) Color(0xFFE7E9EF) else Color.White.copy(alpha = 0.14f)
+        ),
+        contentColor = Color.White
+    ) {
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            icon?.let {
+                Icon(it, null, Modifier.size(17.dp))
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (focused || primary) {
+                    androidx.compose.ui.text.font.FontWeight.SemiBold
+                } else {
+                    androidx.compose.ui.text.font.FontWeight.Medium
+                },
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+@Composable
 internal fun PictureModeQuickOverlay(
     profiles: List<VideoAppearanceProfile>,
     preview: VideoAppearanceProfile,
@@ -2620,7 +2670,6 @@ internal fun PictureModeQuickOverlay(
     val isTv = context.isTvLikeDevice(configuration)
     val compactPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val columns = if (compactPhone) 2 else 4
-    val actionShape = RoundedCornerShape(12.dp)
     val secondaryActionWidth = if (compactPhone) 76.dp else 96.dp
     val settingsActionWidth = if (compactPhone) 108.dp else 112.dp
     val actionHeight = 44.dp
@@ -2680,38 +2729,28 @@ internal fun PictureModeQuickOverlay(
             }
         },
         dismissButton = {
-            OutlinedButton(
-                onClick = onSettings,
+            PlayerPictureModeActionButton(
+                label = "Settings",
+                icon = Icons.Default.Tune,
                 modifier = Modifier.width(settingsActionWidth).height(actionHeight).focusRequester(settingsRequester)
-                    .focusProperties { right = skipRequester }
-                    .playerControlFocus(actionShape) {},
-                shape = actionShape,
-                contentPadding = PaddingValues(horizontal = 8.dp)
-            ) {
-                Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Settings", maxLines = 1, softWrap = false)
-            }
-            OutlinedButton(
-                onClick = onSkip,
+                    .focusProperties { right = skipRequester },
+                onClick = onSettings
+            )
+            PlayerPictureModeActionButton(
+                label = "Skip",
                 modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(skipRequester)
-                    .focusProperties { left = settingsRequester; right = applyRequester }
-                    .playerControlFocus(actionShape) {},
-                shape = actionShape
-            ) {
-                Text("Skip", maxLines = 1, softWrap = false)
-            }
+                    .focusProperties { left = settingsRequester; right = applyRequester },
+                onClick = onSkip
+            )
         },
         confirmButton = {
-            Button(
-                onClick = onApply,
+            PlayerPictureModeActionButton(
+                label = "Apply",
+                primary = true,
                 modifier = Modifier.width(secondaryActionWidth).height(actionHeight).focusRequester(applyRequester)
-                    .focusProperties { left = skipRequester }
-                    .playerControlFocus(actionShape) {},
-                shape = actionShape
-            ) {
-                Text("Apply", maxLines = 1, softWrap = false)
-            }
+                    .focusProperties { left = skipRequester },
+                onClick = onApply
+            )
         }
     )
 }
