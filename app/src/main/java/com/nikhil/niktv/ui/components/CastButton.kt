@@ -16,9 +16,10 @@ fun CastButton(modifier: Modifier = Modifier) {
     AndroidView(
         modifier = modifier.size(48.dp),
         factory = { context ->
-            val themedContext = ContextThemeWrapper(context, android.R.style.Theme_DeviceDefault)
+            val themedContext = ContextThemeWrapper(context, androidx.mediarouter.R.style.Theme_MediaRouter)
             MediaRouteButton(themedContext).apply {
                 CastButtonFactory.setUpMediaRouteButton(context.applicationContext, this)
+                this.setAlwaysVisible(true)
             }
         }
     )

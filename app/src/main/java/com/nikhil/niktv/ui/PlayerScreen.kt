@@ -1562,14 +1562,12 @@ fun PlayerScreen(
                             else offlineDownloadProgressText.orEmpty()
                         )
                     }
-                    com.nikhil.niktv.ui.components.CastButton(
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
                     Row(
                         modifier = Modifier.offset(x = -lowerQuickActionsShift, y = lowerQuickActionsOffset),
                         horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        com.nikhil.niktv.ui.components.CastButton()
                         if (media.catalogType != CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
