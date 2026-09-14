@@ -662,9 +662,9 @@ internal fun PlayerQueueOverlay(
             !context.packageManager.hasSystemFeature(
                 android.content.pm.PackageManager.FEATURE_TOUCHSCREEN
             )
+    val touchQueueRail = !tvQueueGrid
     val compactQueueGrid =
-        !tvQueueGrid &&
-            configuration.smallestScreenWidthDp < 600
+        touchQueueRail && configuration.smallestScreenWidthDp < 600
     val queueColumnCount = when {
         tvQueueGrid -> 6
         compactQueueGrid -> 3
@@ -678,10 +678,14 @@ internal fun PlayerQueueOverlay(
      * of retaining the old multi-row sheet height. The wider/taller card gives
      * episode artwork a useful canvas and enough room for readable metadata.
      */
-    val compactQueueSheetHeight = 232.dp
+    val touchQueueSheetHeight =
+        (configuration.screenHeightDp * .35f).dp.coerceIn(
+            if (compactQueueGrid) 132.dp else 156.dp,
+            if (compactQueueGrid) 172.dp else 220.dp
+        )
     val queueSheetMinHeight = when {
         tvQueueGrid -> 200.dp
-        compactQueueGrid -> compactQueueSheetHeight
+        touchQueueRail -> touchQueueSheetHeight
         else -> 260.dp
     }
     val desiredQueueSheetMaxHeight =
@@ -694,19 +698,19 @@ internal fun PlayerQueueOverlay(
                 }
             ).dp
     val queueSheetMaxHeight = when {
-        compactQueueGrid -> compactQueueSheetHeight
+        touchQueueRail -> touchQueueSheetHeight
         desiredQueueSheetMaxHeight > queueSheetMinHeight ->
             desiredQueueSheetMaxHeight
         else -> queueSheetMinHeight
     }
     val queueOuterHorizontalPadding = when {
         tvQueueGrid -> 18.dp
-        compactQueueGrid -> 8.dp
+        touchQueueRail -> 8.dp
         else -> 28.dp
     }
     val queueOuterVerticalPadding = when {
         tvQueueGrid -> 8.dp
-        compactQueueGrid -> 8.dp
+        touchQueueRail -> 6.dp
         else -> 22.dp
     }
     val queueDismissBoundary =
@@ -717,28 +721,28 @@ internal fun PlayerQueueOverlay(
         else -> 20.dp
     }
     val queueSheetCornerRadius =
-        if (compactQueueGrid) 18.dp else 24.dp
+        if (touchQueueRail) 18.dp else 24.dp
     val queueHeaderSpacer = when {
         tvQueueGrid -> 4.dp
-        compactQueueGrid -> 4.dp
+        touchQueueRail -> 3.dp
         else -> 14.dp
     }
     val queueGridHorizontalSpacing = when {
         tvQueueGrid -> 8.dp
-        compactQueueGrid -> 10.dp
+        touchQueueRail -> 10.dp
         else -> 12.dp
     }
     val queueGridVerticalSpacing = when {
         tvQueueGrid -> 7.dp
-        compactQueueGrid -> 8.dp
+        touchQueueRail -> 8.dp
         else -> 12.dp
     }
     val queueCardHeight = when {
-        tvQueueGrid -> 96.dp
-        compactQueueGrid -> 164.dp
-        else -> 124.dp
+        tvQueueGrid -> 112.dp
+        else -> (touchQueueSheetHeight - 54.dp).coerceAtLeast(82.dp)
     }
-    val compactQueueCardWidth = 244.dp
+    val compactQueueCardWidth =
+        if (compactQueueGrid) 174.dp else 232.dp
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items) { items.distinctBy { it.id } }
@@ -747,7 +751,7 @@ internal fun PlayerQueueOverlay(
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
     val initialVisibleItem =
-        if (compactQueueGrid) {
+        if (touchQueueRail) {
             currentIndex
         } else {
             (currentIndex / queueColumnCount) * queueColumnCount
@@ -913,14 +917,14 @@ internal fun PlayerQueueOverlay(
         }
         val cardShape =
             androidx.compose.foundation.shape.RoundedCornerShape(
-                if (compactQueueGrid) 14.dp else 12.dp
+                if (touchQueueRail) 14.dp else 12.dp
             )
 
         Box {
             Surface(
                 Modifier
                     .then(
-                        if (compactQueueGrid) {
+                        if (touchQueueRail) {
                             Modifier.width(compactQueueCardWidth)
                         } else {
                             Modifier.fillMaxWidth()
@@ -956,7 +960,7 @@ internal fun PlayerQueueOverlay(
                 },
                 shape = cardShape
             ) {
-                if (compactQueueGrid) {
+                if (touchQueueRail || tvQueueGrid) {
                     /*
                      * Match the Home media-card visual language on phones:
                      * artwork is the card, while title/subtitle sit over a
@@ -1011,7 +1015,7 @@ internal fun PlayerQueueOverlay(
                                 )
                         )
 
-                        if (current) {
+                        if (current && !compactQueueGrid) {
                             Surface(
                                 Modifier
                                     .align(Alignment.TopStart)
@@ -1064,7 +1068,7 @@ internal fun PlayerQueueOverlay(
                         val subtitle =
                             listOfNotNull(
                                 episodeLabel.takeIf { it.isNotBlank() },
-                                description
+                                description.takeUnless { compactQueueGrid }
                             ).joinToString(" · ")
 
                         Column(
@@ -1090,7 +1094,7 @@ internal fun PlayerQueueOverlay(
                                 fontWeight =
                                     androidx.compose.ui.text.font
                                         .FontWeight.SemiBold,
-                                maxLines = 2,
+                                maxLines = 3,
                                 overflow = TextOverflow.Ellipsis
                             )
                             if (subtitle.isNotBlank()) {
@@ -1102,7 +1106,7 @@ internal fun PlayerQueueOverlay(
                                             fontSize = 10.sp,
                                             lineHeight = 12.sp
                                         ),
-                                    maxLines = 3,
+                                    maxLines = if (compactQueueGrid) 2 else 3,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -1309,7 +1313,7 @@ internal fun PlayerQueueOverlay(
                         } else {
                             uniqueItems.lastIndex
                         }
-                    if (compactQueueGrid) {
+                    if (touchQueueRail) {
                         when (event.key) {
                             Key.DirectionUp -> {
                                 onDismiss()
@@ -1402,7 +1406,7 @@ internal fun PlayerQueueOverlay(
                             start = change.position
                             tracking = true
                             startedAtGridTop =
-                                compactQueueGrid ||
+                                touchQueueRail ||
                                     (
                                         gridState.firstVisibleItemIndex == 0 &&
                                             gridState
@@ -1483,13 +1487,13 @@ internal fun PlayerQueueOverlay(
                     when {
                         tvQueueGrid ->
                             "D-pad browse  •  ↑ from top closes  •  OK Play"
-                        compactQueueGrid ->
+                        touchQueueRail ->
                             "Swipe sideways to browse  •  Swipe down to close"
                         else ->
                             "Swipe to browse  •  Swipe down at top to close"
                     },
                     style =
-                        if (compactQueueGrid || tvQueueGrid) {
+                        if (touchQueueRail || tvQueueGrid) {
                             MaterialTheme.typography.labelSmall
                         } else {
                             MaterialTheme.typography.bodySmall
@@ -1524,7 +1528,7 @@ internal fun PlayerQueueOverlay(
                             Surface(
                                 Modifier
                                     .then(
-                                        if (compactQueueGrid) {
+                                        if (touchQueueRail) {
                                             Modifier.width(compactQueueCardWidth)
                                         } else {
                                             Modifier.fillMaxWidth()
@@ -1629,7 +1633,7 @@ internal fun PlayerQueueOverlay(
                     }
                 }
 
-                if (compactQueueGrid) {
+                if (touchQueueRail) {
                     LazyHorizontalGrid(
                         rows = GridCells.Fixed(1),
                         modifier = Modifier

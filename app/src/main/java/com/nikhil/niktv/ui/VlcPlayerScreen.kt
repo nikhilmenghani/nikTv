@@ -587,6 +587,16 @@ internal fun VlcPlayerScreen(
 
     Box(
         modifier.fillMaxSize()
+            .playerQueueSwipeObserver(
+                enabled = focusMode && hasPlaybackQueue && !pictureEditorVisible,
+                onOpen = {
+                    controlsVisible = false
+                    controlsFocused = false
+                    queueRevealDragging = false
+                    queueRevealProgress = 1f
+                    queueVisible = true
+                }
+            )
             .playerActivityObserver {
                 dpadInteraction++
             }
@@ -663,7 +673,9 @@ internal fun VlcPlayerScreen(
                                 }
                                 dpadInteraction++
                                 gestureStartY = event.y
-                                val sideBand = layout.width * 0.34f
+                                // Outer quarters adjust brightness/volume; the
+                                // middle half consistently reveals the queue.
+                                val sideBand = layout.width * 0.25f
                                 val brightnessBand = event.x <= sideBand
                                 val volumeBand = event.x >= layout.width - sideBand
                                 levelGestureEligible = brightnessBand || volumeBand
@@ -675,10 +687,8 @@ internal fun VlcPlayerScreen(
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         if (compactMobileControls) {
-                                            event.x >= layout.width * 0.39f &&
-                                                event.x <= layout.width * 0.61f &&
-                                                event.y >= layout.height * 0.54f &&
-                                                event.y <= layout.height * 0.78f
+                                            event.x >= layout.width * 0.25f &&
+                                                event.x <= layout.width * 0.75f
                                         } else {
                                             event.y >= layout.height * 0.72f
                                         }

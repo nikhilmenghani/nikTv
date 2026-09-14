@@ -112,6 +112,37 @@ internal fun Modifier.playerActivityObserver(onActivity: () -> Unit): Modifier =
         }
     }
 
+/** Observe, without stealing taps, the middle-half swipe used to open the queue. */
+internal fun Modifier.playerQueueSwipeObserver(
+    enabled: Boolean,
+    onOpen: () -> Unit
+): Modifier = pointerInput(enabled, onOpen) {
+    if (!enabled) return@pointerInput
+    awaitPointerEventScope {
+        var start = Offset.Zero
+        var tracking = false
+        var opened = false
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull() ?: continue
+            if (change.pressed && !change.previousPressed) {
+                start = change.position
+                tracking = start.x in (size.width * .25f)..(size.width * .75f)
+                opened = false
+            } else if (change.pressed && tracking && !opened) {
+                val delta = change.position - start
+                if (delta.y < -40.dp.toPx() && kotlin.math.abs(delta.y) > kotlin.math.abs(delta.x)) {
+                    opened = true
+                    onOpen()
+                }
+            } else if (!change.pressed) {
+                tracking = false
+                opened = false
+            }
+        }
+    }
+}
+
 internal fun PlaybackEngine.nextPlayerChoice(): PlaybackEngine = when (this) {
     PlaybackEngine.AUTO -> PlaybackEngine.MEDIA3
     PlaybackEngine.MEDIA3 -> PlaybackEngine.VLC
@@ -274,6 +305,7 @@ fun PlayerScreen(
     val transportActivity = remember(context) {
         context.findActivity() as? MainActivity
     }
+
     val channelTransportEnabled =
         media.catalogType == CatalogType.LIVE_TV &&
             media.episodeQueue.distinctBy { it.id }.size > 1
@@ -980,6 +1012,10 @@ fun PlayerScreen(
     Box(
         modifier
             .fillMaxSize()
+            .playerQueueSwipeObserver(
+                enabled = focusMode && hasPlaybackQueue && !pictureEditorVisible,
+                onOpen = ::showEpisodeQueue
+            )
             .playerActivityObserver {
                 dpadInteraction++
             }
@@ -1189,7 +1225,10 @@ fun PlayerScreen(
                                 dpadInteraction++
                                 lastTouch = Offset(event.x, event.y)
                                 gestureStartY = event.y
-                                val sideBand = playerView.width * 0.34f
+                                // Reserve the outer quarters for level gestures. The
+                                // entire middle half belongs to the playback queue,
+                                // even while the controls are visible.
+                                val sideBand = playerView.width * 0.25f
                                 val brightnessBand = event.x <= sideBand
                                 val volumeBand = event.x >= playerView.width - sideBand
                                 levelGestureEligible = brightnessBand || volumeBand
@@ -1202,10 +1241,8 @@ fun PlayerScreen(
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         if (compactMobileControls) {
-                                            event.x >= playerView.width * 0.39f &&
-                                                event.x <= playerView.width * 0.61f &&
-                                                event.y >= playerView.height * 0.54f &&
-                                                event.y <= playerView.height * 0.78f
+                                            event.x >= playerView.width * 0.25f &&
+                                                event.x <= playerView.width * 0.75f
                                         } else {
                                             event.y >= playerView.height * 0.72f
                                         }
@@ -2514,7 +2551,7 @@ private fun PlayerPictureModeChoiceButton(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isTvLikeDevice(configuration)
-    val controlHeight = if (isTv) 56.dp else 48.dp
+    val controlHeight = if (isTv) 56.dp else 44.dp
     val shape = RoundedCornerShape(10.dp)
 
     Surface(
@@ -2539,20 +2576,23 @@ private fun PlayerPictureModeChoiceButton(
         contentColor = Color.White
     ) {
         Box(
-            Modifier.fillMaxSize().padding(horizontal = 6.dp),
+            Modifier.fillMaxSize().padding(horizontal = 5.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 profile.name,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = if (isTv) 11.sp else 10.sp,
+                    lineHeight = if (isTv) 13.sp else 11.sp
+                ),
                 fontWeight = if (selected) {
                     androidx.compose.ui.text.font.FontWeight.SemiBold
                 } else {
                     androidx.compose.ui.text.font.FontWeight.Medium
                 },
                 color = Color.White.copy(alpha = if (selected) 1f else 0.90f),
-                maxLines = 1,
-                softWrap = false
+                maxLines = 2,
+                softWrap = true
             )
         }
     }
@@ -2567,6 +2607,14 @@ internal fun PictureModeQuickOverlay(
     onApply: () -> Unit,
     onSkip: () -> Unit
 ) {
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val isTv = context.isTvLikeDevice(configuration)
+    val compactPhone = !isTv && configuration.smallestScreenWidthDp < 600
+    val columns = if (compactPhone) 2 else 4
+    val actionShape = RoundedCornerShape(12.dp)
+    val actionWidth = if (compactPhone) 88.dp else 104.dp
+    val actionHeight = 44.dp
     val modeRequesters = remember(profiles.map { it.id }) { profiles.map { FocusRequester() } }
     val skipRequester = remember { FocusRequester() }
     val settingsRequester = remember { FocusRequester() }
@@ -2594,40 +2642,65 @@ internal fun PictureModeQuickOverlay(
             }
         },
         text = {
-            Column(Modifier.widthIn(min = 280.dp, max = 420.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                profiles.chunked(4).forEachIndexed { row, rowModes ->
+            Column(
+                Modifier.widthIn(
+                    min = if (compactPhone) 260.dp else 280.dp,
+                    max = if (compactPhone) 330.dp else 420.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                profiles.chunked(columns).forEachIndexed { row, rowModes ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         rowModes.forEachIndexed { column, profile ->
-                            val index = row * 4 + column
+                            val index = row * columns + column
                             PlayerPictureModeChoiceButton(
                                 profile = profile,
                                 selected = profile.id == preview.id,
                                 modifier = Modifier.weight(1f).focusRequester(modeRequesters[index]).focusProperties {
                                     if (column > 0) left = modeRequesters[index - 1]
                                     if (column < rowModes.lastIndex) right = modeRequesters[index + 1]
-                                    if (row > 0) up = modeRequesters[index - 4]
-                                    down = modeRequesters.getOrNull(index + 4) ?: applyRequester
+                                    if (row > 0) up = modeRequesters[index - columns]
+                                    down = modeRequesters.getOrNull(index + columns) ?: applyRequester
                                 },
                                 onClick = { onPreview(profile) }
                             )
                         }
-                        repeat(4 - rowModes.size) { Spacer(Modifier.weight(1f)) }
+                        repeat(columns - rowModes.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = onSettings, modifier = Modifier.focusRequester(settingsRequester).focusProperties { right = skipRequester }.playerControlFocus { }) {
+            OutlinedButton(
+                onClick = onSettings,
+                modifier = Modifier.width(actionWidth).height(actionHeight).focusRequester(settingsRequester)
+                    .focusProperties { right = skipRequester }
+                    .playerControlFocus(actionShape) {},
+                shape = actionShape,
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
                 Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Settings")
             }
-            TextButton(onClick = onSkip, modifier = Modifier.focusRequester(skipRequester).focusProperties { left = settingsRequester; right = applyRequester }.playerControlFocus { }) {
+            OutlinedButton(
+                onClick = onSkip,
+                modifier = Modifier.width(actionWidth).height(actionHeight).focusRequester(skipRequester)
+                    .focusProperties { left = settingsRequester; right = applyRequester }
+                    .playerControlFocus(actionShape) {},
+                shape = actionShape
+            ) {
                 Text("Skip")
             }
         },
         confirmButton = {
-            Button(onClick = onApply, modifier = Modifier.focusRequester(applyRequester).focusProperties { left = skipRequester }.playerControlFocus { }) {
+            Button(
+                onClick = onApply,
+                modifier = Modifier.width(actionWidth).height(actionHeight).focusRequester(applyRequester)
+                    .focusProperties { left = skipRequester }
+                    .playerControlFocus(actionShape) {},
+                shape = actionShape
+            ) {
                 Text("Apply")
             }
         }
