@@ -1756,7 +1756,7 @@ private fun ModernCompactMediaCard(
                                     lineHeight = 11.sp
                                 )
                             },
-                            maxLines = 2,
+                            maxLines = 3,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
