@@ -1187,6 +1187,10 @@ internal fun VlcPlayerScreen(
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (pipAvailable) {
+                                Spacer(Modifier.size(if (compactMobileControls) 44.dp else 48.dp))
+                                Spacer(Modifier.weight(1f))
+                            }
                             if (media.previousEpisode != null) {
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.SkipPrevious,
@@ -1228,6 +1232,7 @@ internal fun VlcPlayerScreen(
                                         right = when {
                                             seekable -> forwardRequester
                                             media.nextEpisode != null -> nextRequester
+                                            pipAvailable -> pipRequester
                                             else -> FocusRequester.Default
                                         }
                                     },
@@ -1242,7 +1247,10 @@ internal fun VlcPlayerScreen(
                                     contentDescription = "Forward 10 seconds",
                                     onClick = { player.time = (player.time + 10_000L).coerceAtMost(duration) },
                                     modifier = Modifier.focusRequester(forwardRequester)
-                                        .focusProperties { up = progressRequester },
+                                        .focusProperties {
+                                            up = progressRequester
+                                            if (media.nextEpisode == null && pipAvailable) right = pipRequester
+                                        },
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1253,7 +1261,35 @@ internal fun VlcPlayerScreen(
                                     contentDescription = "Next",
                                     onClick = { if (!advancing) { advancing = true; onPlayNext() } },
                                     modifier = Modifier.focusRequester(nextRequester)
-                                        .focusProperties { up = if (seekable) progressRequester else moreRequester },
+                                        .focusProperties {
+                                            up = if (seekable) progressRequester else moreRequester
+                                            if (pipAvailable) right = pipRequester
+                                        },
+                                    size = if (compactMobileControls) 44.dp else 48.dp,
+                                    onFocused = { controlsFocused = it }
+                                )
+                            }
+                            if (pipAvailable) {
+                                Spacer(Modifier.weight(1f))
+                                val pipLeftRequester = when {
+                                    media.nextEpisode != null -> nextRequester
+                                    seekable -> forwardRequester
+                                    else -> playRequester
+                                }
+                                PlayerChromeIconButton(
+                                    icon = Icons.Default.PictureInPictureAlt,
+                                    contentDescription = "Picture in Picture",
+                                    onClick = {
+                                        controlsVisible = false
+                                        controlsFocused = false
+                                        pipActivity?.enterPlayerPictureInPicture()
+                                    },
+                                    modifier = Modifier
+                                        .focusRequester(pipRequester)
+                                        .focusProperties {
+                                            left = pipLeftRequester
+                                            up = if (seekable) progressRequester else moreRequester
+                                        },
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1293,13 +1329,6 @@ internal fun VlcPlayerScreen(
                     onControlsTimeoutChanged = { seconds ->
                         onControlsTimeoutChanged(seconds)
                         modeFeedback = playerControlsTimeoutFeedback(seconds)
-                    },
-                    pipAvailable = pipAvailable,
-                    onPictureInPicture = {
-                        onMoreOptionsOpenChanged(false)
-                        controlsVisible = false
-                        controlsFocused = false
-                        pipActivity?.enterPlayerPictureInPicture()
                     },
                     fullscreen = focusMode,
                     onToggleFullscreen = {

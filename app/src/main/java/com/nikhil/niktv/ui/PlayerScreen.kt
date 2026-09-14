@@ -1726,6 +1726,10 @@ fun PlayerScreen(
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                if (pipAvailable) {
+                                    Spacer(Modifier.size(if (compactMobileControls) 44.dp else 48.dp))
+                                    Spacer(Modifier.weight(1f))
+                                }
                                 if (media.previousEpisode != null) {
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.SkipPrevious,
@@ -1767,6 +1771,7 @@ fun PlayerScreen(
                                             right = when {
                                                 seekable -> forwardFocusRequester
                                                 media.nextEpisode != null -> nextFocusRequester
+                                                pipAvailable -> pipFocusRequester
                                                 else -> FocusRequester.Default
                                             }
                                         },
@@ -1781,7 +1786,10 @@ fun PlayerScreen(
                                         contentDescription = "Forward 10 seconds",
                                         onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(duration)) },
                                         modifier = Modifier.focusRequester(forwardFocusRequester)
-                                            .focusProperties { up = progressFocusRequester },
+                                            .focusProperties {
+                                                up = progressFocusRequester
+                                                if (media.nextEpisode == null && pipAvailable) right = pipFocusRequester
+                                            },
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
@@ -1792,7 +1800,35 @@ fun PlayerScreen(
                                         contentDescription = "Next",
                                         onClick = { if (!advancing) { advancing = true; onPlayNext() } },
                                         modifier = Modifier.focusRequester(nextFocusRequester)
-                                            .focusProperties { up = if (seekable) progressFocusRequester else moreFocusRequester },
+                                            .focusProperties {
+                                                up = if (seekable) progressFocusRequester else moreFocusRequester
+                                                if (pipAvailable) right = pipFocusRequester
+                                            },
+                                        size = if (compactMobileControls) 44.dp else 48.dp,
+                                        onFocused = { controlsFocused = it }
+                                    )
+                                }
+                                if (pipAvailable) {
+                                    Spacer(Modifier.weight(1f))
+                                    val pipLeftRequester = when {
+                                        media.nextEpisode != null -> nextFocusRequester
+                                        seekable -> forwardFocusRequester
+                                        else -> playPauseFocusRequester
+                                    }
+                                    PlayerChromeIconButton(
+                                        icon = Icons.Default.PictureInPictureAlt,
+                                        contentDescription = "Picture in Picture",
+                                        onClick = {
+                                            controlsVisible = false
+                                            controlsFocused = false
+                                            pipActivity?.enterPlayerPictureInPicture()
+                                        },
+                                        modifier = Modifier
+                                            .focusRequester(pipFocusRequester)
+                                            .focusProperties {
+                                                left = pipLeftRequester
+                                                up = if (seekable) progressFocusRequester else moreFocusRequester
+                                            },
                                         size = if (compactMobileControls) 44.dp else 48.dp,
                                         onFocused = { controlsFocused = it }
                                     )
@@ -1833,13 +1869,6 @@ fun PlayerScreen(
                     onControlsTimeoutChanged = { seconds ->
                         onControlsTimeoutChanged(seconds)
                         modeFeedback = playerControlsTimeoutFeedback(seconds)
-                    },
-                    pipAvailable = pipAvailable,
-                    onPictureInPicture = {
-                        moreOptionsOpen = false
-                        controlsVisible = false
-                        controlsFocused = false
-                        pipActivity?.enterPlayerPictureInPicture()
                     },
                     fullscreen = focusMode,
                     onToggleFullscreen = {
@@ -2779,8 +2808,6 @@ internal fun PlayerMoreOptionsDialog(
     onEditPictureMode: () -> Unit,
     controlsTimeoutSeconds: Int,
     onControlsTimeoutChanged: (Int) -> Unit,
-    pipAvailable: Boolean,
-    onPictureInPicture: () -> Unit,
     fullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
     onDismiss: () -> Unit
@@ -2911,13 +2938,6 @@ internal fun PlayerMoreOptionsDialog(
                     }
                 }
 
-                if (pipAvailable) {
-                    PlayerMoreOptionRow(
-                        icon = Icons.Default.PictureInPictureAlt,
-                        label = "Picture in Picture",
-                        onClick = onPictureInPicture
-                    )
-                }
                 PlayerMoreOptionRow(
                     icon = Icons.Default.Timer,
                     label = "Controls timeout",
@@ -3045,9 +3065,13 @@ internal fun PlaybackProgressBar(
             thumb = {
                 Box(
                     Modifier
-                        .size(if (compact) 12.dp else 14.dp)
-                        .shadow(4.dp, CircleShape)
-                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                        .width(if (compact) 3.dp else 4.dp)
+                        .height(if (compact) 16.dp else 20.dp)
+                        .shadow(3.dp, RoundedCornerShape(99.dp))
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            RoundedCornerShape(99.dp)
+                        )
                 )
             },
             track = {
