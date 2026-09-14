@@ -1748,9 +1748,6 @@ fun PlayerScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
-                                val utilityButtonCount = 2 + if (pipAvailable) 1 else 0
-                                Spacer(Modifier.width((utilityButtonSize.value * utilityButtonCount).dp))
-                                Spacer(Modifier.weight(1f))
                                 if (media.previousEpisode != null) {
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.SkipPrevious,
