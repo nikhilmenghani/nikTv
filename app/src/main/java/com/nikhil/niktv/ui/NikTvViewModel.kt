@@ -1261,6 +1261,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val hasMore =
                         (next.hasMore && actuallyAdded) || (next.hasMore && stillHasEarlier)
 
+                    val previousCache = episodeSeasonCaches.firstOrNull {
+                        it.profileKey == session.profile.cacheKey() &&
+                            it.seriesId == series.id &&
+                            (season == null || it.season == season)
+                    }
+                    val previousEnriched = previousCache?.episodes.orEmpty().associateBy { it.id }
+                    val rawQueue = mergedQueue.map { episode ->
+                        previousCache?.rawIptvEpisodes()
+                            ?.firstOrNull { it.id == episode.id }
+                            ?: episode
+                    }
                     val cache =
                         EpisodeSeasonCache(
                             session.profile.cacheKey(),
@@ -1269,10 +1280,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             next.availableSeasons.ifEmpty {
                                 snapshot.availableSeriesSeasons
                             },
-                            mergedQueue,
+                            rawQueue.map { previousEnriched[it.id] ?: it },
                             maxOf(next.page, targetPage),
                             hasMore,
-                            EPISODE_METADATA_VERSION
+                            EPISODE_METADATA_VERSION,
+                            iptvEpisodes = rawQueue,
+                            tmdbEpisodeKeys = previousCache?.tmdbEpisodeKeys.orEmpty(),
+                            tmdbSeriesId = previousCache?.tmdbSeriesId,
+                            tmdbCachedAtMillis = previousCache?.tmdbCachedAtMillis ?: 0L
                         )
 
                     episodeSeasonCaches =
@@ -1281,6 +1296,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 it.key == cache.key
                             }
                     store.saveEpisodeSeasonCache(cache)
+
+                    // Keep the loading tile visible until new episodes have their
+                    // cached/fetched metadata, then publish the page atomically.
+                    runCatching {
+                        enrichEpisodeCacheFromTmdb(series, cache, force = false)
+                    }.onFailure {
+                        Log.w("NikTvEpisodeMetadata", "Player page enrichment failed", it)
+                    }
+                    val publishedCache = episodeSeasonCaches.firstOrNull { it.key == cache.key } ?: cache
+                    val nextIds = next.episodes.mapTo(mutableSetOf()) { it.id }
+                    val enrichedAdditions = publishedCache.episodes.filter { it.id in nextIds }
 
                     _state.update { current ->
                         if (
@@ -1304,7 +1330,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             } else {
                                 val updatedPlaying =
                                     active.withAppendedPlaybackQueue(
-                                        next.episodes
+                                        enrichedAdditions
                                     )
 
                                 val browseMatches =
@@ -1318,7 +1344,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                     playbackQueueLoadingMore = false,
                                     items =
                                         if (browseMatches) {
-                                            (current.items + next.episodes)
+                                            (current.items + enrichedAdditions)
                                                 .distinctBy { it.id }
                                                 .sortedWith(
                                                     compareBy<MediaItem>(

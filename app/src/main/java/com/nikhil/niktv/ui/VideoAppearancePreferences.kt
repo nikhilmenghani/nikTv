@@ -897,20 +897,24 @@ internal fun PlayerQueueOverlay(
             if (loadingMore) {
                 observedLoading = true
             } else if (observedLoading) {
-                loadMoreRequested = false
                 observedLoading = false
-                if (focusFirstLoadedItem && !isEpisodeQueue) {
+                // Let the item-ID effect claim successful pagination first.
+                // This fallback runs only when the provider returned no new IDs.
+                delay(160L)
+                if (focusFirstLoadedItem) {
                     focusFirstLoadedItem = false
-                    delay(40L)
+                    loadMoreRequested = false
                     if (uniqueItems.isNotEmpty()) {
                         focusAt(
-                            if (hasMore) {
+                            if (hasMore && !leadingLoadPrevious) {
                                 uniqueItems.size
                             } else {
-                                uniqueItems.lastIndex
+                                if (leadingLoadPrevious) 0 else uniqueItems.lastIndex
                             }
                         )
                     }
+                } else {
+                    loadMoreRequested = false
                 }
             }
         }
