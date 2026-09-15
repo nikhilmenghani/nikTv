@@ -952,12 +952,14 @@ internal fun VlcPlayerScreen(
             val lowerQuickActionsOffset =
                 (playerConfiguration.screenHeightDp -
                     if (compactMobileControls) 64 else 91).coerceAtLeast(0).dp
+            val tvQuickActionClearance =
+                if (context.isTvLikeDevice(playerConfiguration)) 56.dp else 0.dp
             val lowerQuickActionsShift = when {
                 pipAvailable && compactMobileControls -> 144.dp
                 pipAvailable -> 168.dp
                 compactMobileControls -> 96.dp
                 else -> 112.dp
-            }
+            } + tvQuickActionClearance
             val playbackDetailLines = buildList {
                 add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · VLC · Video fit · ${resizeMode.label}")
