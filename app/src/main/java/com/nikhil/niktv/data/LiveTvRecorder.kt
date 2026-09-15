@@ -288,6 +288,7 @@ class LiveTvRecordingService : Service() {
     private suspend fun recordHls(initialUrl: String, output: java.io.OutputStream) {
         var failures = 0
         var resolvedPlaylistUrl: String? = null
+        val timestampRebaser = MpegTsTimestampRebaser()
         while (resolvedPlaylistUrl == null) {
             awaitResume()
             try {
@@ -323,7 +324,8 @@ class LiveTvRecordingService : Service() {
                 addAll(mediaSegments)
             }
             val isFinishedPlaylist = lines.any { it == "#EXT-X-ENDLIST" }
-            if (hlsRebaseRequested && !isFinishedPlaylist) {
+            var continueTimelineAtNextSegment = hlsRebaseRequested && !isFinishedPlaylist
+            if (continueTimelineAtNextSegment) {
                 // A live manifest contains a sliding backlog. Start (and resume) at its
                 // live edge so time elapsed before Start or while paused is never recorded.
                 written.addAll(mediaSegments.dropLast(1))
@@ -334,7 +336,12 @@ class LiveTvRecordingService : Service() {
                 awaitResume()
                 if (hlsRebaseRequested) continue@playlistLoop
                 val appended = try {
-                    appendUrl(segment, output)
+                    appendUrl(
+                        segment,
+                        output,
+                        timestampRebaser,
+                        continueTimelineAtNextSegment && segment in mediaSegments
+                    )
                 } catch (error: java.io.IOException) {
                     if (paused) break
                     if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
@@ -344,6 +351,7 @@ class LiveTvRecordingService : Service() {
                 if (paused) break
                 bytes += appended
                 written.add(segment)
+                if (segment in mediaSegments) continueTimelineAtNextSegment = false
                 failures = 0
                 publishProgress(bytes)
             }
@@ -405,7 +413,12 @@ class LiveTvRecordingService : Service() {
         }
     }
 
-    private fun appendUrl(url: String, output: java.io.OutputStream): Long {
+    private fun appendUrl(
+        url: String,
+        output: java.io.OutputStream,
+        timestampRebaser: MpegTsTimestampRebaser,
+        forceTimestampContinuity: Boolean
+    ): Long {
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").build()
         val call = client.newCall(request)
         activeStreamCall = call
@@ -414,7 +427,7 @@ class LiveTvRecordingService : Service() {
                 requireSuccessful(response.code, response.isSuccessful, "Segment")
                 val data = response.body?.bytes() ?: return@use 0L
                 if (paused) return@use 0L
-                output.write(data)
+                output.write(timestampRebaser.rebase(data, forceTimestampContinuity))
                 data.size.toLong()
             }
         } finally {
