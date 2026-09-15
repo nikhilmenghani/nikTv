@@ -1699,6 +1699,9 @@ fun PlayerScreen(
                                 maxLines = 1
                             )
                         }
+                        if (media.catalogType == CatalogType.LIVE_TV) {
+                            PlayerLiveSchedule(media.media, compactMobileControls)
+                        }
                         PlayerDateTime(compact = compactMobileControls)
                         PlayerDownloadStatusPill(
                             if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)

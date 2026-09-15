@@ -4378,6 +4378,24 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 playbackQueueLoadingMore = false
             )
         }
+        if (type == CatalogType.LIVE_TV && item.liveSchedule.isEmpty()) {
+            // Playback is already available; guide enrichment is deliberately
+            // asynchronous and updates only this still-playing channel.
+            viewModelScope.launch {
+                val enriched = portal.playingChannelSchedule(session, item)
+                if (enriched.liveSchedule.isEmpty()) return@launch
+                _state.update { current ->
+                    val playing = current.nowPlaying
+                    if (playing?.media?.id != item.id || playing.url != url) current
+                    else playing.copy(
+                        media = enriched,
+                        episodeQueue = playing.episodeQueue.map { queued ->
+                            if (queued.id == enriched.id) enriched else queued
+                        }
+                    ).let { current.copy(nowPlaying = it) }
+                }
+            }
+        }
         if (
             newPlaybackScope != null &&
             initialPlaybackHasMore &&

@@ -492,6 +492,42 @@ class StalkerPortalClient(private val context: Context) {
         }
     }
 
+    /** Fetch only the guide for the channel being played. This mirrors the
+     * lightweight Cast4K get_short_epg flow and avoids refreshing a category. */
+    suspend fun playingChannelSchedule(session: PortalSession, item: MediaItem): MediaItem = withContext(Dispatchers.IO) {
+        if (session.profile.portalType != PortalType.STALKER || item.id.isBlank()) return@withContext item
+        val response = runCatching {
+            request(
+                session.profile,
+                session.endpointUrl,
+                session,
+                authorizedParams(
+                    session,
+                    mapOf(
+                        "type" to "itv",
+                        "action" to "get_short_epg",
+                        "ch_id" to item.id,
+                        "size" to "12"
+                    )
+                )
+            )
+        }.getOrNull() ?: return@withContext item
+        val now = System.currentTimeMillis()
+        val schedules = response.epgSchedulesByChannel(item.id)
+        val schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
+            .filter { it.endTimeMillis == null || it.endTimeMillis > now }
+            .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
+        if (schedule.isEmpty()) return@withContext item
+        item.copy(
+            liveProgramme = schedule.firstOrNull { programme ->
+                val start = programme.startTimeMillis
+                val end = programme.endTimeMillis
+                start != null && end != null && now in start until end
+            } ?: item.liveProgramme,
+            liveSchedule = schedule
+        )
+    }
+
     private fun JsonObject.providerEpisodeAirDate(): String? =
         listOf("air_date", "release_date", "releasedate")
             .firstNotNullOfOrNull { key ->
@@ -908,12 +944,14 @@ class StalkerPortalClient(private val context: Context) {
         )
     }
 
-    private fun JsonElement.epgSchedulesByChannel(): Map<String, List<LiveProgramme>> {
+    private fun JsonElement.epgSchedulesByChannel(defaultChannelId: String? = null): Map<String, List<LiveProgramme>> {
         val root = payload()
         val data = (root as? JsonObject)?.get("data") ?: root
         val result = linkedMapOf<String, MutableList<LiveProgramme>>()
         fun add(channelId: String?, node: JsonElement) {
-            val id = channelId?.takeIf(String::isNotBlank) ?: return
+            val id = channelId?.takeIf(String::isNotBlank)
+                ?: defaultChannelId?.takeIf(String::isNotBlank)
+                ?: return
             val programme = (node as? JsonObject)?.liveProgramme() ?: return
             result.getOrPut(id) { mutableListOf() }.add(programme)
         }
@@ -936,7 +974,7 @@ class StalkerPortalClient(private val context: Context) {
             }
             is JsonArray -> data.forEach { node ->
                 val o = node as? JsonObject ?: return@forEach
-                val channelId = o.string("ch_id") ?: o.string("channel_id") ?: o.string("id")
+                val channelId = o.string("ch_id") ?: o.string("channel_id") ?: defaultChannelId
                 // Ministra/Cast4K-style get_epg_info responses commonly return
                 // one channel object containing an `epg`/`programs` array.
                 // Previously we tried to parse that wrapper as one programme,
