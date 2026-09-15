@@ -22,8 +22,7 @@ class SettingsNavigationTest {
     fun currentSectionsMapToExpectedDestinations() {
         val expected = mapOf(
             "Mobile controls" to SettingsDestination.APPEARANCE,
-            "Picture and video appearance" to SettingsDestination.APPEARANCE,
-            "Display and screen" to SettingsDestination.APPEARANCE,
+"Display and screen" to SettingsDestination.APPEARANCE,
             "Default media player" to SettingsDestination.PLAYBACK,
             "Player controls" to SettingsDestination.PLAYBACK,
             "Series" to SettingsDestination.PLAYBACK,

@@ -14,7 +14,7 @@ internal enum class SettingsDestination(
 ) {
     APPEARANCE(
         "Appearance",
-        "Display, picture modes and device presentation"
+        "Display, screen and device presentation"
     ),
     PLAYBACK(
         "Playback",
@@ -45,7 +45,6 @@ internal fun SettingsDestination.icon(): ImageVector = when (this) {
 internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
     when (sectionTitle) {
         "Mobile controls",
-        "Picture and video appearance",
         "Display and screen" -> SettingsDestination.APPEARANCE
 
         "Default media player",

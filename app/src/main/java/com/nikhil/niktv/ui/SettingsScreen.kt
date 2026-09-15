@@ -609,12 +609,12 @@ internal fun ModernSettingsScreen(
             LocalSettingsDestination.current
                 ?: selectedSettingsDestination
 
-        SettingsDestinationHeader(
-            destination = activeDestination,
-            compact = compactSettingsHeader
-        )
-
         if (!compactSettingsHeader) {
+            SettingsDestinationHeader(
+                destination = activeDestination,
+                compact = false
+            )
+
             SettingsSummaryRow(
                 activeProfile = profile?.name ?: "No active profile",
                 defaultPlayer = when (state.playbackEngine) {
@@ -684,296 +684,6 @@ internal fun ModernSettingsScreen(
                                 if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) "∞"
                                 else "${seconds}s"
                             )
-                        }
-                    }
-                }
-            }
-        }
-        SettingsSection("Picture and video appearance") {
-            val (appearanceProfiles, activeAppearance) =
-                rememberVideoAppearanceProfiles()
-            val editableAppearanceProfiles =
-                appearanceProfiles.filterNot { it.id == "default" }
-            var appearanceSchedule by remember {
-                mutableStateOf(VideoAppearancePreferences.schedule(context))
-            }
-            var scheduleError by remember { mutableStateOf<String?>(null) }
-            var editingId by remember(activeAppearance.id) {
-                mutableStateOf(
-                    editableAppearanceProfiles
-                        .firstOrNull { it.id == activeAppearance.id }
-                        ?.id
-                        ?: editableAppearanceProfiles.first().id
-                )
-            }
-            val editing =
-                editableAppearanceProfiles.firstOrNull { it.id == editingId }
-                    ?: editableAppearanceProfiles.first()
-            var editName by remember(editing.id, editing.name) { mutableStateOf(editing.name) }
-            var editBrightness by remember(editing.id, editing.brightness) { mutableFloatStateOf(editing.brightness) }
-            var editWarmth by remember(editing.id, editing.warmth) { mutableFloatStateOf(editing.warmth) }
-            var editCoolness by remember(editing.id, editing.coolness) { mutableFloatStateOf(editing.coolness) }
-            var editTint by remember(editing.id, editing.tint) { mutableFloatStateOf(editing.tint) }
-            var editDimming by remember(editing.id, editing.dimming) { mutableFloatStateOf(editing.dimming) }
-            val profileNameRequester = remember { FocusRequester() }
-            val brightnessRequester = remember { FocusRequester() }
-            val warmthRequester = remember { FocusRequester() }
-            val coolnessRequester = remember { FocusRequester() }
-            val tintRequester = remember { FocusRequester() }
-            val dimmingRequester = remember { FocusRequester() }
-            val saveProfileRequester = remember { FocusRequester() }
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Picture mode profiles", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Choose the active picture mode in the player. Edit filter profiles and scheduled windows here; Default is an immutable unfiltered reference.",
-                    color = Color.Gray
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    editableAppearanceProfiles.forEach { profile ->
-                        FilterChip(
-                            selected = editingId == profile.id,
-                            onClick = {
-                                editingId = profile.id
-                            },
-                            label = { Text(profile.name) },
-                            leadingIcon = {
-                                Icon(
-                                    videoAppearanceIcon(profile.id),
-                                    null,
-                                    Modifier.size(18.dp)
-                                )
-                            },
-                            modifier = Modifier.remoteFocusFrame(CircleShape)
-                        )
-                    }
-                }
-                Text("Edit selected profile", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Surface(
-                    Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = Color(0xFF101522),
-                    border = BorderStroke(1.dp, Color(0xFF2A3244))
-                ) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Edit ${editing.name}", style = MaterialTheme.typography.titleMedium)
-                        TvSafeSettingsTextField(
-                            value = editName,
-                            onValueChange = { editName = it },
-                            label = "Profile name",
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(profileNameRequester)
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                        brightnessRequester.requestFocus()
-                                        true
-                                    } else false
-                                }
-                        )
-                        AppearanceSliderRow(
-                            label = "Brightness",
-                            value = editBrightness,
-                            valueRange = -1f..1f,
-                            requester = brightnessRequester,
-                            upRequester = profileNameRequester,
-                            downRequester = warmthRequester,
-                            onValueChange = { editBrightness = it }
-                        )
-                        AppearanceSliderRow(
-                            label = "Warmth",
-                            value = editWarmth,
-                            valueRange = 0f..1f,
-                            requester = warmthRequester,
-                            upRequester = brightnessRequester,
-                            downRequester = coolnessRequester,
-                            onValueChange = { editWarmth = it }
-                        )
-                        AppearanceSliderRow(
-                            label = "Coolness",
-                            value = editCoolness,
-                            valueRange = 0f..1f,
-                            requester = coolnessRequester,
-                            upRequester = warmthRequester,
-                            downRequester = tintRequester,
-                            onValueChange = { editCoolness = it }
-                        )
-                        AppearanceSliderRow(
-                            label = "Color tint",
-                            value = editTint,
-                            valueRange = -1f..1f,
-                            requester = tintRequester,
-                            upRequester = coolnessRequester,
-                            downRequester = dimmingRequester,
-                            valueText = when {
-                                editTint > 0f -> "${(editTint * 100).toInt()}% magenta"
-                                editTint < 0f -> "${(-editTint * 100).toInt()}% green"
-                                else -> "Neutral"
-                            },
-                            onValueChange = { editTint = it }
-                        )
-                        AppearanceSliderRow(
-                            label = "Dimming",
-                            value = editDimming,
-                            valueRange = 0f..0.8f,
-                            requester = dimmingRequester,
-                            upRequester = tintRequester,
-                            downRequester = saveProfileRequester,
-                            onValueChange = { editDimming = it }
-                        )
-                        Button(
-                            onClick = {
-                                VideoAppearancePreferences.update(
-                                    context,
-                                    editing.copy(
-                                        name = editName.trim().ifBlank { editing.name },
-                                        brightness = editBrightness,
-                                        warmth = editWarmth,
-                                        coolness = editCoolness,
-                                        tint = editTint,
-                                        dimming = editDimming
-                                    )
-                                )
-                            },
-                            modifier = Modifier
-                                .align(Alignment.End)
-                                .focusRequester(saveProfileRequester)
-                                .onPreviewKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                        dimmingRequester.requestFocus()
-                                        true
-                                    } else false
-                                }
-                                .remoteFocusFrame(CircleShape),
-                            shape = CircleShape
-                        ) { Text("Save profile") }
-                    }
-                }
-                OutlinedButton(
-                    onClick = {
-                        VideoAppearancePreferences.resetRecommendedProfiles(context)
-                    },
-                    modifier = Modifier
-                        .align(Alignment.End)
-                        .remoteFocusFrame(CircleShape)
-                ) {
-                    Icon(Icons.Default.RestartAlt, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Reset profiles to recommended")
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Automatic picture mode", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Scheduled windows override the fallback profile. Windows cannot overlap, and uncovered time uses the fallback.",
-                            color = Color.Gray,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    Switch(
-                        checked = appearanceSchedule.enabled,
-                        onCheckedChange = { enabled ->
-                            appearanceSchedule = appearanceSchedule.copy(enabled = enabled)
-                            VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                        },
-                        modifier = Modifier.remoteFocusFrame(CircleShape)
-                    )
-                }
-                if (appearanceSchedule.enabled) {
-                    Text("Scheduled windows", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Only explicit windows override the player choice. Outside a scheduled window, your most recent player selection remains active.",
-                        color = Color.Gray,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    scheduleError?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                    }
-                    appearanceSchedule.entries.forEachIndexed { index, entry ->
-                        key(entry.startMinutes, entry.endMinutes, entry.profileId, index) {
-                            ScheduleTimelineRow(
-                                entry = entry,
-                                profiles = appearanceProfiles,
-                                canRemove = true,
-                                onChange = { updated ->
-                                    val entries = appearanceSchedule.entries.toMutableList()
-                                    val originalIndex = entries.indexOf(entry).takeIf { it >= 0 } ?: index
-                                    if (updated.startMinutes == updated.endMinutes) {
-                                        scheduleError = "Start and end times must be different."
-                                        return@ScheduleTimelineRow
-                                    }
-                                    if (entries.withIndex().any { other ->
-                                            other.index != originalIndex && schedulesOverlap(updated, other.value)
-                                        }) {
-                                        scheduleError = "That time overlaps another scheduled window."
-                                        return@ScheduleTimelineRow
-                                    }
-                                    entries[originalIndex] = updated
-                                    scheduleError = null
-                                    appearanceSchedule = appearanceSchedule.copy(entries = entries)
-                                    VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                                },
-                                onRemove = {
-                                    scheduleError = null
-                                    appearanceSchedule = appearanceSchedule.copy(
-                                        entries = appearanceSchedule.entries.filterNot { it == entry }
-                                    )
-                                    VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                                }
-                            )
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = {
-                                val last = appearanceSchedule.entries.lastOrNull()
-                                val preferredStart = ((last?.startMinutes ?: -60) + 60 + 1440) % 1440
-                                val candidate = (0 until 96).asSequence()
-                                    .map { offset -> (preferredStart + offset * 15) % 1440 }
-                                    .map { start ->
-                                        VideoAppearanceScheduleEntry(
-                                            profileId = VideoAppearancePreferences.activeId(context),
-                                            startMinutes = start,
-                                            endMinutes = (start + 60) % 1440
-                                        )
-                                    }
-                                    .firstOrNull { proposed ->
-                                        appearanceSchedule.entries.none { schedulesOverlap(proposed, it) }
-                                    }
-                                if (candidate == null) {
-                                    scheduleError = "There is no free one-hour window to add."
-                                    return@Button
-                                }
-                                scheduleError = null
-                                appearanceSchedule = appearanceSchedule.copy(
-                                    entries = appearanceSchedule.entries + candidate
-                                )
-                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                            },
-                            modifier = Modifier.remoteFocusFrame(CircleShape)
-                        ) {
-                            Icon(Icons.Default.Add, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Add time period")
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                appearanceSchedule = VideoAppearancePreferences.defaultSchedule(
-                                    enabled = appearanceSchedule.enabled
-                                )
-                                scheduleError = null
-                                VideoAppearancePreferences.setSchedule(context, appearanceSchedule)
-                            },
-                            modifier = Modifier.remoteFocusFrame(CircleShape)
-                        ) {
-                            Icon(Icons.Default.RestartAlt, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Reset to defaults")
                         }
                     }
                 }
@@ -3535,6 +3245,102 @@ internal fun SettingsSection(
             Color(0xFFE50914)
         }
 
+    /*
+     * MOBILE_SETTINGS_SECTION_HEADER_V2
+     *
+     * Mobile uses one unified card per settings section: the section title is
+     * the non-focusable first row of the card, followed by the existing
+     * controls. This mirrors the compact "Backup & restore" visual language
+     * without adding an extra D-pad/touch target.
+     */
+    if (compact) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusGroup(),
+            shape = RoundedCornerShape(18.dp),
+            color =
+                if (danger) {
+                    Color(0xFF1A1012)
+                } else {
+                    Color(0xFF111318)
+                },
+            shadowElevation = 1.dp,
+            border = BorderStroke(
+                1.dp,
+                if (danger) {
+                    Color(0xFF59262B)
+                } else {
+                    Color(0xFF292C33)
+                }
+            )
+        ) {
+            Column {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(11.dp)
+                ) {
+                    Surface(
+                        modifier = Modifier.size(34.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color =
+                            if (danger) {
+                                Color(0xFF321518)
+                            } else {
+                                Color(0xFF1A1D23)
+                            }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                settingsSectionIcon(title),
+                                contentDescription = null,
+                                modifier = Modifier.size(19.dp),
+                                tint =
+                                    if (danger) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        Color(0xFFD5D8DE)
+                                    }
+                            )
+                        }
+                    }
+                    Text(
+                        title,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = .1.sp,
+                        color =
+                            if (danger) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                Color(0xFFF5F5F7)
+                            }
+                    )
+                }
+
+                HorizontalDivider(
+                    color =
+                        if (danger) {
+                            Color(0xFF4A2226)
+                        } else {
+                            Color(0xFF292C33)
+                        }
+                )
+
+                Column(
+                    modifier = Modifier.padding(vertical = 3.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    content = content
+                )
+            }
+        }
+        return
+    }
+
     Column(
         Modifier
             .fillMaxWidth()
@@ -3542,24 +3348,19 @@ internal fun SettingsSection(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
-            Modifier.padding(horizontal = if (compact) 2.dp else 6.dp),
+            Modifier.padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 Modifier
                     .width(4.dp)
-                    .height(if (compact) 18.dp else 20.dp)
+                    .height(20.dp)
                     .background(accent, CircleShape)
             )
             Text(
                 title,
-                style =
-                    if (compact) {
-                        MaterialTheme.typography.titleMedium
-                    } else {
-                        MaterialTheme.typography.titleLarge
-                    },
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = .15.sp,
                 color =
@@ -3573,14 +3374,14 @@ internal fun SettingsSection(
 
         Surface(
             Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(if (compact) 18.dp else 16.dp),
+            shape = RoundedCornerShape(16.dp),
             color =
                 if (danger) {
                     Color(0xFF1A1012)
                 } else {
                     Color(0xFF111318)
                 },
-            shadowElevation = if (compact) 1.dp else 3.dp,
+            shadowElevation = 3.dp,
             border = BorderStroke(
                 1.dp,
                 if (danger) {
@@ -3597,6 +3398,25 @@ internal fun SettingsSection(
         }
     }
 }
+
+private fun settingsSectionIcon(title: String): ImageVector =
+    when (title) {
+        "Mobile controls" -> Icons.Default.Tune
+        "Display and screen" -> Icons.Default.Brightness6
+        "Default media player" -> Icons.Default.PlayCircle
+        "Player controls" -> Icons.Default.Tune
+        "Series" -> Icons.Default.VideoLibrary
+        "Category Filters" -> Icons.Default.LiveTv
+        "Catalog cache" -> Icons.Default.Refresh
+        "Profiles" -> Icons.Default.AccountCircle
+        "Connection" -> Icons.Default.Language
+        "Connection actions" -> Icons.Default.Edit
+        "Metadata and subtitle diagnostics" -> Icons.Default.Subtitles
+        "Backup and restore" -> Icons.Default.CloudUpload
+        "Danger zone" -> Icons.Default.DeleteOutline
+        "App updates" -> Icons.Default.SystemUpdate
+        else -> Icons.Default.Settings
+    }
 
 @Composable
 internal fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
