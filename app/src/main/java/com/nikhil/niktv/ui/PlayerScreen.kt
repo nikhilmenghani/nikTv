@@ -621,7 +621,17 @@ fun PlayerScreen(
             .build()
     }
     
-    val createLocalPlayer = {
+    var castSessionActive by remember(castPlayer) {
+        mutableStateOf(castPlayer.isCastSessionAvailable)
+    }
+    var pendingCastStartPosition by remember(media.progressKey) {
+        mutableStateOf<Long?>(null)
+    }
+    var pendingLocalResumePosition by remember(media.progressKey) {
+        mutableStateOf<Long?>(null)
+    }
+
+    val createLocalPlayer = { resumePosition: Long? ->
         val renderersFactory = DefaultRenderersFactory(context).apply {
             if (effectiveEngine == PlaybackEngine.MEDIA3) {
                 setEnableDecoderFallback(true)
@@ -637,44 +647,143 @@ fun PlayerScreen(
         builder.build().apply {
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
             setMediaItem(mediaItemBuilder.build())
-            if (engineSwitchResumePosition > 0L) seekTo(engineSwitchResumePosition)
+            val startPosition =
+                resumePosition ?: engineSwitchResumePosition
+            if (startPosition > 0L) seekTo(startPosition)
             prepare()
             playWhenReady = true
             repeatMode = Player.REPEAT_MODE_OFF
         }
     }
-    
-    var localPlayer by remember(media.progressKey, effectiveEngine, media.url) { mutableStateOf(createLocalPlayer()) }
-    var activePlayer: Player by remember { mutableStateOf(if (castPlayer.isCastSessionAvailable) castPlayer else localPlayer) }
-    
-    DisposableEffect(castPlayer, castMediaItem) {
+
+    /*
+     * PLAYER_ACTIVE_OWNERSHIP_V1
+     *
+     * The local player is a media-scoped lease. It exists only while local
+     * playback owns the session, so a channel/media change creates exactly one
+     * replacement ExoPlayer and Cast playback does not create an unused local
+     * player behind the scenes.
+     */
+    val localLease = remember(
+        media.progressKey,
+        effectiveEngine,
+        media.url,
+        castSessionActive
+    ) {
+        if (castSessionActive) {
+            null
+        } else {
+            PlayerLease(
+                player = createLocalPlayer(pendingLocalResumePosition),
+                releasePlayer = { it.release() }
+            )
+        }
+    }
+    val localPlayer = localLease?.player
+    LaunchedEffect(localLease) {
+        if (localLease != null) {
+            pendingLocalResumePosition = null
+        }
+    }
+
+    val currentLocalPlayer by rememberUpdatedState(localPlayer)
+    val currentCastSessionActive by rememberUpdatedState(castSessionActive)
+
+    DisposableEffect(castPlayer, media.progressKey) {
         val listener = object : SessionAvailabilityListener {
             override fun onCastSessionAvailable() {
-                val currentPos = localPlayer.currentPosition
-                localPlayer.release()
-                activePlayer = castPlayer
-                castPlayer.setMediaItem(castMediaItem, currentPos)
-                castPlayer.prepare()
-                castPlayer.play()
+                if (currentCastSessionActive) return
+                pendingCastStartPosition =
+                    currentLocalPlayer
+                        ?.currentPosition
+                        ?.takeUnless { it == C.TIME_UNSET }
+                        ?.coerceAtLeast(0L)
+                        ?: 0L
+                castSessionActive = true
             }
+
             override fun onCastSessionUnavailable() {
-                val currentPos = castPlayer.currentPosition
-                localPlayer = createLocalPlayer()
-                localPlayer.seekTo(currentPos)
-                activePlayer = localPlayer
+                if (!currentCastSessionActive) return
+                pendingLocalResumePosition =
+                    castPlayer.currentPosition
+                        .takeUnless { it == C.TIME_UNSET }
+                        ?.coerceAtLeast(0L)
+                        ?: 0L
+                castSessionActive = false
             }
         }
+
         castPlayer.setSessionAvailabilityListener(listener)
-        if (castPlayer.isCastSessionAvailable && activePlayer !== castPlayer) {
-            listener.onCastSessionAvailable()
+
+        when {
+            castPlayer.isCastSessionAvailable && !currentCastSessionActive ->
+                listener.onCastSessionAvailable()
+            !castPlayer.isCastSessionAvailable && currentCastSessionActive ->
+                listener.onCastSessionUnavailable()
         }
+
         onDispose {
             castPlayer.setSessionAvailabilityListener(null)
         }
     }
-    
-    val player = activePlayer
-    DisposableEffect(player) {
+
+    /*
+     * Recomposition alone never restarts Cast playback. Replace the Cast item
+     * only for a fresh connection/position transfer or when the current media
+     * URL changes.
+     */
+    LaunchedEffect(castSessionActive, castMediaItem) {
+        if (!castSessionActive) return@LaunchedEffect
+
+        val requestedPosition = pendingCastStartPosition
+        val currentUri =
+            castPlayer.currentMediaItem
+                ?.localConfiguration
+                ?.uri
+        val requestedUri =
+            castMediaItem.localConfiguration
+                ?.uri
+
+        if (requestedPosition != null || currentUri != requestedUri) {
+            castPlayer.setMediaItem(
+                castMediaItem,
+                requestedPosition ?: 0L
+            )
+            castPlayer.prepare()
+            castPlayer.play()
+        }
+
+        pendingCastStartPosition = null
+    }
+
+    val player: Player =
+        selectActivePlayer(
+            castSessionActive = castSessionActive,
+            castPlayer = castPlayer,
+            localPlayer = localPlayer
+        )
+    DisposableEffect(player, media.progressKey) {
+        /*
+         * A replacement player can already be READY before this listener is
+         * installed. Adopt its observable state first so Compose never waits
+         * for an event that has already happened.
+         */
+        playbackState = player.playbackState
+        isPlaying = player.isPlaying
+        playbackRequested = player.playWhenReady
+        position =
+            player.currentPosition
+                .takeUnless { it == C.TIME_UNSET }
+                ?.coerceAtLeast(0L)
+                ?: 0L
+        duration =
+            player.duration
+                .takeIf { it != C.TIME_UNSET && it > 0L }
+                ?: 0L
+        if (playbackState == Player.STATE_READY) {
+            startupTimedOut = false
+        }
+
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
@@ -808,11 +917,15 @@ fun PlayerScreen(
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
-    DisposableEffect(player) {
+    DisposableEffect(player, media.progressKey, localLease) {
         onDispose {
-            onProgress(media.progressKey, player.currentPosition, player.duration)
-            if (player !== castPlayer) {
-                player.release()
+            onProgress(
+                media.progressKey,
+                player.currentPosition,
+                player.duration
+            )
+            if (player === localLease?.player) {
+                localLease.releaseOnce()
             }
         }
     }
@@ -876,7 +989,7 @@ fun PlayerScreen(
             runCatching { playNextFocusRequester.requestFocus() }
         }
     }
-    LaunchedEffect(player) {
+    LaunchedEffect(player, media.progressKey) {
         while (true) {
             delay(1_000)
             position = player.currentPosition.coerceAtLeast(0L)
@@ -1195,6 +1308,17 @@ fun PlayerScreen(
                             ) &&
                             keyEvent.repeatCount > 0
                         ) return@setOnKeyListener true
+
+                        /*
+                         * AndroidView's factory listener survives ordinary
+                         * recomposition. Always control the PlayerView's
+                         * currently adopted player rather than the player that
+                         * happened to be captured when the View was created.
+                         */
+                        val keyPlayer =
+                            playerView.player
+                                ?: return@setOnKeyListener false
+
                         if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER,
@@ -1204,19 +1328,21 @@ fun PlayerScreen(
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                                playbackRequested = !playbackRequested; if (playbackRequested) player.play() else player.pause()
+                                playbackRequested = !playbackRequested
+                                if (playbackRequested) keyPlayer.play()
+                                else keyPlayer.pause()
                                 controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY -> {
                                 playbackRequested = true
-                                player.play()
+                                keyPlayer.play()
                                 controlsVisible = true
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PAUSE -> {
                                 playbackRequested = false
-                                player.pause()
+                                keyPlayer.pause()
                                 controlsVisible = true
                                 true
                             }
@@ -1227,8 +1353,14 @@ fun PlayerScreen(
                                 ) {
                                     onPlayNext()
                                 } else {
-                                    val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-                                    player.seekTo((player.currentPosition + 10_000L).coerceAtMost(maxPosition))
+                                    val maxPosition =
+                                        keyPlayer.duration
+                                            .takeIf { it > 0L }
+                                            ?: Long.MAX_VALUE
+                                    keyPlayer.seekTo(
+                                        (keyPlayer.currentPosition + 10_000L)
+                                            .coerceAtMost(maxPosition)
+                                    )
                                     controlsVisible = true
                                 }
                                 true
@@ -1240,7 +1372,10 @@ fun PlayerScreen(
                                 ) {
                                     onPlayPrevious()
                                 } else {
-                                    player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                    keyPlayer.seekTo(
+                                        (keyPlayer.currentPosition - 10_000L)
+                                            .coerceAtLeast(0L)
+                                    )
                                     controlsVisible = true
                                 }
                                 true
