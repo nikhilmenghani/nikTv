@@ -161,6 +161,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
+    private var searchServerJob: kotlinx.coroutines.Job? = null
 
     init {
         prepareProfileChooser()
@@ -3381,6 +3382,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeSearch() {
         searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
         _state.update {
             it.copy(
                 searchOpen = false,
@@ -3395,6 +3397,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.searchScopeLocked || snapshot.searchType == type) return
 
         searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
 
         _state.update {
             it.copy(
@@ -3427,6 +3430,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.searchCategoryId == categoryId) return
 
         searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
 
         _state.update {
             it.copy(
@@ -3525,6 +3529,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSearchQuery(query: String) {
         searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
 
         _state.update {
             it.copy(
@@ -3624,7 +3629,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(searchLocalLoading = true)
         }
 
-        viewModelScope.launch {
+        searchServerJob?.cancel()
+        searchServerJob = viewModelScope.launch {
             rememberSearch(query, snapshot.searchType)
 
             val saved =
@@ -3694,7 +3700,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        viewModelScope.launch {
+        searchServerJob?.cancel()
+        searchServerJob = viewModelScope.launch {
             val current = _state.value
             if (
                 !current.searchHasMore ||
@@ -3748,27 +3755,48 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 // they arrive so All categories remains useful without a long blank wait.
                 var discovered = emptyList<MediaItem>()
                 var anyHasMore = false
-                val categories = _state.value.searchCategories.filter { it.id != "*" }
-                categories.forEach { category ->
-                    val categoryPage = runCatching {
-                        portal.search(session, type, query, page, category.id)
-                    }.getOrNull() ?: return@forEach
-                    anyHasMore = anyHasMore || categoryPage.hasMore
-                    val before = discovered.size
-                    discovered = (discovered + categoryPage.items).distinctBy { it.id }
-                    if (discovered.size > before) {
-                        _state.update { current ->
-                            if (current.searchType == type &&
-                                current.searchCategoryId == "*" &&
-                                current.searchQuery.trim().equals(query, true)
-                            ) {
-                                current.copy(
-                                    searchResults = (existing + discovered).distinctBy { it.id },
-                                    searchUsedServer = true
-                                )
-                            } else current
+                val cachedCategoryIds = _state.value.browseCachesByType[
+                    catalogTypeForSearch(type)
+                ]?.itemsByCategory?.keys.orEmpty()
+                val categories = _state.value.searchCategories
+                    .filter { it.id != "*" }
+                    .sortedByDescending { it.id in cachedCategoryIds }
+
+                // A small parallel window cuts latency without flooding the
+                // IPTV portal. Stop as soon as an exact title is found; users
+                // can request another page if they need broader matches.
+                for (batch in categories.chunked(SEARCH_CATEGORY_CONCURRENCY)) {
+                    val pages = coroutineScope {
+                        batch.map { category ->
+                            async {
+                                runCatching {
+                                    portal.search(session, type, query, page, category.id)
+                                }.getOrNull()
+                            }
+                        }.awaitAll().filterNotNull()
+                    }
+                    pages.forEach { categoryPage ->
+                        anyHasMore = anyHasMore || categoryPage.hasMore
+                        val before = discovered.size
+                        discovered = (discovered + categoryPage.items).distinctBy { it.id }
+                        if (discovered.size > before) {
+                            _state.update { current ->
+                                if (current.searchType == type &&
+                                    current.searchCategoryId == "*" &&
+                                    current.searchQuery.trim().equals(query, true)
+                                ) {
+                                    current.copy(
+                                        searchResults = (existing + discovered).distinctBy { it.id },
+                                        searchUsedServer = true
+                                    )
+                                } else current
+                            }
                         }
                     }
+                    if (discovered.any {
+                            it.title.normalizedSearchQuery() == query.normalizedSearchQuery()
+                        } || discovered.size >= SEARCH_ALL_CATEGORY_RESULT_LIMIT
+                    ) break
                 }
                 direct.copy(items = discovered, hasMore = anyHasMore)
             }
@@ -5488,5 +5516,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val INITIAL_MOVIE_MATCH_LIMIT = 5
         private const val MAX_BACKGROUND_MATCH_REQUESTS = 8
         private const val SEARCH_PREVIEW_DEBOUNCE_MS = 220L
+        private const val SEARCH_CATEGORY_CONCURRENCY = 3
+        private const val SEARCH_ALL_CATEGORY_RESULT_LIMIT = 24
     }
 }

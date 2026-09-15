@@ -12,6 +12,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -131,6 +132,7 @@ internal fun ModernSearchScreen(
         mutableStateOf(false)
     }
     var searchEditing by rememberSaveable { mutableStateOf(false) }
+    var editSessionSawIme by remember { mutableStateOf(false) }
     var restoreQueryFocus by rememberSaveable { mutableStateOf(false) }
     var queryFocused by remember { mutableStateOf(false) }
 
@@ -192,9 +194,25 @@ internal fun ModernSearchScreen(
      */
     LaunchedEffect(searchEditing) {
         if (searchEditing) {
+            editSessionSawIme = false
             withFrameNanos { }
             runCatching { searchRequester.requestFocus() }
             keyboard?.show()
+        }
+    }
+
+    val imeVisible = WindowInsets.isImeVisible
+    LaunchedEffect(searchEditing, imeVisible) {
+        if (!searchEditing) {
+            editSessionSawIme = false
+        } else if (imeVisible) {
+            editSessionSawIme = true
+        } else if (editSessionSawIme) {
+            // Fire TV consumes the first Back press while dismissing its IME,
+            // so BackHandler does not always run. Leave editor mode as soon as
+            // that IME closes, retaining focus on the query's D-pad target.
+            searchEditing = false
+            restoreQueryFocus = true
         }
     }
 
@@ -347,7 +365,9 @@ internal fun ModernSearchScreen(
                             keyboard?.hide()
                             restoreQueryFocus = true
                             if (state.searchQuery.isNotBlank()) {
-                                search(true)
+                                // Show cached/indexed matches immediately. A
+                                // provider-wide search remains an explicit action.
+                                search(false)
                             }
                         }
                     ),
@@ -374,6 +394,24 @@ internal fun ModernSearchScreen(
                                         if (
                                             event.type ==
                                                 KeyEventType.KeyDown &&
+                                            event.key == Key.DirectionRight
+                                        ) {
+                                            runCatching {
+                                                if (state.searchQuery.isNotEmpty()) {
+                                                    clearSearchRequester.requestFocus()
+                                                } else {
+                                                    submitSearchRequester.requestFocus()
+                                                }
+                                            }
+                                            true
+                                        } else if (
+                                            event.type == KeyEventType.KeyDown &&
+                                            event.key == Key.DirectionDown
+                                        ) {
+                                            runCatching { typeBelowSearch.requestFocus() }
+                                            true
+                                        } else if (
+                                            event.type == KeyEventType.KeyDown &&
                                             event.key in listOf(
                                                 Key.DirectionCenter,
                                                 Key.Enter,
@@ -448,7 +486,7 @@ internal fun ModernSearchScreen(
                     onClick = {
                         searchEditing = false
                         keyboard?.hide()
-                        search(true)
+                        search(false)
                     },
                     modifier = Modifier
                         .focusRequester(submitSearchRequester)
