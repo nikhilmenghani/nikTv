@@ -291,8 +291,13 @@ internal fun ModernSearchScreen(
                     if (!searchEditing) {
                         awaitPointerEventScope {
                             while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                if (event.changes.any { it.pressed && !it.previousPressed }) {
+                                val event = awaitPointerEvent(PointerEventPass.Final)
+                                val released = event.changes.firstOrNull {
+                                    it.previousPressed && !it.pressed
+                                }
+                                // Trailing Clear/Search buttons consume their own tap.
+                                // Only an otherwise-unhandled field tap enters editing.
+                                if (released != null && !released.isConsumed) {
                                     activateSearchField()
                                 }
                             }
