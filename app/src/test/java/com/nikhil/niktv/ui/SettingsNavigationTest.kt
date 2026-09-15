@@ -24,9 +24,9 @@ class SettingsNavigationTest {
             "Mobile controls" to SettingsDestination.APPEARANCE,
 "Display and screen" to SettingsDestination.APPEARANCE,
             "Default media player" to SettingsDestination.PLAYBACK,
-            "Player controls" to SettingsDestination.PLAYBACK,
+
             "Series" to SettingsDestination.PLAYBACK,
-            "Category Filters" to SettingsDestination.CONTENT,
+
             "Catalog cache" to SettingsDestination.CONTENT,
             "Profiles" to SettingsDestination.PROFILES,
             "Connection" to SettingsDestination.PROFILES,

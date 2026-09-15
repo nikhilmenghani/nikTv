@@ -645,8 +645,8 @@ internal fun ModernSettingsScreen(
         val keepAwakeRequester = remember { FocusRequester() }
         val orientationRequester = remember { FocusRequester() }
         val playbackEngineRequester = remember { FocusRequester() }
-        val controlsTimeoutRequester = remember { FocusRequester() }
         val seriesSeasonRequester = remember { FocusRequester() }
+        val catalogRefreshRequester = remember { FocusRequester() }
         val appBrightnessStep =
             (AppBrightnessPreferences.MAX - AppBrightnessPreferences.MIN) /
                 17f
@@ -679,125 +679,8 @@ internal fun ModernSettingsScreen(
             setPlaybackEngine = setPlaybackEngine,
             compact = compactSettingsHeader,
             entryRequester = playbackEngineRequester,
-            downRequester = controlsTimeoutRequester
+            downRequester = seriesSeasonRequester
         )
-        SettingsSection("Player controls") {
-            if (compactSettingsHeader) {
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.Timer,
-                    title = "Controls timeout",
-                    subtitle =
-                        "Choose how long playback controls stay visible. Infinite keeps them visible until dismissed.",
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        SingleChoiceSegmentedButtonRow(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, end = 2.dp)
-                        ) {
-                            PLAYER_CONTROLS_TIMEOUT_OPTIONS
-                                .forEachIndexed { index, seconds ->
-                                    val shape =
-                                        uniformSegmentShape(
-                                            index,
-                                            PLAYER_CONTROLS_TIMEOUT_OPTIONS.size
-                                        )
-                                    val selected =
-                                        state.playerControlsTimeoutSeconds ==
-                                            seconds
-                                    SegmentedButton(
-                                        selected = selected,
-                                        onClick = {
-                                            setPlayerControlsTimeoutSeconds(
-                                                seconds
-                                            )
-                                        },
-                                        modifier = Modifier
-                                            .then(
-                                                if (selected) {
-                                                    Modifier.focusRequester(
-                                                        controlsTimeoutRequester
-                                                    )
-                                                } else {
-                                                    Modifier
-                                                }
-                                            )
-                                            .focusProperties {
-                                                up = playbackEngineRequester
-                                                down = seriesSeasonRequester
-                                            }
-                                            .remoteFocusFrame(shape),
-                                        shape = shape
-                                    ) {
-                                        Text(
-                                            if (
-                                                seconds ==
-                                                PLAYER_CONTROLS_TIMEOUT_INFINITE
-                                            ) {
-                                                "∞"
-                                            } else {
-                                                "${seconds}s"
-                                            },
-                                            style =
-                                                MaterialTheme.typography
-                                                    .labelLarge
-                                        )
-                                    }
-                                }
-                        }
-                    }
-                )
-            } else {
-                Column(
-                    Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "Controls timeout",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        "Choose how long controls stay visible while video is playing. Infinite keeps them visible until you dismiss them.",
-                        color = Color.Gray
-                    )
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier.fillMaxWidth()
-                    ) {
-                        PLAYER_CONTROLS_TIMEOUT_OPTIONS
-                            .forEachIndexed { index, seconds ->
-                                val shape =
-                                    uniformSegmentShape(
-                                        index,
-                                        PLAYER_CONTROLS_TIMEOUT_OPTIONS.size
-                                    )
-                                SegmentedButton(
-                                    state.playerControlsTimeoutSeconds ==
-                                        seconds,
-                                    {
-                                        setPlayerControlsTimeoutSeconds(
-                                            seconds
-                                        )
-                                    },
-                                    shape,
-                                    modifier =
-                                        Modifier.remoteFocusFrame(shape)
-                                ) {
-                                    Text(
-                                        if (
-                                            seconds ==
-                                            PLAYER_CONTROLS_TIMEOUT_INFINITE
-                                        ) {
-                                            "∞"
-                                        } else {
-                                            "${seconds}s"
-                                        }
-                                    )
-                                }
-                            }
-                    }
-                }
-            }
-        }
         SettingsSection("Display and screen") {
             if (compactSettingsHeader) {
                 CompactSettingsOptionRow(
@@ -1132,31 +1015,6 @@ internal fun ModernSettingsScreen(
                 modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = addProfile),
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
-        }
-        if (profile != null) SettingsSection("Category Filters") {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Content Visibility", style = MaterialTheme.typography.titleMedium)
-                Text("Choose which categories to include for Live TV, Movies, and Series.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                visibleCatalogTypes.forEachIndexed { index, type ->
-                    val raw = state.rawCategoriesByType[type].orEmpty().ifEmpty { if (state.selectedType == type) state.categories else emptyList() }
-                    val filterKey = "${profile.cacheKey()}|${type.name}"
-                    val enabledIds = state.categoryFilters[filterKey]
-                    val countSummary = when {
-                        raw.isEmpty() -> "Tap to configure"
-                        enabledIds == null -> "All ${raw.size} categories active"
-                        else -> "${enabledIds.size} of ${raw.size} categories active"
-                    }
-                    ListItem(
-                        headlineContent = { Text(type.title) },
-                        supportingContent = { Text(countSummary) },
-                        leadingContent = { Icon(type.icon(), null) },
-                        trailingContent = { Icon(Icons.Default.ChevronRight, "Configure ${type.title} categories") },
-                        modifier = Modifier.remoteFocusFrame().clip(RoundedCornerShape(12.dp)).clickable { openCategoryManager(type) },
-                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-                    )
-                    if (index != visibleCatalogTypes.lastIndex) Spacer(Modifier.height(4.dp))
-                }
-            }
         }
         val activeSettingsDestination = LocalSettingsDestination.current
         if (
@@ -1820,18 +1678,107 @@ internal fun ModernSettingsScreen(
         }
 
         SettingsSection("Catalog cache") {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Refresh interval", style = MaterialTheme.typography.titleMedium)
-                Text("Categories and media lists are stored on this device and refreshed after this interval.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf(30 to "30m", 60 to "1h", 360 to "6h", 1440 to "24h").forEachIndexed { index, (minutes, label) ->
-                        val intervalShape = uniformSegmentShape(index, 4)
-                        SegmentedButton(
-                            selected = state.cacheIntervalMinutes == minutes,
-                            onClick = { setCacheIntervalMinutes(minutes) },
-                            modifier = Modifier.remoteFocusFrame(intervalShape),
-                            shape = intervalShape
-                        ) { Text(label) }
+            if (compactSettingsHeader) {
+                val refreshOptions =
+                    listOf(
+                        30 to "30m",
+                        60 to "1h",
+                        360 to "6h",
+                        1440 to "24h"
+                    )
+
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.Refresh,
+                    title = "Refresh interval",
+                    subtitle =
+                        "Choose how long categories and media lists stay cached on this device.",
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        SingleChoiceSegmentedButtonRow(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, end = 2.dp)
+                        ) {
+                            refreshOptions.forEachIndexed {
+                                    index,
+                                    (minutes, label) ->
+                                val shape =
+                                    uniformSegmentShape(
+                                        index,
+                                        refreshOptions.size
+                                    )
+                                val selected =
+                                    state.cacheIntervalMinutes == minutes
+                                SegmentedButton(
+                                    selected = selected,
+                                    onClick = {
+                                        setCacheIntervalMinutes(minutes)
+                                    },
+                                    modifier = Modifier
+                                        .then(
+                                            if (selected) {
+                                                Modifier.focusRequester(
+                                                    catalogRefreshRequester
+                                                )
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .remoteFocusFrame(shape),
+                                    shape = shape
+                                ) {
+                                    Text(
+                                        label,
+                                        style =
+                                            MaterialTheme.typography
+                                                .labelLarge
+                                    )
+                                }
+                            }
+                        }
+                    }
+                )
+            } else {
+                Column(
+                    Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Refresh interval",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        "Categories and media lists are stored on this device and refreshed after this interval.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color =
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier.fillMaxWidth()
+                    ) {
+                        listOf(
+                            30 to "30m",
+                            60 to "1h",
+                            360 to "6h",
+                            1440 to "24h"
+                        ).forEachIndexed { index, (minutes, label) ->
+                            val intervalShape =
+                                uniformSegmentShape(index, 4)
+                            SegmentedButton(
+                                selected =
+                                    state.cacheIntervalMinutes == minutes,
+                                onClick = {
+                                    setCacheIntervalMinutes(minutes)
+                                },
+                                modifier =
+                                    Modifier.remoteFocusFrame(
+                                        intervalShape
+                                    ),
+                                shape = intervalShape
+                            ) {
+                                Text(label)
+                            }
+                        }
                     }
                 }
             }
@@ -1875,7 +1822,7 @@ internal fun ModernSettingsScreen(
                                                 }
                                             )
                                             .focusProperties {
-                                                up = controlsTimeoutRequester
+                                                up = playbackEngineRequester
                                             }
                                             .remoteFocusFrame(shape),
                                         shape = shape

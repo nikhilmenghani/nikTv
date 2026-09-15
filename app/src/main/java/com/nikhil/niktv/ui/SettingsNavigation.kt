@@ -18,11 +18,11 @@ internal enum class SettingsDestination(
     ),
     PLAYBACK(
         "Playback",
-        "Player engine, controls and series defaults"
+        "Player engine and series defaults"
     ),
     CONTENT(
         "Content",
-        "Category visibility and catalog refresh behavior"
+        "Catalog cache and refresh behavior"
     ),
     PROFILES(
         "Profiles",
@@ -48,10 +48,8 @@ internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
         "Display and screen" -> SettingsDestination.APPEARANCE
 
         "Default media player",
-        "Player controls",
         "Series" -> SettingsDestination.PLAYBACK
 
-        "Category Filters",
         "Catalog cache" -> SettingsDestination.CONTENT
 
         "Profiles",
