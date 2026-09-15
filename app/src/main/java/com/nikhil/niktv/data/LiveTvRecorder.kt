@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -264,11 +265,33 @@ class LiveTvRecordingService : Service() {
         if (!paused && recordingJob?.isActive == true) (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L) else 0L
 
     private suspend fun recordHls(initialUrl: String, output: java.io.OutputStream) {
-        var playlistUrl = resolveMediaPlaylist(initialUrl)
+        var failures = 0
+        var resolvedPlaylistUrl: String? = null
+        while (resolvedPlaylistUrl == null) {
+            awaitResume()
+            try {
+                resolvedPlaylistUrl = resolveMediaPlaylist(initialUrl)
+            } catch (error: java.io.IOException) {
+                if (paused) continue
+                if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
+                delay(retryDelay(failures))
+            }
+        }
+        val playlistUrl = requireNotNull(resolvedPlaylistUrl)
         val written = LinkedHashSet<String>()
         var bytes = 0L
-        while (scope.isActive) {
-            val playlist = getText(playlistUrl)
+        failures = 0
+        while (currentCoroutineContext().isActive) {
+            awaitResume()
+            val playlist = try {
+                getText(playlistUrl)
+            } catch (error: java.io.IOException) {
+                if (paused) continue
+                if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
+                delay(retryDelay(failures))
+                continue
+            }
+            failures = 0
             val lines = playlist.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
             val mapUri = lines.firstOrNull { it.startsWith("#EXT-X-MAP:") }
                 ?.substringAfter("URI=", "")?.trim()?.trim('"')
@@ -277,11 +300,21 @@ class LiveTvRecordingService : Service() {
                 lines.filterNot { it.startsWith("#") }.forEach { add(resolve(playlistUrl, it)) }
             }
             for (segment in segments) {
-                if (!written.add(segment)) continue
-                if (!paused) {
-                    bytes += appendUrl(segment, output)
-                    publishProgress(bytes)
+                if (segment in written) continue
+                awaitResume()
+                val appended = try {
+                    appendUrl(segment, output)
+                } catch (error: java.io.IOException) {
+                    if (paused) break
+                    if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
+                    delay(retryDelay(failures))
+                    break
                 }
+                if (paused) break
+                bytes += appended
+                written.add(segment)
+                failures = 0
+                publishProgress(bytes)
             }
             if (lines.any { it == "#EXT-X-ENDLIST" }) return
             val targetSeconds = lines.firstOrNull { it.startsWith("#EXT-X-TARGETDURATION:") }
@@ -303,17 +336,18 @@ class LiveTvRecordingService : Service() {
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").build()
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE * 8)
         var bytes = LiveTvRecorder.state.value.bytesWritten
-        while (scope.isActive) {
-            while (paused && scope.isActive) delay(100L)
-            if (!scope.isActive) return
+        var failures = 0
+        while (currentCoroutineContext().isActive) {
+            awaitResume()
 
             val call = client.newCall(request)
             activeStreamCall = call
+            val bytesBeforeAttempt = bytes
             try {
                 call.execute().use { response ->
-                    check(response.isSuccessful) { "Stream returned HTTP ${response.code}" }
+                    requireSuccessful(response.code, response.isSuccessful, "Stream")
                     val input = response.body?.byteStream() ?: error("Stream returned no data")
-                    while (scope.isActive && !paused) {
+                    while (currentCoroutineContext().isActive && !paused) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         output.write(buffer, 0, count)
@@ -321,41 +355,58 @@ class LiveTvRecordingService : Service() {
                         if (bytes % (1024 * 1024) < count) publishProgress(bytes)
                     }
                 }
+                failures = 0
             } catch (error: java.io.IOException) {
-                if (!paused && scope.isActive) throw error
+                if (!paused && currentCoroutineContext().isActive) {
+                    if (!error.isRetriableStreamFailure()) throw error
+                    failures = if (bytes > bytesBeforeAttempt) 1 else failures + 1
+                    if (failures > MAX_STREAM_RETRIES) throw error
+                }
             } finally {
                 if (activeStreamCall === call) activeStreamCall = null
             }
 
             // A resumed live stream must reconnect at its current live edge.
             // Do not consume and discard network bytes while paused.
-            if (!paused && scope.isActive) delay(350L)
+            if (!paused && currentCoroutineContext().isActive) {
+                delay(if (failures == 0) 350L else retryDelay(failures))
+            }
         }
     }
 
     private fun appendUrl(url: String, output: java.io.OutputStream): Long {
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").build()
-        client.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "Segment returned HTTP ${response.code}" }
-            val input = response.body?.byteStream() ?: return 0L
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE * 8)
-            var written = 0L
-            while (!paused) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                output.write(buffer, 0, count)
-                written += count
+        val call = client.newCall(request)
+        activeStreamCall = call
+        try {
+            return call.execute().use { response ->
+                requireSuccessful(response.code, response.isSuccessful, "Segment")
+                val data = response.body?.bytes() ?: return@use 0L
+                if (paused) return@use 0L
+                output.write(data)
+                data.size.toLong()
             }
-            return written
+        } finally {
+            if (activeStreamCall === call) activeStreamCall = null
         }
     }
 
     private fun getText(url: String): String {
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").build()
-        return client.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "Playlist returned HTTP ${response.code}" }
-            response.body?.string() ?: error("Playlist returned no data")
+        val call = client.newCall(request)
+        activeStreamCall = call
+        try {
+            return call.execute().use { response ->
+                requireSuccessful(response.code, response.isSuccessful, "Playlist")
+                response.body?.string() ?: error("Playlist returned no data")
+            }
+        } finally {
+            if (activeStreamCall === call) activeStreamCall = null
         }
+    }
+
+    private suspend fun awaitResume() {
+        while (paused && currentCoroutineContext().isActive) delay(100L)
     }
 
     private fun publishProgress(bytes: Long) {
@@ -434,8 +485,25 @@ class LiveTvRecordingService : Service() {
         const val EXTRA_URL = "url"
         private const val CHANNEL_ID = "niktv_live_recordings"
         private const val NOTIFICATION_ID = 2114
+        private const val MAX_STREAM_RETRIES = 8
     }
 }
+
+private class RecordingHttpException(
+    val statusCode: Int,
+    message: String
+) : java.io.IOException(message)
+
+private fun requireSuccessful(code: Int, successful: Boolean, label: String) {
+    if (successful) return
+    throw RecordingHttpException(code, "$label returned HTTP $code")
+}
+
+private fun java.io.IOException.isRetriableStreamFailure(): Boolean =
+    this !is RecordingHttpException
+
+private fun retryDelay(attempt: Int): Long =
+    (500L * (1L shl (attempt - 1).coerceIn(0, 4))).coerceAtMost(8_000L)
 
 private fun isHls(url: String) = url.substringBefore('?').endsWith(".m3u8", true)
 private fun recordingCollectionUri(): android.net.Uri =
