@@ -507,7 +507,9 @@ class StalkerPortalClient(private val context: Context) {
                         "type" to "itv",
                         "action" to "get_short_epg",
                         "ch_id" to item.id,
-                        "size" to "12"
+                        // One bounded request. Twenty-four entries normally
+                        // covers a full day without polling or category-wide EPG load.
+                        "size" to "24"
                     )
                 )
             )

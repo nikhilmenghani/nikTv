@@ -167,6 +167,7 @@ internal fun VlcPlayerScreen(
         previousLiveRecordingActive = liveRecording.active
     }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
@@ -210,6 +211,7 @@ internal fun VlcPlayerScreen(
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeRequester = remember(media.progressKey) { FocusRequester() }
+    val programmeGuideRequester = remember(media.progressKey) { FocusRequester() }
     val pictureSettingsRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutRequester = remember(media.progressKey) { FocusRequester() }
     val moreRequester = remember(media.progressKey) { FocusRequester() }
@@ -333,13 +335,14 @@ internal fun VlcPlayerScreen(
             controlsFocused = false
         }
     }
-    LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible, moreOptionsOpen) {
+    LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible, programmeGuideOpen, moreOptionsOpen) {
         if (
             controlsVisible &&
             playing &&
             error == null &&
             !queueVisible &&
             !pictureEditorVisible &&
+            !programmeGuideOpen &&
             !moreOptionsOpen &&
             controlsTimeoutSeconds != PLAYER_CONTROLS_TIMEOUT_INFINITE
         ) {
@@ -392,6 +395,7 @@ internal fun VlcPlayerScreen(
 
     BackHandler {
         when {
+            programmeGuideOpen -> programmeGuideOpen = false
             moreOptionsOpen -> onMoreOptionsOpenChanged(false)
             queueVisible -> queueVisible = false
             pictureEditorVisible -> {
@@ -991,9 +995,6 @@ internal fun VlcPlayerScreen(
                                 maxLines = 1
                             )
                         }
-                        if (media.catalogType == CatalogType.LIVE_TV) {
-                            PlayerLiveSchedule(media.media, compactMobileControls)
-                        }
                         PlayerDateTime(compact = compactMobileControls)
                         PlayerDownloadStatusPill(
                             if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)
@@ -1150,29 +1151,61 @@ internal fun VlcPlayerScreen(
                                 .focusRequester(pictureModeRequester)
                                 .focusProperties {
                                     left = resizeRequester
-                                    right = moreRequester
+                                    right = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideRequester else controlsTimeoutRequester
                                     up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = resizeRequester,
-                                    right = moreRequester,
+                                    right = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideRequester else controlsTimeoutRequester,
                                     up = if (seekable) progressRequester else backRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
+                        if (media.catalogType == CatalogType.LIVE_TV) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.EventNote,
+                                badgeText = media.media.liveSchedule.size.takeIf { it > 0 }?.toString(),
+                                contentDescription = "Programme guide",
+                                onClick = { programmeGuideOpen = true },
+                                modifier = Modifier.focusRequester(programmeGuideRequester)
+                                    .focusProperties { left = pictureModeRequester; right = controlsTimeoutRequester }
+                                    .playerDpadFocusRoutes(left = pictureModeRequester, right = controlsTimeoutRequester),
+                                onFocused = { controlsFocused = it }
+                            )
+                        }
                         PlayerChromeIconButton(
-                            icon = Icons.Default.Settings,
-                            contentDescription = "Playback settings",
+                            icon = Icons.Default.Timer,
+                            badgeText = playerControlsTimeoutBadge(controlsTimeoutSeconds),
+                            contentDescription = "Controls timeout: ${playerControlsTimeoutLabel(controlsTimeoutSeconds)}",
+                            onClick = {
+                                val seconds = nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
+                                onControlsTimeoutChanged(seconds)
+                                modeFeedback = playerControlsTimeoutFeedback(seconds)
+                            },
+                            modifier = Modifier.focusRequester(controlsTimeoutRequester)
+                                .focusProperties {
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideRequester else pictureModeRequester
+                                    right = moreRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideRequester else pictureModeRequester,
+                                    right = moreRequester
+                                ),
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = Icons.Default.Info,
+                            contentDescription = "Playback information",
                             onClick = { onMoreOptionsOpenChanged(true) },
                             modifier = Modifier
                                 .focusRequester(moreRequester)
                                 .focusProperties {
-                                    left = pictureModeRequester
+                                    left = controlsTimeoutRequester
                                     right = if (pipAvailable) pipRequester else playerSwitchRequester
                                     up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = pictureModeRequester,
+                                    left = controlsTimeoutRequester,
                                     right = if (pipAvailable) pipRequester else playerSwitchRequester,
                                     up = if (seekable) progressRequester else backRequester
                                 ),
@@ -1479,11 +1512,6 @@ internal fun VlcPlayerScreen(
             if (moreOptionsOpen) {
                 PlayerMoreOptionsDialog(
                     detailLines = playbackDetailLines,
-                    controlsTimeoutSeconds = controlsTimeoutSeconds,
-                    onControlsTimeoutChanged = { seconds ->
-                        onControlsTimeoutChanged(seconds)
-                        modeFeedback = playerControlsTimeoutFeedback(seconds)
-                    },
                     onDismiss = {
                         onMoreOptionsOpenChanged(false)
                         scope.launch {
@@ -1492,6 +1520,12 @@ internal fun VlcPlayerScreen(
                         }
                     }
                 )
+            }
+            if (programmeGuideOpen) {
+                PlayerLiveScheduleOverlay(media.media) {
+                    programmeGuideOpen = false
+                    scope.launch { delay(80L); runCatching { programmeGuideRequester.requestFocus() } }
+                }
             }
         }
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(

@@ -1,29 +1,32 @@
 package com.nikhil.niktv.ui
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import com.nikhil.niktv.model.MediaItem
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Compact, non-focusable guide rendered from metadata already on PlayingMedia. */
+/** Compact guide rendered from the playing channel's already-fetched metadata. */
 @Composable
-internal fun PlayerLiveSchedule(item: MediaItem, compact: Boolean) {
-    if (item.liveSchedule.isEmpty() && item.liveProgramme == null) return
+internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
     val now by produceState(System.currentTimeMillis(), item.id, item.liveSchedule) {
         while (true) {
             value = System.currentTimeMillis()
@@ -35,38 +38,88 @@ internal fun PlayerLiveSchedule(item: MediaItem, compact: Boolean) {
         val end = programme.endTimeMillis
         start != null && end != null && now in start until end
     } ?: item.liveProgramme
-    val upcoming = item.liveSchedule
-        .filter { (it.startTimeMillis ?: Long.MIN_VALUE) > now }
-        .take(if (compact) 1 else 2)
-    if (current == null && upcoming.isEmpty()) return
+    val programmes = item.liveSchedule.filter { (it.endTimeMillis ?: Long.MAX_VALUE) > now }
     val formatter = SimpleDateFormat("h:mm a", Locale.getDefault())
-
-    Column {
-        current?.let {
-            Text(
-                "Now · ${it.title}",
-                color = Color.White.copy(alpha = .88f),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        if (upcoming.isNotEmpty()) {
-            Row {
-                Text("Next", color = Color.White.copy(alpha = .62f), style = MaterialTheme.typography.labelSmall)
-                Spacer(Modifier.width(5.dp))
-                Text(
-                    upcoming.joinToString("  •  ") { programme ->
-                        val time = programme.startTimeMillis?.let { formatter.format(Date(it)) }
-                        listOfNotNull(time, programme.title).joinToString(" · ")
-                    },
-                    color = Color.White.copy(alpha = .72f),
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
+    val requesters = remember(programmes) { programmes.map { FocusRequester() } }
+    val closeRequester = remember { FocusRequester() }
+    LaunchedEffect(programmes) {
+        kotlinx.coroutines.delay(100L)
+        runCatching { (requesters.firstOrNull() ?: closeRequester).requestFocus() }
     }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.widthIn(min = 300.dp, max = 430.dp),
+        shape = RoundedCornerShape(22.dp),
+        containerColor = Color(0xF21A1A1A),
+        properties = DialogProperties(usePlatformDefaultWidth = true),
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Programme guide", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(.62f))
+            }
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (programmes.isEmpty()) {
+                    item {
+                        Text(
+                            "No programme information was returned for this channel.",
+                            color = Color.White.copy(alpha = .68f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+                    }
+                }
+                itemsIndexed(programmes) { index, programme ->
+                    val isCurrent = programme == current
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(requesters[index])
+                            .focusProperties {
+                                if (index > 0) up = requesters[index - 1]
+                                down = requesters.getOrNull(index + 1) ?: closeRequester
+                            }
+                            .focusable()
+                            .remoteFocusFrame(RoundedCornerShape(14.dp)),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isCurrent) Color(0xFF452126) else Color.White.copy(.055f),
+                        border = BorderStroke(1.dp, if (isCurrent) Color(0xFFE50914) else Color.White.copy(.10f))
+                    ) {
+                        Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+                            val range = listOfNotNull(
+                                programme.startTimeMillis?.let { formatter.format(Date(it)) },
+                                programme.endTimeMillis?.let { formatter.format(Date(it)) }
+                            ).joinToString(" – ")
+                            Text(
+                                if (isCurrent) "NOW  ·  $range" else range,
+                                color = if (isCurrent) Color(0xFFFF8A94) else Color.White.copy(.58f),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                programme.title,
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.focusRequester(closeRequester).playerControlFocus(RoundedCornerShape(12.dp)) {},
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Close") }
+        }
+    )
 }

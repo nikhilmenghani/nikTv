@@ -189,6 +189,9 @@ internal val PLAYER_CONTROLS_TIMEOUT_OPTIONS = listOf(
 internal fun playerControlsTimeoutLabel(seconds: Int): String =
     if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) "Infinite" else "${seconds}s"
 
+internal fun playerControlsTimeoutBadge(seconds: Int): String =
+    if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) "∞" else "${seconds}s"
+
 internal fun playerControlsTimeoutFeedback(seconds: Int): String =
     if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) {
         "Controls stay visible"
@@ -476,6 +479,7 @@ fun PlayerScreen(
         previousLiveRecordingActive = liveRecording.active
     }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
@@ -578,6 +582,7 @@ fun PlayerScreen(
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val programmeGuideFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
     val moreFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1032,6 +1037,7 @@ fun PlayerScreen(
         embeddedMode,
         queueVisible,
         pictureEditorVisible,
+        programmeGuideOpen,
         moreOptionsOpen
     ) {
         val canAutoHide =
@@ -1041,6 +1047,7 @@ fun PlayerScreen(
                 !startupTimedOut
                 && !queueVisible
                 && !pictureEditorVisible
+                && !programmeGuideOpen
                 && !moreOptionsOpen
 
         if (
@@ -1149,6 +1156,7 @@ fun PlayerScreen(
 
     BackHandler {
         when {
+            programmeGuideOpen -> programmeGuideOpen = false
             moreOptionsOpen -> moreOptionsOpen = false
             queueVisible -> queueVisible = false
             pictureEditorVisible -> {
@@ -1699,9 +1707,6 @@ fun PlayerScreen(
                                 maxLines = 1
                             )
                         }
-                        if (media.catalogType == CatalogType.LIVE_TV) {
-                            PlayerLiveSchedule(media.media, compactMobileControls)
-                        }
                         PlayerDateTime(compact = compactMobileControls)
                         PlayerDownloadStatusPill(
                             if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)
@@ -1857,29 +1862,61 @@ fun PlayerScreen(
                                 .focusRequester(pictureModeFocusRequester)
                                 .focusProperties {
                                     left = resizeFocusRequester
-                                    right = moreFocusRequester
+                                    right = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideFocusRequester else controlsTimeoutFocusRequester
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
                                     left = resizeFocusRequester,
-                                    right = moreFocusRequester,
+                                    right = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideFocusRequester else controlsTimeoutFocusRequester,
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 ),
                             onFocused = { controlsFocused = it }
                         )
+                        if (media.catalogType == CatalogType.LIVE_TV) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.EventNote,
+                                badgeText = media.media.liveSchedule.size.takeIf { it > 0 }?.toString(),
+                                contentDescription = "Programme guide",
+                                onClick = { programmeGuideOpen = true },
+                                modifier = Modifier.focusRequester(programmeGuideFocusRequester)
+                                    .focusProperties { left = pictureModeFocusRequester; right = controlsTimeoutFocusRequester }
+                                    .playerDpadFocusRoutes(left = pictureModeFocusRequester, right = controlsTimeoutFocusRequester),
+                                onFocused = { controlsFocused = it }
+                            )
+                        }
                         PlayerChromeIconButton(
-                            icon = Icons.Default.Settings,
-                            contentDescription = "Playback settings",
+                            icon = Icons.Default.Timer,
+                            badgeText = playerControlsTimeoutBadge(controlsTimeoutSeconds),
+                            contentDescription = "Controls timeout: ${playerControlsTimeoutLabel(controlsTimeoutSeconds)}",
+                            onClick = {
+                                val seconds = nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
+                                onControlsTimeoutChanged(seconds)
+                                modeFeedback = playerControlsTimeoutFeedback(seconds)
+                            },
+                            modifier = Modifier.focusRequester(controlsTimeoutFocusRequester)
+                                .focusProperties {
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideFocusRequester else pictureModeFocusRequester
+                                    right = moreFocusRequester
+                                }
+                                .playerDpadFocusRoutes(
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) programmeGuideFocusRequester else pictureModeFocusRequester,
+                                    right = moreFocusRequester
+                                ),
+                            onFocused = { controlsFocused = it }
+                        )
+                        PlayerChromeIconButton(
+                            icon = Icons.Default.Info,
+                            contentDescription = "Playback information",
                             onClick = { moreOptionsOpen = true },
                             modifier = Modifier
                                 .focusRequester(moreFocusRequester)
                                 .focusProperties {
-                                    left = pictureModeFocusRequester
+                                    left = controlsTimeoutFocusRequester
                                     right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = pictureModeFocusRequester,
+                                    left = controlsTimeoutFocusRequester,
                                     right = if (pipAvailable) pipFocusRequester else playerSwitchFocusRequester,
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 ),
@@ -2191,11 +2228,6 @@ fun PlayerScreen(
             if (moreOptionsOpen) {
                 PlayerMoreOptionsDialog(
                     detailLines = playbackDetailLines,
-                    controlsTimeoutSeconds = controlsTimeoutSeconds,
-                    onControlsTimeoutChanged = { seconds ->
-                        onControlsTimeoutChanged(seconds)
-                        modeFeedback = playerControlsTimeoutFeedback(seconds)
-                    },
                     onDismiss = {
                         moreOptionsOpen = false
                         coroutineScope.launch {
@@ -2204,6 +2236,12 @@ fun PlayerScreen(
                         }
                     }
                 )
+            }
+            if (programmeGuideOpen) {
+                PlayerLiveScheduleOverlay(media.media) {
+                    programmeGuideOpen = false
+                    coroutineScope.launch { delay(80L); runCatching { programmeGuideFocusRequester.requestFocus() } }
+                }
             }
         }
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
@@ -3121,8 +3159,6 @@ internal fun PictureModeQuickOverlay(
 @Composable
 internal fun PlayerMoreOptionsDialog(
     detailLines: List<String>,
-    controlsTimeoutSeconds: Int,
-    onControlsTimeoutChanged: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -3131,12 +3167,11 @@ internal fun PlayerMoreOptionsDialog(
             configuration.screenWidthDp > configuration.screenHeightDp
     val optionsBodyMaxHeight =
         (configuration.screenHeightDp * if (compactLandscape) .55f else .68f).dp
-    val controlsOptionRequester = remember { FocusRequester() }
     val closeRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
         delay(100L)
-        runCatching { controlsOptionRequester.requestFocus() }
+        runCatching { closeRequester.requestFocus() }
     }
 
     AlertDialog(
@@ -3149,9 +3184,9 @@ internal fun PlayerMoreOptionsDialog(
                 (dialogView.parent as? DialogWindowProvider)?.window?.setGravity(Gravity.END)
             }
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Playback options", color = Color.White)
+                Text("Playback information", color = Color.White)
                 Text(
-                    "Technical details and less-frequent controls",
+                    "Details for the current stream",
                     color = Color.White.copy(alpha = 0.62f),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -3185,19 +3220,6 @@ internal fun PlayerMoreOptionsDialog(
                     }
                 }
 
-                PlayerMoreOptionRow(
-                    icon = Icons.Default.Timer,
-                    label = "Controls timeout",
-                    value = playerControlsTimeoutLabel(controlsTimeoutSeconds),
-                    modifier = Modifier
-                        .focusRequester(controlsOptionRequester)
-                        .focusProperties { down = closeRequester },
-                    onClick = {
-                        onControlsTimeoutChanged(
-                            nextPlayerControlsTimeoutSeconds(controlsTimeoutSeconds)
-                        )
-                    }
-                )
             }
         },
         confirmButton = {
@@ -3205,7 +3227,6 @@ internal fun PlayerMoreOptionsDialog(
                 onClick = onDismiss,
                 modifier = Modifier
                     .focusRequester(closeRequester)
-                    .focusProperties { up = controlsOptionRequester }
                     .playerControlFocus(RoundedCornerShape(12.dp)) {},
                 shape = RoundedCornerShape(12.dp)
             ) {
