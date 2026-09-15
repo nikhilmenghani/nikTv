@@ -1519,7 +1519,7 @@ class LiveTvRecordingService : Service() {
     }
 
     private fun notifyRecording(recording: LiveTvRecording) {
-        if (recording.id !in runtimes) return
+        if (!runtimes.containsKey(recording.id)) return
         ensureForeground()
         getSystemService(NotificationManager::class.java)
             .notify(
