@@ -641,27 +641,26 @@ internal fun ModernSettingsScreen(
 
         if (showMobileAppearance) SettingsSection("Mobile controls") {
             val onScreenDpad by rememberOnScreenDpadEnabled()
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("On-screen D-pad", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Show a movable remote control overlay for testing focus navigation on this phone.",
-                            color = Color.Gray,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
+            ListItem(
+                headlineContent = { Text("On-screen D-pad") },
+                supportingContent = {
+                    Text(
+                        "Show a movable remote control overlay for testing focus navigation on this phone."
+                    )
+                },
+                trailingContent = {
                     Switch(
                         checked = onScreenDpad,
-                        onCheckedChange = { OnScreenDpadPreferences.setEnabled(context, it) },
+                        onCheckedChange = {
+                            OnScreenDpadPreferences.setEnabled(context, it)
+                        },
                         modifier = Modifier.remoteFocusFrame(CircleShape)
                     )
-                }
-            }
+                },
+                colors = ListItemDefaults.colors(
+                    containerColor = Color.Transparent
+                )
+            )
         }
         PlaybackEngineSettingsSection(state.playbackEngine, setPlaybackEngine)
         SettingsSection("Player controls") {
@@ -770,7 +769,7 @@ internal fun ModernSettingsScreen(
             )
             if (compactSettingsHeader) {
                 HorizontalDivider()
-                OrientationSettingsSection(Modifier.padding(8.dp))
+                CompactOrientationSetting()
             }
         }
         SettingsSection("Profiles") {
@@ -864,8 +863,11 @@ internal fun ModernSettingsScreen(
         }
         val activeSettingsDestination = LocalSettingsDestination.current
         if (
-            activeSettingsDestination == null ||
-            activeSettingsDestination == SettingsDestination.APPEARANCE
+            !compactSettingsHeader &&
+            (
+                activeSettingsDestination == null ||
+                    activeSettingsDestination == SettingsDestination.APPEARANCE
+                )
         ) {
             OrientationSettingsSection(Modifier.focusGroup())
         }
@@ -3224,6 +3226,56 @@ private fun SettingsDestinationRail(
 }
 
 @Composable
+private fun CompactOrientationSetting() {
+    val context = LocalContext.current
+    val selected by rememberUiOrientationMode()
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            "Screen orientation",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            "Auto uses portrait on phones and landscape on tablets and TVs.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        SingleChoiceSegmentedButtonRow(
+            Modifier.fillMaxWidth()
+        ) {
+            UiOrientationMode.entries.forEachIndexed { index, mode ->
+                val shape =
+                    uniformSegmentShape(
+                        index,
+                        UiOrientationMode.entries.size
+                    )
+                SegmentedButton(
+                    selected = selected == mode,
+                    onClick = {
+                        UiOrientationPreferences.set(context, mode)
+                    },
+                    modifier = Modifier.remoteFocusFrame(shape),
+                    shape = shape
+                ) {
+                    Text(
+                        mode.title,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun SettingsSection(
     title: String,
     content: @Composable ColumnScope.() -> Unit
@@ -3242,16 +3294,16 @@ internal fun SettingsSection(
         if (danger) {
             MaterialTheme.colorScheme.error
         } else {
-            Color(0xFFE50914)
+            MaterialTheme.colorScheme.primary
         }
 
     /*
-     * MOBILE_SETTINGS_SECTION_HEADER_V2
+     * MOBILE_SETTINGS_CATEGORY_HEADER_V3
      *
-     * Mobile uses one unified card per settings section: the section title is
-     * the non-focusable first row of the card, followed by the existing
-     * controls. This mirrors the compact "Backup & restore" visual language
-     * without adding an extra D-pad/touch target.
+     * A mobile section title is a category label, not an action. Keep it
+     * larger than option text, remove decorative title icons, and use one
+     * restrained accent rail. The header remains non-focusable so the first
+     * actual setting stays the first D-pad/touch target.
      */
     if (compact) {
         Surface(
@@ -3271,7 +3323,7 @@ internal fun SettingsSection(
                 if (danger) {
                     Color(0xFF59262B)
                 } else {
-                    Color(0xFF292C33)
+                    MaterialTheme.colorScheme.outlineVariant
                 }
             )
         ) {
@@ -3279,45 +3331,27 @@ internal fun SettingsSection(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 15.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(11.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Surface(
-                        modifier = Modifier.size(34.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        color =
-                            if (danger) {
-                                Color(0xFF321518)
-                            } else {
-                                Color(0xFF1A1D23)
-                            }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                settingsSectionIcon(title),
-                                contentDescription = null,
-                                modifier = Modifier.size(19.dp),
-                                tint =
-                                    if (danger) {
-                                        MaterialTheme.colorScheme.error
-                                    } else {
-                                        Color(0xFFD5D8DE)
-                                    }
-                            )
-                        }
-                    }
+                    Box(
+                        Modifier
+                            .width(3.dp)
+                            .height(26.dp)
+                            .background(accent, CircleShape)
+                    )
                     Text(
                         title,
                         modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = .1.sp,
                         color =
                             if (danger) {
                                 MaterialTheme.colorScheme.error
                             } else {
-                                Color(0xFFF5F5F7)
+                                MaterialTheme.colorScheme.onSurface
                             }
                     )
                 }
@@ -3327,12 +3361,12 @@ internal fun SettingsSection(
                         if (danger) {
                             Color(0xFF4A2226)
                         } else {
-                            Color(0xFF292C33)
+                            MaterialTheme.colorScheme.outlineVariant
                         }
                 )
 
                 Column(
-                    modifier = Modifier.padding(vertical = 3.dp),
+                    modifier = Modifier.padding(vertical = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     content = content
                 )
@@ -3398,25 +3432,6 @@ internal fun SettingsSection(
         }
     }
 }
-
-private fun settingsSectionIcon(title: String): ImageVector =
-    when (title) {
-        "Mobile controls" -> Icons.Default.Tune
-        "Display and screen" -> Icons.Default.Brightness6
-        "Default media player" -> Icons.Default.PlayCircle
-        "Player controls" -> Icons.Default.Tune
-        "Series" -> Icons.Default.VideoLibrary
-        "Category Filters" -> Icons.Default.LiveTv
-        "Catalog cache" -> Icons.Default.Refresh
-        "Profiles" -> Icons.Default.AccountCircle
-        "Connection" -> Icons.Default.Language
-        "Connection actions" -> Icons.Default.Edit
-        "Metadata and subtitle diagnostics" -> Icons.Default.Subtitles
-        "Backup and restore" -> Icons.Default.CloudUpload
-        "Danger zone" -> Icons.Default.DeleteOutline
-        "App updates" -> Icons.Default.SystemUpdate
-        else -> Icons.Default.Settings
-    }
 
 @Composable
 internal fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
