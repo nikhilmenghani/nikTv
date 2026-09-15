@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -36,13 +38,12 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -126,6 +127,8 @@ internal fun ModernSearchScreen(
         mutableStateOf(false)
     }
     var searchEditing by rememberSaveable { mutableStateOf(false) }
+    var restoreQueryFocus by rememberSaveable { mutableStateOf(false) }
+    var queryFocused by remember { mutableStateOf(false) }
 
     val searchRequester = remember { FocusRequester() }
     val clearSearchRequester = remember { FocusRequester() }
@@ -168,15 +171,41 @@ internal fun ModernSearchScreen(
             (state.searchQuery.isNotBlank() && !state.searchLocalLoading && !state.searchServerLoading)
 
     fun activateSearchField() {
-        searchEditing = true
-        searchRequester.requestFocus()
-        keyboard?.show()
+        if (!searchEditing) {
+            searchEditing = true
+        }
+    }
+
+    /*
+     * SEARCH_SIBLING_FOCUS_V5
+     *
+     * Remote focus and text-edit focus intentionally use the same requester,
+     * but they are different focus targets. While not editing, BasicTextField
+     * is disabled and an explicit Compose focus target owns D-pad navigation.
+     * Entering edit mode removes that target, enables BasicTextField, then
+     * focuses the real text editor and opens the IME on the following frame.
+     * This keeps horizontal D-pad navigation out of the EditText cursor path.
+     */
+    LaunchedEffect(searchEditing) {
+        if (searchEditing) {
+            withFrameNanos { }
+            runCatching { searchRequester.requestFocus() }
+            keyboard?.show()
+        }
+    }
+
+    LaunchedEffect(restoreQueryFocus, searchEditing, state.searchQuery) {
+        if (restoreQueryFocus && !searchEditing) {
+            withFrameNanos { }
+            runCatching { searchRequester.requestFocus() }
+            restoreQueryFocus = false
+        }
     }
 
     BackHandler(enabled = searchEditing) {
         searchEditing = false
         keyboard?.hide()
-        searchRequester.requestFocus()
+        restoreQueryFocus = true
     }
 
     LaunchedEffect(remoteNavigationActive) {
@@ -248,144 +277,203 @@ internal fun ModernSearchScreen(
 
         Spacer(Modifier.height(6.dp))
 
-        OutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = setQuery,
+        val searchBarShape = RoundedCornerShape(18.dp)
+        val queryFocusBorder =
+            if (queryFocused && remoteNavigationActive) {
+                Color(0xFFFF3340)
+            } else if (queryFocused) {
+                SearchAccent
+            } else {
+                SearchOutline
+            }
+        val queryFocusBorderWidth =
+            if (queryFocused && remoteNavigationActive) {
+                3.dp
+            } else if (queryFocused) {
+                2.dp
+            } else {
+                1.dp
+            }
+
+        /*
+         * The search actions are deliberately siblings of the query editor.
+         * The outer Surface is visual-only and never becomes a focus target.
+         * This prevents TextField's internal EditText from owning Clear/Search
+         * and lets Compose focus routing move between three independent nodes.
+         */
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 1120.dp)
                 .align(Alignment.CenterHorizontally)
-                .height(if (isTv) 62.dp else 56.dp)
-                .focusRequester(searchRequester)
-                .focusProperties {
-                    right = if (state.searchQuery.isNotEmpty()) clearSearchRequester else submitSearchRequester
-                    down = typeBelowSearch
-                }
-                .onFocusChanged {
-                    if (!it.isFocused && searchEditing) {
-                        searchEditing = false
-                        keyboard?.hide()
-                    }
-                }
-                // Use the bubbling phase so a focused trailing action (Clear or
-                // Search) receives DPAD_CENTER before the surrounding field.
-                .onKeyEvent { event ->
-                    if (!searchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                        if (state.searchQuery.isNotEmpty()) clearSearchRequester.requestFocus()
-                        else submitSearchRequester.requestFocus()
-                        true
-                    } else if (!searchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                        typeBelowSearch.requestFocus()
-                        true
-                    } else if (
-                        !searchEditing && event.key in listOf(
-                            Key.DirectionCenter,
-                            Key.Enter,
-                            Key.NumPadEnter
-                        )
-                    ) {
-                        if (event.type == KeyEventType.KeyUp) activateSearchField()
-                        true
-                    } else {
-                        false
-                    }
-                }
-                .pointerInput(searchEditing) {
-                    if (!searchEditing) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Final)
-                                val released = event.changes.firstOrNull {
-                                    it.previousPressed && !it.pressed
-                                }
-                                // Trailing Clear/Search buttons consume their own tap.
-                                // Only an otherwise-unhandled field tap enters editing.
-                                if (released != null && !released.isConsumed) {
-                                    activateSearchField()
-                                }
+                .height(if (isTv) 62.dp else 56.dp),
+            shape = searchBarShape,
+            color = if (queryFocused) SearchRaised else SearchSurface,
+            border = BorderStroke(queryFocusBorderWidth, queryFocusBorder)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 13.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = if (queryFocused) SearchAccent else SearchMuted
+                )
+                Spacer(Modifier.width(8.dp))
+
+                BasicTextField(
+                    value = state.searchQuery,
+                    onValueChange = setQuery,
+                    enabled = searchEditing,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = Color.White
+                    ),
+                    cursorBrush = SolidColor(SearchAccent),
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Search
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            searchEditing = false
+                            keyboard?.hide()
+                            restoreQueryFocus = true
+                            if (state.searchQuery.isNotBlank()) {
+                                search(true)
                             }
                         }
-                    }
-                }
-                .remoteFocusFrame(RoundedCornerShape(18.dp)),
-            singleLine = true,
-            shape = RoundedCornerShape(18.dp),
-            placeholder = {
-                Text(if (state.searchScopeLocked) "Search ${state.searchType.title.lowercase()}" else "Search NikTV")
-            },
-            leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = null)
-            },
-            trailingIcon = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (state.searchQuery.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                setQuery("")
-                                searchRequester.requestFocus()
-                            },
-                            modifier = Modifier
-                                .focusRequester(clearSearchRequester)
-                                .focusProperties {
-                                    left = searchRequester
-                                    right = submitSearchRequester
-                                    down = typeBelowSearch
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .focusRequester(searchRequester)
+                        .focusProperties {
+                            right =
+                                if (state.searchQuery.isNotEmpty()) {
+                                    clearSearchRequester
+                                } else {
+                                    submitSearchRequester
                                 }
-                                .remoteFocusFrame(CircleShape)
+                            down = typeBelowSearch
+                        }
+                        .onFocusChanged {
+                            queryFocused = it.isFocused
+                        }
+                        .then(
+                            if (!searchEditing) {
+                                Modifier
+                                    .onPreviewKeyEvent { event ->
+                                        if (
+                                            event.type ==
+                                                KeyEventType.KeyDown &&
+                                            event.key in listOf(
+                                                Key.DirectionCenter,
+                                                Key.Enter,
+                                                Key.NumPadEnter
+                                            )
+                                        ) {
+                                            activateSearchField()
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                    .pointerInput(Unit) {
+                                        detectTapGestures {
+                                            activateSearchField()
+                                        }
+                                    }
+                                    .focusable()
+                            } else {
+                                Modifier
+                            }
+                        ),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.CenterStart
                         ) {
-                            Icon(Icons.Default.Close, "Clear search")
+                            if (state.searchQuery.isEmpty()) {
+                                Text(
+                                    if (state.searchScopeLocked) {
+                                        "Search ${state.searchType.title.lowercase()}"
+                                    } else {
+                                        "Search NikTV"
+                                    },
+                                    color = SearchMuted,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1
+                                )
+                            }
+                            innerTextField()
                         }
                     }
-                    FilledIconButton(
+                )
+
+                if (state.searchQuery.isNotEmpty()) {
+                    IconButton(
                         onClick = {
                             searchEditing = false
                             keyboard?.hide()
-                            search(true)
+                            setQuery("")
+                            restoreQueryFocus = true
                         },
                         modifier = Modifier
-                            .focusRequester(submitSearchRequester)
+                            .focusRequester(clearSearchRequester)
                             .focusProperties {
-                                left = if (state.searchQuery.isNotEmpty()) clearSearchRequester else searchRequester
+                                left = searchRequester
+                                right = submitSearchRequester
                                 down = typeBelowSearch
                             }
-                            .remoteFocusFrame(CircleShape),
-                        enabled =
-                            state.searchQuery.isNotBlank() &&
-                                !state.searchServerLoading,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = SearchAccent,
-                            contentColor = Color.White,
-                            disabledContainerColor = SearchOutline,
-                            disabledContentColor = SearchMuted
-                        )
+                            .remoteFocusFrame(CircleShape)
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
-                            "Search"
-                        )
+                        Icon(Icons.Default.Close, "Clear search")
                     }
                 }
-            },
-            readOnly = !searchEditing,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    searchEditing = false
-                    keyboard?.hide()
-                    if (state.searchQuery.isNotBlank()) search(true)
+
+                val canSubmit =
+                    state.searchQuery.isNotBlank() &&
+                        !state.searchServerLoading
+                FilledIconButton(
+                    onClick = {
+                        searchEditing = false
+                        keyboard?.hide()
+                        search(true)
+                    },
+                    modifier = Modifier
+                        .focusRequester(submitSearchRequester)
+                        .focusProperties {
+                            left =
+                                if (state.searchQuery.isNotEmpty()) {
+                                    clearSearchRequester
+                                } else {
+                                    searchRequester
+                                }
+                            down = typeBelowSearch
+                        }
+                        .remoteFocusFrame(CircleShape),
+                    enabled = !state.searchServerLoading,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor =
+                            if (canSubmit) SearchAccent else SearchOutline,
+                        contentColor =
+                            if (canSubmit) Color.White else SearchMuted,
+                        disabledContainerColor = SearchOutline,
+                        disabledContentColor = SearchMuted
+                    )
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        "Search"
+                    )
                 }
-            ),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = SearchRaised,
-                unfocusedContainerColor = SearchSurface,
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedBorderColor = SearchAccent,
-                unfocusedBorderColor = SearchOutline,
-                focusedLeadingIconColor = SearchAccent,
-                unfocusedLeadingIconColor = SearchMuted,
-                cursorColor = SearchAccent
-            )
+            }
         )
 
         Spacer(Modifier.height(12.dp))
