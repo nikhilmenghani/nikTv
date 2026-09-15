@@ -25,6 +25,66 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@Composable
+internal fun PlayerLiveScheduleSummary(
+    item: MediaItem,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (item.liveSchedule.isEmpty() && item.liveProgramme == null) return
+    val now by produceState(System.currentTimeMillis(), item.id, item.liveSchedule) {
+        while (true) {
+            value = System.currentTimeMillis()
+            delay(30_000L)
+        }
+    }
+    val current = item.liveSchedule.firstOrNull { programme ->
+        val start = programme.startTimeMillis
+        val end = programme.endTimeMillis
+        start != null && end != null && now in start until end
+    } ?: item.liveProgramme
+    val next = item.liveSchedule.filter { (it.startTimeMillis ?: Long.MIN_VALUE) > now }.take(2)
+    val time = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
+    val entries = listOfNotNull(current?.let { "NOW" to it }) + next.map { "NEXT" to it }
+    if (entries.isEmpty()) return
+
+    Surface(
+        modifier = modifier.widthIn(min = if (compact) 220.dp else 300.dp, max = if (compact) 290.dp else 390.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = Color.Black.copy(alpha = .58f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .12f))
+    ) {
+        Column(
+            Modifier.padding(horizontal = if (compact) 10.dp else 13.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            entries.forEach { (label, programme) ->
+                Row(verticalAlignment = androidx.compose.ui.Alignment.Top) {
+                    Text(
+                        label,
+                        modifier = Modifier.width(if (compact) 34.dp else 40.dp),
+                        color = if (label == "NOW") Color(0xFFFF6B76) else Color.White.copy(.48f),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Column(Modifier.weight(1f)) {
+                        programme.startTimeMillis?.let {
+                            Text(time.format(Date(it)), color = Color.White.copy(.55f), style = MaterialTheme.typography.labelSmall)
+                        }
+                        Text(
+                            programme.title,
+                            color = Color.White.copy(if (label == "NOW") .92f else .74f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Compact guide rendered from the playing channel's already-fetched metadata. */
 @Composable
 internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {

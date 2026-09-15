@@ -1003,6 +1003,20 @@ internal fun VlcPlayerScreen(
                     }
                 }
 
+                if (media.catalogType == CatalogType.LIVE_TV) {
+                    PlayerLiveScheduleSummary(
+                        item = media.media,
+                        compact = compactMobileControls,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
+                            .padding(
+                                top = if (compactMobileControls) 58.dp else 78.dp,
+                                end = if (compactMobileControls) 10.dp else 20.dp
+                            )
+                    )
+                }
+
                 val quickActions: @Composable RowScope.() -> Unit = {
                         com.nikhil.niktv.ui.components.CastButton(
                             modifier = Modifier

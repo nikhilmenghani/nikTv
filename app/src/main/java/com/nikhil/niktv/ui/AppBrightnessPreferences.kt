@@ -32,6 +32,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
@@ -141,6 +148,7 @@ internal fun AppBrightnessControl(
     trigger: @Composable (open: () -> Unit) -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     var expanded by remember { mutableStateOf(false) }
     var brightness by remember(context) {
         mutableFloatStateOf(AppBrightnessPreferences.get(context))
@@ -203,7 +211,23 @@ internal fun AppBrightnessControl(
                     enabled = !followsSystem,
                     valueRange = AppBrightnessPreferences.MIN..AppBrightnessPreferences.MAX,
                     steps = 16,
-                    modifier = Modifier.width(190.dp)
+                    modifier = Modifier
+                        .width(190.dp)
+                        .onPreviewKeyEvent { event ->
+                            when (event.key) {
+                                Key.DirectionUp, Key.DirectionDown -> {
+                                    if (event.type == KeyEventType.KeyDown) {
+                                        focusManager.moveFocus(
+                                            if (event.key == Key.DirectionUp) FocusDirection.Up else FocusDirection.Down
+                                        )
+                                    }
+                                    // Slider maps vertical arrows to value changes;
+                                    // consume them after explicitly leaving the bar.
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
