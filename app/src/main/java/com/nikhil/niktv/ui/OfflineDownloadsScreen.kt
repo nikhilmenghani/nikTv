@@ -218,7 +218,7 @@ internal fun OfflineDownloadsScreen(
                                     Text(recording.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                                     Text("Live TV recording · MPEG-TS", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                                     Text(
-                                        "${formatOfflineBytes(recording.sizeBytes)} · Download/NikTV/Recordings",
+                                        "${formatRecordingDuration(recording.durationMillis)} · ${formatOfflineBytes(recording.sizeBytes)} · Download/NikTV/Recordings",
                                         color = Color.Gray,
                                         style = MaterialTheme.typography.labelSmall,
                                         maxLines = 1,
@@ -575,6 +575,16 @@ private fun StorageUsageRow(
         ) { Text("Clear") }
       }
     }
+}
+
+private fun formatRecordingDuration(durationMillis: Long): String {
+    if (durationMillis <= 0L) return "Duration unavailable"
+    val totalSeconds = durationMillis / 1_000L
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) "%d:%02d:%02d".format(hours, minutes, seconds)
+    else "%d:%02d".format(minutes, seconds)
 }
 
 internal fun MediaItem.displayTitle(series: MediaItem): String {

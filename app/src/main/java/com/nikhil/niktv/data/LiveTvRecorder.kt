@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
@@ -48,7 +49,8 @@ data class RecordedLiveTvMedia(
     val uri: android.net.Uri,
     val title: String,
     val sizeBytes: Long,
-    val createdAtMillis: Long
+    val createdAtMillis: Long,
+    val durationMillis: Long
 )
 
 object LiveTvRecorder {
@@ -139,7 +141,8 @@ object LiveTvRecorder {
                                 uri = uri,
                                 title = cursor.getString(nameIndex).substringBeforeLast('.'),
                                 sizeBytes = cursor.getLong(sizeIndex).coerceAtLeast(0L),
-                                createdAtMillis = cursor.getLong(dateIndex).coerceAtLeast(0L) * 1000L
+                                createdAtMillis = cursor.getLong(dateIndex).coerceAtLeast(0L) * 1000L,
+                                durationMillis = readMediaDuration(context, uri)
                             )
                         )
                     }
@@ -150,6 +153,21 @@ object LiveTvRecorder {
 
     fun delete(context: Context, recording: RecordedLiveTvMedia): Boolean =
         runCatching { context.contentResolver.delete(recording.uri, null, null) > 0 }.getOrDefault(false)
+
+    private fun readMediaDuration(context: Context, uri: android.net.Uri): Long {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.coerceAtLeast(0L)
+                ?: 0L
+        } catch (_: Throwable) {
+            0L
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
 }
 
 class LiveTvRecordingService : Service() {
@@ -158,6 +176,7 @@ class LiveTvRecordingService : Service() {
     private var statusJob: Job? = null
     @Volatile private var paused = false
     @Volatile private var activeStreamCall: Call? = null
+    @Volatile private var hlsRebaseRequested = false
     private var accumulatedDurationMillis = 0L
     private var lastResumedAtMillis = 0L
     private val client = OkHttpClient.Builder()
@@ -195,6 +214,7 @@ class LiveTvRecordingService : Service() {
     private fun startRecording(title: String, sourceUrl: String) {
         val startedAt = System.currentTimeMillis()
         paused = false
+        hlsRebaseRequested = isHls(sourceUrl)
         accumulatedDurationMillis = 0L
         lastResumedAtMillis = startedAt
         val initial = LiveRecordingState(
@@ -255,6 +275,7 @@ class LiveTvRecordingService : Service() {
             accumulatedDurationMillis += (now - lastResumedAtMillis).coerceAtLeast(0L)
         } else {
             lastResumedAtMillis = now
+            hlsRebaseRequested = true
         }
         paused = value
         if (value) activeStreamCall?.cancel()
@@ -281,7 +302,7 @@ class LiveTvRecordingService : Service() {
         val written = LinkedHashSet<String>()
         var bytes = 0L
         failures = 0
-        while (currentCoroutineContext().isActive) {
+        playlistLoop@ while (currentCoroutineContext().isActive) {
             awaitResume()
             val playlist = try {
                 getText(playlistUrl)
@@ -295,13 +316,23 @@ class LiveTvRecordingService : Service() {
             val lines = playlist.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
             val mapUri = lines.firstOrNull { it.startsWith("#EXT-X-MAP:") }
                 ?.substringAfter("URI=", "")?.trim()?.trim('"')
+            val mediaSegments = lines.filterNot { it.startsWith("#") }
+                .map { resolve(playlistUrl, it) }
             val segments = buildList {
                 mapUri?.let { add(resolve(playlistUrl, it)) }
-                lines.filterNot { it.startsWith("#") }.forEach { add(resolve(playlistUrl, it)) }
+                addAll(mediaSegments)
+            }
+            val isFinishedPlaylist = lines.any { it == "#EXT-X-ENDLIST" }
+            if (hlsRebaseRequested && !isFinishedPlaylist) {
+                // A live manifest contains a sliding backlog. Start (and resume) at its
+                // live edge so time elapsed before Start or while paused is never recorded.
+                written.addAll(mediaSegments.dropLast(1))
+                hlsRebaseRequested = false
             }
             for (segment in segments) {
                 if (segment in written) continue
                 awaitResume()
+                if (hlsRebaseRequested) continue@playlistLoop
                 val appended = try {
                     appendUrl(segment, output)
                 } catch (error: java.io.IOException) {
@@ -316,7 +347,7 @@ class LiveTvRecordingService : Service() {
                 failures = 0
                 publishProgress(bytes)
             }
-            if (lines.any { it == "#EXT-X-ENDLIST" }) return
+            if (isFinishedPlaylist) return
             val targetSeconds = lines.firstOrNull { it.startsWith("#EXT-X-TARGETDURATION:") }
                 ?.substringAfter(':')?.toLongOrNull()?.coerceIn(1, 10) ?: 3L
             delay(targetSeconds * 500L)
