@@ -195,12 +195,16 @@ class ProfileStore(private val context: Context) {
             caches.firstOrNull { profileKey == null || it.profileKey == profileKey }
         }
     }
-    suspend fun saveSearchCatalog(cache: SearchCatalogCache) {
+    suspend fun saveSearchCatalog(
+        cache: SearchCatalogCache,
+        scheduleMetadataSync: Boolean = true
+    ) {
         val cacheKey = stringPreferencesKey("search_catalog_${cache.type.name.lowercase()}")
         context.dataStore.edit { prefs ->
             val existing = prefs[cacheKey]?.let { raw -> runCatching { Json.decodeFromString<List<SearchCatalogCache>>(raw) }.getOrNull() }.orEmpty()
             prefs[cacheKey] = Json.encodeToString(listOf(cache) + existing.filterNot { it.profileKey == cache.profileKey })
         }
+        if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
     suspend fun saveFavorites(items: List<FavoriteItem>) = context.dataStore.edit {
         it[favoritesKey] = Json.encodeToString(items)
@@ -232,6 +236,20 @@ class ProfileStore(private val context: Context) {
             // value. Never deserialize it; the scoped cache replaces it safely.
             prefs.remove(legacyKey)
         }
+        SearchMetadataSyncScheduler.request(context)
+    }
+
+    suspend fun mergeSearchMetadata(cache: SearchCatalogCache) {
+        val current = searchCatalog(cache.type, cache.profileKey).first()
+        val merged = if (current == null) {
+            cache
+        } else {
+            current.copy(
+                cachedAtMillis = maxOf(current.cachedAtMillis, cache.cachedAtMillis),
+                items = (current.items + cache.items).distinctBy { it.id }
+            )
+        }
+        saveSearchCatalog(merged, scheduleMetadataSync = false)
     }
 
     suspend fun discardLegacyBrowseCatalogs() = context.dataStore.edit { prefs ->

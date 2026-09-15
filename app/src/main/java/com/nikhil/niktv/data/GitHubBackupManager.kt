@@ -180,6 +180,7 @@ class GitHubBackupManager(context: Context) {
                 autoBackupIntervalHours = interval
             )
         )
+        SearchMetadataSyncScheduler.initialize(appContext)
     }
 
     suspend fun uploadBackup(
