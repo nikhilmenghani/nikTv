@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -266,7 +267,9 @@ internal fun ModernSearchScreen(
                         keyboard?.hide()
                     }
                 }
-                .onPreviewKeyEvent { event ->
+                // Use the bubbling phase so a focused trailing action (Clear or
+                // Search) receives DPAD_CENTER before the surrounding field.
+                .onKeyEvent { event ->
                     if (!searchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
                         if (state.searchQuery.isNotEmpty()) clearSearchRequester.requestFocus()
                         else submitSearchRequester.requestFocus()
