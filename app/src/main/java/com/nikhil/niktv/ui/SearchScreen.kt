@@ -474,7 +474,7 @@ internal fun ModernSearchScreen(
                     )
                 }
             }
-        )
+        }
 
         Spacer(Modifier.height(12.dp))
 
