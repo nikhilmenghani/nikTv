@@ -639,27 +639,36 @@ internal fun ModernSettingsScreen(
         val showMobileAppearance =
             settingsConfiguration.smallestScreenWidthDp < 600
 
+        val mobileDpadRequester = remember { FocusRequester() }
+        val followSystemBrightnessRequester = remember { FocusRequester() }
+        val appBrightnessRequester = remember { FocusRequester() }
+        val keepAwakeRequester = remember { FocusRequester() }
+        val orientationRequester = remember { FocusRequester() }
+        val appBrightnessStep =
+            (AppBrightnessPreferences.MAX - AppBrightnessPreferences.MIN) /
+                17f
+
         if (showMobileAppearance) SettingsSection("Mobile controls") {
             val onScreenDpad by rememberOnScreenDpadEnabled()
-            ListItem(
-                headlineContent = { Text("On-screen D-pad") },
-                supportingContent = {
-                    Text(
-                        "Show a movable remote control overlay for testing focus navigation on this phone."
-                    )
-                },
+            CompactSettingsOptionRow(
+                icon = Icons.Default.Tune,
+                title = "On-screen D-pad",
+                subtitle =
+                    "Show a movable remote control overlay for testing focus navigation on this phone.",
                 trailingContent = {
                     Switch(
                         checked = onScreenDpad,
                         onCheckedChange = {
                             OnScreenDpadPreferences.setEnabled(context, it)
                         },
-                        modifier = Modifier.remoteFocusFrame(CircleShape)
+                        modifier = Modifier
+                            .focusRequester(mobileDpadRequester)
+                            .focusProperties {
+                                down = followSystemBrightnessRequester
+                            }
+                            .remoteFocusFrame(CircleShape)
                     )
-                },
-                colors = ListItemDefaults.colors(
-                    containerColor = Color.Transparent
-                )
+                }
             )
         }
         PlaybackEngineSettingsSection(state.playbackEngine, setPlaybackEngine)
@@ -689,87 +698,274 @@ internal fun ModernSettingsScreen(
             }
         }
         SettingsSection("Display and screen") {
-            ListItem(
-                headlineContent = { Text("Follow system brightness") },
-                supportingContent = {
-                    Text("Use the brightness configured by this device or TV")
-                },
-                leadingContent = { Icon(Icons.Default.BrightnessAuto, null) },
-                trailingContent = {
-                    Switch(
-                        checked = followSystemBrightness,
-                        onCheckedChange = {
-                            followSystemBrightness = it
-                            AppBrightnessPreferences.setFollowsSystem(context, it)
-                        },
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(16.dp))
-                    )
-                },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("App brightness") },
-                supportingContent = {
-                    Text(
-                        if (followSystemBrightness) {
-                            "System controlled"
-                        } else {
-                            "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open"
-                        }
-                    )
-                },
-                leadingContent = { Icon(Icons.Default.Brightness6, null) },
-                trailingContent = {
-                    Slider(
-                        value = appBrightness,
-                        enabled = !followSystemBrightness,
-                        onValueChange = {
-                            appBrightness = it
-                            AppBrightnessPreferences.set(context, it)
-                        },
-                        valueRange = AppBrightnessPreferences.MIN..AppBrightnessPreferences.MAX,
-                        steps = 16,
-                        modifier = Modifier
-                            .width(220.dp)
-                            .remoteFocusFrame(RoundedCornerShape(12.dp))
-                    )
-                },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
-            HorizontalDivider()
-            ListItem(
-                headlineContent = {
-                    Text("Only keep screen awake during playback")
-                },
-                supportingContent = {
-                    Text(
-                        if (state.keepAwakeOnlyDuringPlayback) {
-                            "NikTV may let the screen sleep while browsing; playback always stays awake."
-                        } else {
-                            "NikTV keeps the screen awake for as long as the app is open."
-                        }
-                    )
-                },
-                leadingContent = {
-                    Icon(Icons.Default.LightMode, null)
-                },
-                trailingContent = {
-                    Switch(
-                        checked = state.keepAwakeOnlyDuringPlayback,
-                        onCheckedChange = setKeepAwakeOnlyDuringPlayback,
-                        modifier = Modifier.remoteFocusFrame(
-                            RoundedCornerShape(16.dp)
-                        )
-                    )
-                },
-                colors = ListItemDefaults.colors(
-                    containerColor = Color.Transparent
-                )
-            )
             if (compactSettingsHeader) {
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.BrightnessAuto,
+                    title = "Follow system brightness",
+                    subtitle =
+                        "Use the brightness configured by this device or TV.",
+                    trailingContent = {
+                        Switch(
+                            checked = followSystemBrightness,
+                            onCheckedChange = {
+                                followSystemBrightness = it
+                                AppBrightnessPreferences
+                                    .setFollowsSystem(context, it)
+                            },
+                            modifier = Modifier
+                                .focusRequester(
+                                    followSystemBrightnessRequester
+                                )
+                                .focusProperties {
+                                    up = mobileDpadRequester
+                                    down =
+                                        if (followSystemBrightness) {
+                                            keepAwakeRequester
+                                        } else {
+                                            appBrightnessRequester
+                                        }
+                                }
+                                .remoteFocusFrame(
+                                    RoundedCornerShape(16.dp)
+                                )
+                        )
+                    }
+                )
                 HorizontalDivider()
-                CompactOrientationSetting()
+
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.Brightness6,
+                    title = "App brightness",
+                    subtitle =
+                        if (followSystemBrightness) {
+                            "System controlled."
+                        } else {
+                            "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open."
+                        },
+                    belowContent = {
+                        Spacer(Modifier.height(6.dp))
+                        Slider(
+                            value = appBrightness,
+                            enabled = !followSystemBrightness,
+                            onValueChange = {
+                                appBrightness = it
+                                AppBrightnessPreferences.set(context, it)
+                            },
+                            valueRange =
+                                AppBrightnessPreferences.MIN..
+                                    AppBrightnessPreferences.MAX,
+                            steps = 16,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, end = 2.dp)
+                                .focusRequester(appBrightnessRequester)
+                                .onPreviewKeyEvent { event ->
+                                    if (
+                                        event.type != KeyEventType.KeyDown
+                                    ) {
+                                        return@onPreviewKeyEvent false
+                                    }
+
+                                    when (event.key) {
+                                        Key.DirectionLeft -> {
+                                            val next =
+                                                (appBrightness -
+                                                    appBrightnessStep)
+                                                    .coerceIn(
+                                                        AppBrightnessPreferences.MIN,
+                                                        AppBrightnessPreferences.MAX
+                                                    )
+                                            appBrightness = next
+                                            AppBrightnessPreferences.set(
+                                                context,
+                                                next
+                                            )
+                                            true
+                                        }
+
+                                        Key.DirectionRight -> {
+                                            val next =
+                                                (appBrightness +
+                                                    appBrightnessStep)
+                                                    .coerceIn(
+                                                        AppBrightnessPreferences.MIN,
+                                                        AppBrightnessPreferences.MAX
+                                                    )
+                                            appBrightness = next
+                                            AppBrightnessPreferences.set(
+                                                context,
+                                                next
+                                            )
+                                            true
+                                        }
+
+                                        Key.DirectionUp -> {
+                                            followSystemBrightnessRequester
+                                                .requestFocus()
+                                            true
+                                        }
+
+                                        Key.DirectionDown -> {
+                                            keepAwakeRequester.requestFocus()
+                                            true
+                                        }
+
+                                        else -> false
+                                    }
+                                }
+                                .remoteFocusFrame(
+                                    RoundedCornerShape(12.dp)
+                                )
+                        )
+                    }
+                )
+                HorizontalDivider()
+
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.LightMode,
+                    title = "Keep screen awake during playback",
+                    subtitle =
+                        if (state.keepAwakeOnlyDuringPlayback) {
+                            "Browsing may sleep normally; playback always stays awake."
+                        } else {
+                            "Keep the screen awake while NikTV is open."
+                        },
+                    trailingContent = {
+                        Switch(
+                            checked =
+                                state.keepAwakeOnlyDuringPlayback,
+                            onCheckedChange =
+                                setKeepAwakeOnlyDuringPlayback,
+                            modifier = Modifier
+                                .focusRequester(keepAwakeRequester)
+                                .focusProperties {
+                                    up =
+                                        if (followSystemBrightness) {
+                                            followSystemBrightnessRequester
+                                        } else {
+                                            appBrightnessRequester
+                                        }
+                                    down = orientationRequester
+                                }
+                                .remoteFocusFrame(
+                                    RoundedCornerShape(16.dp)
+                                )
+                        )
+                    }
+                )
+                HorizontalDivider()
+
+                CompactOrientationSetting(
+                    entryRequester = orientationRequester,
+                    upRequester = keepAwakeRequester
+                )
+            } else {
+                ListItem(
+                    headlineContent = {
+                        Text("Follow system brightness")
+                    },
+                    supportingContent = {
+                        Text(
+                            "Use the brightness configured by this device or TV"
+                        )
+                    },
+                    leadingContent = {
+                        Icon(Icons.Default.BrightnessAuto, null)
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = followSystemBrightness,
+                            onCheckedChange = {
+                                followSystemBrightness = it
+                                AppBrightnessPreferences
+                                    .setFollowsSystem(context, it)
+                            },
+                            modifier = Modifier.remoteFocusFrame(
+                                RoundedCornerShape(16.dp)
+                            )
+                        )
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
+                )
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = { Text("App brightness") },
+                    supportingContent = {
+                        Text(
+                            if (followSystemBrightness) {
+                                "System controlled"
+                            } else {
+                                "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open"
+                            }
+                        )
+                    },
+                    leadingContent = {
+                        Icon(Icons.Default.Brightness6, null)
+                    },
+                    trailingContent = {
+                        Slider(
+                            value = appBrightness,
+                            enabled = !followSystemBrightness,
+                            onValueChange = {
+                                appBrightness = it
+                                AppBrightnessPreferences.set(
+                                    context,
+                                    it
+                                )
+                            },
+                            valueRange =
+                                AppBrightnessPreferences.MIN..
+                                    AppBrightnessPreferences.MAX,
+                            steps = 16,
+                            modifier = Modifier
+                                .width(220.dp)
+                                .remoteFocusFrame(
+                                    RoundedCornerShape(12.dp)
+                                )
+                        )
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
+                )
+                HorizontalDivider()
+                ListItem(
+                    headlineContent = {
+                        Text(
+                            "Only keep screen awake during playback"
+                        )
+                    },
+                    supportingContent = {
+                        Text(
+                            if (
+                                state.keepAwakeOnlyDuringPlayback
+                            ) {
+                                "NikTV may let the screen sleep while browsing; playback always stays awake."
+                            } else {
+                                "NikTV keeps the screen awake for as long as the app is open."
+                            }
+                        )
+                    },
+                    leadingContent = {
+                        Icon(Icons.Default.LightMode, null)
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked =
+                                state.keepAwakeOnlyDuringPlayback,
+                            onCheckedChange =
+                                setKeepAwakeOnlyDuringPlayback,
+                            modifier = Modifier.remoteFocusFrame(
+                                RoundedCornerShape(16.dp)
+                            )
+                        )
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
+                )
             }
         }
         SettingsSection("Profiles") {
@@ -3226,53 +3422,121 @@ private fun SettingsDestinationRail(
 }
 
 @Composable
-private fun CompactOrientationSetting() {
+private fun CompactSettingsOptionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    trailingContent: @Composable RowScope.() -> Unit = {},
+    belowContent: @Composable ColumnScope.() -> Unit = {}
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(28.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            trailingContent()
+        }
+
+        belowContent()
+    }
+}
+
+@Composable
+private fun CompactOrientationSetting(
+    entryRequester: FocusRequester,
+    upRequester: FocusRequester
+) {
     val context = LocalContext.current
     val selected by rememberUiOrientationMode()
 
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(
-            "Screen orientation",
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Text(
+    CompactSettingsOptionRow(
+        icon = Icons.Default.ScreenRotation,
+        title = "Screen orientation",
+        subtitle =
             "Auto uses portrait on phones and landscape on tablets and TVs.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        SingleChoiceSegmentedButtonRow(
-            Modifier.fillMaxWidth()
-        ) {
-            UiOrientationMode.entries.forEachIndexed { index, mode ->
-                val shape =
-                    uniformSegmentShape(
-                        index,
-                        UiOrientationMode.entries.size
-                    )
-                SegmentedButton(
-                    selected = selected == mode,
-                    onClick = {
-                        UiOrientationPreferences.set(context, mode)
-                    },
-                    modifier = Modifier.remoteFocusFrame(shape),
-                    shape = shape
-                ) {
-                    Text(
-                        mode.title,
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1
-                    )
+        belowContent = {
+            Spacer(Modifier.height(8.dp))
+            SingleChoiceSegmentedButtonRow(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 40.dp, end = 2.dp)
+            ) {
+                UiOrientationMode.entries.forEachIndexed { index, mode ->
+                    val shape =
+                        uniformSegmentShape(
+                            index,
+                            UiOrientationMode.entries.size
+                        )
+                    SegmentedButton(
+                        selected = selected == mode,
+                        onClick = {
+                            UiOrientationPreferences.set(
+                                context,
+                                mode
+                            )
+                        },
+                        modifier = Modifier
+                            .then(
+                                if (index == 0) {
+                                    Modifier.focusRequester(
+                                        entryRequester
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .focusProperties {
+                                up = upRequester
+                            }
+                            .remoteFocusFrame(shape),
+                        shape = shape
+                    ) {
+                        Text(
+                            mode.title,
+                            style =
+                                MaterialTheme.typography.labelLarge,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
-    }
+    )
 }
 
 @Composable
