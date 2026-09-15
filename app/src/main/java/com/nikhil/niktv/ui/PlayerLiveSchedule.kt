@@ -1,5 +1,6 @@
 package com.nikhil.niktv.ui
 
+import android.view.Gravity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -8,15 +9,15 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.DialogProperties
 import com.nikhil.niktv.model.MediaItem
 import kotlinx.coroutines.delay
@@ -39,7 +40,9 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
         start != null && end != null && now in start until end
     } ?: item.liveProgramme
     val programmes = item.liveSchedule.filter { (it.endTimeMillis ?: Long.MAX_VALUE) > now }
-    val formatter = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val dateTimeFormatter = SimpleDateFormat("EEE, MMM d · h:mm a", Locale.getDefault())
+    val timeFormatter = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val dayKeyFormatter = SimpleDateFormat("yyyyMMdd", Locale.US)
     val requesters = remember(programmes) { programmes.map { FocusRequester() } }
     val closeRequester = remember { FocusRequester() }
     LaunchedEffect(programmes) {
@@ -54,8 +57,17 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
         containerColor = Color(0xF21A1A1A),
         properties = DialogProperties(usePlatformDefaultWidth = true),
         title = {
+            val dialogView = LocalView.current
+            SideEffect {
+                (dialogView.parent as? DialogWindowProvider)?.window?.setGravity(Gravity.END)
+            }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    item.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    softWrap = true
+                )
                 Text("Programme guide", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(.62f))
             }
         },
@@ -91,10 +103,21 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
                         border = BorderStroke(1.dp, if (isCurrent) Color(0xFFE50914) else Color.White.copy(.10f))
                     ) {
                         Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
-                            val range = listOfNotNull(
-                                programme.startTimeMillis?.let { formatter.format(Date(it)) },
-                                programme.endTimeMillis?.let { formatter.format(Date(it)) }
-                            ).joinToString(" – ")
+                            val startDate = programme.startTimeMillis?.let(::Date)
+                            val endDate = programme.endTimeMillis?.let(::Date)
+                            val range = when {
+                                startDate != null && endDate != null -> {
+                                    val endText = if (dayKeyFormatter.format(startDate) == dayKeyFormatter.format(endDate)) {
+                                        timeFormatter.format(endDate)
+                                    } else {
+                                        dateTimeFormatter.format(endDate)
+                                    }
+                                    "${dateTimeFormatter.format(startDate)} – $endText"
+                                }
+                                startDate != null -> dateTimeFormatter.format(startDate)
+                                endDate != null -> "Until ${dateTimeFormatter.format(endDate)}"
+                                else -> "Time unavailable"
+                            }
                             Text(
                                 if (isCurrent) "NOW  ·  $range" else range,
                                 color = if (isCurrent) Color(0xFFFF8A94) else Color.White.copy(.58f),
@@ -104,10 +127,9 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
                             Text(
                                 programme.title,
                                 color = Color.White,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Medium,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                softWrap = true
                             )
                         }
                     }
