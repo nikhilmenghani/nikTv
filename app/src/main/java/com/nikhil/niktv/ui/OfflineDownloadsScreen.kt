@@ -112,7 +112,7 @@ import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
 import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
-import com.nikhil.niktv.data.LiveTvRecordingManager
+import com.nikhil.niktv.data.LiveTvRecorder
 import com.nikhil.niktv.data.RecordedLiveTvMedia
 import com.nikhil.niktv.data.AppStorageSnapshot
 import com.nikhil.niktv.data.appStorageSnapshot
@@ -140,44 +140,19 @@ internal fun OfflineDownloadsScreen(
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
     val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
     var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
-    var pendingRecordingRemoval by remember {
-        mutableStateOf<RecordedLiveTvMedia?>(null)
-    }
-    var legacyRecordings by remember {
-        mutableStateOf<List<RecordedLiveTvMedia>>(emptyList())
-    }
-    val managedRecordings by
-        LiveTvRecordingManager.records(context).collectAsState()
-    val managedForProfile = remember(managedRecordings, profileKey) {
-        managedRecordings.filter {
-            profileKey != null && it.profileKey == profileKey
-        }
-    }
-    val managedOutputUris = remember(managedForProfile) {
-        managedForProfile.mapNotNull { it.outputUri }.toSet()
-    }
-    val visibleLegacyRecordings =
-        remember(legacyRecordings, managedOutputUris) {
-            legacyRecordings.filterNot {
-                it.uri.toString() in managedOutputUris
-            }
-        }
-    val hasManagedCompleted =
-        managedForProfile.any { it.isTerminal }
+    var pendingRecordingRemoval by remember { mutableStateOf<RecordedLiveTvMedia?>(null) }
+    var recordings by remember { mutableStateOf<List<RecordedLiveTvMedia>>(emptyList()) }
+    val liveRecording by LiveTvRecorder.state.collectAsState()
     var pendingClear by remember { mutableStateOf<String?>(null) }
     var storageRevision by remember { mutableLongStateOf(0L) }
     var storage by remember { mutableStateOf<AppStorageSnapshot?>(null) }
     var clearing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(state.offlineDownloadRevision, storageRevision) {
-        storage = runCatching {
-            appStorageSnapshot(context, state.offlineDownloads)
-        }.getOrNull()
+        storage = runCatching { appStorageSnapshot(context, state.offlineDownloads) }.getOrNull()
     }
-    LaunchedEffect(storageRevision, managedOutputUris) {
-        legacyRecordings = withContext(Dispatchers.IO) {
-            LiveTvRecordingManager.legacyRecordings(context)
-        }
+    LaunchedEffect(storageRevision, liveRecording.active) {
+        recordings = withContext(Dispatchers.IO) { LiveTvRecorder.recordings(context) }
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
         ModernScreenTopBar("Offline downloads", close)
@@ -189,11 +164,7 @@ internal fun OfflineDownloadsScreen(
             onClearSubtitles = { pendingClear = "subtitles" },
             onClearTemporary = { pendingClear = "temporary" }
         )
-        if (
-            entries.isEmpty() &&
-            managedForProfile.isEmpty() &&
-            visibleLegacyRecordings.isEmpty()
-        ) {
+        if (entries.isEmpty() && recordings.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Default.DownloadDone, null, Modifier.size(54.dp), tint = Color.Gray)
@@ -207,30 +178,11 @@ internal fun OfflineDownloadsScreen(
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                liveTvRecordingManagerSections(
-                    context,
-                    managedForProfile
-                )
-                if (visibleLegacyRecordings.isNotEmpty()) {
+                if (recordings.isNotEmpty()) {
                     item("recordings-header") {
-                        Text(
-                            if (hasManagedCompleted) {
-                                "Completed · Earlier recordings"
-                            } else {
-                                "Completed"
-                            },
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(
-                                top = 10.dp,
-                                bottom = 4.dp
-                            )
-                        )
+                        Text("Recordings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
                     }
-                    items(
-                        visibleLegacyRecordings,
-                        key = { it.uri.toString() }
-                    ) { recording ->
+                    items(recordings, key = { it.uri.toString() }) { recording ->
                         val rowRequester = remember(recording.uri) { FocusRequester() }
                         val shareRequester = remember(recording.uri) { FocusRequester() }
                         val deleteRequester = remember(recording.uri) { FocusRequester() }
@@ -499,14 +451,8 @@ internal fun OfflineDownloadsScreen(
             dismissButton = { TextButton(onClick = { pendingRecordingRemoval = null }) { Text("Keep") } },
             confirmButton = {
                 Button(onClick = {
-                    LiveTvRecordingManager.deleteLegacyRecording(
-                        context,
-                        recording
-                    )
-                    legacyRecordings =
-                        legacyRecordings.filterNot {
-                            it.uri == recording.uri
-                        }
+                    LiveTvRecorder.delete(context, recording)
+                    recordings = recordings.filterNot { it.uri == recording.uri }
                     storageRevision++
                     pendingRecordingRemoval = null
                 }) { Text("Delete") }

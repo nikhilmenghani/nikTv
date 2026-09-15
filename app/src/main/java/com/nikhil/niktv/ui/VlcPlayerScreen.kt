@@ -44,8 +44,7 @@ import com.nikhil.niktv.model.PlayingMedia
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.data.SubtitleSearchRequest
-import com.nikhil.niktv.data.LiveTvRecordingManager
-import com.nikhil.niktv.data.LiveTvRecordingStatus
+import com.nikhil.niktv.data.LiveTvRecorder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.LibVLC
@@ -93,33 +92,8 @@ internal fun VlcPlayerScreen(
     onPlayerSwitchFocusRestored: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val recordingProfile = rememberCurrentRecordingProfile()
-    val managedRecordings by
-        LiveTvRecordingManager.records(context).collectAsState()
-    val recordingProfileKey = recordingProfile?.cacheKey()
-    val channelRecordings = remember(
-        managedRecordings,
-        recordingProfileKey,
-        media.media.id
-    ) {
-        managedRecordings.filter {
-            recordingProfileKey != null &&
-                it.profileKey == recordingProfileKey &&
-                it.channel.channelId == media.media.id
-        }
-    }
-    val liveRecording =
-        channelRecordings.firstOrNull { it.isActive }
-    val scheduledRecording =
-        channelRecordings
-            .filter { it.isScheduled }
-            .minByOrNull { it.scheduledStartMillis }
-    val latestChannelRecording =
-        channelRecordings.maxByOrNull { it.updatedAtMillis }
-    val recordingThisChannel = liveRecording != null
-    var recordingDialogOpen by remember(media.progressKey) {
-        mutableStateOf(false)
-    }
+    val liveRecording by LiveTvRecorder.state.collectAsState()
+    val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
     LaunchedEffect(downloadRequested, offlineDownloadInProgress) {
         if (offlineDownloadInProgress) {
@@ -176,34 +150,15 @@ internal fun VlcPlayerScreen(
     val activeAppearanceProfile =
         appearancePreview ?: persistedAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
-    var previousManagedRecordingState by remember(media.media.id) {
-        mutableStateOf<LiveTvRecordingStatus?>(null)
-    }
-    LaunchedEffect(
-        latestChannelRecording?.id,
-        latestChannelRecording?.state,
-        latestChannelRecording?.errorMessage
-    ) {
-        val current = latestChannelRecording
-        val previous = previousManagedRecordingState
+    var previousLiveRecordingActive by remember { mutableStateOf(liveRecording.active) }
+    LaunchedEffect(liveRecording.active, liveRecording.error, media.url) {
         modeFeedback = when {
-            current?.state == LiveTvRecordingStatus.FAILED ->
-                "Recording failed · ${
-                    current.errorMessage ?: "Unable to record this stream"
-                }"
-            current?.state == LiveTvRecordingStatus.RECORDING &&
-                previous != LiveTvRecordingStatus.RECORDING ->
-                "Recording started · ${current.title}"
-            current?.state == LiveTvRecordingStatus.COMPLETED &&
-                previous in setOf(
-                    LiveTvRecordingStatus.STARTING,
-                    LiveTvRecordingStatus.RECORDING,
-                    LiveTvRecordingStatus.PAUSED
-                ) ->
-                "Recording stopped and saved"
+            liveRecording.error != null -> "Recording failed · ${liveRecording.error}"
+            liveRecording.active && liveRecording.sourceUrl == media.url -> "Recording started · ${liveRecording.title}"
+            previousLiveRecordingActive && !liveRecording.active -> "Recording stopped and saved"
             else -> modeFeedback
         }
-        previousManagedRecordingState = current?.state
+        previousLiveRecordingActive = liveRecording.active
     }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
@@ -1026,11 +981,8 @@ internal fun VlcPlayerScreen(
                         }
                         PlayerDateTime(compact = compactMobileControls)
                         PlayerDownloadStatusPill(
-                            (liveRecording ?: scheduledRecording)
-                                ?.let {
-                                    LiveTvRecordingManager.statusText(it)
-                                }
-                                ?: offlineDownloadProgressText.orEmpty()
+                            if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)
+                            else offlineDownloadProgressText.orEmpty()
                         )
                     }
                     Row(
@@ -1081,37 +1033,16 @@ internal fun VlcPlayerScreen(
                                 onFocused = { controlsFocused = it }
                             )
                         } else {
-                            liveRecording?.let { recording ->
+                            if (recordingThisChannel) {
                                 PlayerChromeIconButton(
-                                    icon =
-                                        if (recording.isPaused) {
-                                            Icons.Default.PlayArrow
-                                        } else {
-                                            Icons.Default.Pause
-                                        },
-                                    contentDescription =
-                                        if (recording.isPaused) {
-                                            "Resume recording"
-                                        } else {
-                                            "Pause recording"
-                                        },
+                                    icon = if (liveRecording.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                    contentDescription = if (liveRecording.paused) "Resume recording" else "Pause recording",
                                     onClick = {
-                                        if (recording.isPaused) {
-                                            LiveTvRecordingManager.resume(
-                                                context,
-                                                recording.id
-                                            )
-                                        } else {
-                                            LiveTvRecordingManager.pause(
-                                                context,
-                                                recording.id
-                                            )
-                                        }
+                                        if (liveRecording.paused) LiveTvRecorder.resume(context)
+                                        else LiveTvRecorder.pause(context)
                                     },
                                     modifier = Modifier
-                                        .focusRequester(
-                                            recordingPauseRequester
-                                        )
+                                        .focusRequester(recordingPauseRequester)
                                         .focusProperties {
                                             left = castRequester
                                             right = downloadRequester
@@ -1123,63 +1054,30 @@ internal fun VlcPlayerScreen(
                                             up = backRequester
                                         ),
                                     selected = false,
-                                    onFocused = {
-                                        controlsFocused = it
-                                    }
+                                    onFocused = { controlsFocused = it }
                                 )
                             }
                             PlayerChromeIconButton(
-                                icon =
-                                    if (
-                                        scheduledRecording != null &&
-                                        !recordingThisChannel
-                                    ) {
-                                        Icons.Default.Schedule
-                                    } else {
-                                        Icons.Default.FiberManualRecord
-                                    },
-                                contentDescription =
-                                    if (
-                                        recordingThisChannel ||
-                                        scheduledRecording != null
-                                    ) {
-                                        "Manage Live TV recording"
-                                    } else {
-                                        "Record live TV"
-                                    },
+                                icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
+                                contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
                                 onClick = {
-                                    recordingDialogOpen = true
+                                    if (liveRecording.active) LiveTvRecorder.stop(context)
+                                    else LiveTvRecorder.start(context, media.media.title, media.url)
                                 },
                                 modifier = Modifier
-                                    .focusRequester(
-                                        downloadRequester
-                                    )
+                                    .focusRequester(downloadRequester)
                                     .focusProperties {
-                                        left =
-                                            if (recordingThisChannel) {
-                                                recordingPauseRequester
-                                            } else {
-                                                castRequester
-                                            }
+                                        left = if (recordingThisChannel) recordingPauseRequester else castRequester
                                         right = subtitleRequester
                                         up = backRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left =
-                                            if (recordingThisChannel) {
-                                                recordingPauseRequester
-                                            } else {
-                                                castRequester
-                                            },
+                                        left = if (recordingThisChannel) recordingPauseRequester else castRequester,
                                         right = subtitleRequester,
                                         up = backRequester
                                     ),
-                                selected =
-                                    recordingThisChannel ||
-                                        scheduledRecording != null,
-                                onFocused = {
-                                    controlsFocused = it
-                                }
+                                selected = false,
+                                onFocused = { controlsFocused = it }
                             )
                         }
                         PlayerChromeIconButton(
@@ -1695,17 +1593,6 @@ internal fun VlcPlayerScreen(
                     Text("${(level * 100).toInt()}%")
                 }
             }
-        }
-        if (
-            recordingDialogOpen &&
-            media.catalogType == CatalogType.LIVE_TV
-        ) {
-            LiveTvRecordingDialog(
-                channel = media.media,
-                onDismiss = {
-                    recordingDialogOpen = false
-                }
-            )
         }
         modeFeedback?.let { PlayerModeFeedback(it) }
         val countdown = remainingSeconds
