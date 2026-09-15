@@ -3147,12 +3147,33 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             activePlayback.catalogType ==
                 snapshot.nowPlaying?.catalogType
         ) {
+            /*
+             * PLAYER_QUEUE_REFRESH_RECONCILIATION_V17
+             *
+             * Dashboard/catalog refresh replaces cached MediaItems, including
+             * provider playback commands, while the open player's queue remains
+             * an intentional ordering snapshot. Reconcile that snapshot by ID
+             * before create_link so selecting a tile cannot reuse an expired
+             * command. This is entirely local and does not add a catalog request.
+             */
+            val refreshedItemsById = snapshot
+                .browseCachesByType[activePlayback.catalogType]
+                ?.itemsByCategory
+                ?.values
+                ?.asSequence()
+                ?.flatten()
+                ?.associateBy { it.id }
+                .orEmpty()
+            val refreshedQueue = activeQueue.map { queued ->
+                refreshedItemsById[queued.id] ?: queued
+            }
+            val refreshedSelection = refreshedItemsById[item.id] ?: item
             task {
                 playInternal(
-                    item = item,
+                    item = refreshedSelection,
                     type = activePlayback.catalogType,
                     series = activePlayback.series,
-                    episodes = activeQueue,
+                    episodes = refreshedQueue,
                     directFullscreen = activePlayback.directFullscreen
                 )
             }
