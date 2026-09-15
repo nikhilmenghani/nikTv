@@ -354,6 +354,7 @@ internal fun ModernSettingsScreen(
     val versionRequester = remember { FocusRequester() }
     val oneClickUpdateRequester = remember { FocusRequester() }
     val settingsEntryRequester = remember { FocusRequester() }
+    val settingsSummaryEntryRequester = remember { FocusRequester() }
     var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
     var restoreVersionFocus by remember { mutableStateOf(false) }
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
@@ -506,15 +507,39 @@ internal fun ModernSettingsScreen(
         is UpdateDownloadState.Queued -> 0L to null
         else -> null
     }
-    LaunchedEffect(Unit) {
-        withFrameNanos { }
-        runCatching { settingsEntryRequester.requestFocus() }
-    }
     val settingsConfiguration = LocalConfiguration.current
+    val settingsIsTv = context.isTvLikeDevice(settingsConfiguration)
     val compactSettingsHeader = settingsConfiguration.screenWidthDp < 600
-    val mobileSettingsPages = MobileSettingsPage.entries
-    val settingsPagerState = rememberPagerState(pageCount = { mobileSettingsPages.size })
-    val mobileSettingsTopBarBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val settingsDestinations = SettingsDestination.entries
+    var selectedSettingsDestination by remember {
+        mutableStateOf(SettingsDestination.APPEARANCE)
+    }
+    val settingsRailRequesters = remember {
+        SettingsDestination.entries.associateWith { FocusRequester() }
+    }
+    val settingsPagerState = rememberPagerState(
+        pageCount = { settingsDestinations.size }
+    )
+    val mobileSettingsTopBarBehavior =
+        TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+
+    LaunchedEffect(compactSettingsHeader) {
+        withFrameNanos { }
+        if (!compactSettingsHeader) {
+            runCatching {
+                settingsRailRequesters
+                    .getValue(selectedSettingsDestination)
+                    .requestFocus()
+            }
+        }
+    }
+
+    LaunchedEffect(settingsPagerState.currentPage, compactSettingsHeader) {
+        if (compactSettingsHeader) {
+            selectedSettingsDestination =
+                settingsDestinations[settingsPagerState.currentPage]
+        }
+    }
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
@@ -546,11 +571,14 @@ internal fun ModernSettingsScreen(
         },
         bottomBar = {
             if (compactSettingsHeader) {
-                MobileSettingsBottomNavigation(
-                    currentPage = mobileSettingsPages[settingsPagerState.currentPage],
-                    selectPage = { page ->
+                SettingsBottomNavigation(
+                    currentDestination =
+                        settingsDestinations[settingsPagerState.currentPage],
+                    selectDestination = { destination ->
                         scope.launch {
-                            settingsPagerState.animateScrollToPage(mobileSettingsPages.indexOf(page))
+                            settingsPagerState.animateScrollToPage(
+                                settingsDestinations.indexOf(destination)
+                            )
                         }
                     }
                 )
@@ -577,75 +605,37 @@ internal fun ModernSettingsScreen(
             ),
         verticalArrangement = Arrangement.spacedBy(if (compactSettingsHeader) 20.dp else 12.dp)
     ) {
-        if (!compactSettingsHeader) Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            color = Color(0xFF111318),
-            border = BorderStroke(1.dp, Color(0xFF292C33)),
-            shadowElevation = 6.dp
-        ) {
-            Column(
-                Modifier
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color(0xFF171A20), Color(0xFF111318))
-                        )
-                    )
-                    .padding(if (compactSettingsHeader) 13.dp else 17.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(13.dp),
-                        color = Color(0xFF2A1215),
-                        border = BorderStroke(1.dp, Color(0xFF6F2028))
-                    ) {
-                        Icon(
-                            Icons.Default.Tune,
-                            null,
-                            Modifier.padding(if (compactSettingsHeader) 9.dp else 11.dp)
-                                .size(if (compactSettingsHeader) 22.dp else 24.dp),
-                            tint = Color(0xFFFF6973)
-                        )
-                    }
-                    Text(
-                        "Make NikTV yours",
-                        modifier = Modifier.weight(1f),
-                        style = if (compactSettingsHeader) {
-                            MaterialTheme.typography.titleMedium
-                        } else {
-                            MaterialTheme.typography.titleLarge
-                        },
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFF5F5F7)
-                    )
-                    if (!compactSettingsHeader) {
-                        AssistChip(
-                            onClick = {},
-                            enabled = false,
-                            label = { Text("v${BuildConfig.VERSION_NAME}") }
-                        )
-                    }
-                }
-                Text(
-                    "Playback, appearance, content, profiles and updates",
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Color(0xFF9B9FA8),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                if (compactSettingsHeader) {
-                    Text(
-                        "NikTV ${BuildConfig.VERSION_NAME}",
-                        color = Color(0xFF70757E),
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-            }
+        val activeDestination =
+            LocalSettingsDestination.current
+                ?: selectedSettingsDestination
+
+        SettingsDestinationHeader(
+            destination = activeDestination,
+            compact = compactSettingsHeader
+        )
+
+        if (!compactSettingsHeader) {
+            SettingsSummaryRow(
+                activeProfile = profile?.name ?: "No active profile",
+                defaultPlayer = when (state.playbackEngine) {
+                    PlaybackEngine.AUTO -> "Auto"
+                    PlaybackEngine.MEDIA3,
+                    PlaybackEngine.EXOPLAYER -> "ExoPlayer"
+                    PlaybackEngine.VLC -> "VLC"
+                },
+                backup = when (githubBackupConfig.backupMode) {
+                    com.nikhil.niktv.data.BackupMode.GITHUB -> "GitHub"
+                    com.nikhil.niktv.data.BackupMode.DEVICE -> "Device"
+                },
+                updates = "v${BuildConfig.VERSION_NAME}",
+                currentDestination = activeDestination,
+                railRequester =
+                    settingsRailRequesters.getValue(activeDestination),
+                entryRequester = settingsSummaryEntryRequester,
+                onSelect = { selectedSettingsDestination = it }
+            )
         }
+
         val showMobileAppearance =
             settingsConfiguration.smallestScreenWidthDp < 600
 
@@ -699,7 +689,7 @@ internal fun ModernSettingsScreen(
                 }
             }
         }
-        if (!compactSettingsHeader) SettingsSection("Picture and video appearance") {
+        SettingsSection("Picture and video appearance") {
             val (appearanceProfiles, activeAppearance) =
                 rememberVideoAppearanceProfiles()
             val editableAppearanceProfiles =
@@ -1137,7 +1127,7 @@ internal fun ModernSettingsScreen(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
             )
         }
-        if (!compactSettingsHeader && profile != null) SettingsSection("Category Filters") {
+        if (profile != null) SettingsSection("Category Filters") {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Content Visibility", style = MaterialTheme.typography.titleMedium)
                 Text("Choose which categories to include for Live TV, Movies, and Series.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1162,15 +1152,25 @@ internal fun ModernSettingsScreen(
                 }
             }
         }
-        val activeMobileSettingsPage = LocalMobileSettingsPage.current
-        if (activeMobileSettingsPage == null) {
+        val activeSettingsDestination = LocalSettingsDestination.current
+        if (
+            activeSettingsDestination == null ||
+            activeSettingsDestination == SettingsDestination.APPEARANCE
+        ) {
             OrientationSettingsSection(Modifier.focusGroup())
         }
 
-        if (profile != null &&
-            (activeMobileSettingsPage == null || activeMobileSettingsPage == MobileSettingsPage.PLAYBACK)
+        if (
+            profile != null &&
+            (
+                activeSettingsDestination == null ||
+                    activeSettingsDestination == SettingsDestination.PLAYBACK
+                )
         ) {
-            PlaybackDesignSettingsSection(profile.cacheKey(), Modifier.focusGroup())
+            PlaybackDesignSettingsSection(
+                profile.cacheKey(),
+                Modifier.focusGroup()
+            )
         }
 
         if (profile != null) SettingsSection("Connection") {
@@ -1748,31 +1748,68 @@ internal fun ModernSettingsScreen(
             )
         }
 
-        SettingsSection("Account actions") {
+        SettingsSection("Connection actions") {
             ListItem(
                 headlineContent = { Text("Re-authenticate") },
-                supportingContent = { Text("Request a fresh session token using the saved profile") },
+                supportingContent = {
+                    Text("Request a fresh session token using the saved profile")
+                },
                 leadingContent = { Icon(Icons.Default.Refresh, null) },
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = reauthenticate),
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(onClick = reauthenticate),
+                colors =
+                    ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
             )
             HorizontalDivider()
             ListItem(
                 headlineContent = { Text("Edit connection") },
-                supportingContent = { Text("Change portal address or credentials") },
+                supportingContent = {
+                    Text("Change portal address or credentials")
+                },
                 leadingContent = { Icon(Icons.Default.Edit, null) },
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = editProfile),
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            )
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Clear all app data", color = MaterialTheme.colorScheme.error) },
-                supportingContent = { Text("Remove every profile, cache, favorite, recent item, and session") },
-                leadingContent = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = logout),
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(onClick = editProfile),
+                colors =
+                    ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
             )
         }
+
+        SettingsSection("Danger zone") {
+            ListItem(
+                headlineContent = {
+                    Text(
+                        "Clear all app data",
+                        color = MaterialTheme.colorScheme.error
+                    )
+                },
+                supportingContent = {
+                    Text(
+                        "Remove every profile, cache, favorite, recent item, and session"
+                    )
+                },
+                leadingContent = {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Logout,
+                        null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                },
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(onClick = logout),
+                colors =
+                    ListItemDefaults.colors(
+                        containerColor = Color.Transparent
+                    )
+            )
+        }
+
         SettingsSection("Catalog cache") {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Refresh interval", style = MaterialTheme.typography.titleMedium)
@@ -2087,11 +2124,16 @@ internal fun ModernSettingsScreen(
                 }
             }
         }
-        Text(
-            "NikTV keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (
+            LocalSettingsDestination.current ==
+                SettingsDestination.SYSTEM
+        ) {
+            Text(
+                "NikTV keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         } }
         if (compactSettingsHeader) {
             HorizontalPager(
@@ -2099,14 +2141,49 @@ internal fun ModernSettingsScreen(
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 CompositionLocalProvider(
-                    LocalMobileSettingsPage provides mobileSettingsPages[page]
+                    LocalSettingsDestination provides
+                        settingsDestinations[page]
                 ) {
                     settingsPageContent()
                 }
             }
         } else {
-            CompositionLocalProvider(LocalMobileSettingsPage provides null) {
-                settingsPageContent()
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF07080A))
+            ) {
+                SettingsDestinationRail(
+                    selected = selectedSettingsDestination,
+                    onSelected = { selectedSettingsDestination = it },
+                    requesters = settingsRailRequesters,
+                    detailRequester = settingsSummaryEntryRequester,
+                    modifier = Modifier
+                        .width(if (settingsIsTv) 248.dp else 218.dp)
+                        .fillMaxHeight()
+                        .padding(padding)
+                )
+                VerticalDivider(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(
+                            top = padding.calculateTopPadding(),
+                            bottom = padding.calculateBottomPadding()
+                        ),
+                    color = Color(0xFF25272D)
+                )
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                ) {
+                    CompositionLocalProvider(
+                        LocalSettingsDestination provides
+                            selectedSettingsDestination
+                    ) {
+                        settingsPageContent()
+                    }
+                }
             }
         }
     }
@@ -3144,95 +3221,380 @@ internal fun formatScheduleTime(minutes: Int): String {
     return "$displayHour:${minute.toString().padStart(2, '0')} $period"
 }
 
+private val LocalSettingsDestination =
+    compositionLocalOf<SettingsDestination?> { null }
+
 @Composable
-internal fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    val mobilePage = LocalMobileSettingsPage.current
-    if (mobilePage != null && settingsPageFor(title) != mobilePage) return
-    if (mobilePage != null) {
-        var expanded by rememberSaveable(title, mobilePage) { mutableStateOf(true) }
-        Surface(
-            Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF15171C),
-            border = BorderStroke(1.dp, Color(0xFF34373F)),
-            shadowElevation = 2.dp
+private fun SettingsDestinationHeader(
+    destination: SettingsDestination,
+    compact: Boolean
+) {
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(Modifier.padding(12.dp)) {
-                Row(
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF2A1215),
+                border = BorderStroke(1.dp, Color(0xFF6F2028))
+            ) {
+                Icon(
+                    destination.icon(),
+                    null,
                     Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { expanded = !expanded }
-                        .padding(start = 8.dp, end = 2.dp, top = 5.dp, bottom = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        Modifier
-                            .width(4.dp)
-                            .height(24.dp)
-                            .background(Color(0xFFE50914), CircleShape)
+                        .padding(if (compact) 8.dp else 10.dp)
+                        .size(if (compact) 20.dp else 24.dp),
+                    tint = Color(0xFFFF6973)
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    destination.title,
+                    style =
+                        if (compact) {
+                            MaterialTheme.typography.titleLarge
+                        } else {
+                            MaterialTheme.typography.headlineSmall
+                        },
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF5F5F7)
+                )
+                Text(
+                    destination.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF9B9FA8)
+                )
+            }
+            if (!compact) {
+                AssistChip(
+                    onClick = {},
+                    enabled = false,
+                    label = { Text("v${BuildConfig.VERSION_NAME}") }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSummaryRow(
+    activeProfile: String,
+    defaultPlayer: String,
+    backup: String,
+    updates: String,
+    currentDestination: SettingsDestination,
+    railRequester: FocusRequester,
+    entryRequester: FocusRequester,
+    onSelect: (SettingsDestination) -> Unit
+) {
+    val summaries =
+        listOf(
+            SettingsSummary(
+                Icons.Default.AccountCircle,
+                "Active profile",
+                activeProfile,
+                SettingsDestination.PROFILES
+            ),
+            SettingsSummary(
+                Icons.Default.PlayCircle,
+                "Default player",
+                defaultPlayer,
+                SettingsDestination.PLAYBACK
+            ),
+            SettingsSummary(
+                Icons.Default.CloudDone,
+                "Backup",
+                backup,
+                SettingsDestination.SYSTEM
+            ),
+            SettingsSummary(
+                Icons.Default.SystemUpdate,
+                "Updates",
+                updates,
+                SettingsDestination.SYSTEM
+            )
+        )
+
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        summaries.forEachIndexed { index, summary ->
+            Surface(
+                onClick = { onSelect(summary.destination) },
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 82.dp)
+                    .then(
+                        if (index == 0) {
+                            Modifier.focusRequester(entryRequester)
+                        } else {
+                            Modifier
+                        }
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        title,
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFF5F5F7)
+                    .then(
+                        if (index == 0) {
+                            Modifier.focusProperties {
+                                left = railRequester
+                            }
+                        } else {
+                            Modifier
+                        }
                     )
-                    IconButton(onClick = { expanded = !expanded }) {
-                        Icon(
-                            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            if (expanded) "Collapse $title" else "Expand $title"
-                        )
+                    .remoteFocusFrame(RoundedCornerShape(14.dp)),
+                shape = RoundedCornerShape(14.dp),
+                color =
+                    if (summary.destination == currentDestination) {
+                        Color(0xFF241418)
+                    } else {
+                        Color(0xFF12151B)
+                    },
+                border = BorderStroke(
+                    1.dp,
+                    if (summary.destination == currentDestination) {
+                        Color(0xFF6F2028)
+                    } else {
+                        Color(0xFF2B2F37)
                     }
-                }
-                AnimatedVisibility(visible = expanded) {
-                    Surface(
-                        Modifier.fillMaxWidth().padding(top = 8.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF0F1115),
-                        border = BorderStroke(1.dp, Color(0xFF292C33))
+                )
+            ) {
+                Row(
+                    Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        summary.icon,
+                        null,
+                        Modifier.size(22.dp),
+                        tint = Color(0xFFFF6973)
+                    )
+                    Column(
+                        Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Column(
-                            Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            content = content
+                        Text(
+                            summary.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFF9B9FA8),
+                            maxLines = 1
+                        )
+                        Text(
+                            summary.value,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFF5F5F7),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
         }
+    }
+}
+
+private data class SettingsSummary(
+    val icon: ImageVector,
+    val label: String,
+    val value: String,
+    val destination: SettingsDestination
+)
+
+@Composable
+private fun SettingsDestinationRail(
+    selected: SettingsDestination,
+    onSelected: (SettingsDestination) -> Unit,
+    requesters: Map<SettingsDestination, FocusRequester>,
+    detailRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = Color(0xFF0B0D10)
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "Settings",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFF5F5F7)
+            )
+            Text(
+                "Customize NikTV",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF81858E)
+            )
+            Spacer(Modifier.height(12.dp))
+
+            SettingsDestination.entries.forEach { destination ->
+                val isSelected = destination == selected
+                val shape = RoundedCornerShape(14.dp)
+                Surface(
+                    onClick = { onSelected(destination) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 54.dp)
+                        .focusRequester(requesters.getValue(destination))
+                        .focusProperties {
+                            right = detailRequester
+                        }
+                        .remoteFocusFrame(shape)
+                        .semantics {
+                            role = Role.Tab
+                            this.selected = isSelected
+                        },
+                    shape = shape,
+                    color =
+                        if (isSelected) {
+                            Color(0xFF3A1014)
+                        } else {
+                            Color.Transparent
+                        },
+                    border =
+                        if (isSelected) {
+                            BorderStroke(1.dp, Color(0xFFE50914))
+                        } else {
+                            BorderStroke(1.dp, Color.Transparent)
+                        }
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            destination.icon(),
+                            null,
+                            Modifier.size(22.dp),
+                            tint =
+                                if (isSelected) {
+                                    Color(0xFFFF6973)
+                                } else {
+                                    Color(0xFFB4B7BF)
+                                }
+                        )
+                        Text(
+                            destination.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight =
+                                if (isSelected) {
+                                    FontWeight.Bold
+                                } else {
+                                    FontWeight.Medium
+                                },
+                            color =
+                                if (isSelected) {
+                                    Color.White
+                                } else {
+                                    Color(0xFFD4D6DA)
+                                }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+            Text(
+                "NikTV ${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF686D76)
+            )
+        }
+    }
+}
+
+@Composable
+internal fun SettingsSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val destination = LocalSettingsDestination.current
+    if (
+        destination != null &&
+        settingsDestinationFor(title) != destination
+    ) {
         return
     }
-    Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+    val compact = LocalConfiguration.current.screenWidthDp < 600
+    val danger = title == "Danger zone"
+    val accent =
+        if (danger) {
+            MaterialTheme.colorScheme.error
+        } else {
+            Color(0xFFE50914)
+        }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .focusGroup(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Row(
-            Modifier.padding(horizontal = 6.dp),
+            Modifier.padding(horizontal = if (compact) 2.dp else 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 Modifier
                     .width(4.dp)
-                    .height(20.dp)
-                    .background(Color(0xFFE50914), CircleShape)
+                    .height(if (compact) 18.dp else 20.dp)
+                    .background(accent, CircleShape)
             )
             Text(
                 title,
-                style = MaterialTheme.typography.titleLarge,
+                style =
+                    if (compact) {
+                        MaterialTheme.typography.titleMedium
+                    } else {
+                        MaterialTheme.typography.titleLarge
+                    },
                 fontWeight = FontWeight.Bold,
                 letterSpacing = .15.sp,
-                color = Color(0xFFF5F5F7)
+                color =
+                    if (danger) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        Color(0xFFF5F5F7)
+                    }
             )
         }
+
         Surface(
             Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF111318),
-            shadowElevation = 3.dp,
-            border = BorderStroke(1.dp, Color(0xFF292C33)),
-            content = { Column(content = content) }
-        )
+            shape = RoundedCornerShape(if (compact) 18.dp else 16.dp),
+            color =
+                if (danger) {
+                    Color(0xFF1A1012)
+                } else {
+                    Color(0xFF111318)
+                },
+            shadowElevation = if (compact) 1.dp else 3.dp,
+            border = BorderStroke(
+                1.dp,
+                if (danger) {
+                    Color(0xFF59262B)
+                } else {
+                    Color(0xFF292C33)
+                }
+            )
+        ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                content = content
+            )
+        }
     }
 }
 
@@ -3298,26 +3660,29 @@ internal fun RowScope.ExpressiveBottomNavigationItem(
 }
 
 @Composable
-internal fun MobileSettingsBottomNavigation(
-    currentPage: MobileSettingsPage,
-    selectPage: (MobileSettingsPage) -> Unit
+internal fun SettingsBottomNavigation(
+    currentDestination: SettingsDestination,
+    selectDestination: (SettingsDestination) -> Unit
 ) {
-    Surface(color = Color(0xFF101216), tonalElevation = 8.dp) {
+    Surface(
+        color = Color(0xFF101216),
+        tonalElevation = 8.dp
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(horizontal = 8.dp, vertical = 8.dp)
                 .animateContentSize(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            MobileSettingsPage.entries.forEach { page ->
+            SettingsDestination.entries.forEach { destination ->
                 ExpressiveBottomNavigationItem(
-                    icon = page.icon,
-                    label = page.title,
-                    selected = page == currentPage,
-                    onClick = { selectPage(page) },
-                    inactiveWidth = 54.dp
+                    icon = destination.icon(),
+                    label = destination.title,
+                    selected = destination == currentDestination,
+                    onClick = { selectDestination(destination) },
+                    inactiveWidth = 46.dp
                 )
             }
         }
