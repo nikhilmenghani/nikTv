@@ -127,6 +127,8 @@ internal fun ModernSearchScreen(
     var searchEditing by rememberSaveable { mutableStateOf(false) }
 
     val searchRequester = remember { FocusRequester() }
+    val clearSearchRequester = remember { FocusRequester() }
+    val submitSearchRequester = remember { FocusRequester() }
     val categoryRequester = remember { FocusRequester() }
     val contentRequester = remember { FocusRequester() }
     val typeRequesters = remember { searchVisibleTypes.associateWith { FocusRequester() } }
@@ -203,7 +205,7 @@ internal fun ModernSearchScreen(
         state.searchUsedServer,
         searchEditing
     ) {
-        if (remoteNavigationActive && (!searchEditing || state.searchUsedServer) &&
+        if (remoteNavigationActive && !searchEditing &&
             !state.searchLocalLoading && !state.searchServerLoading &&
             state.searchResults.isNotEmpty()
         ) {
@@ -254,7 +256,10 @@ internal fun ModernSearchScreen(
                 .align(Alignment.CenterHorizontally)
                 .height(if (isTv) 62.dp else 56.dp)
                 .focusRequester(searchRequester)
-                .focusProperties { down = typeBelowSearch }
+                .focusProperties {
+                    right = if (state.searchQuery.isNotEmpty()) clearSearchRequester else submitSearchRequester
+                    down = typeBelowSearch
+                }
                 .onFocusChanged {
                     if (!it.isFocused && searchEditing) {
                         searchEditing = false
@@ -262,19 +267,21 @@ internal fun ModernSearchScreen(
                     }
                 }
                 .onPreviewKeyEvent { event ->
-                    if (!searchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                    if (!searchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                        if (state.searchQuery.isNotEmpty()) clearSearchRequester.requestFocus()
+                        else submitSearchRequester.requestFocus()
+                        true
+                    } else if (!searchEditing && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
                         typeBelowSearch.requestFocus()
                         true
                     } else if (
-                        !searchEditing &&
-                        event.type == KeyEventType.KeyUp &&
-                        event.key in listOf(
+                        !searchEditing && event.key in listOf(
                             Key.DirectionCenter,
                             Key.Enter,
                             Key.NumPadEnter
                         )
                     ) {
-                        activateSearchField()
+                        if (event.type == KeyEventType.KeyUp) activateSearchField()
                         true
                     } else {
                         false
@@ -304,7 +311,20 @@ internal fun ModernSearchScreen(
             trailingIcon = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (state.searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { setQuery("") }, modifier = Modifier.focusProperties { canFocus = false }) {
+                        IconButton(
+                            onClick = {
+                                setQuery("")
+                                searchRequester.requestFocus()
+                            },
+                            modifier = Modifier
+                                .focusRequester(clearSearchRequester)
+                                .focusProperties {
+                                    left = searchRequester
+                                    right = submitSearchRequester
+                                    down = typeBelowSearch
+                                }
+                                .remoteFocusFrame(CircleShape)
+                        ) {
                             Icon(Icons.Default.Close, "Clear search")
                         }
                     }
@@ -314,7 +334,13 @@ internal fun ModernSearchScreen(
                             keyboard?.hide()
                             search(true)
                         },
-                        modifier = Modifier.focusProperties { canFocus = false },
+                        modifier = Modifier
+                            .focusRequester(submitSearchRequester)
+                            .focusProperties {
+                                left = if (state.searchQuery.isNotEmpty()) clearSearchRequester else searchRequester
+                                down = typeBelowSearch
+                            }
+                            .remoteFocusFrame(CircleShape),
                         enabled =
                             state.searchQuery.isNotBlank() &&
                                 !state.searchServerLoading,
@@ -508,7 +534,7 @@ internal fun ModernSearchScreen(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                if (isTv) "OK to search again · hold OK to remove" else "Select to search again",
+                "Select to search again · × to remove",
                 style = MaterialTheme.typography.bodySmall,
                 color = SearchMuted,
                 modifier = Modifier.padding(bottom = 8.dp)
@@ -528,7 +554,7 @@ internal fun ModernSearchScreen(
                         recent = recent,
                         onClick = { useRecent(recent) },
                         onRemove = { deleteRecent(recent) },
-                        showRemoveButton = !isTv,
+                        showRemoveButton = true,
                         modifier = if (recent == visibleRecentSearches.first()) Modifier.focusRequester(contentRequester) else Modifier
                     )
                 }
@@ -1116,8 +1142,15 @@ private fun SearchRecentRow(
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(14.dp)
+    val rowRequester = remember { FocusRequester() }
+    val removeRequester = remember { FocusRequester() }
     Surface(
-        modifier = modifier.fillMaxWidth().remoteFocusFrame(shape).remoteCombinedClickable(onClick = onClick, onLongClick = onRemove),
+        modifier = modifier
+            .fillMaxWidth()
+            .focusRequester(rowRequester)
+            .focusProperties { right = removeRequester }
+            .remoteFocusFrame(shape)
+            .remoteCombinedClickable(onClick = onClick, onLongClick = onRemove),
         shape = shape,
         color = SearchSurface,
         border = BorderStroke(1.dp, SearchOutline)
@@ -1135,7 +1168,13 @@ private fun SearchRecentRow(
                 Text("${recent.type.title} · ${recent.categoryTitle}", style = MaterialTheme.typography.bodySmall, color = SearchMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (showRemoveButton) {
-                IconButton(onClick = onRemove, modifier = Modifier.focusProperties { canFocus = false }) {
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier
+                        .focusRequester(removeRequester)
+                        .focusProperties { left = rowRequester }
+                        .remoteFocusFrame(CircleShape)
+                ) {
                     Icon(Icons.Default.Close, "Remove ${recent.query}", tint = SearchMuted)
                 }
             }

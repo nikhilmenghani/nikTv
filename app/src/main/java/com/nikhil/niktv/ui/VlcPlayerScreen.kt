@@ -9,6 +9,8 @@ import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -904,17 +906,7 @@ internal fun VlcPlayerScreen(
                 seekable -> forwardRequester
                 else -> playRequester
             }
-            val lowerQuickActionsOffset =
-                (playerConfiguration.screenHeightDp -
-                    if (compactMobileControls) 64 else 91).coerceAtLeast(0).dp
-            val tvQuickActionClearance =
-                if (context.isTvLikeDevice(playerConfiguration)) 56.dp else 0.dp
-            val lowerQuickActionsShift = when {
-                pipAvailable && compactMobileControls -> 144.dp
-                pipAvailable -> 168.dp
-                compactMobileControls -> 96.dp
-                else -> 112.dp
-            } + tvQuickActionClearance
+            val controlRowScrollState = rememberScrollState()
             val playbackDetailLines = buildList {
                 add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · VLC · Video fit · ${resizeMode.label}")
@@ -933,8 +925,12 @@ internal fun VlcPlayerScreen(
                     )
             ) {
                 Row(
-                    Modifier
-                        .fillMaxWidth()
+                                Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (compactMobileControls) Modifier.horizontalScroll(controlRowScrollState)
+                                        else Modifier
+                                    )
                         .zIndex(2f)
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
@@ -985,11 +981,9 @@ internal fun VlcPlayerScreen(
                             else offlineDownloadProgressText.orEmpty()
                         )
                     }
-                    Row(
-                        modifier = Modifier.offset(x = -lowerQuickActionsShift, y = lowerQuickActionsOffset),
-                        horizontalArrangement = Arrangement.spacedBy(if (compactMobileControls) 4.dp else 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                }
+
+                val quickActions: @Composable RowScope.() -> Unit = {
                         com.nikhil.niktv.ui.components.CastButton(
                             modifier = Modifier
                                 .focusRequester(castRequester)
@@ -1165,7 +1159,6 @@ internal fun VlcPlayerScreen(
                                 ),
                             onFocused = { controlsFocused = it }
                         )
-                    }
                 }
 
                 Surface(
@@ -1244,8 +1237,11 @@ internal fun VlcPlayerScreen(
                                         false
                                     }
                                 },
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
+                                horizontalArrangement = Arrangement.spacedBy(
+                                    if (compactMobileControls) 4.dp else 8.dp,
+                                    Alignment.CenterHorizontally
+                                ),
+                                verticalAlignment = Alignment.CenterVertically
                         ) {
                             val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
                                 val isTv = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
@@ -1370,8 +1366,10 @@ internal fun VlcPlayerScreen(
                                 }
                                 }
 
-                            Spacer(Modifier.weight(1f))
-                            if (pipAvailable) {
+                                if (compactMobileControls) Spacer(Modifier.width(8.dp))
+                                else Spacer(Modifier.weight(1f))
+                                quickActions()
+                                if (pipAvailable) {
                                 val pipLeftRequester = moreRequester
                                 PlayerChromeIconButton(
                                     icon = Icons.Default.PictureInPictureAlt,
