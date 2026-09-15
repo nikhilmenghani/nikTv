@@ -644,6 +644,9 @@ internal fun ModernSettingsScreen(
         val appBrightnessRequester = remember { FocusRequester() }
         val keepAwakeRequester = remember { FocusRequester() }
         val orientationRequester = remember { FocusRequester() }
+        val playbackEngineRequester = remember { FocusRequester() }
+        val controlsTimeoutRequester = remember { FocusRequester() }
+        val seriesSeasonRequester = remember { FocusRequester() }
         val appBrightnessStep =
             (AppBrightnessPreferences.MAX - AppBrightnessPreferences.MIN) /
                 17f
@@ -671,28 +674,126 @@ internal fun ModernSettingsScreen(
                 }
             )
         }
-        PlaybackEngineSettingsSection(state.playbackEngine, setPlaybackEngine)
+        PlaybackEngineSettingsSection(
+            selectedEngine = state.playbackEngine,
+            setPlaybackEngine = setPlaybackEngine,
+            compact = compactSettingsHeader,
+            entryRequester = playbackEngineRequester,
+            downRequester = controlsTimeoutRequester
+        )
         SettingsSection("Player controls") {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Controls timeout", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Choose how long controls stay visible while video is playing. Infinite keeps them visible until you dismiss them.",
-                    color = Color.Gray
-                )
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    PLAYER_CONTROLS_TIMEOUT_OPTIONS.forEachIndexed { index, seconds ->
-                        val shape = uniformSegmentShape(index, PLAYER_CONTROLS_TIMEOUT_OPTIONS.size)
-                        SegmentedButton(
-                            state.playerControlsTimeoutSeconds == seconds,
-                            { setPlayerControlsTimeoutSeconds(seconds) },
-                            shape,
-                            modifier = Modifier.remoteFocusFrame(shape)
+            if (compactSettingsHeader) {
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.Timer,
+                    title = "Controls timeout",
+                    subtitle =
+                        "Choose how long playback controls stay visible. Infinite keeps them visible until dismissed.",
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        SingleChoiceSegmentedButtonRow(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, end = 2.dp)
                         ) {
-                            Text(
-                                if (seconds == PLAYER_CONTROLS_TIMEOUT_INFINITE) "∞"
-                                else "${seconds}s"
-                            )
+                            PLAYER_CONTROLS_TIMEOUT_OPTIONS
+                                .forEachIndexed { index, seconds ->
+                                    val shape =
+                                        uniformSegmentShape(
+                                            index,
+                                            PLAYER_CONTROLS_TIMEOUT_OPTIONS.size
+                                        )
+                                    val selected =
+                                        state.playerControlsTimeoutSeconds ==
+                                            seconds
+                                    SegmentedButton(
+                                        selected = selected,
+                                        onClick = {
+                                            setPlayerControlsTimeoutSeconds(
+                                                seconds
+                                            )
+                                        },
+                                        modifier = Modifier
+                                            .then(
+                                                if (selected) {
+                                                    Modifier.focusRequester(
+                                                        controlsTimeoutRequester
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                            .focusProperties {
+                                                up = playbackEngineRequester
+                                                down = seriesSeasonRequester
+                                            }
+                                            .remoteFocusFrame(shape),
+                                        shape = shape
+                                    ) {
+                                        Text(
+                                            if (
+                                                seconds ==
+                                                PLAYER_CONTROLS_TIMEOUT_INFINITE
+                                            ) {
+                                                "∞"
+                                            } else {
+                                                "${seconds}s"
+                                            },
+                                            style =
+                                                MaterialTheme.typography
+                                                    .labelLarge
+                                        )
+                                    }
+                                }
                         }
+                    }
+                )
+            } else {
+                Column(
+                    Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Controls timeout",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        "Choose how long controls stay visible while video is playing. Infinite keeps them visible until you dismiss them.",
+                        color = Color.Gray
+                    )
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier.fillMaxWidth()
+                    ) {
+                        PLAYER_CONTROLS_TIMEOUT_OPTIONS
+                            .forEachIndexed { index, seconds ->
+                                val shape =
+                                    uniformSegmentShape(
+                                        index,
+                                        PLAYER_CONTROLS_TIMEOUT_OPTIONS.size
+                                    )
+                                SegmentedButton(
+                                    state.playerControlsTimeoutSeconds ==
+                                        seconds,
+                                    {
+                                        setPlayerControlsTimeoutSeconds(
+                                            seconds
+                                        )
+                                    },
+                                    shape,
+                                    modifier =
+                                        Modifier.remoteFocusFrame(shape)
+                                ) {
+                                    Text(
+                                        if (
+                                            seconds ==
+                                            PLAYER_CONTROLS_TIMEOUT_INFINITE
+                                        ) {
+                                            "∞"
+                                        } else {
+                                            "${seconds}s"
+                                        }
+                                    )
+                                }
+                            }
                     }
                 }
             }
@@ -1736,18 +1837,114 @@ internal fun ModernSettingsScreen(
             }
         }
         SettingsSection("Series") {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Default season", style = MaterialTheme.typography.titleMedium)
-                Text("Used only when a series has no remembered season. NikTV loads one season at a time.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SeriesStartSeason.entries.forEachIndexed { index, option ->
-                        val shape = uniformSegmentShape(index, SeriesStartSeason.entries.size)
-                        SegmentedButton(
-                            selected = state.seriesStartSeason == option,
-                            onClick = { setSeriesStartSeason(option) },
-                            modifier = Modifier.remoteFocusFrame(shape),
-                            shape = shape
-                        ) { Text(if (option == SeriesStartSeason.FIRST) "First season" else "Latest season") }
+            if (compactSettingsHeader) {
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.VideoLibrary,
+                    title = "Default season",
+                    subtitle =
+                        "Used when a series has no remembered season. NikTV loads one season at a time.",
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        SingleChoiceSegmentedButtonRow(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, end = 2.dp)
+                        ) {
+                            SeriesStartSeason.entries
+                                .forEachIndexed { index, option ->
+                                    val shape =
+                                        uniformSegmentShape(
+                                            index,
+                                            SeriesStartSeason.entries.size
+                                        )
+                                    val selected =
+                                        state.seriesStartSeason == option
+                                    SegmentedButton(
+                                        selected = selected,
+                                        onClick = {
+                                            setSeriesStartSeason(option)
+                                        },
+                                        modifier = Modifier
+                                            .then(
+                                                if (selected) {
+                                                    Modifier.focusRequester(
+                                                        seriesSeasonRequester
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                            .focusProperties {
+                                                up = controlsTimeoutRequester
+                                            }
+                                            .remoteFocusFrame(shape),
+                                        shape = shape
+                                    ) {
+                                        Text(
+                                            if (
+                                                option ==
+                                                SeriesStartSeason.FIRST
+                                            ) {
+                                                "First season"
+                                            } else {
+                                                "Latest season"
+                                            },
+                                            style =
+                                                MaterialTheme.typography
+                                                    .labelLarge
+                                        )
+                                    }
+                                }
+                        }
+                    }
+                )
+            } else {
+                Column(
+                    Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Default season",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        "Used only when a series has no remembered season. NikTV loads one season at a time.",
+                        color =
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier.fillMaxWidth()
+                    ) {
+                        SeriesStartSeason.entries
+                            .forEachIndexed { index, option ->
+                                val shape =
+                                    uniformSegmentShape(
+                                        index,
+                                        SeriesStartSeason.entries.size
+                                    )
+                                SegmentedButton(
+                                    selected =
+                                        state.seriesStartSeason ==
+                                            option,
+                                    onClick = {
+                                        setSeriesStartSeason(option)
+                                    },
+                                    modifier =
+                                        Modifier.remoteFocusFrame(shape),
+                                    shape = shape
+                                ) {
+                                    Text(
+                                        if (
+                                            option ==
+                                            SeriesStartSeason.FIRST
+                                        ) {
+                                            "First season"
+                                        } else {
+                                            "Latest season"
+                                        }
+                                    )
+                                }
+                            }
                     }
                 }
             }
@@ -2939,37 +3136,163 @@ internal fun LiveTvPlaybackScreen(
 @Composable
 internal fun PlaybackEngineSettingsSection(
     selectedEngine: PlaybackEngine,
-    setPlaybackEngine: (PlaybackEngine) -> Unit
+    setPlaybackEngine: (PlaybackEngine) -> Unit,
+    compact: Boolean,
+    entryRequester: FocusRequester,
+    downRequester: FocusRequester
 ) {
     SettingsSection("Default media player") {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Used for Live TV, movies and episodes", style = MaterialTheme.typography.titleMedium)
-            Text("Auto learns compatibility per series. You can force a specific engine here.", color = Color.Gray)
-            val engines = listOf(
-                Triple(PlaybackEngine.AUTO, "Auto", "Learns failures and uses VLC when needed"),
-                Triple(PlaybackEngine.MEDIA3, "ExoPlayer", "NikTV decoder fallback and recovery"),
-                Triple(PlaybackEngine.VLC, "VLC player", "Software decoding and broad compatibility")
+        val engines = listOf(
+            Triple(
+                PlaybackEngine.AUTO,
+                "Auto",
+                "Learn compatibility automatically and use VLC when needed."
+            ),
+            Triple(
+                PlaybackEngine.MEDIA3,
+                "ExoPlayer",
+                "Use NikTV decoder fallback and recovery."
+            ),
+            Triple(
+                PlaybackEngine.VLC,
+                "VLC",
+                "Use software decoding and broad format compatibility."
             )
-            FlowRow(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                maxItemsInEachRow = 2
-            ) {
-                engines.forEach { (engine, label, description) ->
-                    val selected = selectedEngine == engine
-                    Surface(
-                        onClick = { setPlaybackEngine(engine) },
-                        modifier = Modifier.weight(1f).widthIn(min = 150.dp).remoteFocusFrame(RoundedCornerShape(16.dp)),
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (selected) Color(0xFF351416) else Color(0xFF1A1F2E),
-                        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) Color(0xFFE50914) else Color(0xFF30384B))
+        )
+
+        if (compact) {
+            val selectedDescription =
+                engines.firstOrNull { it.first == selectedEngine }
+                    ?.third
+                    ?: "Choose the playback engine NikTV should use."
+
+            CompactSettingsOptionRow(
+                icon = Icons.Default.PlayCircle,
+                title = "Playback engine",
+                subtitle = selectedDescription,
+                belowContent = {
+                    Spacer(Modifier.height(8.dp))
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 40.dp, end = 2.dp)
                     ) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected, onClick = null)
-                            Column(Modifier.padding(start = 6.dp)) {
-                                Text(label, fontWeight = FontWeight.Bold)
-                                Text(description, style = MaterialTheme.typography.bodySmall, color = Color.Gray, maxLines = 2)
+                        engines.forEachIndexed {
+                                index,
+                                (engine, label, _) ->
+                            val shape =
+                                uniformSegmentShape(
+                                    index,
+                                    engines.size
+                                )
+                            val selected =
+                                selectedEngine == engine
+                            SegmentedButton(
+                                selected = selected,
+                                onClick = {
+                                    setPlaybackEngine(engine)
+                                },
+                                modifier = Modifier
+                                    .then(
+                                        if (selected) {
+                                            Modifier.focusRequester(
+                                                entryRequester
+                                            )
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .focusProperties {
+                                        down = downRequester
+                                    }
+                                    .remoteFocusFrame(shape),
+                                shape = shape
+                            ) {
+                                Text(
+                                    label,
+                                    style =
+                                        MaterialTheme.typography
+                                            .labelLarge,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+            )
+        } else {
+            Column(
+                Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Used for Live TV, movies and episodes",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    "Auto learns compatibility per series. You can force a specific engine here.",
+                    color = Color.Gray
+                )
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    maxItemsInEachRow = 2
+                ) {
+                    engines.forEach {
+                            (engine, label, description) ->
+                        val selected = selectedEngine == engine
+                        Surface(
+                            onClick = {
+                                setPlaybackEngine(engine)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .widthIn(min = 150.dp)
+                                .remoteFocusFrame(
+                                    RoundedCornerShape(16.dp)
+                                ),
+                            shape = RoundedCornerShape(16.dp),
+                            color =
+                                if (selected) {
+                                    Color(0xFF351416)
+                                } else {
+                                    Color(0xFF1A1F2E)
+                                },
+                            border = BorderStroke(
+                                if (selected) 2.dp else 1.dp,
+                                if (selected) {
+                                    Color(0xFFE50914)
+                                } else {
+                                    Color(0xFF30384B)
+                                }
+                            )
+                        ) {
+                            Row(
+                                Modifier.padding(12.dp),
+                                verticalAlignment =
+                                    Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected,
+                                    onClick = null
+                                )
+                                Column(
+                                    Modifier.padding(start = 6.dp)
+                                ) {
+                                    Text(
+                                        label,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        description,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                        color = Color.Gray,
+                                        maxLines = 2
+                                    )
+                                }
                             }
                         }
                     }
