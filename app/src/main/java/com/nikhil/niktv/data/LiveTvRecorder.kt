@@ -244,6 +244,9 @@ class LiveTvRecordingService : Service() {
                     if (isHls(sourceUrl)) recordHls(sourceUrl, output)
                     else copyStream(sourceUrl, output)
                 }
+                if (isHls(sourceUrl)) {
+                    trimOutputToRecordedDuration(outputUri, accumulatedDurationMillis)
+                }
                 finishOutput(outputUri)
                 LiveTvRecorder.update(LiveRecordingState(error = null))
             } catch (_: CancellationException) {
@@ -271,13 +274,12 @@ class LiveTvRecordingService : Service() {
         // the user pressed Stop.
         stopRequested = true
         if (!paused) accumulatedDurationMillis += (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L)
+        paused = true
         statusJob?.cancel()
-        recordingJob?.cancel()
-        client.dispatcher.cancelAll()
-        recordingJob = null
-        LiveTvRecorder.update(LiveRecordingState())
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        publishProgress(LiveTvRecorder.state.value.bytesWritten)
+        // Cancelling only the active request lets the writer exit normally and
+        // finish trimming/publishing before this service is destroyed.
+        activeStreamCall?.cancel()
     }
 
     private fun setPaused(value: Boolean) {
@@ -301,25 +303,29 @@ class LiveTvRecordingService : Service() {
         var failures = 0
         var resolvedPlaylistUrl: String? = null
         val timestampRebaser = MpegTsTimestampRebaser()
-        while (resolvedPlaylistUrl == null) {
+        while (resolvedPlaylistUrl == null && !stopRequested) {
             awaitResume()
+            if (stopRequested) return
             try {
                 resolvedPlaylistUrl = resolveMediaPlaylist(initialUrl)
             } catch (error: java.io.IOException) {
+                if (stopRequested) return
                 if (paused) continue
                 if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
                 delay(retryDelay(failures))
             }
         }
-        val playlistUrl = requireNotNull(resolvedPlaylistUrl)
+        val playlistUrl = resolvedPlaylistUrl ?: return
         val written = LinkedHashSet<String>()
         var bytes = 0L
         failures = 0
-        playlistLoop@ while (currentCoroutineContext().isActive) {
+        playlistLoop@ while (currentCoroutineContext().isActive && !stopRequested) {
             awaitResume()
+            if (stopRequested) return
             val playlist = try {
                 getText(playlistUrl)
             } catch (error: java.io.IOException) {
+                if (stopRequested) return
                 if (paused) continue
                 if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
                 delay(retryDelay(failures))
@@ -344,8 +350,10 @@ class LiveTvRecordingService : Service() {
                 hlsRebaseRequested = false
             }
             for (segment in segments) {
+                if (stopRequested) return
                 if (segment in written) continue
                 awaitResume()
+                if (stopRequested) return
                 if (hlsRebaseRequested) continue@playlistLoop
                 val appended = try {
                     appendUrl(
@@ -355,6 +363,7 @@ class LiveTvRecordingService : Service() {
                         continueTimelineAtNextSegment && segment in mediaSegments
                     )
                 } catch (error: java.io.IOException) {
+                    if (stopRequested) return
                     if (paused) break
                     if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
                     delay(retryDelay(failures))
@@ -388,8 +397,9 @@ class LiveTvRecordingService : Service() {
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE * 8)
         var bytes = LiveTvRecorder.state.value.bytesWritten
         var failures = 0
-        while (currentCoroutineContext().isActive) {
+        while (currentCoroutineContext().isActive && !stopRequested) {
             awaitResume()
+            if (stopRequested) return
 
             val call = client.newCall(request)
             activeStreamCall = call
@@ -398,7 +408,7 @@ class LiveTvRecordingService : Service() {
                 call.execute().use { response ->
                     requireSuccessful(response.code, response.isSuccessful, "Stream")
                     val input = response.body?.byteStream() ?: error("Stream returned no data")
-                    while (currentCoroutineContext().isActive && !paused) {
+                    while (currentCoroutineContext().isActive && !paused && !stopRequested) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         output.write(buffer, 0, count)
@@ -408,6 +418,7 @@ class LiveTvRecordingService : Service() {
                 }
                 failures = 0
             } catch (error: java.io.IOException) {
+                if (stopRequested) return
                 if (!paused && currentCoroutineContext().isActive) {
                     if (!error.isRetriableStreamFailure()) throw error
                     failures = if (bytes > bytesBeforeAttempt) 1 else failures + 1
@@ -419,7 +430,7 @@ class LiveTvRecordingService : Service() {
 
             // A resumed live stream must reconnect at its current live edge.
             // Do not consume and discard network bytes while paused.
-            if (!paused && currentCoroutineContext().isActive) {
+            if (!paused && !stopRequested && currentCoroutineContext().isActive) {
                 delay(if (failures == 0) 350L else retryDelay(failures))
             }
         }
@@ -463,7 +474,7 @@ class LiveTvRecordingService : Service() {
     }
 
     private suspend fun awaitResume() {
-        while (paused && currentCoroutineContext().isActive) delay(100L)
+        while (paused && !stopRequested && currentCoroutineContext().isActive) delay(100L)
     }
 
     private fun publishProgress(bytes: Long) {

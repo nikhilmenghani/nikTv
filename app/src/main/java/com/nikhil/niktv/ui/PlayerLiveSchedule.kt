@@ -6,6 +6,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -13,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -21,6 +23,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.DialogProperties
 import com.nikhil.niktv.model.MediaItem
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -135,6 +138,9 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
     val dayKeyFormatter = SimpleDateFormat("yyyyMMdd", Locale.US)
     val requesters = remember(programmes) { programmes.map { FocusRequester() } }
     val closeRequester = remember { FocusRequester() }
+    val listState = rememberLazyListState()
+    val focusScope = rememberCoroutineScope()
+    var focusedProgrammeIndex by remember(programmes) { mutableIntStateOf(-1) }
     LaunchedEffect(programmes) {
         kotlinx.coroutines.delay(100L)
         runCatching { (requesters.firstOrNull() ?: closeRequester).requestFocus() }
@@ -163,6 +169,7 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
         },
         text = {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -178,6 +185,7 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
                 }
                 itemsIndexed(programmes) { index, programme ->
                     val isCurrent = programme == current
+                    val isFocused = focusedProgrammeIndex == index
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -186,11 +194,32 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
                                 if (index > 0) up = requesters[index - 1]
                                 down = requesters.getOrNull(index + 1) ?: closeRequester
                             }
-                            .focusable()
-                            .remoteFocusFrame(RoundedCornerShape(14.dp)),
+                            .onFocusChanged { state ->
+                                if (state.isFocused) {
+                                    focusedProgrammeIndex = index
+                                    focusScope.launch {
+                                        val visible = listState.layoutInfo.visibleItemsInfo
+                                        if (visible.none { it.index == index }) {
+                                            listState.animateScrollToItem(index)
+                                        }
+                                    }
+                                }
+                            }
+                            .focusable(),
                         shape = RoundedCornerShape(14.dp),
-                        color = if (isCurrent) Color(0xFF452126) else Color.White.copy(.055f),
-                        border = BorderStroke(1.dp, if (isCurrent) Color(0xFFE50914) else Color.White.copy(.10f))
+                        color = when {
+                            isFocused -> Color.White.copy(.16f)
+                            isCurrent -> Color(0xFF452126)
+                            else -> Color.White.copy(.055f)
+                        },
+                        border = BorderStroke(
+                            if (isFocused) 2.dp else 1.dp,
+                            when {
+                                isFocused -> Color.White
+                                isCurrent -> Color(0xFFE50914)
+                                else -> Color.White.copy(.10f)
+                            }
+                        )
                     ) {
                         Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
                             val startDate = programme.startTimeMillis?.let(::Date)
