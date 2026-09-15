@@ -842,6 +842,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         _state.update { current ->
+            val refreshedItemsById = cache.itemsByCategory
+                .values
+                .asSequence()
+                .flatten()
+                .associateBy { it.id }
             val updatedRaw = current.rawCategoriesByType + (type to allCategories)
             current.copy(
                 selectedType = type,
@@ -855,7 +860,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 fullSearchItems = null,
                 fullSearchCachedAtMillis = null,
                 browseCache = cache,
-                browseCachesByType = current.browseCachesByType + (type to cache)
+                browseCachesByType = current.browseCachesByType + (type to cache),
+                // Refresh runs off the UI thread. Once its cache is ready, update
+                // the open player's metadata snapshot atomically without touching
+                // the active stream URL or restarting playback.
+                nowPlaying = current.nowPlaying?.let { playing ->
+                    if (playing.catalogType == type && refreshedItemsById.isNotEmpty()) {
+                        playing.withRefreshedQueueItems(refreshedItemsById)
+                    } else {
+                        playing
+                    }
+                }
             )
         }
 
@@ -4478,6 +4493,38 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             playing.episodeQueue.distinctBy { it.id }
         }
+    }
+
+    /**
+     * Replace stale provider commands in a player queue after a catalog refresh.
+     * The current resolved URL is deliberately retained; only a subsequent channel
+     * selection requests a new signed playback URL.
+     */
+    private fun PlayingMedia.withRefreshedQueueItems(
+        refreshedItemsById: Map<String, MediaItem>
+    ): PlayingMedia {
+        val refreshedQueue = episodeQueue.map { queued ->
+            refreshedItemsById[queued.id] ?: queued
+        }
+        val refreshedCurrent = refreshedItemsById[media.id] ?: media
+        val currentIndex = refreshedQueue.indexOfFirst { it.id == media.id }
+        val wrap = catalogType == CatalogType.LIVE_TV && refreshedQueue.size > 1
+        return copy(
+            media = refreshedCurrent,
+            episodeQueue = refreshedQueue,
+            previousEpisode = if (currentIndex >= 0) {
+                refreshedQueue.getOrNull(currentIndex - 1)
+                    ?: refreshedQueue.lastOrNull().takeIf { wrap }
+            } else {
+                previousEpisode?.let { refreshedItemsById[it.id] ?: it }
+            },
+            nextEpisode = if (currentIndex >= 0) {
+                refreshedQueue.getOrNull(currentIndex + 1)
+                    ?: refreshedQueue.firstOrNull().takeIf { wrap }
+            } else {
+                nextEpisode?.let { refreshedItemsById[it.id] ?: it }
+            }
+        )
     }
 
     fun playNextEpisode() {
