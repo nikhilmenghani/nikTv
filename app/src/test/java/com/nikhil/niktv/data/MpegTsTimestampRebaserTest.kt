@@ -2,6 +2,7 @@ package com.nikhil.niktv.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.io.ByteArrayInputStream
 
 class MpegTsTimestampRebaserTest {
     @Test
@@ -15,6 +16,18 @@ class MpegTsTimestampRebaserTest {
         assertEquals(90_000L, readPts(first))
         assertEquals(93_600L, readPts(resumed))
         assertEquals(97_200L, readPts(following))
+    }
+
+    @Test
+    fun recordingTailIsCutAtRequestedPresentationDuration() {
+        val stream = packetWithPts(90_000L) +
+            packetWithPts(180_000L) +
+            packetWithPts(270_000L) +
+            packetWithPts(360_000L)
+
+        val cutoff = MpegTsRecordingTrimmer.cutoffBytes(ByteArrayInputStream(stream), 2_100L)
+
+        assertEquals(188L * 3L, cutoff)
     }
 
     private fun packetWithPts(pts: Long): ByteArray = ByteArray(188) { 0xff.toByte() }.apply {

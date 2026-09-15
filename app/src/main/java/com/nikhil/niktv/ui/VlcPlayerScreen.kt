@@ -48,7 +48,11 @@ import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.data.SubtitleSearchRequest
 import com.nikhil.niktv.data.LiveTvRecorder
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -416,7 +420,7 @@ internal fun VlcPlayerScreen(
         }
     }
 
-    DisposableEffect(player, media.url) {
+    LaunchedEffect(player, media.url) {
         player.setEventListener { event ->
             when (event.type) {
                 MediaPlayer.Event.Opening -> buffering = true
@@ -476,41 +480,53 @@ internal fun VlcPlayerScreen(
                 }
             }
         }
-        val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
-            setHWDecoderEnabled(false, false)
-            addOption(":network-caching=1500")
-            externalSubtitleFile?.takeIf(File::exists)?.let { file ->
-                addSlave(
-                    IMedia.Slave(
-                        IMedia.Slave.Type.Subtitle,
-                        4,
-                        android.net.Uri.fromFile(file).toString()
-                    )
-                )
-                externalSubtitleAttached = true
-            }
-        }
-        player.media = vlcMedia
-        vlcMedia.release()
-        player.play()
-
-        // VLC_RESUME_AFTER_TIMELINE_READY_V2
-        // Applying player.time during Opening/Buffering can be discarded.
-        onDispose {
-            val finalPosition =
-                (
-                    if (pendingInitialResumePosition > 0L) {
-                        pendingInitialResumePosition
-                    } else {
-                        player.time
+        try {
+            // Media construction can wait on LibVLC's native mutex. Keeping all
+            // preparation on a worker prevents that mutex from freezing Compose
+            // input dispatch and triggering an ANR.
+            var preparedExternalSubtitle = false
+            withContext(Dispatchers.IO) {
+                val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
+                    setHWDecoderEnabled(false, false)
+                    addOption(":network-caching=1500")
+                    externalSubtitleFile?.takeIf(File::exists)?.let { file ->
+                        addSlave(
+                            IMedia.Slave(
+                                IMedia.Slave.Type.Subtitle,
+                                4,
+                                android.net.Uri.fromFile(file).toString()
+                            )
+                        )
+                        preparedExternalSubtitle = true
                     }
-                    ).coerceAtLeast(0L)
-            val finalDuration = player.length.coerceAtLeast(0L)
-            if (media.progressKey.isNotBlank()) onProgress(media.progressKey, finalPosition, finalDuration)
-            player.stop()
-            player.detachViews()
-            player.release()
-            libVlc.release()
+                }
+                try {
+                    player.media = vlcMedia
+                } finally {
+                    vlcMedia.release()
+                }
+                player.play()
+            }
+            if (preparedExternalSubtitle) externalSubtitleAttached = true
+            awaitCancellation()
+        } finally {
+            // Teardown uses the same native lock and must not run in Compose's
+            // synchronous disposal path either.
+            val finalTiming = withContext(NonCancellable + Dispatchers.IO) {
+                val position = (
+                    if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
+                    else player.time
+                ).coerceAtLeast(0L)
+                val length = player.length.coerceAtLeast(0L)
+                runCatching { player.stop() }
+                runCatching { player.detachViews() }
+                runCatching { player.release() }
+                runCatching { libVlc.release() }
+                position to length
+            }
+            if (media.progressKey.isNotBlank()) {
+                onProgress(media.progressKey, finalTiming.first, finalTiming.second)
+            }
         }
     }
 

@@ -5,7 +5,10 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -23,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -1230,6 +1234,7 @@ private fun SearchCategoryOptionTile(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun SearchRecentRow(
     recent: RecentSearch,
     onClick: () -> Unit,
@@ -1240,13 +1245,22 @@ private fun SearchRecentRow(
     val shape = RoundedCornerShape(14.dp)
     val rowRequester = remember { FocusRequester() }
     val removeRequester = remember { FocusRequester() }
+    val remoteNavigationActive = LocalContext.current.usesRemoteNavigation(LocalConfiguration.current)
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .focusRequester(rowRequester)
             .focusProperties { right = removeRequester }
             .remoteFocusFrame(shape)
-            .remoteCombinedClickable(onClick = onClick, onLongClick = onRemove),
+            // Do not install the app-wide preview-key click handler on this
+            // parent. Preview events reach the row before its focused X child,
+            // so DPAD_CENTER used to invoke the recent search instead of the X.
+            .combinedClickable(
+                indication = if (remoteNavigationActive) null else LocalIndication.current,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick,
+                onLongClick = onRemove
+            ),
         shape = shape,
         color = SearchSurface,
         border = BorderStroke(1.dp, SearchOutline)

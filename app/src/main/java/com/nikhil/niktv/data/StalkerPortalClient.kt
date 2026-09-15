@@ -936,7 +936,16 @@ class StalkerPortalClient(private val context: Context) {
             }
             is JsonArray -> data.forEach { node ->
                 val o = node as? JsonObject ?: return@forEach
-                add(o.string("ch_id") ?: o.string("channel_id") ?: o.string("id"), o)
+                val channelId = o.string("ch_id") ?: o.string("channel_id") ?: o.string("id")
+                // Ministra/Cast4K-style get_epg_info responses commonly return
+                // one channel object containing an `epg`/`programs` array.
+                // Previously we tried to parse that wrapper as one programme,
+                // which discarded the complete upcoming schedule.
+                val entries = o["data"] as? JsonArray
+                    ?: o["programs"] as? JsonArray
+                    ?: o["epg"] as? JsonArray
+                if (entries != null) entries.forEach { add(channelId, it) }
+                else add(channelId, o)
             }
             else -> Unit
         }

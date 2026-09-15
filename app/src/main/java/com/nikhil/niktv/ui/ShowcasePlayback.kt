@@ -1096,6 +1096,39 @@ private fun ShowcaseDetailsPanel(
             }
         }
 
+        if (item.liveSchedule.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            val upcoming = remember(item.liveSchedule, now / 60_000L) {
+                item.liveSchedule
+                    .filter { (it.endTimeMillis ?: Long.MAX_VALUE) > now }
+                    .filterNot { it == item.liveProgramme }
+                    .take(3)
+            }
+            if (upcoming.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        "UP NEXT",
+                        color = Color.LightGray,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    upcoming.forEach { programme ->
+                        val start = programme.startTimeMillis?.let {
+                            java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                                .format(java.util.Date(it))
+                        }
+                        Text(
+                            listOfNotNull(start, programme.title).joinToString(" · "),
+                            color = Color.White.copy(alpha = .82f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
         Text(
             description
                 ?: "No additional metadata was provided by the IPTV portal for this title.",

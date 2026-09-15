@@ -12,10 +12,12 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.provider.MediaStore
+import android.system.Os
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.nikhil.niktv.R
 import java.net.URI
+import java.io.FileInputStream
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -177,6 +180,7 @@ class LiveTvRecordingService : Service() {
     @Volatile private var paused = false
     @Volatile private var activeStreamCall: Call? = null
     @Volatile private var hlsRebaseRequested = false
+    @Volatile private var stopRequested = false
     private var accumulatedDurationMillis = 0L
     private var lastResumedAtMillis = 0L
     private val client = OkHttpClient.Builder()
@@ -214,6 +218,7 @@ class LiveTvRecordingService : Service() {
     private fun startRecording(title: String, sourceUrl: String) {
         val startedAt = System.currentTimeMillis()
         paused = false
+        stopRequested = false
         hlsRebaseRequested = isHls(sourceUrl)
         accumulatedDurationMillis = 0L
         lastResumedAtMillis = startedAt
@@ -242,6 +247,9 @@ class LiveTvRecordingService : Service() {
                 finishOutput(outputUri)
                 LiveTvRecorder.update(LiveRecordingState(error = null))
             } catch (_: CancellationException) {
+                if (hlsRebaseRequested || isHls(sourceUrl)) {
+                    outputUri?.let { trimOutputToRecordedDuration(it, accumulatedDurationMillis) }
+                }
                 outputUri?.let(::finishOutput)
                 LiveTvRecorder.update(LiveRecordingState())
             } catch (error: Throwable) {
@@ -258,6 +266,10 @@ class LiveTvRecordingService : Service() {
     }
 
     private fun stopRecording() {
+        // Set the boundary before cancelling the HTTP call. A segment response
+        // can win the cancellation race; appendUrl must never commit it after
+        // the user pressed Stop.
+        stopRequested = true
         if (!paused) accumulatedDurationMillis += (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L)
         statusJob?.cancel()
         recordingJob?.cancel()
@@ -413,7 +425,7 @@ class LiveTvRecordingService : Service() {
         }
     }
 
-    private fun appendUrl(
+    private suspend fun appendUrl(
         url: String,
         output: java.io.OutputStream,
         timestampRebaser: MpegTsTimestampRebaser,
@@ -426,7 +438,8 @@ class LiveTvRecordingService : Service() {
             return call.execute().use { response ->
                 requireSuccessful(response.code, response.isSuccessful, "Segment")
                 val data = response.body?.bytes() ?: return@use 0L
-                if (paused) return@use 0L
+                currentCoroutineContext().ensureActive()
+                if (paused || stopRequested) return@use 0L
                 output.write(timestampRebaser.rebase(data, forceTimestampContinuity))
                 data.size.toLong()
             }
@@ -530,6 +543,20 @@ class LiveTvRecordingService : Service() {
         private const val CHANNEL_ID = "niktv_live_recordings"
         private const val NOTIFICATION_ID = 2114
         private const val MAX_STREAM_RETRIES = 8
+    }
+
+    private fun trimOutputToRecordedDuration(uri: android.net.Uri, durationMillis: Long) {
+        if (durationMillis <= 0L) return
+        runCatching {
+            contentResolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
+                // Keep the shared descriptor open while scanning, then truncate
+                // at a complete 188-byte transport-stream packet boundary.
+                val cutoff = FileInputStream(Os.dup(descriptor.fileDescriptor)).use { input ->
+                    MpegTsRecordingTrimmer.cutoffBytes(input, durationMillis)
+                }
+                if (cutoff != null) Os.ftruncate(descriptor.fileDescriptor, cutoff)
+            }
+        }
     }
 }
 
