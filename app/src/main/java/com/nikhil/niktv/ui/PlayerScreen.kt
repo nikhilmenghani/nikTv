@@ -480,6 +480,7 @@ fun PlayerScreen(
     }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
+    var programmeGuideExpanded by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
@@ -1715,20 +1716,6 @@ fun PlayerScreen(
                     }
                 }
 
-                if (media.catalogType == CatalogType.LIVE_TV) {
-                    PlayerLiveScheduleSummary(
-                        item = media.media,
-                        compact = compactMobileControls,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
-                            .padding(
-                                top = if (compactMobileControls) 58.dp else 78.dp,
-                                end = if (compactMobileControls) 10.dp else 20.dp
-                            )
-                    )
-                }
-
                 val quickActions: @Composable RowScope.() -> Unit = {
                         com.nikhil.niktv.ui.components.CastButton(
                             modifier = Modifier
@@ -1891,7 +1878,7 @@ fun PlayerScreen(
                                 icon = Icons.Default.EventNote,
                                 badgeText = media.media.liveSchedule.size.takeIf { it > 0 }?.toString(),
                                 contentDescription = "Programme guide",
-                                onClick = { programmeGuideOpen = true },
+                                onClick = { programmeGuideExpanded = false; programmeGuideOpen = true },
                                 modifier = Modifier.focusRequester(programmeGuideFocusRequester)
                                     .focusProperties { left = pictureModeFocusRequester; right = controlsTimeoutFocusRequester }
                                     .playerDpadFocusRoutes(left = pictureModeFocusRequester, right = controlsTimeoutFocusRequester),
@@ -2252,9 +2239,18 @@ fun PlayerScreen(
                 )
             }
             if (programmeGuideOpen) {
-                PlayerLiveScheduleOverlay(media.media) {
-                    programmeGuideOpen = false
-                    coroutineScope.launch { delay(80L); runCatching { programmeGuideFocusRequester.requestFocus() } }
+                if (programmeGuideExpanded) {
+                    PlayerLiveScheduleOverlay(media.media) { programmeGuideExpanded = false }
+                } else {
+                    PlayerLiveScheduleSummary(
+                        item = media.media,
+                        compact = compactMobileControls,
+                        onExpand = { programmeGuideExpanded = true },
+                        onDismiss = {
+                            programmeGuideOpen = false
+                            coroutineScope.launch { delay(80L); runCatching { programmeGuideFocusRequester.requestFocus() } }
+                        }
+                    )
                 }
             }
         }

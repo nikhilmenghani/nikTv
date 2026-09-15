@@ -168,6 +168,7 @@ internal fun VlcPlayerScreen(
     }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
+    var programmeGuideExpanded by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
@@ -1003,20 +1004,6 @@ internal fun VlcPlayerScreen(
                     }
                 }
 
-                if (media.catalogType == CatalogType.LIVE_TV) {
-                    PlayerLiveScheduleSummary(
-                        item = media.media,
-                        compact = compactMobileControls,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
-                            .padding(
-                                top = if (compactMobileControls) 58.dp else 78.dp,
-                                end = if (compactMobileControls) 10.dp else 20.dp
-                            )
-                    )
-                }
-
                 val quickActions: @Composable RowScope.() -> Unit = {
                         com.nikhil.niktv.ui.components.CastButton(
                             modifier = Modifier
@@ -1180,7 +1167,7 @@ internal fun VlcPlayerScreen(
                                 icon = Icons.Default.EventNote,
                                 badgeText = media.media.liveSchedule.size.takeIf { it > 0 }?.toString(),
                                 contentDescription = "Programme guide",
-                                onClick = { programmeGuideOpen = true },
+                                onClick = { programmeGuideExpanded = false; programmeGuideOpen = true },
                                 modifier = Modifier.focusRequester(programmeGuideRequester)
                                     .focusProperties { left = pictureModeRequester; right = controlsTimeoutRequester }
                                     .playerDpadFocusRoutes(left = pictureModeRequester, right = controlsTimeoutRequester),
@@ -1536,9 +1523,18 @@ internal fun VlcPlayerScreen(
                 )
             }
             if (programmeGuideOpen) {
-                PlayerLiveScheduleOverlay(media.media) {
-                    programmeGuideOpen = false
-                    scope.launch { delay(80L); runCatching { programmeGuideRequester.requestFocus() } }
+                if (programmeGuideExpanded) {
+                    PlayerLiveScheduleOverlay(media.media) { programmeGuideExpanded = false }
+                } else {
+                    PlayerLiveScheduleSummary(
+                        item = media.media,
+                        compact = compactMobileControls,
+                        onExpand = { programmeGuideExpanded = true },
+                        onDismiss = {
+                            programmeGuideOpen = false
+                            scope.launch { delay(80L); runCatching { programmeGuideRequester.requestFocus() } }
+                        }
+                    )
                 }
             }
         }
