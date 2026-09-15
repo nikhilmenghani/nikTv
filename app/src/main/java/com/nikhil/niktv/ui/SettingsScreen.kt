@@ -953,67 +953,157 @@ internal fun ModernSettingsScreen(
             }
         }
         SettingsSection("Profiles") {
-            Text(
-                "Preconfigured profiles",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                style = MaterialTheme.typography.titleMedium
-            )
-            preconfiguredProfiles.forEach { builtIn ->
-                val enabled = state.profiles.any { it.cacheKey() == builtIn.cacheKey() }
-                ListItem(
-                    headlineContent = { Text(builtIn.name) },
-                    supportingContent = { Text(if (enabled) "Available on the profile screen" else "Hidden from the profile screen") },
-                    leadingContent = { Icon(if (builtIn.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
+            if (!compactSettingsHeader) {
+                Text(
+                    "Preconfigured profiles",
+                    modifier = Modifier.padding(
+                        horizontal = 16.dp,
+                        vertical = 10.dp
+                    ),
+                    style = MaterialTheme.typography.titleMedium
+                )
+            }
+
+            preconfiguredProfiles.forEachIndexed { index, builtIn ->
+                val enabled = state.profiles.any {
+                    it.cacheKey() == builtIn.cacheKey()
+                }
+                ResponsiveSettingsOptionRow(
+                    icon =
+                        if (builtIn.portalType == PortalType.STALKER) {
+                            Icons.Default.Tv
+                        } else {
+                            Icons.Default.Key
+                        },
+                    title = builtIn.name,
+                    subtitle =
+                        if (enabled) {
+                            "Available on the profile screen"
+                        } else {
+                            "Hidden from the profile screen"
+                        },
                     trailingContent = {
                         Switch(
                             checked = enabled,
-                            onCheckedChange = { setPreconfiguredProfileEnabled(builtIn, it) },
-                            enabled = builtIn.portalUrl.isNotBlank() &&
-                                (builtIn.portalType == PortalType.STALKER ||
-                                    (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
+                            onCheckedChange = {
+                                setPreconfiguredProfileEnabled(
+                                    builtIn,
+                                    it
+                                )
+                            },
+                            enabled =
+                                builtIn.portalUrl.isNotBlank() &&
+                                    (
+                                        builtIn.portalType ==
+                                            PortalType.STALKER ||
+                                            (
+                                                builtIn.username
+                                                    .isNotBlank() &&
+                                                    builtIn.password
+                                                        .isNotBlank()
+                                                )
+                                        ),
+                            modifier = Modifier.remoteFocusFrame(
+                                CircleShape
+                            )
                         )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    }
                 )
+                if (
+                    index != preconfiguredProfiles.lastIndex ||
+                    state.profiles.isNotEmpty()
+                ) {
+                    HorizontalDivider()
+                }
             }
-            HorizontalDivider()
+
             state.profiles.forEachIndexed { index, saved ->
-                val isPreconfigured = preconfiguredProfiles.any { it.cacheKey() == saved.cacheKey() }
-                ListItem(
-                    headlineContent = { Text(saved.name) },
-                    supportingContent = { Text(if (isPreconfigured) "Preconfigured ${saved.portalType.displayName()} profile" else "${saved.portalType.displayName()} · ${saved.portalUrl}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    leadingContent = { Icon(if (saved.portalType == PortalType.STALKER) Icons.Default.Tv else Icons.Default.Key, null) },
+                val isPreconfigured = preconfiguredProfiles.any {
+                    it.cacheKey() == saved.cacheKey()
+                }
+                ResponsiveSettingsOptionRow(
+                    icon =
+                        if (saved.portalType == PortalType.STALKER) {
+                            Icons.Default.Tv
+                        } else {
+                            Icons.Default.Key
+                        },
+                    title = saved.name,
+                    subtitle =
+                        if (isPreconfigured) {
+                            "Preconfigured ${saved.portalType.displayName()} profile"
+                        } else {
+                            "${saved.portalType.displayName()} · ${saved.portalUrl}"
+                        },
                     trailingContent = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            if (saved == profile) {
-                                Icon(Icons.Default.CheckCircle, "Active", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                            } else {
-                                TextButton(
-                                    onClick = { switchProfile(saved) },
-                                    modifier = Modifier.height(48.dp).then(if (index == 0) Modifier.focusRequester(settingsEntryRequester) else Modifier).remoteFocusFrame(CircleShape),
-                                    shape = CircleShape
-                                ) { Text("Open") }
+                        if (saved == profile) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                "Active",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        } else {
+                            TextButton(
+                                onClick = { switchProfile(saved) },
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .then(
+                                        if (index == 0) {
+                                            Modifier.focusRequester(
+                                                settingsEntryRequester
+                                            )
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .remoteFocusFrame(CircleShape),
+                                shape = CircleShape
+                            ) {
+                                Text("Open")
                             }
-                            IconButton(
-                                onClick = { pendingRemoval = saved },
-                                modifier = Modifier.size(48.dp).then(if (index == 0 && saved == profile) Modifier.focusRequester(settingsEntryRequester) else Modifier).remoteFocusFrame(CircleShape)
-                            ) { Icon(Icons.Default.DeleteOutline, "Remove ${saved.name}") }
                         }
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        IconButton(
+                            onClick = { pendingRemoval = saved },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .then(
+                                    if (
+                                        index == 0 &&
+                                        saved == profile
+                                    ) {
+                                        Modifier.focusRequester(
+                                            settingsEntryRequester
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .remoteFocusFrame(CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.DeleteOutline,
+                                "Remove ${saved.name}"
+                            )
+                        }
+                    }
                 )
-                if (index != state.profiles.lastIndex) HorizontalDivider()
+                if (index != state.profiles.lastIndex) {
+                    HorizontalDivider()
+                }
             }
+
             HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Add profile") },
-                supportingContent = { Text("Connect another Stalker or Xtream service") },
-                leadingContent = { Icon(Icons.Default.AddCircleOutline, null) },
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)).clickable(onClick = addProfile),
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.AddCircleOutline,
+                title = "Add profile",
+                subtitle = "Connect another Stalker or Xtream service",
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(onClick = addProfile),
+                trailingContent = {
+                    Icon(Icons.Default.ChevronRight, "Add profile")
+                }
             )
         }
         val activeSettingsDestination = LocalSettingsDestination.current
@@ -1041,89 +1131,180 @@ internal fun ModernSettingsScreen(
         }
 
         if (profile != null) SettingsSection("Connection") {
-            SettingsValueRow(Icons.Default.AccountCircle, "Profile", profile.name)
+            SettingsValueRow(
+                Icons.Default.AccountCircle,
+                "Profile",
+                profile.name
+            )
             HorizontalDivider()
-            SettingsValueRow(Icons.Default.Language, "Portal", profile.portalUrl)
+            SettingsValueRow(
+                Icons.Default.Language,
+                "Portal",
+                profile.portalUrl
+            )
             HorizontalDivider()
-            SettingsValueRow(Icons.Default.Security, "Session", if (state.session != null) "Authenticated" else "Authentication required")
+            SettingsValueRow(
+                Icons.Default.Security,
+                "Session",
+                if (state.session != null) {
+                    "Authenticated"
+                } else {
+                    "Authentication required"
+                }
+            )
             HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Automatically re-authenticate expired sessions") },
-                supportingContent = {
-                    Text(
-                        if (state.automaticReauthentication) {
-                            "Retry the interrupted page load or playback once with a fresh session."
-                        } else {
-                            "Show the Session expired prompt and wait for confirmation."
-                        }
-                    )
-                },
-                leadingContent = { Icon(Icons.Default.Security, null) },
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.Security,
+                title = "Automatically re-authenticate expired sessions",
+                subtitle =
+                    if (state.automaticReauthentication) {
+                        "Retry an interrupted page load or playback once with a fresh session."
+                    } else {
+                        "Show the Session expired prompt and wait for confirmation."
+                    },
                 trailingContent = {
                     Switch(
                         checked = state.automaticReauthentication,
                         onCheckedChange = setAutomaticReauthentication,
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(16.dp))
+                        modifier = Modifier.remoteFocusFrame(
+                            RoundedCornerShape(16.dp)
+                        )
                     )
-                },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                }
             )
             HorizontalDivider()
-            SettingsValueRow(Icons.Default.Wifi, "Device MAC Address", deviceMacAddress)
+            SettingsValueRow(
+                Icons.Default.Wifi,
+                "Device MAC Address",
+                deviceMacAddress
+            )
         }
         TmdbCredentialSettingsSection()
         SettingsSection("Backup and restore") {
-            Text(
-                "Backup files contain portal addresses and credentials. " +
-                    "Use a backup password when storing sensitive backups in a public repository.",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Column(
-                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    "Backup mode",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+            val backupModes =
+                listOf(
+                    com.nikhil.niktv.data.BackupMode.GITHUB to "GitHub",
+                    com.nikhil.niktv.data.BackupMode.DEVICE to "Device"
                 )
-                val backupModes =
-                    listOf(
-                        com.nikhil.niktv.data.BackupMode.GITHUB to "GitHub",
-                        com.nikhil.niktv.data.BackupMode.DEVICE to "Device"
-                    )
-                SingleChoiceSegmentedButtonRow(
-                    Modifier.fillMaxWidth()
-                ) {
-                    backupModes.forEachIndexed { index, (mode, label) ->
-                        val shape =
-                            uniformSegmentShape(index, backupModes.size)
-                        SegmentedButton(
-                            selected =
-                                githubBackupConfig.backupMode == mode,
-                            onClick = {
-                                val updated =
-                                    githubBackupConfig.copy(
-                                        backupMode = mode
-                                    )
-                                githubBackupConfig = updated
-                                githubBackupManager.saveConfig(updated)
-                            },
-                            modifier =
-                                Modifier.remoteFocusFrame(shape),
-                            shape = shape
+
+            if (compactSettingsHeader) {
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.CloudUpload,
+                    title = "Backup mode",
+                    subtitle =
+                        "Choose where NikTV stores backups. Backups can contain portal credentials.",
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        SingleChoiceSegmentedButtonRow(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, end = 2.dp)
                         ) {
-                            Text(label)
+                            backupModes.forEachIndexed {
+                                    index,
+                                    (mode, label) ->
+                                val shape =
+                                    uniformSegmentShape(
+                                        index,
+                                        backupModes.size
+                                    )
+                                SegmentedButton(
+                                    selected =
+                                        githubBackupConfig.backupMode ==
+                                            mode,
+                                    onClick = {
+                                        val updated =
+                                            githubBackupConfig.copy(
+                                                backupMode = mode
+                                            )
+                                        githubBackupConfig = updated
+                                        githubBackupManager.saveConfig(
+                                            updated
+                                        )
+                                    },
+                                    modifier =
+                                        Modifier.remoteFocusFrame(shape),
+                                    shape = shape
+                                ) {
+                                    Text(
+                                        label,
+                                        style =
+                                            MaterialTheme.typography
+                                                .labelLarge
+                                    )
+                                }
+                            }
+                        }
+                    }
+                )
+            } else {
+                Text(
+                    "Backup files contain portal addresses and credentials. " +
+                        "Use a backup password when storing sensitive backups in a public repository.",
+                    modifier = Modifier.padding(
+                        horizontal = 16.dp,
+                        vertical = 10.dp
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Column(
+                    Modifier.padding(
+                        horizontal = 12.dp,
+                        vertical = 8.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "Backup mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier.fillMaxWidth()
+                    ) {
+                        backupModes.forEachIndexed {
+                                index,
+                                (mode, label) ->
+                            val shape =
+                                uniformSegmentShape(
+                                    index,
+                                    backupModes.size
+                                )
+                            SegmentedButton(
+                                selected =
+                                    githubBackupConfig.backupMode == mode,
+                                onClick = {
+                                    val updated =
+                                        githubBackupConfig.copy(
+                                            backupMode = mode
+                                        )
+                                    githubBackupConfig = updated
+                                    githubBackupManager.saveConfig(updated)
+                                },
+                                modifier =
+                                    Modifier.remoteFocusFrame(shape),
+                                shape = shape
+                            ) {
+                                Text(label)
+                            }
                         }
                     }
                 }
+            }
 
-                if (
-                    githubBackupConfig.backupMode ==
-                    com.nikhil.niktv.data.BackupMode.GITHUB
+            if (
+                githubBackupConfig.backupMode ==
+                com.nikhil.niktv.data.BackupMode.GITHUB
+            ) {
+                HorizontalDivider()
+                Column(
+                    Modifier.padding(
+                        horizontal =
+                            if (compactSettingsHeader) 16.dp else 12.dp,
+                        vertical = 10.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     TvSafeSettingsTextField(
                         value = githubBackupConfig.username,
@@ -1153,8 +1334,9 @@ internal fun ModernSettingsScreen(
                                 githubBackupConfig.copy(token = it)
                         },
                         label = "GitHub personal access token",
-                        supportingText = "Defaults to the build-time G_TOKEN. " +
-                            "A changed value is stored encrypted on this device.",
+                        supportingText =
+                            "Defaults to the build-time G_TOKEN. " +
+                                "A changed value is stored encrypted on this device.",
                         password = true,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -1169,8 +1351,9 @@ internal fun ModernSettingsScreen(
                                 )
                         },
                         label = "Backup password (optional)",
-                        supportingText = "Leave blank for plain JSON. Use 12+ characters " +
-                            "to encrypt GitHub backups.",
+                        supportingText =
+                            "Leave blank for plain JSON. Use 12+ characters " +
+                                "to encrypt GitHub backups.",
                         password = true,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -1192,11 +1375,6 @@ internal fun ModernSettingsScreen(
                         )
                     }
 
-                    Text(
-                        "Automatic GitHub backup",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
                     val scheduleOptions =
                         listOf(
                             0 to "Off",
@@ -1204,56 +1382,120 @@ internal fun ModernSettingsScreen(
                             12 to "12h",
                             24 to "24h"
                         )
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier.fillMaxWidth()
-                    ) {
-                        scheduleOptions.forEachIndexed {
-                                index,
-                                (hours, label) ->
-                            val shape =
-                                uniformSegmentShape(
-                                    index,
-                                    scheduleOptions.size
-                                )
-                            SegmentedButton(
-                                selected =
-                                    githubBackupConfig
-                                        .autoBackupIntervalHours == hours,
-                                onClick = {
-                                    val updated =
-                                        githubBackupConfig.copy(
-                                            autoBackupIntervalHours = hours
-                                        )
-                                    githubBackupConfig = updated
-                                    githubBackupManager.saveConfig(updated)
-                                },
-                                modifier =
-                                    Modifier.remoteFocusFrame(shape),
-                                shape = shape
-                            ) {
-                                Text(label)
-                            }
-                        }
-                    }
-                    Text(
+                    val scheduleSummary =
                         if (
                             githubBackupConfig.autoBackupIntervalHours == 0
                         ) {
                             "Automatic backup is off."
                         } else {
-                            "NikTV checks every " +
-                                "${githubBackupConfig.autoBackupIntervalHours} hours " +
-                                "and uploads only when backed-up data has changed."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color =
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                            "Check every ${githubBackupConfig.autoBackupIntervalHours} hours and upload only when data changes."
+                        }
+
+                    if (compactSettingsHeader) {
+                        CompactSettingsOptionRow(
+                            icon = Icons.Default.Refresh,
+                            title = "Automatic GitHub backup",
+                            subtitle = scheduleSummary,
+                            horizontalPadding = 0.dp,
+                            verticalPadding = 4.dp,
+                            belowContent = {
+                                Spacer(Modifier.height(8.dp))
+                                SingleChoiceSegmentedButtonRow(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(
+                                            start = 40.dp,
+                                            end = 2.dp
+                                        )
+                                ) {
+                                    scheduleOptions.forEachIndexed {
+                                            index,
+                                            (hours, label) ->
+                                        val shape =
+                                            uniformSegmentShape(
+                                                index,
+                                                scheduleOptions.size
+                                            )
+                                        SegmentedButton(
+                                            selected =
+                                                githubBackupConfig
+                                                    .autoBackupIntervalHours ==
+                                                    hours,
+                                            onClick = {
+                                                val updated =
+                                                    githubBackupConfig.copy(
+                                                        autoBackupIntervalHours =
+                                                            hours
+                                                    )
+                                                githubBackupConfig = updated
+                                                githubBackupManager
+                                                    .saveConfig(updated)
+                                            },
+                                            modifier =
+                                                Modifier.remoteFocusFrame(
+                                                    shape
+                                                ),
+                                            shape = shape
+                                        ) {
+                                            Text(
+                                                label,
+                                                style =
+                                                    MaterialTheme.typography
+                                                        .labelLarge
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    } else {
+                        Text(
+                            "Automatic GitHub backup",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        SingleChoiceSegmentedButtonRow(
+                            Modifier.fillMaxWidth()
+                        ) {
+                            scheduleOptions.forEachIndexed {
+                                    index,
+                                    (hours, label) ->
+                                val shape =
+                                    uniformSegmentShape(
+                                        index,
+                                        scheduleOptions.size
+                                    )
+                                SegmentedButton(
+                                    selected =
+                                        githubBackupConfig
+                                            .autoBackupIntervalHours == hours,
+                                    onClick = {
+                                        val updated =
+                                            githubBackupConfig.copy(
+                                                autoBackupIntervalHours = hours
+                                            )
+                                        githubBackupConfig = updated
+                                        githubBackupManager.saveConfig(updated)
+                                    },
+                                    modifier =
+                                        Modifier.remoteFocusFrame(shape),
+                                    shape = shape
+                                ) {
+                                    Text(label)
+                                }
+                            }
+                        }
+                        Text(
+                            scheduleSummary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
                     FilledTonalButton(
                         onClick = {
-                            val config =
-                                normalizedGitHubBackupConfig()
+                            val config = normalizedGitHubBackupConfig()
                             githubBackupManager.saveConfig(config)
                             githubBackupConfig =
                                 githubBackupManager.loadConfig()
@@ -1270,8 +1512,12 @@ internal fun ModernSettingsScreen(
                                     ) &&
                                 (
                                     githubBackupConfig.passphrase.isBlank() ||
-                                        githubBackupConfig.passphrase.length >= 12
-                                    )
+                                        githubBackupConfig.passphrase.length >=
+                                        12
+                                    ),
+                        modifier = Modifier.remoteFocusFrame(
+                            RoundedCornerShape(12.dp)
+                        )
                     ) {
                         Icon(Icons.Default.Save, null)
                         Spacer(Modifier.width(8.dp))
@@ -1294,48 +1540,63 @@ internal fun ModernSettingsScreen(
                                 }
                         )
                     }
-                } else {
-                    Text(
-                        "Export opens Android's document picker. Import lets you " +
-                            "choose a local NikTV JSON backup.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
+            } else {
+                Text(
+                    "Export opens Android's document picker. Import lets you choose a local NikTV JSON backup.",
+                    modifier = Modifier.padding(
+                        horizontal = 16.dp,
+                        vertical = 12.dp
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Export backup") },
-                supportingContent = {
-                    Text(
-                        if (
-                            githubBackupConfig.backupMode ==
-                            com.nikhil.niktv.data.BackupMode.GITHUB
-                        ) {
-                            if (githubBackupConfig.passphrase.isBlank()) {
-                                "Upload the current NikTV setup to GitHub as JSON"
-                            } else {
-                                "Encrypt and upload the current NikTV setup to GitHub"
-                            }
+            ResponsiveSettingsOptionRow(
+                icon =
+                    if (
+                        githubBackupConfig.backupMode ==
+                        com.nikhil.niktv.data.BackupMode.GITHUB
+                    ) {
+                        Icons.Default.CloudUpload
+                    } else {
+                        Icons.Default.FileUpload
+                    },
+                title = "Export backup",
+                subtitle =
+                    if (
+                        githubBackupConfig.backupMode ==
+                        com.nikhil.niktv.data.BackupMode.GITHUB
+                    ) {
+                        if (githubBackupConfig.passphrase.isBlank()) {
+                            "Upload the current NikTV setup to GitHub as JSON"
                         } else {
-                            "Save the current NikTV setup to this device"
+                            "Encrypt and upload the current NikTV setup to GitHub"
                         }
-                    )
-                },
-                leadingContent = {
-                    Icon(
+                    } else {
+                        "Save the current NikTV setup to this device"
+                    },
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(enabled = !githubBackupUploading) {
                         if (
                             githubBackupConfig.backupMode ==
                             com.nikhil.niktv.data.BackupMode.GITHUB
                         ) {
-                            Icons.Default.CloudUpload
+                            performGitHubExport()
                         } else {
-                            Icons.Default.FileUpload
-                        },
-                        null
-                    )
-                },
+                            val timestamp =
+                                java.text.SimpleDateFormat(
+                                    "yyyyMMdd-HHmmss",
+                                    java.util.Locale.getDefault()
+                                ).format(java.util.Date())
+                            exportLauncher.launch(
+                                "NikTV-${BuildConfig.VERSION_NAME}-$timestamp-backup.json"
+                            )
+                        }
+                    },
                 trailingContent = {
                     if (githubBackupUploading) {
                         CircularProgressIndicator(
@@ -1343,86 +1604,53 @@ internal fun ModernSettingsScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Icon(Icons.Default.ChevronRight, null)
+                        Icon(Icons.Default.ChevronRight, "Export backup")
                     }
-                },
-                modifier =
-                    Modifier
-                        .remoteFocusFrame(RoundedCornerShape(14.dp))
-                        .clickable(enabled = !githubBackupUploading) {
-                            if (
-                                githubBackupConfig.backupMode ==
-                                com.nikhil.niktv.data.BackupMode.GITHUB
-                            ) {
-                                performGitHubExport()
-                            } else {
-                                val timestamp =
-                                    java.text.SimpleDateFormat(
-                                        "yyyyMMdd-HHmmss",
-                                        java.util.Locale.getDefault()
-                                    ).format(java.util.Date())
-                                exportLauncher.launch(
-                                    "NikTV-${BuildConfig.VERSION_NAME}-$timestamp-backup.json"
-                                )
-                            }
-                        },
-                colors =
-                    ListItemDefaults.colors(
-                        containerColor = Color.Transparent
-                    )
+                }
             )
 
             HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Import backup") },
-                supportingContent = {
-                    Text(
+            ResponsiveSettingsOptionRow(
+                icon =
+                    if (
+                        githubBackupConfig.backupMode ==
+                        com.nikhil.niktv.data.BackupMode.GITHUB
+                    ) {
+                        Icons.Default.CloudDownload
+                    } else {
+                        Icons.Default.FileDownload
+                    },
+                title = "Import backup",
+                subtitle =
+                    if (
+                        githubBackupConfig.backupMode ==
+                        com.nikhil.niktv.data.BackupMode.GITHUB
+                    ) {
+                        "Choose one of the backups stored in GitHub"
+                    } else {
+                        "Choose a NikTV JSON backup from this device"
+                    },
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable {
                         if (
                             githubBackupConfig.backupMode ==
                             com.nikhil.niktv.data.BackupMode.GITHUB
                         ) {
-                            "Choose one of the backups stored in GitHub"
+                            openGitHubRestoreBrowser()
                         } else {
-                            "Choose a NikTV JSON backup from this device"
-                        }
-                    )
-                },
-                leadingContent = {
-                    Icon(
-                        if (
-                            githubBackupConfig.backupMode ==
-                            com.nikhil.niktv.data.BackupMode.GITHUB
-                        ) {
-                            Icons.Default.CloudDownload
-                        } else {
-                            Icons.Default.FileDownload
-                        },
-                        null
-                    )
-                },
-                modifier =
-                    Modifier
-                        .remoteFocusFrame(RoundedCornerShape(14.dp))
-                        .clickable {
-                            if (
-                                githubBackupConfig.backupMode ==
-                                com.nikhil.niktv.data.BackupMode.GITHUB
-                            ) {
-                                openGitHubRestoreBrowser()
-                            } else {
-                                importLauncher.launch(
-                                    arrayOf(
-                                        "application/json",
-                                        "text/json",
-                                        "text/plain"
-                                    )
+                            importLauncher.launch(
+                                arrayOf(
+                                    "application/json",
+                                    "text/json",
+                                    "text/plain"
                                 )
-                            }
-                        },
-                colors =
-                    ListItemDefaults.colors(
-                        containerColor = Color.Transparent
-                    )
+                            )
+                        }
+                    },
+                trailingContent = {
+                    Icon(Icons.Default.ChevronRight, "Import backup")
+                }
             )
         }
 
@@ -1616,67 +1844,53 @@ internal fun ModernSettingsScreen(
         }
 
         SettingsSection("Connection actions") {
-            ListItem(
-                headlineContent = { Text("Re-authenticate") },
-                supportingContent = {
-                    Text("Request a fresh session token using the saved profile")
-                },
-                leadingContent = { Icon(Icons.Default.Refresh, null) },
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.Refresh,
+                title = "Re-authenticate",
+                subtitle =
+                    "Request a fresh session token using the saved profile",
                 modifier = Modifier
                     .remoteFocusFrame(RoundedCornerShape(14.dp))
                     .clickable(onClick = reauthenticate),
-                colors =
-                    ListItemDefaults.colors(
-                        containerColor = Color.Transparent
-                    )
+                trailingContent = {
+                    Icon(Icons.Default.ChevronRight, "Re-authenticate")
+                }
             )
             HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Edit connection") },
-                supportingContent = {
-                    Text("Change portal address or credentials")
-                },
-                leadingContent = { Icon(Icons.Default.Edit, null) },
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.Edit,
+                title = "Edit connection",
+                subtitle = "Change portal address or credentials",
                 modifier = Modifier
                     .remoteFocusFrame(RoundedCornerShape(14.dp))
                     .clickable(onClick = editProfile),
-                colors =
-                    ListItemDefaults.colors(
-                        containerColor = Color.Transparent
-                    )
+                trailingContent = {
+                    Icon(Icons.Default.ChevronRight, "Edit connection")
+                }
             )
         }
-
         SettingsSection("Danger zone") {
-            ListItem(
-                headlineContent = {
-                    Text(
-                        "Clear all app data",
-                        color = MaterialTheme.colorScheme.error
-                    )
-                },
-                supportingContent = {
-                    Text(
-                        "Remove every profile, cache, favorite, recent item, and session"
-                    )
-                },
-                leadingContent = {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Logout,
-                        null,
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                },
+            ResponsiveSettingsOptionRow(
+                icon = Icons.AutoMirrored.Filled.Logout,
+                title = "Clear all app data",
+                subtitle =
+                    "Remove every profile, cache, favorite, recent item, and session",
+                iconTint = MaterialTheme.colorScheme.error,
+                titleColor = MaterialTheme.colorScheme.error,
+                subtitleColor =
+                    MaterialTheme.colorScheme.error.copy(alpha = .78f),
                 modifier = Modifier
                     .remoteFocusFrame(RoundedCornerShape(14.dp))
                     .clickable(onClick = logout),
-                colors =
-                    ListItemDefaults.colors(
-                        containerColor = Color.Transparent
+                trailingContent = {
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        "Clear all app data",
+                        tint = MaterialTheme.colorScheme.error
                     )
+                }
             )
         }
-
         SettingsSection("Catalog cache") {
             if (compactSettingsHeader) {
                 val refreshOptions =
@@ -1898,99 +2112,148 @@ internal fun ModernSettingsScreen(
         }
         SettingsSection("App updates") {
             Column {
-                ListItem(
-                    headlineContent = { Text("Require updates before using NikTV") },
-                    supportingContent = {
-                        Text(
-                            if (BuildConfig.DEBUG) "Development build · disabled by default"
-                            else "Block access until an available update is installed"
-                        )
-                    },
-                    leadingContent = { Icon(Icons.Default.AdminPanelSettings, null) },
+                ResponsiveSettingsOptionRow(
+                    icon = Icons.Default.AdminPanelSettings,
+                    title = "Require updates before using NikTV",
+                    subtitle =
+                        if (BuildConfig.DEBUG) {
+                            "Development build · disabled by default"
+                        } else {
+                            "Block access until an available update is installed"
+                        },
                     trailingContent = {
                         Switch(
                             checked = updateEnforcementEnabled,
-                            onCheckedChange = AppUpdates::setUpdateEnforcementEnabled,
-                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                            onCheckedChange =
+                                AppUpdates::setUpdateEnforcementEnabled,
+                            modifier = Modifier.remoteFocusFrame(
+                                CircleShape
+                            )
                         )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    }
                 )
                 HorizontalDivider()
-                ListItem(
-                    headlineContent = { Text("Check for updates on startup") },
-                    supportingContent = {
-                        Text(
-                            if (startupUpdateCheckEnabled) {
-                                "Enabled · check for an update whenever NikTV starts"
-                            } else {
-                                "Disabled · no launch-time update check"
-                            }
-                        )
-                    },
-                    leadingContent = { Icon(Icons.Default.Refresh, null) },
+                ResponsiveSettingsOptionRow(
+                    icon = Icons.Default.Refresh,
+                    title = "Check for updates on startup",
+                    subtitle =
+                        if (startupUpdateCheckEnabled) {
+                            "Enabled · check for an update whenever NikTV starts"
+                        } else {
+                            "Disabled · no launch-time update check"
+                        },
                     trailingContent = {
                         Switch(
                             checked = startupUpdateCheckEnabled,
-                            onCheckedChange = AppUpdates::setStartupUpdateCheckEnabled,
-                            modifier = Modifier.remoteFocusFrame(CircleShape)
+                            onCheckedChange =
+                                AppUpdates::setStartupUpdateCheckEnabled,
+                            modifier = Modifier.remoteFocusFrame(
+                                CircleShape
+                            )
                         )
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    }
                 )
                 HorizontalDivider()
-                Column(
-                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("Update APK", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        if (updatePackagePreference == UpdatePackage.AUTO) {
-                            "Automatic · ${AppUpdates.effectiveUpdatePackage().displayName} detected"
-                        } else {
-                            "Use ${updatePackagePreference.displayName} for future updates"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+
+                val updatePackageSummary =
+                    if (updatePackagePreference == UpdatePackage.AUTO) {
+                        "Automatic · ${AppUpdates.effectiveUpdatePackage().displayName} detected"
+                    } else {
+                        "Use ${updatePackagePreference.displayName} for future updates"
+                    }
+
+                if (compactSettingsHeader) {
+                    CompactSettingsOptionRow(
+                        icon = Icons.Default.SystemUpdate,
+                        title = "Update APK",
+                        subtitle = updatePackageSummary,
+                        belowContent = {
+                            Spacer(Modifier.height(8.dp))
+                            FlowRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 40.dp, end = 2.dp),
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(8.dp),
+                                verticalArrangement =
+                                    Arrangement.spacedBy(8.dp)
+                            ) {
+                                UpdatePackage.entries.forEach { option ->
+                                    FilterChip(
+                                        selected =
+                                            updatePackagePreference == option,
+                                        onClick = {
+                                            AppUpdates.setUpdatePackage(option)
+                                            availableUpdate = null
+                                            updateMessage =
+                                                "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
+                                        },
+                                        label = {
+                                            Text(option.displayName)
+                                        },
+                                        modifier =
+                                            Modifier.remoteFocusFrame(
+                                                RoundedCornerShape(10.dp)
+                                            )
+                                    )
+                                }
+                            }
+                        }
                     )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                } else {
+                    Column(
+                        Modifier.padding(
+                            horizontal = 16.dp,
+                            vertical = 12.dp
+                        ),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        UpdatePackage.entries.forEach { option ->
-                            FilterChip(
-                                selected = updatePackagePreference == option,
-                                onClick = {
-                                    AppUpdates.setUpdatePackage(option)
-                                    availableUpdate = null
-                                    updateMessage = "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
-                                },
-                                label = { Text(option.displayName) },
-                                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))
-                            )
+                        Text(
+                            "Update APK",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            updatePackageSummary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        FlowRow(
+                            horizontalArrangement =
+                                Arrangement.spacedBy(8.dp),
+                            verticalArrangement =
+                                Arrangement.spacedBy(8.dp)
+                        ) {
+                            UpdatePackage.entries.forEach { option ->
+                                FilterChip(
+                                    selected =
+                                        updatePackagePreference == option,
+                                    onClick = {
+                                        AppUpdates.setUpdatePackage(option)
+                                        availableUpdate = null
+                                        updateMessage =
+                                            "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
+                                    },
+                                    label = { Text(option.displayName) },
+                                    modifier = Modifier.remoteFocusFrame(
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                )
+                            }
                         }
                     }
                 }
+
                 HorizontalDivider()
-                ListItem(
-                    headlineContent = { Text("One-click update") },
-                    supportingContent = {
-                        Text(
-                            if (oneClickUpdating) {
-                                "Checking for an update…"
-                            } else {
-                                "Check now, download an available update, then open Android's installer"
-                            }
-                        )
-                    },
-                    leadingContent = { Icon(Icons.Default.SystemUpdateAlt, null) },
-                    trailingContent = {
+                ResponsiveSettingsOptionRow(
+                    icon = Icons.Default.SystemUpdateAlt,
+                    title = "One-click update",
+                    subtitle =
                         if (oneClickUpdating) {
-                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                            "Checking for an update…"
                         } else {
-                            Icon(Icons.Default.ChevronRight, "Run one-click update")
-                        }
-                    },
+                            "Check now, download an available update, then open Android's installer"
+                        },
                     modifier = Modifier
                         .focusRequester(oneClickUpdateRequester)
                         .remoteFocusFrame(RoundedCornerShape(14.dp))
@@ -1999,142 +2262,250 @@ internal fun ModernSettingsScreen(
                                 runOneClickUpdate()
                             }
                         },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    trailingContent = {
+                        if (oneClickUpdating) {
+                            CircularProgressIndicator(
+                                Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.ChevronRight,
+                                "Run one-click update"
+                            )
+                        }
+                    }
                 )
                 HorizontalDivider()
-                ListItem(
-                    headlineContent = { Text("NikTV ${BuildConfig.VERSION_NAME}") },
-                    supportingContent = {
-                        Column {
-                            Text(downloadStatus)
-                            if (downloadState !is UpdateDownloadState.Idle && updateMessage != null) {
-                                Text(updateMessage!!)
-                            }
+
+                val versionStatus =
+                    buildString {
+                        append(downloadStatus)
+                        if (
+                            downloadState !is UpdateDownloadState.Idle &&
+                            updateMessage != null
+                        ) {
+                            append(" · ")
+                            append(updateMessage)
                         }
-                    },
-                    leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
-                    trailingContent = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) },
-                    modifier = Modifier.focusRequester(versionRequester).remoteFocusFrame(RoundedCornerShape(14.dp)).clickable {
-                        if (!checkingUpdate && !oneClickUpdating) {
-                            checkingUpdate = true; updateMessage = "Checking for updates…"
-                            scope.launch {
-                                runCatching { AppUpdates.check() }
-                                    .onSuccess { update ->
-                                        availableUpdate = update
-                                        updateMessage = if (update == null) "You're up to date" else "Version ${update.version} is available"
+                    }
+
+                ResponsiveSettingsOptionRow(
+                    icon = Icons.Default.SystemUpdate,
+                    title = "NikTV ${BuildConfig.VERSION_NAME}",
+                    subtitle = versionStatus,
+                    modifier = Modifier
+                        .focusRequester(versionRequester)
+                        .remoteFocusFrame(RoundedCornerShape(14.dp))
+                        .clickable {
+                            if (!checkingUpdate && !oneClickUpdating) {
+                                checkingUpdate = true
+                                updateMessage = "Checking for updates…"
+                                scope.launch {
+                                    runCatching { AppUpdates.check() }
+                                        .onSuccess { update ->
+                                            availableUpdate = update
+                                            updateMessage =
+                                                if (update == null) {
+                                                    "You're up to date"
+                                                } else {
+                                                    "Version ${update.version} is available"
+                                                }
+                                        }
+                                        .onFailure {
+                                            updateMessage =
+                                                updateCheckFailureMessage(it)
+                                        }
+                                    checkingUpdate = false
+                                    if (availableUpdate == null) {
+                                        delay(80L)
+                                        runCatching {
+                                            versionRequester.requestFocus()
+                                        }
                                     }
-                                    .onFailure { updateMessage = updateCheckFailureMessage(it) }
-                                checkingUpdate = false
-                                if (availableUpdate == null) {
-                                    delay(80L)
-                                    runCatching { versionRequester.requestFocus() }
                                 }
                             }
+                        },
+                    trailingContent = {
+                        if (checkingUpdate) {
+                            CircularProgressIndicator(
+                                Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.ChevronRight,
+                                "Check for updates"
+                            )
                         }
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    }
                 )
+
+                val updateProgressModifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start =
+                            if (compactSettingsHeader) 56.dp else 16.dp,
+                        end = 16.dp
+                    )
+
                 when (val download = downloadState) {
                     is UpdateDownloadState.Queued -> {
-                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                        LinearProgressIndicator(updateProgressModifier)
                     }
                     is UpdateDownloadState.Downloading -> {
                         if (download.totalBytes != null) {
                             LinearProgressIndicator(
-                                progress = { (download.percent ?: 0) / 100f },
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                                progress = {
+                                    (download.percent ?: 0) / 100f
+                                },
+                                modifier = updateProgressModifier
                             )
                         } else {
-                            LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                            LinearProgressIndicator(updateProgressModifier)
                         }
                     }
                     is UpdateDownloadState.Paused -> {
                         if (download.totalBytes != null) {
                             LinearProgressIndicator(
                                 progress = {
-                                    (download.bytesDownloaded.toFloat() / download.totalBytes)
-                                        .coerceIn(0f, 1f)
+                                    (
+                                        download.bytesDownloaded.toFloat() /
+                                            download.totalBytes
+                                        ).coerceIn(0f, 1f)
                                 },
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                                modifier = updateProgressModifier
                             )
                         }
                     }
                     else -> Unit
                 }
+
                 downloadedBytes?.let { (bytes, total) ->
                     Text(
                         buildString {
-                            append("Downloaded ${formatDownloadBytes(bytes)}")
-                            total?.let { append(" of ${formatDownloadBytes(it)}") }
+                            append(
+                                "Downloaded ${formatDownloadBytes(bytes)}"
+                            )
+                            total?.let {
+                                append(" of ${formatDownloadBytes(it)}")
+                            }
                         },
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        Modifier.padding(
+                            start =
+                                if (compactSettingsHeader) 56.dp
+                                else 16.dp,
+                            end = 16.dp,
+                            top = 8.dp,
+                            bottom = 8.dp
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (downloadState is UpdateDownloadState.Ready ||
+
+                if (
+                    downloadState is UpdateDownloadState.Ready ||
                     downloadState is UpdateDownloadState.InstallerLaunched
                 ) {
-                    val version = when (val download = downloadState) {
-                        is UpdateDownloadState.Ready -> download.version
-                        is UpdateDownloadState.InstallerLaunched -> download.version
-                        else -> ""
-                    }
+                    val version =
+                        when (val download = downloadState) {
+                            is UpdateDownloadState.Ready ->
+                                download.version
+                            is UpdateDownloadState.InstallerLaunched ->
+                                download.version
+                            else -> ""
+                        }
                     Text(
                         "Saved in ${AppUpdates.savedLocation(version)}",
-                        Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        Modifier.padding(
+                            start =
+                                if (compactSettingsHeader) 56.dp
+                                else 16.dp,
+                            end = 16.dp,
+                            top = 4.dp,
+                            bottom = 4.dp
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     FlowRow(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                horizontal = 12.dp,
+                                vertical = 8.dp
+                            ),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(onClick = {
-                            downloadActionMessage = null
-                            runCatching { AppUpdates.install(context) }
-                                .onFailure { downloadActionMessage = it.message }
-                        }, modifier = Modifier.remoteFocusFrame()) { Text("Install") }
-                        OutlinedButton(onClick = {
-                            downloadActionMessage = null
-                            runCatching { AppUpdates.openDownloads(context) }
-                                .onFailure { downloadActionMessage = it.message }
-                        }, modifier = Modifier.remoteFocusFrame()) { Text("Open Downloads") }
+                        Button(
+                            onClick = {
+                                downloadActionMessage = null
+                                runCatching {
+                                    AppUpdates.install(context)
+                                }.onFailure {
+                                    downloadActionMessage = it.message
+                                }
+                            },
+                            modifier = Modifier.remoteFocusFrame()
+                        ) {
+                            Text("Install")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                downloadActionMessage = null
+                                runCatching {
+                                    AppUpdates.openDownloads(context)
+                                }.onFailure {
+                                    downloadActionMessage = it.message
+                                }
+                            },
+                            modifier = Modifier.remoteFocusFrame()
+                        ) {
+                            Text("Open Downloads")
+                        }
                     }
                 }
+
                 if (downloadState is UpdateDownloadState.Failed) {
                     Button(
                         onClick = {
-                            val failed = downloadState as UpdateDownloadState.Failed
-                            requestUpdateDownload(UpdateInfo(failed.version, failed.downloadUrl))
+                            val failed =
+                                downloadState as UpdateDownloadState.Failed
+                            requestUpdateDownload(
+                                UpdateInfo(
+                                    failed.version,
+                                    failed.downloadUrl
+                                )
+                            )
                         },
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).remoteFocusFrame()
-                    ) { Text("Retry download") }
+                        modifier = Modifier
+                            .padding(
+                                horizontal = 16.dp,
+                                vertical = 8.dp
+                            )
+                            .remoteFocusFrame()
+                    ) {
+                        Text("Retry download")
+                    }
                 }
+
                 HorizontalDivider()
-                ListItem(
-                    headlineContent = { Text("Delete older update APKs") },
-                    supportingContent = {
-                        Text(
-                            obsoleteApks?.let { cleanup ->
-                                if (cleanup.fileCount == 0) "No obsolete NikTV installers found"
-                                else "${cleanup.fileCount} installer${if (cleanup.fileCount == 1) "" else "s"} · ${formatDownloadBytes(cleanup.totalBytes)}"
-                            } ?: "Checking Downloads/NikTV…"
-                        )
-                    },
-                    leadingContent = { Icon(Icons.Default.DeleteSweep, null) },
-                    trailingContent = {
-                        if (cleaningObsoleteApks) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                    },
+                ResponsiveSettingsOptionRow(
+                    icon = Icons.Default.DeleteSweep,
+                    title = "Delete older update APKs",
+                    subtitle =
+                        obsoleteApks?.let { cleanup ->
+                            if (cleanup.fileCount == 0) {
+                                "No obsolete NikTV installers found"
+                            } else {
+                                "${cleanup.fileCount} installer${if (cleanup.fileCount == 1) "" else "s"} · ${formatDownloadBytes(cleanup.totalBytes)}"
+                            }
+                        } ?: "Checking Downloads/NikTV…",
                     modifier = Modifier
                         .remoteFocusFrame(RoundedCornerShape(14.dp))
-                        .clickable(
-                            // Keep this row in the TV focus graph even when
-                            // there is currently nothing to delete. A disabled
-                            // clickable is removed from D-pad traversal.
-                            enabled = !cleaningObsoleteApks
-                        ) {
+                        .clickable(enabled = !cleaningObsoleteApks) {
                             if ((obsoleteApks?.fileCount ?: 0) == 0) {
                                 apkCleanupMessage =
                                     if (obsoleteApks == null) {
@@ -2147,21 +2518,46 @@ internal fun ModernSettingsScreen(
                             cleaningObsoleteApks = true
                             apkCleanupMessage = null
                             scope.launch {
-                                runCatching { AppUpdates.deleteObsoleteDownloadedApks(context) }
-                                    .onSuccess { result ->
-                                        apkCleanupMessage = "Deleted ${result.deletedCount} installer${if (result.deletedCount == 1) "" else "s"} and reclaimed ${formatDownloadBytes(result.deletedBytes)}"
-                                        obsoleteApks = AppUpdates.obsoleteDownloadedApks(context)
-                                    }
-                                    .onFailure { apkCleanupMessage = "Could not delete old installers: ${it.message}" }
+                                runCatching {
+                                    AppUpdates.deleteObsoleteDownloadedApks(
+                                        context
+                                    )
+                                }.onSuccess { result ->
+                                    apkCleanupMessage =
+                                        "Deleted ${result.deletedCount} installer${if (result.deletedCount == 1) "" else "s"} and reclaimed ${formatDownloadBytes(result.deletedBytes)}"
+                                    obsoleteApks =
+                                        AppUpdates.obsoleteDownloadedApks(
+                                            context
+                                        )
+                                }.onFailure {
+                                    apkCleanupMessage =
+                                        "Could not delete old installers: ${it.message}"
+                                }
                                 cleaningObsoleteApks = false
                             }
                         },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    trailingContent = {
+                        if (cleaningObsoleteApks) {
+                            CircularProgressIndicator(
+                                Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.ChevronRight,
+                                "Delete older update APKs"
+                            )
+                        }
+                    }
                 )
+
                 apkCleanupMessage?.let {
                     Text(
                         it,
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        Modifier.padding(
+                            horizontal = 16.dp,
+                            vertical = 8.dp
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2169,7 +2565,10 @@ internal fun ModernSettingsScreen(
                 downloadActionMessage?.let {
                     Text(
                         it,
-                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        Modifier.padding(
+                            horizontal = 16.dp,
+                            vertical = 8.dp
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -3697,13 +4096,21 @@ private fun CompactSettingsOptionRow(
     title: String,
     subtitle: String,
     modifier: Modifier = Modifier,
+    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    horizontalPadding: Dp = 16.dp,
+    verticalPadding: Dp = 12.dp,
     trailingContent: @Composable RowScope.() -> Unit = {},
     belowContent: @Composable ColumnScope.() -> Unit = {}
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(
+                horizontal = horizontalPadding,
+                vertical = verticalPadding
+            )
     ) {
         Row(
             Modifier.fillMaxWidth(),
@@ -3718,7 +4125,7 @@ private fun CompactSettingsOptionRow(
                     icon,
                     contentDescription = null,
                     modifier = Modifier.size(22.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = iconTint
                 )
             }
 
@@ -3730,12 +4137,12 @@ private fun CompactSettingsOptionRow(
                     title,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = titleColor
                 )
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = subtitleColor
                 )
             }
 
@@ -3743,6 +4150,54 @@ private fun CompactSettingsOptionRow(
         }
 
         belowContent()
+    }
+}
+
+@Composable
+private fun ResponsiveSettingsOptionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    trailingContent: @Composable RowScope.() -> Unit = {}
+) {
+    val compact = LocalConfiguration.current.screenWidthDp < 600
+    if (compact) {
+        CompactSettingsOptionRow(
+            icon = icon,
+            title = title,
+            subtitle = subtitle,
+            modifier = modifier,
+            iconTint = iconTint,
+            titleColor = titleColor,
+            subtitleColor = subtitleColor,
+            trailingContent = trailingContent
+        )
+    } else {
+        ListItem(
+            headlineContent = {
+                Text(title, color = titleColor)
+            },
+            supportingContent = {
+                Text(subtitle, color = subtitleColor)
+            },
+            leadingContent = {
+                Icon(icon, null, tint = iconTint)
+            },
+            trailingContent = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = trailingContent
+                )
+            },
+            modifier = modifier,
+            colors = ListItemDefaults.colors(
+                containerColor = Color.Transparent
+            )
+        )
     }
 }
 
@@ -3968,13 +4423,28 @@ internal fun SettingsSection(
 }
 
 @Composable
-internal fun SettingsValueRow(icon: ImageVector, label: String, value: String) {
-    ListItem(
-        headlineContent = { Text(label) },
-        supportingContent = { Text(value, maxLines = 2) },
-        leadingContent = { Icon(icon, null) },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-    )
+internal fun SettingsValueRow(
+    icon: ImageVector,
+    label: String,
+    value: String
+) {
+    val compact = LocalConfiguration.current.screenWidthDp < 600
+    if (compact) {
+        CompactSettingsOptionRow(
+            icon = icon,
+            title = label,
+            subtitle = value
+        )
+    } else {
+        ListItem(
+            headlineContent = { Text(label) },
+            supportingContent = { Text(value, maxLines = 2) },
+            leadingContent = { Icon(icon, null) },
+            colors = ListItemDefaults.colors(
+                containerColor = Color.Transparent
+            )
+        )
+    }
 }
 
 @Composable
@@ -4060,28 +4530,31 @@ internal fun SettingsBottomNavigation(
 
 @Composable
 internal fun TmdbCredentialSettingsSection() {
-    var revealCredentials by rememberSaveable { mutableStateOf(false) }
+    var revealCredentials by rememberSaveable {
+        mutableStateOf(false)
+    }
     val apiKey = BuildConfig.TMDB_API_KEY.trim()
     val readAccessToken = BuildConfig.TMDB_READ_ACCESS_TOKEN.trim()
     val openSubtitlesKey = BuildConfig.OPEN_SUBTITLES_KEY.trim()
 
     SettingsSection("Metadata and subtitle diagnostics") {
-        ListItem(
-            headlineContent = { Text("Reveal embedded credentials") },
-            supportingContent = {
-                Text("Credentials are hidden by default because anyone viewing this screen can copy them.")
-            },
-            leadingContent = {
-                Icon(if (revealCredentials) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
-            },
+        ResponsiveSettingsOptionRow(
+            icon =
+                if (revealCredentials) {
+                    Icons.Default.VisibilityOff
+                } else {
+                    Icons.Default.Visibility
+                },
+            title = "Reveal embedded credentials",
+            subtitle =
+                "Credentials are hidden by default because anyone viewing this screen can copy them.",
             trailingContent = {
                 Switch(
                     checked = revealCredentials,
                     onCheckedChange = { revealCredentials = it },
                     modifier = Modifier.remoteFocusFrame(CircleShape)
                 )
-            },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            }
         )
         HorizontalDivider()
         SelectionContainer {
@@ -4089,19 +4562,25 @@ internal fun TmdbCredentialSettingsSection() {
                 SettingsValueRow(
                     Icons.Default.Key,
                     "TMDB API key",
-                    apiKey.credentialDiagnosticValue(revealCredentials)
+                    apiKey.credentialDiagnosticValue(
+                        revealCredentials
+                    )
                 )
                 HorizontalDivider()
                 SettingsValueRow(
                     Icons.Default.VpnKey,
                     "TMDB read access token",
-                    readAccessToken.credentialDiagnosticValue(revealCredentials)
+                    readAccessToken.credentialDiagnosticValue(
+                        revealCredentials
+                    )
                 )
                 HorizontalDivider()
                 SettingsValueRow(
                     Icons.Default.Subtitles,
                     "OpenSubtitles API key",
-                    openSubtitlesKey.credentialDiagnosticValue(revealCredentials)
+                    openSubtitlesKey.credentialDiagnosticValue(
+                        revealCredentials
+                    )
                 )
             }
         }
