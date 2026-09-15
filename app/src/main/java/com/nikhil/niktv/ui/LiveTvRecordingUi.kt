@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -81,6 +82,7 @@ internal fun LiveTvRecordingDialog(
     onDismiss: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val profileFlow = remember(context) {
         com.nikhil.niktv.data.ProfileStore(context).activeProfile
     }
@@ -132,27 +134,28 @@ internal fun LiveTvRecordingDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 560.dp)
-                .heightIn(max = 620.dp),
-            shape = RoundedCornerShape(22.dp),
+                .widthIn(max = 440.dp)
+                .fillMaxWidth(if (configuration.screenWidthDp < 600) 0.88f else 0.94f)
+                .heightIn(max = 540.dp)
+                .fillMaxHeight(if (configuration.screenHeightDp < 500) 0.82f else 0.72f),
+            shape = RoundedCornerShape(18.dp),
             color = Color(0xF51A1A1A)
         ) {
             Column(
                 Modifier
                     .verticalScroll(rememberScrollState())
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 Text(
                     "Live TV recording",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
                 Text(
                     channel.title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.86f),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis

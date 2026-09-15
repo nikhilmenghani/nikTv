@@ -1224,6 +1224,7 @@ class LiveTvRecordingService : Service() {
         val playlistUrl =
             resolveMediaPlaylist(runtime, initialUrl)
         val written = LinkedHashSet<String>()
+        var consecutiveFailures = 0
 
         while (currentCoroutineContext().isActive) {
             while (
@@ -1237,8 +1238,13 @@ class LiveTvRecordingService : Service() {
                 getText(runtime, playlistUrl)
             } catch (error: java.io.IOException) {
                 if (runtime.paused) continue
-                throw error
+                if (!error.isRetriableStreamFailure() || ++consecutiveFailures > MAX_STREAM_RETRIES) {
+                    throw error
+                }
+                delay(streamRetryDelay(consecutiveFailures))
+                continue
             }
+            consecutiveFailures = 0
             val lines =
                 playlist.lineSequence()
                     .map(String::trim)
@@ -1257,15 +1263,35 @@ class LiveTvRecordingService : Service() {
                     .forEach { add(resolve(playlistUrl, it)) }
             }
 
+            var segmentFailed = false
             for (segment in segments) {
-                if (!written.add(segment)) continue
+                if (segment in written) continue
                 if (runtime.paused) break
                 val appended = try {
                     appendUrl(runtime, segment, output)
                 } catch (error: java.io.IOException) {
-                    if (runtime.paused) 0L else throw error
+                    if (runtime.paused) {
+                        0L
+                    } else if (error.isRetriableStreamFailure()) {
+                        consecutiveFailures++
+                        if (consecutiveFailures > MAX_STREAM_RETRIES) throw error
+                        segmentFailed = true
+                        0L
+                    } else {
+                        throw error
+                    }
                 }
-                runtime.bytes += appended
+                if (!segmentFailed && !runtime.paused) {
+                    runtime.bytes += appended
+                    written.add(segment)
+                    consecutiveFailures = 0
+                }
+                if (segmentFailed) break
+            }
+
+            if (segmentFailed) {
+                delay(streamRetryDelay(consecutiveFailures))
+                continue
             }
 
             if (lines.any { it == "#EXT-X-ENDLIST" }) return
@@ -1312,6 +1338,7 @@ class LiveTvRecordingService : Service() {
         output: java.io.OutputStream
     ) {
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE * 8)
+        var consecutiveFailures = 0
 
         while (currentCoroutineContext().isActive) {
             while (
@@ -1324,6 +1351,7 @@ class LiveTvRecordingService : Service() {
             val request = streamRequest(url)
             val call = runtime.client.newCall(request)
             runtime.activeCall = call
+            val bytesBeforeAttempt = runtime.bytes
             try {
                 call.execute().use { response ->
                     requireSuccessful(response, "Stream")
@@ -1340,9 +1368,14 @@ class LiveTvRecordingService : Service() {
                         runtime.bytes += count
                     }
                 }
+                consecutiveFailures = 0
             } catch (error: java.io.IOException) {
                 if (!runtime.paused && currentCoroutineContext().isActive) {
-                    throw error
+                    if (!error.isRetriableStreamFailure()) throw error
+                    consecutiveFailures =
+                        if (runtime.bytes > bytesBeforeAttempt) 1
+                        else consecutiveFailures + 1
+                    if (consecutiveFailures > MAX_STREAM_RETRIES) throw error
                 }
             } finally {
                 if (runtime.activeCall === call) {
@@ -1354,7 +1387,13 @@ class LiveTvRecordingService : Service() {
                 !runtime.paused &&
                 currentCoroutineContext().isActive
             ) {
-                delay(350L)
+                delay(
+                    if (consecutiveFailures > 0) {
+                        streamRetryDelay(consecutiveFailures)
+                    } else {
+                        350L
+                    }
+                )
             }
         }
     }
@@ -1717,6 +1756,7 @@ class LiveTvRecordingService : Service() {
         private const val SUMMARY_NOTIFICATION_ID = 2114
         private const val EXTEND_STEP_MILLIS =
             15L * 60L * 1_000L
+        private const val MAX_STREAM_RETRIES = 8
 
         internal val runningRecordingIds =
             ConcurrentHashMap.newKeySet<String>()
@@ -1789,6 +1829,12 @@ private fun requireSuccessful(
         "$label returned HTTP ${response.code}"
     )
 }
+
+private fun java.io.IOException.isRetriableStreamFailure(): Boolean =
+    this !is RecordingHttpException
+
+private fun streamRetryDelay(attempt: Int): Long =
+    (500L * (1L shl (attempt - 1).coerceIn(0, 4))).coerceAtMost(8_000L)
 
 private fun friendlyFailure(
     error: Throwable
