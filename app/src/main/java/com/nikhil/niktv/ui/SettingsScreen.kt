@@ -513,7 +513,7 @@ internal fun ModernSettingsScreen(
     val compactSettingsHeader = settingsConfiguration.screenWidthDp < 600
     val settingsDestinations = SettingsDestination.entries
     var selectedSettingsDestination by remember {
-        mutableStateOf(SettingsDestination.APPEARANCE)
+        mutableStateOf(SettingsDestination.GENERAL)
     }
     val settingsRailRequesters = remember {
         SettingsDestination.entries.associateWith { FocusRequester() }
@@ -648,41 +648,37 @@ internal fun ModernSettingsScreen(
         val playbackEngineRequester = remember { FocusRequester() }
         val seriesSeasonRequester = remember { FocusRequester() }
         val catalogRefreshRequester = remember { FocusRequester() }
+        val initialCatalogItemsRequester = remember { FocusRequester() }
         val appBrightnessStep =
             (AppBrightnessPreferences.MAX - AppBrightnessPreferences.MIN) /
                 17f
 
-        if (showMobileAppearance) SettingsSection("Mobile controls") {
-            val onScreenDpad by rememberOnScreenDpadEnabled()
-            CompactSettingsOptionRow(
-                icon = Icons.Default.Tune,
-                title = "On-screen D-pad",
-                subtitle =
-                    "Show a movable remote control overlay for testing focus navigation on this phone.",
-                trailingContent = {
-                    Switch(
-                        checked = onScreenDpad,
-                        onCheckedChange = {
-                            OnScreenDpadPreferences.setEnabled(context, it)
-                        },
-                        modifier = Modifier
-                            .focusRequester(mobileDpadRequester)
-                            .focusProperties {
-                                down = followSystemBrightnessRequester
-                            }
-                            .remoteFocusFrame(CircleShape)
-                    )
-                }
-            )
-        }
-        PlaybackEngineSettingsSection(
-            selectedEngine = state.playbackEngine,
-            setPlaybackEngine = setPlaybackEngine,
-            compact = compactSettingsHeader,
-            entryRequester = playbackEngineRequester,
-            downRequester = seriesSeasonRequester
-        )
-        SettingsSection("Display and screen") {
+        SettingsSection("Device & display") {
+            if (showMobileAppearance) {
+                val onScreenDpad by rememberOnScreenDpadEnabled()
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.Tune,
+                    title = "On-screen D-pad",
+                    subtitle =
+                        "Show a movable remote control overlay for testing focus navigation on this phone.",
+                    trailingContent = {
+                        Switch(
+                            checked = onScreenDpad,
+                            onCheckedChange = {
+                                OnScreenDpadPreferences.setEnabled(context, it)
+                            },
+                            modifier = Modifier
+                                .focusRequester(mobileDpadRequester)
+                                .focusProperties {
+                                    down = followSystemBrightnessRequester
+                                }
+                                .remoteFocusFrame(CircleShape)
+                        )
+                    }
+                )
+
+                HorizontalDivider()
+            }
             if (compactSettingsHeader) {
                 CompactSettingsOptionRow(
                     icon = Icons.Default.BrightnessAuto,
@@ -842,7 +838,8 @@ internal fun ModernSettingsScreen(
 
                 CompactOrientationSetting(
                     entryRequester = orientationRequester,
-                    upRequester = keepAwakeRequester
+                    upRequester = keepAwakeRequester,
+                    downRequester = playbackEngineRequester
                 )
             } else {
                 ListItem(
@@ -952,6 +949,304 @@ internal fun ModernSettingsScreen(
                     )
                 )
             }
+
+        }
+        SettingsSection("Playback") {
+            PlaybackEngineSettingsContent(
+                selectedEngine = state.playbackEngine,
+                setPlaybackEngine = setPlaybackEngine,
+                compact = compactSettingsHeader,
+                entryRequester = playbackEngineRequester,
+                upRequester = orientationRequester,
+                downRequester = seriesSeasonRequester
+            )
+            HorizontalDivider()
+            if (compactSettingsHeader) {
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.VideoLibrary,
+                    title = "Default season",
+                    subtitle =
+                        "Used when a series has no remembered season. NikTV loads one season at a time.",
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        SingleChoiceSegmentedButtonRow(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, end = 2.dp)
+                        ) {
+                            SeriesStartSeason.entries
+                                .forEachIndexed { index, option ->
+                                    val shape =
+                                        uniformSegmentShape(
+                                            index,
+                                            SeriesStartSeason.entries.size
+                                        )
+                                    val selected =
+                                        state.seriesStartSeason == option
+                                    SegmentedButton(
+                                        selected = selected,
+                                        onClick = {
+                                            setSeriesStartSeason(option)
+                                        },
+                                        modifier = Modifier
+                                            .then(
+                                                if (selected) {
+                                                    Modifier.focusRequester(
+                                                        seriesSeasonRequester
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                            .focusProperties {
+                                                up = playbackEngineRequester
+                                                down = catalogRefreshRequester
+                                                }
+                                            .remoteFocusFrame(shape),
+                                        shape = shape
+                                    ) {
+                                        Text(
+                                            if (
+                                                option ==
+                                                SeriesStartSeason.FIRST
+                                            ) {
+                                                "First season"
+                                            } else {
+                                                "Latest season"
+                                            },
+                                            style =
+                                                MaterialTheme.typography
+                                                    .labelLarge
+                                        )
+                                    }
+                                }
+                        }
+                    }
+                )
+            } else {
+                Column(
+                    Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Default season",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        "Used only when a series has no remembered season. NikTV loads one season at a time.",
+                        color =
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier.fillMaxWidth()
+                    ) {
+                        SeriesStartSeason.entries
+                            .forEachIndexed { index, option ->
+                                val shape =
+                                    uniformSegmentShape(
+                                        index,
+                                        SeriesStartSeason.entries.size
+                                    )
+                                SegmentedButton(
+                                    selected =
+                                        state.seriesStartSeason ==
+                                            option,
+                                    onClick = {
+                                        setSeriesStartSeason(option)
+                                    },
+                                    modifier =
+                                        Modifier.remoteFocusFrame(shape),
+                                    shape = shape
+                                ) {
+                                    Text(
+                                        if (
+                                            option ==
+                                            SeriesStartSeason.FIRST
+                                        ) {
+                                            "First season"
+                                        } else {
+                                            "Latest season"
+                                        }
+                                    )
+                                }
+                            }
+                    }
+                }
+            }
+
+        }
+        SettingsSection("Storage & refresh") {
+            if (compactSettingsHeader) {
+                val refreshOptions =
+                    listOf(
+                        30 to "30m",
+                        60 to "1h",
+                        360 to "6h",
+                        1440 to "24h"
+                    )
+
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.Refresh,
+                    title = "Refresh interval",
+                    subtitle =
+                        "Choose how long categories and media lists stay cached on this device.",
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        SingleChoiceSegmentedButtonRow(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, end = 2.dp)
+                        ) {
+                            refreshOptions.forEachIndexed {
+                                    index,
+                                    (minutes, label) ->
+                                val shape =
+                                    uniformSegmentShape(
+                                        index,
+                                        refreshOptions.size
+                                    )
+                                val selected =
+                                    state.cacheIntervalMinutes == minutes
+                                SegmentedButton(
+                                    selected = selected,
+                                    onClick = {
+                                        setCacheIntervalMinutes(minutes)
+                                    },
+                                    modifier = Modifier
+                                        .then(
+                                            if (selected) {
+                                                Modifier.focusRequester(
+                                                    catalogRefreshRequester
+                                                )
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .focusProperties {
+                                            up = seriesSeasonRequester
+                                            down = initialCatalogItemsRequester
+                                        }
+                                        .remoteFocusFrame(shape),
+                                    shape = shape
+                                ) {
+                                    Text(
+                                        label,
+                                        style =
+                                            MaterialTheme.typography
+                                                .labelLarge
+                                    )
+                                }
+                            }
+                        }
+                    }
+                )
+            } else {
+                Column(
+                    Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Refresh interval",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        "Categories and media lists are stored on this device and refreshed after this interval.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color =
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    SingleChoiceSegmentedButtonRow(
+                        Modifier.fillMaxWidth()
+                    ) {
+                        listOf(
+                            30 to "30m",
+                            60 to "1h",
+                            360 to "6h",
+                            1440 to "24h"
+                        ).forEachIndexed { index, (minutes, label) ->
+                            val intervalShape =
+                                uniformSegmentShape(index, 4)
+                            SegmentedButton(
+                                selected =
+                                    state.cacheIntervalMinutes == minutes,
+                                onClick = {
+                                    setCacheIntervalMinutes(minutes)
+                                },
+                                modifier =
+                                    Modifier.remoteFocusFrame(
+                                        intervalShape
+                                    ),
+                                shape = intervalShape
+                            ) {
+                                Text(label)
+                            }
+                        }
+                    }
+                }
+            }
+            if (state.savedProfile != null) {
+                val itemOptions = listOf(14, 28, 42, 56)
+                if (compactSettingsHeader) {
+                    CompactSettingsOptionRow(
+                        icon = Icons.Default.GridView,
+                        title = "Initial media load",
+                        subtitle = "Choose how many IPTV items load when a category opens.",
+                        belowContent = {
+                            Spacer(Modifier.height(8.dp))
+                            SingleChoiceSegmentedButtonRow(
+                                Modifier.fillMaxWidth().padding(start = 40.dp, end = 2.dp)
+                            ) {
+                                itemOptions.forEachIndexed { index, count ->
+                                    val shape = uniformSegmentShape(index, itemOptions.size)
+                                    SegmentedButton(
+                                        selected = state.initialCatalogItems == count,
+                                        onClick = { setInitialCatalogItems(count) },
+                                        modifier = Modifier
+                                            .then(
+                                                if (state.initialCatalogItems == count) {
+                                                    Modifier.focusRequester(
+                                                        initialCatalogItemsRequester
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                            .focusProperties {
+                                                up = catalogRefreshRequester
+                                            }
+                                            .remoteFocusFrame(shape),
+                                        shape = shape
+                                    ) { Text(count.toString()) }
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    Column(
+                        Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Initial media load", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Choose how many IPTV items load when a category opens.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            itemOptions.forEachIndexed { index, count ->
+                                val shape = uniformSegmentShape(index, itemOptions.size)
+                                SegmentedButton(
+                                    selected = state.initialCatalogItems == count,
+                                    onClick = { setInitialCatalogItems(count) },
+                                    modifier = Modifier.remoteFocusFrame(shape),
+                                    shape = shape
+                                ) { Text(count.toString()) }
+                            }
+                        }
+                    }
+                }
+            }
+
         }
         SettingsSection("Profiles") {
             if (!compactSettingsHeader) {
@@ -1112,7 +1407,7 @@ internal fun ModernSettingsScreen(
             !compactSettingsHeader &&
             (
                 activeSettingsDestination == null ||
-                    activeSettingsDestination == SettingsDestination.APPEARANCE
+                    activeSettingsDestination == SettingsDestination.GENERAL
                 )
         ) {
             OrientationSettingsSection(Modifier.focusGroup())
@@ -1122,7 +1417,7 @@ internal fun ModernSettingsScreen(
             profile != null &&
             (
                 activeSettingsDestination == null ||
-                    activeSettingsDestination == SettingsDestination.PLAYBACK
+                    activeSettingsDestination == SettingsDestination.GENERAL
                 )
         ) {
             PlaybackDesignSettingsSection(
@@ -1179,9 +1474,35 @@ internal fun ModernSettingsScreen(
                 "Device MAC Address",
                 deviceMacAddress
             )
+
+            HorizontalDivider()
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.Refresh,
+                title = "Re-authenticate",
+                subtitle =
+                    "Request a fresh session token using the saved profile",
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(onClick = reauthenticate),
+                trailingContent = {
+                    Icon(Icons.Default.ChevronRight, "Re-authenticate")
+                }
+            )
+            HorizontalDivider()
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.Edit,
+                title = "Edit connection",
+                subtitle = "Change portal address or credentials",
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(onClick = editProfile),
+                trailingContent = {
+                    Icon(Icons.Default.ChevronRight, "Edit connection")
+                }
+            )
+
         }
-        TmdbCredentialSettingsSection()
-        SettingsSection("Backup and restore") {
+SettingsSection("Backup and restore") {
             val backupModes =
                 listOf(
                     com.nikhil.niktv.data.BackupMode.GITHUB to "GitHub",
@@ -1852,322 +2173,6 @@ internal fun ModernSettingsScreen(
             )
         }
 
-        SettingsSection("Connection actions") {
-            ResponsiveSettingsOptionRow(
-                icon = Icons.Default.Refresh,
-                title = "Re-authenticate",
-                subtitle =
-                    "Request a fresh session token using the saved profile",
-                modifier = Modifier
-                    .remoteFocusFrame(RoundedCornerShape(14.dp))
-                    .clickable(onClick = reauthenticate),
-                trailingContent = {
-                    Icon(Icons.Default.ChevronRight, "Re-authenticate")
-                }
-            )
-            HorizontalDivider()
-            ResponsiveSettingsOptionRow(
-                icon = Icons.Default.Edit,
-                title = "Edit connection",
-                subtitle = "Change portal address or credentials",
-                modifier = Modifier
-                    .remoteFocusFrame(RoundedCornerShape(14.dp))
-                    .clickable(onClick = editProfile),
-                trailingContent = {
-                    Icon(Icons.Default.ChevronRight, "Edit connection")
-                }
-            )
-        }
-        SettingsSection("Danger zone") {
-            ResponsiveSettingsOptionRow(
-                icon = Icons.AutoMirrored.Filled.Logout,
-                title = "Clear all app data",
-                subtitle =
-                    "Remove every profile, cache, favorite, recent item, and session",
-                iconTint = MaterialTheme.colorScheme.error,
-                titleColor = MaterialTheme.colorScheme.error,
-                subtitleColor =
-                    MaterialTheme.colorScheme.error.copy(alpha = .78f),
-                modifier = Modifier
-                    .remoteFocusFrame(RoundedCornerShape(14.dp))
-                    .clickable(onClick = logout),
-                trailingContent = {
-                    Icon(
-                        Icons.Default.ChevronRight,
-                        "Clear all app data",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            )
-        }
-        SettingsSection("Catalog cache") {
-            if (compactSettingsHeader) {
-                val refreshOptions =
-                    listOf(
-                        30 to "30m",
-                        60 to "1h",
-                        360 to "6h",
-                        1440 to "24h"
-                    )
-
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.Refresh,
-                    title = "Refresh interval",
-                    subtitle =
-                        "Choose how long categories and media lists stay cached on this device.",
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        SingleChoiceSegmentedButtonRow(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, end = 2.dp)
-                        ) {
-                            refreshOptions.forEachIndexed {
-                                    index,
-                                    (minutes, label) ->
-                                val shape =
-                                    uniformSegmentShape(
-                                        index,
-                                        refreshOptions.size
-                                    )
-                                val selected =
-                                    state.cacheIntervalMinutes == minutes
-                                SegmentedButton(
-                                    selected = selected,
-                                    onClick = {
-                                        setCacheIntervalMinutes(minutes)
-                                    },
-                                    modifier = Modifier
-                                        .then(
-                                            if (selected) {
-                                                Modifier.focusRequester(
-                                                    catalogRefreshRequester
-                                                )
-                                            } else {
-                                                Modifier
-                                            }
-                                        )
-                                        .remoteFocusFrame(shape),
-                                    shape = shape
-                                ) {
-                                    Text(
-                                        label,
-                                        style =
-                                            MaterialTheme.typography
-                                                .labelLarge
-                                    )
-                                }
-                            }
-                        }
-                    }
-                )
-            } else {
-                Column(
-                    Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "Refresh interval",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        "Categories and media lists are stored on this device and refreshed after this interval.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color =
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier.fillMaxWidth()
-                    ) {
-                        listOf(
-                            30 to "30m",
-                            60 to "1h",
-                            360 to "6h",
-                            1440 to "24h"
-                        ).forEachIndexed { index, (minutes, label) ->
-                            val intervalShape =
-                                uniformSegmentShape(index, 4)
-                            SegmentedButton(
-                                selected =
-                                    state.cacheIntervalMinutes == minutes,
-                                onClick = {
-                                    setCacheIntervalMinutes(minutes)
-                                },
-                                modifier =
-                                    Modifier.remoteFocusFrame(
-                                        intervalShape
-                                    ),
-                                shape = intervalShape
-                            ) {
-                                Text(label)
-                            }
-                        }
-                    }
-                }
-            }
-            if (state.savedProfile != null) {
-                val itemOptions = listOf(14, 28, 42, 56)
-                if (compactSettingsHeader) {
-                    CompactSettingsOptionRow(
-                        icon = Icons.Default.GridView,
-                        title = "Initial media load",
-                        subtitle = "Choose how many IPTV items load when a category opens.",
-                        belowContent = {
-                            Spacer(Modifier.height(8.dp))
-                            SingleChoiceSegmentedButtonRow(
-                                Modifier.fillMaxWidth().padding(start = 40.dp, end = 2.dp)
-                            ) {
-                                itemOptions.forEachIndexed { index, count ->
-                                    val shape = uniformSegmentShape(index, itemOptions.size)
-                                    SegmentedButton(
-                                        selected = state.initialCatalogItems == count,
-                                        onClick = { setInitialCatalogItems(count) },
-                                        modifier = Modifier.remoteFocusFrame(shape),
-                                        shape = shape
-                                    ) { Text(count.toString()) }
-                                }
-                            }
-                        }
-                    )
-                } else {
-                    Column(
-                        Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text("Initial media load", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Choose how many IPTV items load when a category opens.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                            itemOptions.forEachIndexed { index, count ->
-                                val shape = uniformSegmentShape(index, itemOptions.size)
-                                SegmentedButton(
-                                    selected = state.initialCatalogItems == count,
-                                    onClick = { setInitialCatalogItems(count) },
-                                    modifier = Modifier.remoteFocusFrame(shape),
-                                    shape = shape
-                                ) { Text(count.toString()) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        SettingsSection("Series") {
-            if (compactSettingsHeader) {
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.VideoLibrary,
-                    title = "Default season",
-                    subtitle =
-                        "Used when a series has no remembered season. NikTV loads one season at a time.",
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        SingleChoiceSegmentedButtonRow(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, end = 2.dp)
-                        ) {
-                            SeriesStartSeason.entries
-                                .forEachIndexed { index, option ->
-                                    val shape =
-                                        uniformSegmentShape(
-                                            index,
-                                            SeriesStartSeason.entries.size
-                                        )
-                                    val selected =
-                                        state.seriesStartSeason == option
-                                    SegmentedButton(
-                                        selected = selected,
-                                        onClick = {
-                                            setSeriesStartSeason(option)
-                                        },
-                                        modifier = Modifier
-                                            .then(
-                                                if (selected) {
-                                                    Modifier.focusRequester(
-                                                        seriesSeasonRequester
-                                                    )
-                                                } else {
-                                                    Modifier
-                                                }
-                                            )
-                                            .focusProperties {
-                                                up = playbackEngineRequester
-                                            }
-                                            .remoteFocusFrame(shape),
-                                        shape = shape
-                                    ) {
-                                        Text(
-                                            if (
-                                                option ==
-                                                SeriesStartSeason.FIRST
-                                            ) {
-                                                "First season"
-                                            } else {
-                                                "Latest season"
-                                            },
-                                            style =
-                                                MaterialTheme.typography
-                                                    .labelLarge
-                                        )
-                                    }
-                                }
-                        }
-                    }
-                )
-            } else {
-                Column(
-                    Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "Default season",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        "Used only when a series has no remembered season. NikTV loads one season at a time.",
-                        color =
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier.fillMaxWidth()
-                    ) {
-                        SeriesStartSeason.entries
-                            .forEachIndexed { index, option ->
-                                val shape =
-                                    uniformSegmentShape(
-                                        index,
-                                        SeriesStartSeason.entries.size
-                                    )
-                                SegmentedButton(
-                                    selected =
-                                        state.seriesStartSeason ==
-                                            option,
-                                    onClick = {
-                                        setSeriesStartSeason(option)
-                                    },
-                                    modifier =
-                                        Modifier.remoteFocusFrame(shape),
-                                    shape = shape
-                                ) {
-                                    Text(
-                                        if (
-                                            option ==
-                                            SeriesStartSeason.FIRST
-                                        ) {
-                                            "First season"
-                                        } else {
-                                            "Latest season"
-                                        }
-                                    )
-                                }
-                            }
-                    }
-                }
-            }
-        }
         SettingsSection("App updates") {
             Column {
                 ResponsiveSettingsOptionRow(
@@ -2632,6 +2637,30 @@ internal fun ModernSettingsScreen(
                     )
                 }
             }
+        }
+        TmdbCredentialSettingsSection()
+        SettingsSection("Data & reset") {
+            ResponsiveSettingsOptionRow(
+                icon = Icons.AutoMirrored.Filled.Logout,
+                title = "Clear all app data",
+                subtitle =
+                    "Remove every profile, cache, favorite, recent item, and session",
+                iconTint = MaterialTheme.colorScheme.error,
+                titleColor = MaterialTheme.colorScheme.error,
+                subtitleColor =
+                    MaterialTheme.colorScheme.error.copy(alpha = .78f),
+                modifier = Modifier
+                    .remoteFocusFrame(RoundedCornerShape(14.dp))
+                    .clickable(onClick = logout),
+                trailingContent = {
+                    Icon(
+                        Icons.Default.ChevronRight,
+                        "Clear all app data",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            )
+
         }
         if (
             LocalSettingsDestination.current ==
@@ -3538,165 +3567,167 @@ internal fun LiveTvPlaybackScreen(
 }
 
 @Composable
-internal fun PlaybackEngineSettingsSection(
+internal fun PlaybackEngineSettingsContent(
     selectedEngine: PlaybackEngine,
     setPlaybackEngine: (PlaybackEngine) -> Unit,
     compact: Boolean,
     entryRequester: FocusRequester,
+    upRequester: FocusRequester? = null,
     downRequester: FocusRequester
 ) {
-    SettingsSection("Default media player") {
-        val engines = listOf(
-            Triple(
-                PlaybackEngine.AUTO,
-                "Auto",
-                "Learn compatibility automatically and use VLC when needed."
-            ),
-            Triple(
-                PlaybackEngine.MEDIA3,
-                "ExoPlayer",
-                "Use NikTV decoder fallback and recovery."
-            ),
-            Triple(
-                PlaybackEngine.VLC,
-                "VLC",
-                "Use software decoding and broad format compatibility."
-            )
+    val engines = listOf(
+        Triple(
+            PlaybackEngine.AUTO,
+            "Auto",
+            "Learn compatibility automatically and use VLC when needed."
+        ),
+        Triple(
+            PlaybackEngine.MEDIA3,
+            "ExoPlayer",
+            "Use NikTV decoder fallback and recovery."
+        ),
+        Triple(
+            PlaybackEngine.VLC,
+            "VLC",
+            "Use software decoding and broad format compatibility."
         )
+    )
 
-        if (compact) {
-            val selectedDescription =
-                engines.firstOrNull { it.first == selectedEngine }
-                    ?.third
-                    ?: "Choose the playback engine NikTV should use."
+    if (compact) {
+        val selectedDescription =
+            engines.firstOrNull { it.first == selectedEngine }
+                ?.third
+                ?: "Choose the playback engine NikTV should use."
 
-            CompactSettingsOptionRow(
-                icon = Icons.Default.PlayCircle,
-                title = "Playback engine",
-                subtitle = selectedDescription,
-                belowContent = {
-                    Spacer(Modifier.height(8.dp))
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = 40.dp, end = 2.dp)
-                    ) {
-                        engines.forEachIndexed {
-                                index,
-                                (engine, label, _) ->
-                            val shape =
-                                uniformSegmentShape(
-                                    index,
-                                    engines.size
-                                )
-                            val selected =
-                                selectedEngine == engine
-                            SegmentedButton(
-                                selected = selected,
-                                onClick = {
-                                    setPlaybackEngine(engine)
-                                },
-                                modifier = Modifier
-                                    .then(
-                                        if (selected) {
-                                            Modifier.focusRequester(
-                                                entryRequester
-                                            )
-                                        } else {
-                                            Modifier
-                                        }
-                                    )
-                                    .focusProperties {
-                                        down = downRequester
-                                    }
-                                    .remoteFocusFrame(shape),
-                                shape = shape
-                            ) {
-                                Text(
-                                    label,
-                                    style =
-                                        MaterialTheme.typography
-                                            .labelLarge,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                }
-            )
-        } else {
-            Column(
-                Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "Used for Live TV, movies and episodes",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    "Auto learns compatibility per series. You can force a specific engine here.",
-                    color = Color.Gray
-                )
-                FlowRow(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    maxItemsInEachRow = 2
+        CompactSettingsOptionRow(
+            icon = Icons.Default.PlayCircle,
+            title = "Playback engine",
+            subtitle = selectedDescription,
+            belowContent = {
+                Spacer(Modifier.height(8.dp))
+                SingleChoiceSegmentedButtonRow(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 40.dp, end = 2.dp)
                 ) {
-                    engines.forEach {
-                            (engine, label, description) ->
-                        val selected = selectedEngine == engine
-                        Surface(
+                    engines.forEachIndexed {
+                            index,
+                            (engine, label, _) ->
+                        val shape =
+                            uniformSegmentShape(
+                                index,
+                                engines.size
+                            )
+                        val selected =
+                            selectedEngine == engine
+                        SegmentedButton(
+                            selected = selected,
                             onClick = {
                                 setPlaybackEngine(engine)
                             },
                             modifier = Modifier
-                                .weight(1f)
-                                .widthIn(min = 150.dp)
-                                .remoteFocusFrame(
-                                    RoundedCornerShape(16.dp)
-                                ),
-                            shape = RoundedCornerShape(16.dp),
-                            color =
-                                if (selected) {
-                                    Color(0xFF351416)
-                                } else {
-                                    Color(0xFF1A1F2E)
-                                },
-                            border = BorderStroke(
-                                if (selected) 2.dp else 1.dp,
-                                if (selected) {
-                                    Color(0xFFE50914)
-                                } else {
-                                    Color(0xFF30384B)
-                                }
-                            )
-                        ) {
-                            Row(
-                                Modifier.padding(12.dp),
-                                verticalAlignment =
-                                    Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected,
-                                    onClick = null
+                                .then(
+                                    if (selected) {
+                                        Modifier.focusRequester(
+                                            entryRequester
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
                                 )
-                                Column(
-                                    Modifier.padding(start = 6.dp)
-                                ) {
-                                    Text(
-                                        label,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        description,
-                                        style =
-                                            MaterialTheme.typography
-                                                .bodySmall,
-                                        color = Color.Gray,
-                                        maxLines = 2
-                                    )
+                                .focusProperties {
+                                    if (upRequester != null) {
+                                        up = upRequester
+                                    }
+                                    down = downRequester
                                 }
+                                .remoteFocusFrame(shape),
+                            shape = shape
+                        ) {
+                            Text(
+                                label,
+                                style =
+                                    MaterialTheme.typography
+                                        .labelLarge,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        )
+    } else {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "Used for Live TV, movies and episodes",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                "Auto learns compatibility per series. You can force a specific engine here.",
+                color = Color.Gray
+            )
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                maxItemsInEachRow = 2
+            ) {
+                engines.forEach {
+                        (engine, label, description) ->
+                    val selected = selectedEngine == engine
+                    Surface(
+                        onClick = {
+                            setPlaybackEngine(engine)
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .widthIn(min = 150.dp)
+                            .remoteFocusFrame(
+                                RoundedCornerShape(16.dp)
+                            ),
+                        shape = RoundedCornerShape(16.dp),
+                        color =
+                            if (selected) {
+                                Color(0xFF351416)
+                            } else {
+                                Color(0xFF1A1F2E)
+                            },
+                        border = BorderStroke(
+                            if (selected) 2.dp else 1.dp,
+                            if (selected) {
+                                Color(0xFFE50914)
+                            } else {
+                                Color(0xFF30384B)
+                            }
+                        )
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment =
+                                Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected,
+                                onClick = null
+                            )
+                            Column(
+                                Modifier.padding(start = 6.dp)
+                            ) {
+                                Text(
+                                    label,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    description,
+                                    style =
+                                        MaterialTheme.typography
+                                            .bodySmall,
+                                    color = Color.Gray,
+                                    maxLines = 2
+                                )
                             }
                         }
                     }
@@ -3704,6 +3735,7 @@ internal fun PlaybackEngineSettingsSection(
             }
         }
     }
+
 }
 
 @Composable
@@ -3938,7 +3970,7 @@ private fun SettingsSummaryRow(
                 Icons.Default.PlayCircle,
                 "Default player",
                 defaultPlayer,
-                SettingsDestination.PLAYBACK
+                SettingsDestination.GENERAL
             ),
             SettingsSummary(
                 Icons.Default.CloudDone,
@@ -4262,7 +4294,8 @@ private fun ResponsiveSettingsOptionRow(
 @Composable
 private fun CompactOrientationSetting(
     entryRequester: FocusRequester,
-    upRequester: FocusRequester
+    upRequester: FocusRequester,
+    downRequester: FocusRequester? = null
 ) {
     val context = LocalContext.current
     val selected by rememberUiOrientationMode()
@@ -4305,6 +4338,9 @@ private fun CompactOrientationSetting(
                             )
                             .focusProperties {
                                 up = upRequester
+                                if (downRequester != null) {
+                                    down = downRequester
+                                }
                             }
                             .remoteFocusFrame(shape),
                         shape = shape
@@ -4336,7 +4372,7 @@ internal fun SettingsSection(
     }
 
     val compact = LocalConfiguration.current.screenWidthDp < 600
-    val danger = title == "Danger zone"
+    val danger = title == "Data & reset"
     val accent =
         if (danger) {
             MaterialTheme.colorScheme.error
@@ -4523,7 +4559,9 @@ internal fun RowScope.ExpressiveBottomNavigationItem(
     )
     Surface(
         onClick = onClick,
-        modifier = (if (selected) Modifier.weight(1f) else Modifier.width(inactiveWidth))
+        modifier = Modifier
+            .weight(1f)
+            .widthIn(min = inactiveWidth)
             .semantics {
                 role = Role.Tab
                 this.selected = selected
@@ -4534,24 +4572,19 @@ internal fun RowScope.ExpressiveBottomNavigationItem(
         tonalElevation = if (selected) 2.dp else 0.dp
     ) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, if (selected) null else label, Modifier.size(22.dp))
-            AnimatedVisibility(
-                visible = selected,
-                enter = fadeIn() + expandHorizontally(),
-                exit = fadeOut() + shrinkHorizontally()
-            ) {
-                Text(
-                    label,
-                    Modifier.padding(start = 8.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
-                )
-            }
+            Icon(icon, null, Modifier.size(22.dp))
+            Text(
+                label,
+                Modifier.padding(start = 7.dp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight =
+                    if (selected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1
+            )
         }
     }
 }
@@ -4595,7 +4628,7 @@ internal fun TmdbCredentialSettingsSection() {
     val readAccessToken = BuildConfig.TMDB_READ_ACCESS_TOKEN.trim()
     val openSubtitlesKey = BuildConfig.OPEN_SUBTITLES_KEY.trim()
 
-    SettingsSection("Metadata and subtitle diagnostics") {
+    SettingsSection("Advanced") {
         ResponsiveSettingsOptionRow(
             icon =
                 if (revealCredentials) {

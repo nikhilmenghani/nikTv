@@ -8,9 +8,7 @@ class SettingsNavigationTest {
     fun destinationOrderMatchesRedesign() {
         assertEquals(
             listOf(
-                "Appearance",
-                "Playback",
-                "Content",
+                "General",
                 "Profiles",
                 "System"
             ),
@@ -21,20 +19,15 @@ class SettingsNavigationTest {
     @Test
     fun currentSectionsMapToExpectedDestinations() {
         val expected = mapOf(
-            "Mobile controls" to SettingsDestination.APPEARANCE,
-"Display and screen" to SettingsDestination.APPEARANCE,
-            "Default media player" to SettingsDestination.PLAYBACK,
-
-            "Series" to SettingsDestination.PLAYBACK,
-
-            "Catalog cache" to SettingsDestination.CONTENT,
+            "Device & display" to SettingsDestination.GENERAL,
+            "Playback" to SettingsDestination.GENERAL,
+            "Storage & refresh" to SettingsDestination.GENERAL,
             "Profiles" to SettingsDestination.PROFILES,
             "Connection" to SettingsDestination.PROFILES,
-            "Connection actions" to SettingsDestination.PROFILES,
-            "Metadata and subtitle diagnostics" to SettingsDestination.SYSTEM,
             "Backup and restore" to SettingsDestination.SYSTEM,
-            "Danger zone" to SettingsDestination.SYSTEM,
-            "App updates" to SettingsDestination.SYSTEM
+            "App updates" to SettingsDestination.SYSTEM,
+            "Advanced" to SettingsDestination.SYSTEM,
+            "Data & reset" to SettingsDestination.SYSTEM
         )
 
         expected.forEach { (title, destination) ->

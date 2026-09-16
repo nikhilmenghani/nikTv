@@ -2,27 +2,17 @@ package com.nikhil.niktv.ui
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ManageAccounts
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
 
 internal enum class SettingsDestination(
     val title: String,
     val subtitle: String
 ) {
-    APPEARANCE(
-        "Appearance",
-        "Display, screen and device presentation"
-    ),
-    PLAYBACK(
-        "Playback",
-        "Player engine and series defaults"
-    ),
-    CONTENT(
-        "Content",
-        "Catalog cache and refresh behavior"
+    GENERAL(
+        "General",
+        "Device, playback and refresh preferences"
     ),
     PROFILES(
         "Profiles",
@@ -30,36 +20,29 @@ internal enum class SettingsDestination(
     ),
     SYSTEM(
         "System",
-        "Backup, updates, diagnostics and app data"
+        "Backup, updates, advanced settings and app data"
     )
 }
 
 internal fun SettingsDestination.icon(): ImageVector = when (this) {
-    SettingsDestination.APPEARANCE -> Icons.Default.Palette
-    SettingsDestination.PLAYBACK -> Icons.Default.PlayCircle
-    SettingsDestination.CONTENT -> Icons.Default.VideoLibrary
+    SettingsDestination.GENERAL -> Icons.Default.Tune
     SettingsDestination.PROFILES -> Icons.Default.ManageAccounts
     SettingsDestination.SYSTEM -> Icons.Default.Settings
 }
 
 internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
     when (sectionTitle) {
-        "Mobile controls",
-        "Display and screen" -> SettingsDestination.APPEARANCE
-
-        "Default media player",
-        "Series" -> SettingsDestination.PLAYBACK
-
-        "Catalog cache" -> SettingsDestination.CONTENT
+        "Device & display",
+        "Playback",
+        "Storage & refresh" -> SettingsDestination.GENERAL
 
         "Profiles",
-        "Connection",
-        "Connection actions" -> SettingsDestination.PROFILES
+        "Connection" -> SettingsDestination.PROFILES
 
-        "Metadata and subtitle diagnostics",
         "Backup and restore",
-        "Danger zone",
-        "App updates" -> SettingsDestination.SYSTEM
+        "App updates",
+        "Advanced",
+        "Data & reset" -> SettingsDestination.SYSTEM
 
         else -> SettingsDestination.SYSTEM
     }
