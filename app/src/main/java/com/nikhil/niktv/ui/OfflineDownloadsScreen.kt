@@ -439,8 +439,8 @@ internal fun OfflineDownloadsScreen(
             onDismissRequest = { pendingRemoval = null },
             title = { Text(if (OfflineMediaDownloads.status(context, entry.requestId, entry.downloadId) == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
             text = { Text("Remove “${entry.media.title}” from offline downloads?") },
-            dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Keep") } },
-            confirmButton = { Button(onClick = { remove(entry.media, entry.catalogType); pendingRemoval = null }) { Text("Remove") } }
+            dismissButton = { NikTvTextActionButton(onClick = { pendingRemoval = null }) { Text("Keep") } },
+            confirmButton = { NikTvPrimaryActionButton(onClick = { remove(entry.media, entry.catalogType); pendingRemoval = null }) { Text("Remove") } }
         )
     }
     pendingRecordingRemoval?.let { recording ->
@@ -448,9 +448,9 @@ internal fun OfflineDownloadsScreen(
             onDismissRequest = { pendingRecordingRemoval = null },
             title = { Text("Delete recording?") },
             text = { Text("Remove “${recording.title}” from this device?") },
-            dismissButton = { TextButton(onClick = { pendingRecordingRemoval = null }) { Text("Keep") } },
+            dismissButton = { NikTvTextActionButton(onClick = { pendingRecordingRemoval = null }) { Text("Keep") } },
             confirmButton = {
-                Button(onClick = {
+                NikTvPrimaryActionButton(onClick = {
                     LiveTvRecorder.delete(context, recording)
                     recordings = recordings.filterNot { it.uri == recording.uri }
                     storageRevision++
@@ -476,9 +476,9 @@ internal fun OfflineDownloadsScreen(
             onDismissRequest = { pendingClear = null },
             title = { Text(title) },
             text = { Text(explanation) },
-            dismissButton = { TextButton(onClick = { pendingClear = null }) { Text("Cancel") } },
+            dismissButton = { NikTvTextActionButton(onClick = { pendingClear = null }) { Text("Cancel") } },
             confirmButton = {
-                Button(onClick = {
+                NikTvPrimaryActionButton(onClick = {
                     pendingClear = null
                     clearing = true
                     scope.launch {
@@ -567,7 +567,7 @@ private fun StorageUsageRow(
             Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1)
             Text(formatDownloadBytes(bytes), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         }
-        TextButton(
+        NikTvTextActionButton(
             onClick = onClear,
             enabled = enabled,
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),

@@ -1481,7 +1481,7 @@ internal fun ModernSettingsScreen(
                                 modifier = Modifier.size(24.dp)
                             )
                         } else {
-                            TextButton(
+                            NikTvTextActionButton(
                                 onClick = { switchProfile(saved) },
                                 modifier = Modifier
                                     .height(48.dp)
@@ -1978,7 +1978,7 @@ SettingsSection("Backup and restore") {
                         )
                     }
 
-                    FilledTonalButton(
+                    NikTvSecondaryActionButton(
                         onClick = {
                             val config = normalizedGitHubBackupConfig()
                             githubBackupManager.saveConfig(config)
@@ -2188,7 +2188,7 @@ SettingsSection("Backup and restore") {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                OutlinedButton(
+                                NikTvSecondaryActionButton(
                                     onClick = {
                                         githubPendingRestore = null
                                         githubSelectedBackupName = null
@@ -2306,10 +2306,10 @@ SettingsSection("Backup and restore") {
                         githubPendingRestore != null &&
                         !githubRestoreLoading
                     ) {
-                        Button(
+                        NikTvPrimaryActionButton(
                             onClick = {
                                 val decoded =
-                                    githubPendingRestore ?: return@Button
+                                    githubPendingRestore ?: return@NikTvPrimaryActionButton
                                 importBackupContent(decoded.rawBackup)
                                 githubRestoreDialogOpen = false
                                 githubPendingRestore = null
@@ -2323,7 +2323,7 @@ SettingsSection("Backup and restore") {
                     }
                 },
                 dismissButton = {
-                    TextButton(
+                    NikTvTextActionButton(
                         enabled = !githubRestoreLoading,
                         onClick = {
                             githubRestoreDialogOpen = false
@@ -2665,7 +2665,7 @@ SettingsSection("Backup and restore") {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
+                        NikTvPrimaryActionButton(
                             onClick = {
                                 downloadActionMessage = null
                                 runCatching {
@@ -2678,7 +2678,7 @@ SettingsSection("Backup and restore") {
                         ) {
                             Text("Install")
                         }
-                        OutlinedButton(
+                        NikTvSecondaryActionButton(
                             onClick = {
                                 downloadActionMessage = null
                                 runCatching {
@@ -2695,7 +2695,7 @@ SettingsSection("Backup and restore") {
                 }
 
                 if (downloadState is UpdateDownloadState.Failed) {
-                    Button(
+                    NikTvPrimaryActionButton(
                         onClick = {
                             val failed =
                                 downloadState as UpdateDownloadState.Failed
@@ -2899,8 +2899,8 @@ SettingsSection("Backup and restore") {
             onDismissRequest = { pendingRemoval = null },
             title = { Text("Remove ${target.name}?") },
             text = { Text("This removes its saved credentials and session. Other profiles remain available.") },
-            confirmButton = { TextButton(onClick = { removeProfile(target); pendingRemoval = null }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Cancel") } }
+            confirmButton = { NikTvTextActionButton(onClick = { removeProfile(target); pendingRemoval = null }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { NikTvTextActionButton(onClick = { pendingRemoval = null }) { Text("Cancel") } }
         )
     }
     availableUpdate?.let { update ->
@@ -2932,7 +2932,7 @@ SettingsSection("Backup and restore") {
                     downloadActionMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                        FilledTonalButton(
+                        NikTvSecondaryActionButton(
                             onClick = {
                                 AppUpdates.dismissPendingUpdate(update)
                                 restoreVersionFocus = true
@@ -2944,7 +2944,7 @@ SettingsSection("Backup and restore") {
                                 .remoteFocusFrame(CircleShape),
                             shape = CircleShape
                         ) { Text("Later") }
-                        Button(
+                        NikTvPrimaryActionButton(
                             onClick = { requestUpdateDownload(update) },
                             enabled = AppUpdates.canStartDownload(update),
                             modifier = Modifier.height(44.dp).focusRequester(updateDownloadRequester).remoteFocusFrame(CircleShape),
@@ -3494,7 +3494,7 @@ internal fun LiveTvPlaybackScreen(
                             TextOverflow.Ellipsis
                     )
 
-                    TextButton(onClick = refreshPlaybackQueue) {
+                    NikTvTextActionButton(onClick = refreshPlaybackQueue) {
                         Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Clear cache & refresh")
@@ -3608,7 +3608,7 @@ internal fun LiveTvPlaybackScreen(
                             key =
                                 "live-player-load-more"
                         ) {
-                            Button(
+                            NikTvPrimaryActionButton(
                                 onClick = {
                                     /*
                                      * Button deliberately stays enabled
@@ -3621,7 +3621,7 @@ internal fun LiveTvPlaybackScreen(
                                         state.playbackQueueLoadingMore ||
                                         loadMorePending
                                     ) {
-                                        return@Button
+                                        return@NikTvPrimaryActionButton
                                     }
 
                                     /*

@@ -391,7 +391,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().focusRequester(lastFocus).profileTextField("password"), label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, readOnly = profileIsTv && editingField != "password", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { editingField = null; keyboard?.hide() }))
                 } else {
                     OutlinedTextField(mac, { mac = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus).profileTextField("mac"), label = { Text("MAC address") }, placeholder = { Text("00:1A:79:XX:XX:XX") }, singleLine = true, readOnly = profileIsTv && editingField != "mac", keyboardOptions = KeyboardOptions(imeAction = if (advanced) ImeAction.Next else ImeAction.Done), keyboardActions = KeyboardActions(onNext = { editingField = null; lastFocus.requestFocus() }, onDone = { editingField = null; keyboard?.hide() }))
-                    TextButton(onClick = {
+                    NikTvTextActionButton(onClick = {
                         mac = generatedIdentity.macAddress
                         serial = generatedIdentity.serialNumber
                         advanced = true
@@ -400,15 +400,15 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                         Spacer(Modifier.width(8.dp))
                         Text("Generate compatible device identity")
                     }
-                    TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
+                    NikTvTextActionButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
                     if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus).profileTextField("serial"), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, readOnly = profileIsTv && editingField != "serial", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { editingField = null; keyboard?.hide() }))
                 }
                 val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) { Text(if (saved == null) "Add profile" else "Save profile") }
-                    if (saved == null) OutlinedButton(onClick = { keyboard?.hide(); openSettings(null) }, modifier = Modifier.weight(1f)) { Text("Skip Profile") }
+                    NikTvPrimaryActionButton(onClick = { keyboard?.hide(); connect(PortalProfile(name.trim(), url.trim(), mac.trim(), serial.trim(), portalType, username.trim(), password)) }, enabled = !loading && name.isNotBlank() && url.isNotBlank() && credentialsReady, modifier = Modifier.weight(1f)) { Text(if (saved == null) "Add profile" else "Save profile") }
+                    if (saved == null) NikTvSecondaryActionButton(onClick = { keyboard?.hide(); openSettings(null) }, modifier = Modifier.weight(1f)) { Text("Skip Profile") }
                 }
-                OutlinedButton(
+                NikTvSecondaryActionButton(
                     onClick = { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) },
                     modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(10.dp))
                 ) { Icon(Icons.Default.FileDownload, null); Spacer(Modifier.width(8.dp)); Text("Import NikTV backup") }

@@ -787,7 +787,7 @@ private fun YouTubeMobileShowcase(
                             }
                         )
                         if (descriptionOverflows || descriptionExpanded) {
-                            TextButton(
+                            NikTvTextActionButton(
                                 onClick = { descriptionExpanded = !descriptionExpanded },
                                 contentPadding = PaddingValues(0.dp)
                             ) {
@@ -824,7 +824,7 @@ private fun YouTubeMobileShowcase(
                             if (loadingMore || loadMorePending) {
                                 CircularProgressIndicator(Modifier.size(28.dp))
                             } else {
-                                OutlinedButton(onClick = onLoadMore) {
+                                NikTvSecondaryActionButton(onClick = onLoadMore) {
                                     Text(
                                         when (type) {
                                             CatalogType.LIVE_TV -> "Load more channels"
@@ -1160,7 +1160,7 @@ private fun ShowcaseDetailsPanel(
          * Keeping only My List also reduces accidental focus jumps away
          * from the horizontal movie rail.
          */
-        FilledTonalButton(
+        NikTvSecondaryActionButton(
             onClick = onToggleFavorite,
             modifier = Modifier
                 .fillMaxWidth()
@@ -1399,7 +1399,7 @@ private fun BoxScope.ShowcaseRail(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Button(
+                        NikTvPrimaryActionButton(
                             onClick = {
                                 onBrowseFocus()
 

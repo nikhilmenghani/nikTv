@@ -1617,7 +1617,7 @@ internal fun VlcPlayerScreen(
                     Text("This title can’t be played right now", style = MaterialTheme.typography.titleLarge)
                     Text(it, color = Color.LightGray)
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick = onBack) { Text("Go back") }
+                    NikTvPrimaryActionButton(onClick = onBack) { Text("Go back") }
                 }
             }
         }
@@ -1673,8 +1673,8 @@ internal fun VlcPlayerScreen(
                         Text("Up next in ${countdown}s", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         Text(media.nextEpisode.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     }
-                    TextButton(onClick = { autoPlayCancelled = true; videoView?.requestFocus() }) { Text("Cancel") }
-                    Button(
+                    NikTvTextActionButton(onClick = { autoPlayCancelled = true; videoView?.requestFocus() }) { Text("Cancel") }
+                    NikTvPrimaryActionButton(
                         onClick = { if (!advancing) { advancing = true; onPlayNext() } },
                         modifier = Modifier.focusRequester(playNextNowRequester).playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
                     ) { Text("Play now") }

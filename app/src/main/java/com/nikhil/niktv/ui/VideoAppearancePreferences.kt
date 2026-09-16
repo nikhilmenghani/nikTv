@@ -2083,7 +2083,7 @@ internal fun PlayerPictureModeEditor(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    androidx.compose.material3.TextButton(
+                    NikTvTextActionButton(
                         onClick = restoreSelectionAndDismiss,
                         modifier = Modifier
                             .focusRequester(cancelRequester)
@@ -2139,7 +2139,7 @@ internal fun PlayerPictureModeEditor(
                         Text("Cancel")
                     }
 
-                    androidx.compose.material3.Button(
+                    NikTvPrimaryActionButton(
                         onClick = {
                             VideoAppearancePreferences.update(
                                 context,

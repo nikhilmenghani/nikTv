@@ -98,7 +98,7 @@ internal fun PlayerLiveScheduleSummary(
             }
         },
         confirmButton = {
-            TextButton(
+            NikTvTextActionButton(
                 onClick = onExpand,
                 modifier = Modifier.focusRequester(expandRequester)
                     .focusProperties { right = closeRequester }
@@ -107,7 +107,7 @@ internal fun PlayerLiveScheduleSummary(
             ) { Text("Full guide") }
         },
         dismissButton = {
-            TextButton(
+            NikTvTextActionButton(
                 onClick = onDismiss,
                 modifier = Modifier.focusRequester(closeRequester)
                     .focusProperties { left = expandRequester }
@@ -256,7 +256,7 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(
+            NikTvTextActionButton(
                 onClick = onDismiss,
                 modifier = Modifier.focusRequester(closeRequester).playerControlFocus(RoundedCornerShape(12.dp)) {},
                 shape = RoundedCornerShape(12.dp)

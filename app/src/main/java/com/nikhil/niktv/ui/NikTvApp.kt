@@ -808,8 +808,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onDismissRequest = { confirmPlayerDownloadRemoval = false },
                     title = { Text("Remove offline download?") },
                     text = { Text("Cancel or delete “${state.nowPlaying?.media?.title.orEmpty()}” from offline downloads?") },
-                    dismissButton = { TextButton(onClick = { confirmPlayerDownloadRemoval = false }) { Text("Keep") } },
-                    confirmButton = { Button(onClick = { confirmPlayerDownloadRemoval = false; vm.downloadNowPlaying() }) { Text("Remove") } }
+                    dismissButton = { NikTvTextActionButton(onClick = { confirmPlayerDownloadRemoval = false }) { Text("Keep") } },
+                    confirmButton = { NikTvPrimaryActionButton(onClick = { confirmPlayerDownloadRemoval = false; vm.downloadNowPlaying() }) { Text("Remove") } }
                 )
             }
             if (state.feedRefreshing) {
@@ -882,7 +882,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             }
                             if (authorizationExpired) {
                                 Text("The portal rejected the saved authorization token even though the HTTP request completed. Your profile credentials are still saved; request a fresh session to continue.")
-                                if (!showDiagnostics) TextButton(onClick = { showDiagnostics = true }) { Icon(Icons.Default.Info, null); Spacer(Modifier.width(8.dp)); Text("Show diagnostics") }
+                                if (!showDiagnostics) NikTvTextActionButton(onClick = { showDiagnostics = true }) { Icon(Icons.Default.Info, null); Spacer(Modifier.width(8.dp)); Text("Show diagnostics") }
                             }
                             if (showDiagnostics) SelectionContainer {
                                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
@@ -891,13 +891,13 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                                FilledTonalButton(
+                                NikTvSecondaryActionButton(
                                     onClick = vm::dismissError,
                                     enabled = !state.reauthenticating,
                                     modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
                                     shape = CircleShape
                                 ) { Text("Close") }
-                                if (showDiagnostics) Button(
+                                if (showDiagnostics) NikTvPrimaryActionButton(
                                     onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
                                     modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
                                     shape = CircleShape
@@ -906,7 +906,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                     Spacer(Modifier.width(6.dp))
                                     Text("Copy diagnostics")
                                 }
-                                if (authorizationExpired) Button(
+                                if (authorizationExpired) NikTvPrimaryActionButton(
                                     onClick = vm::reauthenticate,
                                     enabled = !state.reauthenticating,
                                     modifier = Modifier.height(44.dp).focusRequester(reauthenticateRequester).remoteFocusFrame(CircleShape),
@@ -926,7 +926,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             state.backupMessage?.let { message ->
                 AlertDialog(
                     onDismissRequest = vm::dismissBackupMessage,
-                    confirmButton = { Button(onClick = vm::dismissBackupMessage) { Text("OK") } },
+                    confirmButton = { NikTvPrimaryActionButton(onClick = vm::dismissBackupMessage) { Text("OK") } },
                     title = { Text("NikTV backup") },
                     text = { Text(message) }
                 )

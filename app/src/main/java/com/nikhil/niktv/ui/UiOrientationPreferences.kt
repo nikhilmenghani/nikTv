@@ -250,7 +250,7 @@ fun OrientationSettingsDialog(
         title = { Text("App settings") },
         text = { OrientationSettingsSection() },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
+            NikTvTextActionButton(onClick = onDismiss) {
                 Text("Done")
             }
         }

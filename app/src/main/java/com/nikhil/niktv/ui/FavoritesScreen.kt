@@ -225,7 +225,7 @@ internal fun ModernFavoriteCard(
                 )
             },
             dismissButton = {
-                TextButton(
+                NikTvTextActionButton(
                     onClick = { removalConfirmationOpen = false },
                     modifier = Modifier
                         .focusRequester(cancelRemovalRequester)
@@ -235,7 +235,7 @@ internal fun ModernFavoriteCard(
                 }
             },
             confirmButton = {
-                Button(
+                NikTvPrimaryActionButton(
                     onClick = {
                         removalConfirmationOpen = false
                         remove()

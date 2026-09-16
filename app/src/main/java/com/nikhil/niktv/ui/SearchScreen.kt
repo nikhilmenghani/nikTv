@@ -661,7 +661,7 @@ internal fun ModernSearchScreen(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            FilledTonalButton(
+            NikTvSecondaryActionButton(
                 onClick = scanAndSync,
                 enabled = !state.searchCatalogScanning,
                 modifier = Modifier
@@ -798,7 +798,7 @@ internal fun ModernSearchScreen(
 
                 when {
                     !state.searchUsedServer -> {
-                        OutlinedButton(
+                        NikTvSecondaryActionButton(
                             onClick = { search(true) },
                             modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
                             enabled = !state.searchServerLoading,
@@ -817,7 +817,7 @@ internal fun ModernSearchScreen(
                     }
 
                     searchingSpecificCategory -> {
-                        OutlinedButton(
+                        NikTvSecondaryActionButton(
                             onClick = {
                                 /*
                                  * SEARCH_BROADEN_EXPLICIT_V3
@@ -861,7 +861,7 @@ internal fun ModernSearchScreen(
                 )
 
                 if (!state.searchUsedServer) {
-                    OutlinedButton(
+                    NikTvSecondaryActionButton(
                         onClick = { search(true) },
                         modifier = Modifier.remoteFocusFrame(),
                         enabled = !state.searchServerLoading,
@@ -1701,7 +1701,7 @@ private fun SearchLoadMoreButton(
     loading: Boolean,
     onClick: () -> Unit
 ) {
-    OutlinedButton(
+    NikTvSecondaryActionButton(
         onClick = onClick,
         enabled = !loading,
         modifier = Modifier

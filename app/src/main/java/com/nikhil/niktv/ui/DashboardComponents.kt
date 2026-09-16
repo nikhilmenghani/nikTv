@@ -341,7 +341,7 @@ internal fun ModernHero(item: MediaItem?, recentAction: (() -> Unit)?, catalogAc
             Text(item?.description?.takeIf(String::isNotBlank) ?: if (profileName.isBlank()) "Choose something to watch" else "Streaming from $profileName",
                 style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = .86f), maxLines = 2, overflow = TextOverflow.Ellipsis)
             val action = recentAction ?: catalogAction
-            if (action != null) Button(onClick = action, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
+            if (action != null) NikTvPrimaryActionButton(onClick = action, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
                 Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text(if (recentAction != null) "Resume" else "Play")
             }
         }
@@ -412,7 +412,7 @@ internal fun <T> ModernRail(
     }
 
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        ModernSectionHeader(title, action = clear?.let { action -> { TextButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
+        ModernSectionHeader(title, action = clear?.let { action -> { NikTvTextActionButton(onClick = action) { Text("Clear", color = Color.LightGray) } } })
         LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             items(entries.take(visibleCount), key = { entry -> "${media(entry).id}-${media(entry).title}" }) { entry ->
                 val itemKey = "${media(entry).id}-${media(entry).title}"

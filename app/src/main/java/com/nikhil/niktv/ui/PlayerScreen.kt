@@ -2352,13 +2352,13 @@ fun PlayerScreen(
                     Text("This title can’t be played right now", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     Text(failure, color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(
+                        NikTvSecondaryActionButton(
                             onClick = onBack,
                             modifier = Modifier.focusRequester(errorBackFocusRequester)
                                 .focusProperties { right = errorRetryFocusRequester }
                                 .playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
                         ) { Text("Go back") }
-                        Button(
+                        NikTvPrimaryActionButton(
                             onClick = onRetry,
                             modifier = Modifier.focusRequester(errorRetryFocusRequester)
                                 .focusProperties { left = errorBackFocusRequester }
@@ -2430,11 +2430,11 @@ fun PlayerScreen(
                         Text("Up next in ${countdown}s", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         Text(media.nextEpisode.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     }
-                    TextButton(onClick = {
+                    NikTvTextActionButton(onClick = {
                         autoPlayCancelled = true
                         playerViewRef?.requestFocus()
                     }, modifier = Modifier.playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }) { Text("Cancel") }
-                    Button(
+                    NikTvPrimaryActionButton(
                         onClick = { if (!advancing) { advancing = true; onPlayNext() } },
                         modifier = Modifier.focusRequester(playNextFocusRequester).playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
                     ) { Text("Play now") }
@@ -3014,46 +3014,13 @@ private fun PlayerPictureModeActionButton(
     icon: ImageVector? = null,
     onClick: () -> Unit
 ) {
-    var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(12.dp)
-
-    Surface(
-        onClick = onClick,
-        modifier = modifier.onFocusChanged { focused = it.isFocused },
-        shape = shape,
-        color = when {
-            primary -> MaterialTheme.colorScheme.primary
-            focused -> Color(0xFF303A49)
-            else -> Color.White.copy(alpha = 0.055f)
-        },
-        border = androidx.compose.foundation.BorderStroke(
-            if (focused) 2.dp else 1.dp,
-            if (focused) Color(0xFFE7E9EF) else Color.White.copy(alpha = 0.14f)
-        ),
-        contentColor = Color.White
-    ) {
-        Row(
-            Modifier.fillMaxSize().padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            icon?.let {
-                Icon(it, null, Modifier.size(17.dp))
-                Spacer(Modifier.width(4.dp))
-            }
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = if (focused || primary) {
-                    androidx.compose.ui.text.font.FontWeight.SemiBold
-                } else {
-                    androidx.compose.ui.text.font.FontWeight.Medium
-                },
-                maxLines = 1,
-                softWrap = false
-            )
-        }
-    }
+    NikTvActionButton(
+        label = label,
+        modifier = modifier,
+        primary = primary,
+        icon = icon,
+        onClick = onClick
+    )
 }
 
 @Composable
@@ -3233,7 +3200,7 @@ internal fun PlayerMoreOptionsDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            NikTvTextActionButton(
                 onClick = onDismiss,
                 modifier = Modifier
                     .focusRequester(closeRequester)

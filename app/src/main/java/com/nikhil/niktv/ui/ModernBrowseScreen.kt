@@ -746,7 +746,7 @@ internal fun ModernBrowseScreen(
                         items(state.categories, key = { it.id }) { category ->
                             val selected = state.selectedCategory?.id == category.id
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                TextButton(onClick = { selectCategory(category) }, modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
+                                NikTvTextActionButton(onClick = { selectCategory(category) }, modifier = Modifier.remoteFocusFrame(CircleShape).focusProperties {
                                     if (state.items.isNotEmpty()) {
                                         down = layoutToggleRequester
                                     }
@@ -766,10 +766,10 @@ internal fun ModernBrowseScreen(
                         "Choose IPTV categories and TMDB discovery rows",
                         action = {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.remoteFocusFrame()) {
+                                NikTvTextActionButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.remoteFocusFrame()) {
                                     Icon(Icons.Default.DashboardCustomize, null); Spacer(Modifier.width(6.dp)); Text("TMDB sections")
                                 }
-                                TextButton(onClick = { resetConfirmationOpen = true }, modifier = Modifier.remoteFocusFrame()) {
+                                NikTvTextActionButton(onClick = { resetConfirmationOpen = true }, modifier = Modifier.remoteFocusFrame()) {
                                     Icon(Icons.Default.RestartAlt, null); Spacer(Modifier.width(6.dp)); Text("Reset to defaults")
                                 }
                             }
@@ -917,9 +917,9 @@ internal fun ModernBrowseScreen(
                             Text("No categories enabled for ${state.selectedType.title}", color = Color.White, style = MaterialTheme.typography.titleMedium)
                             Text("Adjust your category filters to include content.", color = Color.LightGray)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { openCategoryManager(state.selectedType) }) { Text("Manage categories") }
+                                NikTvPrimaryActionButton(onClick = { openCategoryManager(state.selectedType) }) { Text("Manage categories") }
                                 if (dashboardSurface == DashboardSurface.MOVIES || dashboardSurface == DashboardSurface.SERIES) {
-                                    Button(onClick = { tmdbSetupOpen = true }) { Text("TMDB sections") }
+                                    NikTvPrimaryActionButton(onClick = { tmdbSetupOpen = true }) { Text("TMDB sections") }
                                 }
                             }
                         }
@@ -933,15 +933,15 @@ internal fun ModernBrowseScreen(
                         subtitle = "${state.categories.size} dashboard categories",
                         action = {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                TextButton(onClick = { openCategoryManager(state.selectedType) }, modifier = Modifier.remoteFocusFrame()) {
+                                NikTvTextActionButton(onClick = { openCategoryManager(state.selectedType) }, modifier = Modifier.remoteFocusFrame()) {
                                     Icon(Icons.Default.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Categories")
                                 }
                                 if (dashboardSurface != DashboardSurface.LIVE_TV) {
-                                    TextButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.remoteFocusFrame()) {
+                                    NikTvTextActionButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.remoteFocusFrame()) {
                                         Icon(Icons.Default.DashboardCustomize, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("TMDB")
                                     }
                                 }
-                                TextButton(onClick = { resetConfirmationOpen = true }, modifier = Modifier.remoteFocusFrame()) {
+                                NikTvTextActionButton(onClick = { resetConfirmationOpen = true }, modifier = Modifier.remoteFocusFrame()) {
                                     Icon(Icons.Default.RestartAlt, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Reset to defaults")
                                 }
                             }
@@ -1243,10 +1243,10 @@ internal fun ModernBrowseScreen(
                                     label = "movieDashboardLoadMoreScale"
                                 )
 
-                            Button(
+                            NikTvPrimaryActionButton(
                                 onClick = {
                                     if (state.catalogLoadingMore) {
-                                        return@Button
+                                        return@NikTvPrimaryActionButton
                                     }
 
                                     if (
@@ -1254,7 +1254,7 @@ internal fun ModernBrowseScreen(
                                             CatalogType.LIVE_TV
                                     ) {
                                         if (movieLoadMorePending) {
-                                            return@Button
+                                            return@NikTvPrimaryActionButton
                                         }
 
                                         movieLoadMoreStartItemCount =
@@ -1277,7 +1277,7 @@ internal fun ModernBrowseScreen(
                                             CatalogType.LIVE_TV
                                     ) {
                                         if (liveTvLoadMorePending) {
-                                            return@Button
+                                            return@NikTvPrimaryActionButton
                                         }
 
                                         liveTvLoadMoreStartItemCount =

@@ -171,10 +171,10 @@ internal fun TmdbHomeSectionsDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = { choices = emptySet() }, modifier = Modifier.remoteFocusFrame()) { Text("Clear selections") }
-                    TextButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
+                    NikTvTextActionButton(onClick = { choices = emptySet() }, modifier = Modifier.remoteFocusFrame()) { Text("Clear selections") }
+                    NikTvTextActionButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = { save(available.filter { it in choices }) }, modifier = Modifier.remoteFocusFrame()) {
+                    NikTvPrimaryActionButton(onClick = { save(available.filter { it in choices }) }, modifier = Modifier.remoteFocusFrame()) {
                         Text("Apply & Close")
                     }
                 }
@@ -216,9 +216,9 @@ internal fun ProjectCardConfirmationDialog(
                 }
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
+                    NikTvTextActionButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = confirm, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914))) {
+                    NikTvPrimaryActionButton(onClick = confirm, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914))) {
                         Text(confirmLabel)
                     }
                 }
@@ -420,7 +420,7 @@ internal fun CategoryManagerDialog(
                         ) { Icon(Icons.Default.Close, "Close") }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Button(
+                    NikTvPrimaryActionButton(
                         onClick = {
                             applyFilters(mapOf(type to currentEnabledSet.toList()))
                             close()
@@ -472,7 +472,7 @@ internal fun CategoryManagerDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Button(
+                    NikTvPrimaryActionButton(
                         onClick = {
                             applyFilters(mapOf(type to currentEnabledSet.toList()))
                             close()
@@ -898,7 +898,7 @@ internal fun CategoryDialogActionButton(
     modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
-    OutlinedButton(
+    NikTvSecondaryActionButton(
         onClick = onClick,
         modifier = modifier
             .height(50.dp)

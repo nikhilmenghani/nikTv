@@ -422,7 +422,7 @@ private fun ModernNavButton(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    TextButton(onClick = onClick) {
+    NikTvTextActionButton(onClick = onClick) {
         Icon(
             icon,
             null,
@@ -3222,7 +3222,7 @@ private fun ModernLoadMoreButton(
             .padding(vertical = 18.dp),
         contentAlignment = Alignment.Center
     ) {
-        Button(
+        NikTvPrimaryActionButton(
             onClick = onClick,
             modifier = Modifier
                 .zIndex(if (focused) 1f else 0f)

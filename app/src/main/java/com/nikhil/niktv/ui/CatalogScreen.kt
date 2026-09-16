@@ -469,10 +469,10 @@ internal fun CatalogScreen(
             title = { Text("Exit NikTV?") },
             text = { Text("Are you sure you want to close the app?") },
             dismissButton = {
-                TextButton(onClick = { exitConfirmationOpen = false }) { Text("Cancel") }
+                NikTvTextActionButton(onClick = { exitConfirmationOpen = false }) { Text("Cancel") }
             },
             confirmButton = {
-                Button(
+                NikTvPrimaryActionButton(
                     onClick = { activity?.finishAffinity() },
                     modifier = Modifier.focusRequester(exitFocusRequester),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)

@@ -230,7 +230,7 @@ internal fun MandatoryNikTvUpdateScreen(
                     actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
 
                     if (!checking && update != null) {
-                        Button(
+                        NikTvPrimaryActionButton(
                             onClick = {
                                 when (downloadState) {
                                     is UpdateDownloadState.Ready,
@@ -258,7 +258,7 @@ internal fun MandatoryNikTvUpdateScreen(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        OutlinedButton(
+                        NikTvSecondaryActionButton(
                             onClick = { settingsOpen = true },
                             modifier = Modifier.fillMaxWidth().height(50.dp).remoteFocusFrame(RoundedCornerShape(10.dp)),
                             shape = RoundedCornerShape(10.dp)
@@ -300,7 +300,7 @@ internal fun MandatoryNikTvUpdateScreen(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                 )
             },
-            confirmButton = { TextButton(onClick = { settingsOpen = false }) { Text("Done") } }
+            confirmButton = { NikTvTextActionButton(onClick = { settingsOpen = false }) { Text("Done") } }
         )
     }
 }

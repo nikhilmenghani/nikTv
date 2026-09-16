@@ -705,7 +705,7 @@ internal fun ModernTopBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             item("mobile-profile") {
-                TextButton(
+                NikTvTextActionButton(
                     onClick = openProfileSwitcher,
                     modifier = Modifier.remoteFocusFrame(
                         RoundedCornerShape(10.dp)
@@ -728,7 +728,7 @@ internal fun ModernTopBar(
             }
 
             item("mobile-home") {
-                TextButton(
+                NikTvTextActionButton(
                     onClick = openHome,
                     modifier = Modifier.remoteFocusFrame(
                         RoundedCornerShape(10.dp)
@@ -757,7 +757,7 @@ internal fun ModernTopBar(
                             !state.settingsOpen &&
                             state.selectedType == type
 
-                    TextButton(
+                    NikTvTextActionButton(
                         onClick = { selectType(type) },
                         modifier = Modifier.remoteFocusFrame(
                             RoundedCornerShape(10.dp)
@@ -781,7 +781,7 @@ internal fun ModernTopBar(
 
             item("mobile-my-list") {
                 val selected = state.favoritesOpen && !state.searchOpen && !state.settingsOpen
-                TextButton(
+                NikTvTextActionButton(
                     onClick = openFavorites,
                     modifier = Modifier.remoteFocusFrame(
                         RoundedCornerShape(10.dp)
@@ -803,7 +803,7 @@ internal fun ModernTopBar(
 
             item("mobile-search") {
                 val selected = state.searchOpen
-                TextButton(
+                NikTvTextActionButton(
                     onClick = openSearch,
                     modifier = Modifier.remoteFocusFrame(
                         RoundedCornerShape(10.dp)
@@ -825,7 +825,7 @@ internal fun ModernTopBar(
 
             item("mobile-settings") {
                 val selected = state.settingsOpen
-                TextButton(
+                NikTvTextActionButton(
                     onClick = openSettings,
                     modifier = Modifier.remoteFocusFrame(
                         RoundedCornerShape(10.dp)

@@ -455,7 +455,7 @@ internal fun ModernSeriesDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         if (primaryEpisodeToPlay != null) {
-                            Button(
+                            NikTvPrimaryActionButton(
                                 onClick = { play(primaryEpisodeToPlay) },
                                 modifier = Modifier.height(42.dp).remoteFocusFrame(RoundedCornerShape(12.dp)),
                                 shape = RoundedCornerShape(12.dp),
@@ -586,7 +586,7 @@ internal fun ModernSeriesDetailScreen(
                 if ((state.episodeHasMore || state.episodeLoadingMore) && searchQuery.isBlank()) {
                     item("episodes-load-more") {
                         Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
-                            Button(
+                            NikTvPrimaryActionButton(
                                 onClick = loadMoreEpisodes,
                                 // Keeping the button enabled preserves the current TV
                                 // focus target while the next page is being appended.
@@ -964,7 +964,7 @@ internal fun ModernEpisodeCard(
         onDismissRequest = { confirmRemoval = false },
         title = { Text(if (offlineStatus == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
         text = { Text("Remove “${episode.displayTitle(series)}” from offline downloads?") },
-        dismissButton = { TextButton(onClick = { confirmRemoval = false }) { Text("Keep") } },
-        confirmButton = { Button(onClick = { confirmRemoval = false; onRemoveDownload() }) { Text("Remove") } }
+        dismissButton = { NikTvTextActionButton(onClick = { confirmRemoval = false }) { Text("Keep") } },
+        confirmButton = { NikTvPrimaryActionButton(onClick = { confirmRemoval = false; onRemoveDownload() }) { Text("Remove") } }
     )
 }

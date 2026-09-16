@@ -274,7 +274,7 @@ internal fun SubtitleSelectionDialog(
                         modifier = Modifier.weight(1f)
                     )
                     if (internetSearch != null && onExternalSubtitle != null) {
-                        TextButton(
+                        NikTvTextActionButton(
                             onClick = { searchMode = !searchMode },
                             modifier = Modifier
                                 .focusRequester(modeFocusRequester)
@@ -308,7 +308,7 @@ internal fun SubtitleSelectionDialog(
                             )
                         }
                     }
-                    TextButton(
+                    NikTvTextActionButton(
                         onClick = onDismiss,
                         modifier = Modifier
                             .focusRequester(closeFocusRequester)
@@ -435,9 +435,9 @@ internal fun SubtitleSelectionDialog(
                     LazyColumn(Modifier.fillMaxWidth().heightIn(max = listHeight)) {
                         items(results.size, key = { results[it].id }) { index ->
                             val subtitle = results[index]
-                            TextButton(
+                            NikTvTextActionButton(
                                 onClick = {
-                                    if (downloadingId != null) return@TextButton
+                                    if (downloadingId != null) return@NikTvTextActionButton
                                     scope.launch {
                                         downloadingId = subtitle.id
                                         searchError = null
@@ -682,7 +682,7 @@ internal fun SubtitleSelectionDialog(
                         Icon(Icons.Default.Add, "Show subtitles later")
                     }
                 }
-                if (!searchMode && hasActiveSubtitle && delayMs != 0L) TextButton(
+                if (!searchMode && hasActiveSubtitle && delayMs != 0L) NikTvTextActionButton(
                     onClick = { onDelayChange(0L) },
                     modifier = Modifier
                         .focusRequester(resetFocusRequester)
@@ -709,7 +709,7 @@ internal fun SubtitleSelectionDialog(
                         }
                         .playerControlFocus(androidx.compose.foundation.shape.CircleShape)
                 ) { Text("Reset timing") }
-                if (!searchMode && hasActiveSubtitle) TextButton(
+                if (!searchMode && hasActiveSubtitle) NikTvTextActionButton(
                     onClick = { onAppearanceChange(appearance.next()) },
                     modifier = Modifier
                         .focusRequester(appearanceFocusRequester)
@@ -742,7 +742,7 @@ private fun SubtitleTrackRow(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    TextButton(
+    NikTvTextActionButton(
         onClick = onClick,
         modifier = modifier.fillMaxWidth().playerControlFocus(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
     ) {
