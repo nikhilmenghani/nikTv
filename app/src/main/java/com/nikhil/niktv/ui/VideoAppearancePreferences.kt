@@ -2081,9 +2081,9 @@ internal fun PlayerPictureModeEditor(
 
                 Row(
                     Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                 ) {
-                    NikTvTextActionButton(
+                    NikTvSecondaryActionButton(
                         onClick = restoreSelectionAndDismiss,
                         modifier = Modifier
                             .focusRequester(cancelRequester)
@@ -2132,9 +2132,6 @@ internal fun PlayerPictureModeEditor(
                                     else -> false
                                 }
                             }
-                            .playerControlFocus(
-                                androidx.compose.foundation.shape.CircleShape
-                            ) { }
                     ) {
                         Text("Cancel")
                     }
@@ -2201,9 +2198,6 @@ internal fun PlayerPictureModeEditor(
                                     else -> false
                                 }
                             }
-                            .playerControlFocus(
-                                androidx.compose.foundation.shape.CircleShape
-                            ) { }
                     ) {
                         Text(
                             if (selected.id == "custom") {

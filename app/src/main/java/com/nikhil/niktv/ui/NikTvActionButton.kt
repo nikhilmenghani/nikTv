@@ -1,12 +1,14 @@
 package com.nikhil.niktv.ui
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,12 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -66,78 +63,39 @@ private fun NikTvActionSurface(
     minHeight: androidx.compose.ui.unit.Dp,
     content: @Composable RowScope.() -> Unit
 ) {
-    val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val isTv = context.isTvLikeDevice(configuration)
-    val inputModeManager = LocalInputModeManager.current
     var focused by remember { mutableStateOf(false) }
-
-    val keyboardFocused =
-        focused && inputModeManager.inputMode == InputMode.Keyboard
-
-    val containerColor by animateColorAsState(
-        targetValue =
-            when {
-                !enabled ->
-                    Color.White.copy(alpha = 0.035f)
-                emphasis == NikTvActionEmphasis.PRIMARY && keyboardFocused ->
-                    Color(0xFFF12A34)
-                emphasis == NikTvActionEmphasis.PRIMARY ->
-                    Color(0xFFE50914)
-                keyboardFocused ->
-                    Color(0xFF303A49)
-                emphasis == NikTvActionEmphasis.TEXT ->
-                    Color.Transparent
-                else ->
-                    Color.White.copy(alpha = 0.055f)
-            },
-        label = "nikTvActionContainer"
-    )
-
-    val targetScale =
-        if (keyboardFocused && isTv) 1.035f else 1f
-    val scale by animateFloatAsState(
-        targetValue = targetScale,
-        label = "nikTvActionScale"
-    )
-
     val shape = RoundedCornerShape(12.dp)
-    val focusBorder =
-        when {
-            keyboardFocused ->
-                BorderStroke(2.5.dp, Color.White)
-            emphasis == NikTvActionEmphasis.PRIMARY ->
-                BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
-            emphasis == NikTvActionEmphasis.TEXT ->
-                BorderStroke(1.dp, Color.Transparent)
-            else ->
-                BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
-        }
 
+    /*
+     * NIKTV_ACTION_BUTTON_REFERENCE_V2
+     *
+     * Shared actions intentionally match the original Picture Mode action
+     * language: one rounded-rectangle border, slate focus fill, and no
+     * secondary scale/elevation focus decoration.
+     */
     Surface(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .onFocusChanged {
-                focused = it.isFocused
-            },
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
         shape = shape,
-        color = containerColor,
+        color = when {
+            !enabled -> Color.White.copy(alpha = 0.035f)
+            emphasis == NikTvActionEmphasis.PRIMARY ->
+                MaterialTheme.colorScheme.primary
+            focused -> Color(0xFF303A49)
+            else -> Color.White.copy(alpha = 0.055f)
+        },
         contentColor =
-            if (enabled) {
-                Color.White
+            if (enabled) Color.White
+            else Color.White.copy(alpha = 0.48f),
+        border = BorderStroke(
+            if (focused) 2.dp else 1.dp,
+            if (focused) {
+                Color(0xFFE7E9EF)
             } else {
-                Color.White.copy(alpha = 0.48f)
-            },
-        border = focusBorder,
-        shadowElevation =
-            if (keyboardFocused && isTv) 8.dp
-            else if (emphasis == NikTvActionEmphasis.PRIMARY) 2.dp
-            else 0.dp
+                Color.White.copy(alpha = 0.14f)
+            }
+        )
     ) {
         Row(
             modifier = Modifier
@@ -160,38 +118,62 @@ internal fun NikTvActionButton(
     icon: ImageVector? = null,
     enabled: Boolean = true
 ) {
-    NikTvActionSurface(
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(12.dp)
+
+    // Exact shared form of the original Picture Mode Settings / Skip / Apply.
+    Surface(
         onClick = onClick,
-        modifier = modifier,
         enabled = enabled,
-        emphasis =
-            if (primary) {
-                NikTvActionEmphasis.PRIMARY
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
+        shape = shape,
+        color = when {
+            !enabled -> Color.White.copy(alpha = 0.035f)
+            primary -> MaterialTheme.colorScheme.primary
+            focused -> Color(0xFF303A49)
+            else -> Color.White.copy(alpha = 0.055f)
+        },
+        border = BorderStroke(
+            if (focused) 2.dp else 1.dp,
+            if (focused) {
+                Color(0xFFE7E9EF)
             } else {
-                NikTvActionEmphasis.SECONDARY
-            },
-        contentPadding =
-            PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        minHeight = 46.dp
+                Color.White.copy(alpha = 0.14f)
+            }
+        ),
+        contentColor =
+            if (enabled) Color.White
+            else Color.White.copy(alpha = 0.48f)
     ) {
-        if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier
-                    .padding(end = 7.dp)
-                    .defaultMinSize(
-                        minWidth = 18.dp,
-                        minHeight = 18.dp
-                    )
+        Row(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp),
+            horizontalArrangement =
+                androidx.compose.foundation.layout.Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight =
+                    if (focused || primary) {
+                        FontWeight.SemiBold
+                    } else {
+                        FontWeight.Medium
+                    },
+                maxLines = 1,
+                softWrap = false
             )
         }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1
-        )
     }
 }
 
