@@ -141,6 +141,7 @@ internal object SearchMetadataDocuments {
  * represented by [SearchMetadataIndex], so they cannot be uploaded accidentally.
  */
 class SearchMetadataSyncManager(context: Context) {
+    private val appContext = context.applicationContext
     private val backupManager = GitHubBackupManager(context.applicationContext)
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -215,7 +216,7 @@ class SearchMetadataSyncManager(context: Context) {
             "https://api.github.com/repos/${cfg.username}/${cfg.repository}/contents/$path"
         val existingSha = readExistingSha(cfg, contentsUrl, branch)
         val payload = JSONObject()
-            .put("message", "Update NikTV ${index.type.title.lowercase()} search metadata")
+            .put("message", SearchSyncCommitPreferences.message(appContext, index.type.title.lowercase()))
             .put("content", Base64.encodeToString(content.toByteArray(), Base64.NO_WRAP))
             .put("branch", branch)
             .apply { existingSha?.let { put("sha", it) } }

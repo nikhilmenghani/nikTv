@@ -1627,6 +1627,26 @@ SettingsSwitch(
 
         }
 SettingsSection("Backup and restore") {
+            var includeSyncDevice by remember(context) {
+                mutableStateOf(com.nikhil.niktv.data.SearchSyncCommitPreferences.enabled(context))
+            }
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.Devices,
+                title = "Device name in sync commits",
+                subtitle = "Identify search metadata uploads as " +
+                    com.nikhil.niktv.data.SearchSyncCommitPreferences.deviceName() +
+                    ". Turning this off omits the name; metadata sync continues.",
+                trailingContent = {
+                    SettingsSwitch(
+                        checked = includeSyncDevice,
+                        onCheckedChange = {
+                            includeSyncDevice = it
+                            com.nikhil.niktv.data.SearchSyncCommitPreferences.setEnabled(context, it)
+                        }
+                    )
+                }
+            )
+            HorizontalDivider()
             val backupModes =
                 listOf(
                     com.nikhil.niktv.data.BackupMode.GITHUB to "GitHub",
