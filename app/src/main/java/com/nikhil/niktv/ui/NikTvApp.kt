@@ -216,8 +216,6 @@ internal fun Modifier.remoteFocusFrame(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isTvLikeDevice(configuration)
-    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
-
     /*
      * FIRE_TV_STABLE_FOCUS_V13
      *
@@ -226,7 +224,8 @@ internal fun Modifier.remoteFocusFrame(
      * Fire TV navigation look like the entire viewport is bouncing/flashing.
      *
      * TV therefore gets a crisp, local border/background only.
-     * Touch/mobile/tablet retain the existing glow + bringIntoView behavior.
+     * Every device uses a border-only focus treatment; tablets still scroll
+     * focused controls into view without adding a colored shadow.
      */
     return this
         .bringIntoViewRequester(bringIntoViewRequester)
@@ -242,18 +241,6 @@ internal fun Modifier.remoteFocusFrame(
         .then(
             if (focused) {
                 Modifier
-                    .then(
-                        if (!remoteNavigationActive) {
-                            Modifier.shadow(
-                                16.dp,
-                                shape,
-                                ambientColor = Color(0xFFE50914),
-                                spotColor = Color(0xFFE50914)
-                            )
-                        } else {
-                            Modifier
-                        }
-                    )
                     .border(
                         2.dp,
                         Color(0xFFFFB3B8),
