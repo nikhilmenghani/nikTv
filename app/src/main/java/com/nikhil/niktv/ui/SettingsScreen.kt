@@ -1481,8 +1481,6 @@ SettingsSwitch(
                                             Modifier
                                         }
                                     )
-                                    .remoteFocusFrame(CircleShape),
-                                shape = CircleShape
                             ) {
                                 Text("Open")
                             }
