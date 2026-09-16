@@ -198,10 +198,13 @@ class GitHubBackupManager(context: Context) {
                 }
         val settingsVersion = root.optInt("formatVersion", 1)
         val encrypted = cfg.passphrase.isNotBlank()
-        val timestamp = publicTimestamp()
-        val extension = if (encrypted) "niktv" else "json"
-        val name =
-            "NikTV-settings-v$settingsVersion-$timestamp.$extension"
+        val createdAt = Date()
+        val timestamp = publicTimestamp(createdAt)
+        val name = suggestedBackupFileName(
+            encrypted = encrypted,
+            settingsVersion = settingsVersion,
+            date = createdAt
+        )
         val path = "$BACKUP_DIRECTORY/$name"
 
         // Plain mode is intentionally the ProfileStore JSON exactly as exported.
@@ -859,20 +862,34 @@ class GitHubBackupManager(context: Context) {
             .joinToString(" ")
             .ifBlank { "Android device" }
 
+    fun suggestedBackupFileName(
+        encrypted: Boolean,
+        settingsVersion: Int = 1,
+        date: Date = Date()
+    ): String {
+        val device = deviceDisplayName()
+            .replace(Regex("[^A-Za-z0-9]+"), "-")
+            .trim('-')
+            .take(48)
+            .ifBlank { "Android-device" }
+        val extension = if (encrypted) "niktv" else "json"
+        return "NikTV-$device-settings-v$settingsVersion-${publicTimestamp(date)}.$extension"
+    }
+
     private fun readableTimestamp(date: Date): String =
         SimpleDateFormat(
             "yyyy-MM-dd HH:mm:ss Z",
             Locale.US
         ).format(date)
 
-    private fun publicTimestamp(): String {
+    private fun publicTimestamp(date: Date = Date()): String {
         val formatter =
             SimpleDateFormat(
                 "yyyyMMdd-HHmmss-SSS'Z'",
                 Locale.US
             )
         formatter.timeZone = TimeZone.getTimeZone("UTC")
-        return formatter.format(Date())
+        return formatter.format(date)
     }
 
     private data class EncryptedSecret(

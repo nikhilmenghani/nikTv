@@ -6,6 +6,8 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.nikhil.niktv.data.ProfileStore
 import com.nikhil.niktv.data.StalkerPortalClient
 import com.nikhil.niktv.data.TmdbClient
@@ -21,6 +23,7 @@ import com.nikhil.niktv.data.prefetchArtwork
 import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
 import com.nikhil.niktv.data.SearchMetadataSyncScheduler
+import com.nikhil.niktv.data.SearchMetadataSyncWorker
 import com.nikhil.niktv.data.SearchCatalogScanner
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
@@ -95,6 +98,7 @@ data class NikTvState(
     val offlineDownloadRevision: Long = 0L,
     val offlineDownloadsOpen: Boolean = false,
     val cacheIntervalMinutes: Int = 60,
+    val initialCatalogItems: Int = 14,
     val playerControlsTimeoutSeconds: Int = 3,
     val keepAwakeOnlyDuringPlayback: Boolean = false,
     val automaticReauthentication: Boolean = true,
@@ -124,6 +128,9 @@ data class NikTvState(
     val searchLocalLoading: Boolean = false,
     val searchResults: List<MediaItem> = emptyList(),
     val searchServerLoading: Boolean = false,
+    val searchActivityTitle: String? = null,
+    val searchActivityDetail: String? = null,
+    val searchActivityProgress: Float? = null,
     val searchUsedServer: Boolean = false,
     val recentSearches: List<RecentSearch> = emptyList(),
     val searchPage: Int = 0,
@@ -188,6 +195,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(offlineDownloads = downloads) }
         } }
         viewModelScope.launch { store.cacheIntervalMinutes.collect { minutes -> _state.update { it.copy(cacheIntervalMinutes = minutes) } } }
+        viewModelScope.launch {
+            store.initialCatalogItems.collect { items ->
+                _state.update { it.copy(initialCatalogItems = items) }
+            }
+        }
         viewModelScope.launch { store.playerControlsTimeoutSeconds.collect { seconds -> _state.update { it.copy(playerControlsTimeoutSeconds = seconds) } } }
         viewModelScope.launch { store.keepAwakeOnlyDuringPlayback.collect { enabled ->
             _state.update { it.copy(keepAwakeOnlyDuringPlayback = enabled) }
@@ -825,9 +837,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (!forceRefresh && cachedBrowse != null && cachedForSelected != null && (System.currentTimeMillis() - cachedBrowse.cachedAtMillis < maxAge)) {
                 cachedForSelected
             } else {
-                portal.catalogPage(session, selected, 1).also { loadedPage = it }.items.let { loaded ->
-                    if (session.profile.portalType == PortalType.XTREAM) loaded.take(120) else loaded
-                }
+                fetchInitialCatalogPage(session, selected).also { loadedPage = it }.items
             }
         } else emptyList()
 
@@ -903,7 +913,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             categoryCache.pagesByCategory.containsKey(category.id) &&
                 categoryCache.hasMoreByCategory.containsKey(category.id)
         }
-        val firstPage = if (cached == null) portal.catalogPage(session, category, 1) else null
+        val firstPage = if (cached == null) fetchInitialCatalogPage(session, category) else null
         val items = cached ?: firstPage!!.items
         if (cached == null) {
             val existing = _state.value.browseCachesByType[category.type]
@@ -1033,7 +1043,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.selectedType !in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) return
         viewModelScope.launch {
             _state.update { it.copy(catalogLoadingMore = true) }
-            runCatching { portal.catalogPage(session, category, snapshot.catalogPage + 1) }
+            runCatching {
+                portal.catalogPage(
+                    session = session,
+                    category = category,
+                    page = snapshot.catalogPage + 1,
+                    pageSize = snapshot.initialCatalogItems.takeIf {
+                        session.profile.portalType == PortalType.XTREAM
+                    }
+                )
+            }
                 .onSuccess { result ->
                     /*
                      * PAGINATION_ACTUALLY_ADDED_V2
@@ -1125,6 +1144,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setCacheIntervalMinutes(minutes: Int) = viewModelScope.launch {
         store.setCacheIntervalMinutes(minutes)
+    }
+
+    fun setInitialCatalogItems(items: Int) = viewModelScope.launch {
+        val normalized = items.takeIf { it in INITIAL_CATALOG_OPTIONS } ?: 14
+        store.setInitialCatalogItems(normalized)
+        _state.update { it.copy(initialCatalogItems = normalized) }
+        val snapshot = _state.value
+        val session = snapshot.session
+        if (session != null) {
+            loadTypeInternal(
+                session = session,
+                type = snapshot.selectedType,
+                forceRefresh = true,
+                preferredCategoryId = snapshot.selectedCategory?.id
+            )
+        }
     }
 
     fun setPlayerControlsTimeoutSeconds(seconds: Int) {
@@ -1683,6 +1718,48 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             result = portal.catalogPage(session, category, nextPage)
         }
         return result
+    }
+
+    /**
+     * Apply the configured initial media count to both provider types. Xtream
+     * returns a full category and is sliced locally; WIO/Ministra fixes remote
+     * responses at 14 rows, so complete pages are combined up to the target.
+     */
+    private suspend fun fetchInitialCatalogPage(
+        session: PortalSession,
+        category: Category
+    ): PortalCatalogPage {
+        val target = _state.value.initialCatalogItems
+        val firstPage = portal.catalogPage(
+            session = session,
+            category = category,
+            page = 1,
+            pageSize = target.takeIf { session.profile.portalType == PortalType.XTREAM }
+        )
+        if (session.profile.portalType != PortalType.STALKER || !firstPage.hasMore) {
+            return firstPage
+        }
+
+        val merged = firstPage.items.toMutableList()
+        val knownIds = merged.mapTo(mutableSetOf()) { it.id }
+        var latestPage = firstPage
+
+        while (latestPage.hasMore && merged.size < target) {
+            val nextPage = portal.catalogPage(session, category, latestPage.page + 1)
+            val additions = nextPage.items.filter { knownIds.add(it.id) }
+            latestPage = nextPage
+            if (additions.isEmpty()) break
+            merged += additions
+        }
+
+        return PortalCatalogPage(
+            // Keep the complete final provider page. Truncating a 14-row page
+            // at the target would skip its remaining rows when pagination
+            // resumes from the following page.
+            items = merged,
+            page = latestPage.page,
+            hasMore = latestPage.hasMore
+        )
     }
 
     private fun playbackQueuePrefetchKey(scope: String, requestedPage: Int) =
@@ -3328,22 +3405,65 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 ) { progress ->
                     _state.update {
                         it.copy(
-                            searchCatalogScanProgress = progress.fraction,
+                            searchCatalogScanProgress = progress.fraction * 0.82f,
                             searchCatalogScanMessage =
-                                "Scanning ${progress.categoryTitle} · page ${progress.page}"
+                                "Category ${progress.categoryPosition}/${progress.categoryCount} · " +
+                                    "${progress.categoryTitle} · page ${progress.page} · " +
+                                    "${progress.discoveredItems} items"
                         )
                     }
                 }
-                SearchMetadataSyncScheduler.requestNow(getApplication())
                 _state.update {
                     it.copy(
                         browseCachesByType = it.browseCachesByType + (type to result.cache),
+                        searchCatalogScanProgress = 0.84f,
+                        searchCatalogScanMessage =
+                            "Provider scan complete · ${result.itemCount} items · preparing shared index"
+                    )
+                }
+                val syncId = SearchMetadataSyncScheduler.requestNow(getApplication())
+                if (syncId != null) {
+                    val workManager = WorkManager.getInstance(getApplication<Application>())
+                    var completed: WorkInfo? = null
+                    while (true) {
+                        completed = withContext(Dispatchers.IO) {
+                            workManager.getWorkInfoById(syncId).get()
+                        }
+                        val info = completed
+                        if (info == null) {
+                            delay(350L)
+                            continue
+                        }
+                            val syncFraction = info.progress.getFloat(
+                                SearchMetadataSyncWorker.PROGRESS_FRACTION,
+                                0f
+                            )
+                            val syncMessage = info.progress.getString(
+                                SearchMetadataSyncWorker.PROGRESS_MESSAGE
+                            )
+                            _state.update {
+                                it.copy(
+                                    searchCatalogScanProgress = 0.84f + syncFraction * 0.16f,
+                                    searchCatalogScanMessage = syncMessage
+                                        ?.let { message -> "Shared index · $message" }
+                                    ?: "Shared index · waiting for GitHub"
+                                )
+                            }
+                        if (info.state.isFinished) break
+                        delay(350L)
+                    }
+                    if (completed?.state != WorkInfo.State.SUCCEEDED) {
+                        error("Shared index sync will retry in the background")
+                    }
+                }
+                _state.update {
+                    it.copy(
                         searchCatalogScanning = false,
                         searchCatalogScanProgress = 1f,
                         searchCatalogScanMessage = if (result.failures == 0) {
-                            "${result.itemCount} ${type.title.lowercase()} items ready to sync"
+                            "Complete · ${result.itemCount} ${type.title.lowercase()} items scanned and synced"
                         } else {
-                            "${result.itemCount} items found · ${result.failures} categories will retry later"
+                            "Synced ${result.itemCount} items · ${result.failures} categories will retry"
                         }
                     )
                 }
@@ -3449,6 +3569,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 searchOpen = false,
                 searchLocalLoading = false,
                 searchServerLoading = false
+                ,searchActivityTitle = null
+                ,searchActivityDetail = null
+                ,searchActivityProgress = null
             )
         }
     }
@@ -3687,7 +3810,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (query.isBlank() || snapshot.searchServerLoading) return
 
         _state.update {
-            it.copy(searchLocalLoading = true)
+            it.copy(
+                searchLocalLoading = true,
+                searchActivityTitle = "Searching this device",
+                searchActivityDetail = "Checking loaded media, device cache and the shared index",
+                searchActivityProgress = null
+            )
         }
 
         searchServerJob?.cancel()
@@ -3729,6 +3857,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     searchUsedServer = saved != null,
                     searchPage = saved?.lastPage ?: 0,
                     searchHasMore = saved?.hasMore ?: false
+                    ,searchActivityTitle = null
+                    ,searchActivityDetail = null
+                    ,searchActivityProgress = null
                 )
             }
 
@@ -3799,7 +3930,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 searchServerLoading = true,
-                searchLocalLoading = false
+                searchLocalLoading = false,
+                searchActivityTitle = "Searching IPTV provider",
+                searchActivityDetail = "Requesting ${type.title.lowercase()} from the selected provider scope",
+                searchActivityProgress = null
             )
         }
 
@@ -3826,7 +3960,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 // A small parallel window cuts latency without flooding the
                 // IPTV portal. Stop as soon as an exact title is found; users
                 // can request another page if they need broader matches.
-                for (batch in categories.chunked(SEARCH_CATEGORY_CONCURRENCY)) {
+                val batches = categories.chunked(SEARCH_CATEGORY_CONCURRENCY)
+                for ((batchIndex, batch) in batches.withIndex()) {
+                    _state.update { current ->
+                        current.copy(
+                            searchActivityTitle = "Searching IPTV categories",
+                            searchActivityDetail =
+                                "Categories ${batchIndex * SEARCH_CATEGORY_CONCURRENCY + 1}–" +
+                                    "${minOf((batchIndex + 1) * SEARCH_CATEGORY_CONCURRENCY, categories.size)} of ${categories.size}",
+                            searchActivityProgress =
+                                batchIndex.toFloat() / batches.size.coerceAtLeast(1)
+                        )
+                    }
                     val pages = coroutineScope {
                         batch.map { category ->
                             async {
@@ -3900,6 +4045,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         searchUsedServer = true,
                         searchPage = result.page,
                         searchHasMore = hasMore
+                        ,searchActivityTitle = null
+                        ,searchActivityDetail = null
+                        ,searchActivityProgress = null
                     )
                 }
             }
@@ -3916,6 +4064,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     current.copy(
                         searchServerLoading = false,
+                        searchActivityTitle = null,
+                        searchActivityDetail = null,
+                        searchActivityProgress = null,
                         error = error.message ?: "Provider search failed"
                     )
                 }
@@ -5573,6 +5724,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val EPISODE_METADATA_VERSION = 4
         private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
+        private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30
         private const val INITIAL_MOVIE_MATCH_LIMIT = 5
         private const val MAX_BACKGROUND_MATCH_REQUESTS = 8

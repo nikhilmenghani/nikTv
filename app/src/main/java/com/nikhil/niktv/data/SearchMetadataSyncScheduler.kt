@@ -14,6 +14,7 @@ import androidx.work.workDataOf
 import com.nikhil.niktv.model.CatalogType
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 
 /** Keeps the sanitized GitHub search index fresh without blocking catalog UI. */
 object SearchMetadataSyncScheduler {
@@ -66,13 +67,11 @@ object SearchMetadataSyncScheduler {
         enqueue(context, immediate = false)
     }
 
-    fun requestNow(context: Context) {
-        enqueue(context, immediate = true)
-    }
+    fun requestNow(context: Context): UUID? = enqueue(context, immediate = true)
 
-    private fun enqueue(context: Context, immediate: Boolean) {
+    private fun enqueue(context: Context, immediate: Boolean): UUID? {
         val appContext = context.applicationContext
-        if (!isEnabled(GitHubBackupManager(appContext).loadConfig())) return
+        if (!isEnabled(GitHubBackupManager(appContext).loadConfig())) return null
         val builder = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>()
             .setConstraints(networkConstraints())
         if (!immediate) builder.setInitialDelay(DEBOUNCE_SECONDS, TimeUnit.SECONDS)
@@ -82,6 +81,7 @@ object SearchMetadataSyncScheduler {
             if (immediate) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
             request
         )
+        return request.id
     }
 
     private fun isEnabled(config: GitHubBackupConfig): Boolean =
@@ -139,14 +139,29 @@ class SearchMetadataSyncWorker(
         val store = ProfileStore(applicationContext)
         val sync = SearchMetadataSyncManager(applicationContext)
         var transientFailure = false
+        val profiles = store.profiles.first()
+        val total = (profiles.size * SYNC_TYPES.size).coerceAtLeast(1)
+        var completed = 0
 
-        store.profiles.first().forEach { profile ->
+        profiles.forEach { profile ->
             val profileKey = profile.cacheKey()
             SYNC_TYPES.forEach { type ->
                 try {
+                    setProgress(
+                        workDataOf(
+                            PROGRESS_MESSAGE to "Downloading ${type.title} index for ${profile.name}",
+                            PROGRESS_FRACTION to completed.toFloat() / total
+                        )
+                    )
                     val searchCache = store.searchCatalog(type, profileKey).first()
                     val browseCache = store.browseCatalog(type, profileKey).first()
                     val remote = sync.download(profile, type, config)
+                    setProgress(
+                        workDataOf(
+                            PROGRESS_MESSAGE to "Merging ${type.title} metadata",
+                            PROGRESS_FRACTION to (completed + 0.45f) / total
+                        )
+                    )
                     val local = sync.buildIndex(profile, type, searchCache, browseCache)
                     val merged = sync.merge(local, remote)
 
@@ -155,6 +170,12 @@ class SearchMetadataSyncWorker(
                         store.mergeSearchMetadata(remoteCache)
                     }
                     if (merged.items.isNotEmpty() && remote?.items != merged.items) {
+                        setProgress(
+                            workDataOf(
+                                PROGRESS_MESSAGE to "Uploading ${type.title} changes",
+                                PROGRESS_FRACTION to (completed + 0.75f) / total
+                            )
+                        )
                         sync.upload(merged, config)
                     }
                 } catch (_: IllegalArgumentException) {
@@ -162,12 +183,15 @@ class SearchMetadataSyncWorker(
                 } catch (_: Throwable) {
                     transientFailure = true
                 }
+                completed += 1
             }
         }
         return if (transientFailure) Result.retry() else Result.success()
     }
 
     companion object {
+        const val PROGRESS_MESSAGE = "sync_message"
+        const val PROGRESS_FRACTION = "sync_fraction"
         private val SYNC_TYPES = listOf(
             CatalogType.LIVE_TV,
             CatalogType.MOVIES,

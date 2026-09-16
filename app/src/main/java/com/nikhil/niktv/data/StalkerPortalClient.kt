@@ -137,9 +137,23 @@ class StalkerPortalClient(private val context: Context) {
     suspend fun catalog(session: PortalSession, category: Category): List<MediaItem> =
         catalogPage(session, category, 1).items
 
-    suspend fun catalogPage(session: PortalSession, category: Category, page: Int): PortalCatalogPage = withContext(Dispatchers.IO) {
+    suspend fun catalogPage(
+        session: PortalSession,
+        category: Category,
+        page: Int,
+        pageSize: Int? = null
+    ): PortalCatalogPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
-            return@withContext PortalCatalogPage(xtreamCatalog(session, category), 1, false)
+            val allItems = xtreamCatalog(session, category)
+            if (pageSize == null) return@withContext PortalCatalogPage(allItems, 1, false)
+            val requestedPage = page.coerceAtLeast(1)
+            val start = (requestedPage - 1) * pageSize
+            val items = if (start >= allItems.size) emptyList() else allItems.drop(start).take(pageSize)
+            return@withContext PortalCatalogPage(
+                items = items,
+                page = requestedPage,
+                hasMore = start + items.size < allItems.size
+            )
         }
         val action = "get_ordered_list"
         val categoryKey = if (category.type == CatalogType.LIVE_TV || category.type == CatalogType.RADIO) "genre" else "category"
@@ -601,7 +615,10 @@ class StalkerPortalClient(private val context: Context) {
         val nodes = http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("Xtream server returned HTTP ${response.code}")
             val body = response.body ?: error("Xtream server returned an empty response")
-            json.decodeToSequence<JsonElement>(body.byteStream()).take(XTREAM_CATALOG_LIMIT).toList()
+            // Xtream returns the selected category as one response rather than
+            // exposing provider-side catalogue pages. Decode the complete
+            // sequence so valid media is not silently hidden after item 120.
+            json.decodeToSequence<JsonElement>(body.byteStream()).toList()
         }
         return nodes.mapNotNull { node ->
             val o = node as? JsonObject ?: return@mapNotNull null
@@ -1045,7 +1062,6 @@ class StalkerPortalClient(private val context: Context) {
         private const val PLAYBACK_LINK_REQUEST_SPACING_MS = 150L
         private const val REQUEST_WINDOW_MS = 60_000L
         private const val MAX_REQUESTS_PER_WINDOW = 20
-        private const val XTREAM_CATALOG_LIMIT = 120
     }
 
     private data class DeviceIdentity(val serial: String, val stbType: String, val clientType: String, val metrics: String, val hardwareVersion2: String)

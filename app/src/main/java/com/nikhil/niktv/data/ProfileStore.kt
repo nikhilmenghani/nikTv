@@ -55,6 +55,7 @@ class ProfileStore(private val context: Context) {
     private val progressKey = stringPreferencesKey("playback_progress")
     private val playbackUrlsKey = stringPreferencesKey("playback_urls")
     private val cacheIntervalKey = intPreferencesKey("catalog_cache_interval_minutes")
+    private val initialCatalogItemsKey = intPreferencesKey("initial_catalog_items")
     private val playerControlsTimeoutKey = intPreferencesKey("player_controls_timeout_seconds")
     private val keepAwakeOnlyDuringPlaybackKey = intPreferencesKey("keep_awake_only_during_playback")
     private val automaticReauthenticationKey = intPreferencesKey("automatic_reauthentication")
@@ -101,6 +102,9 @@ class ProfileStore(private val context: Context) {
         prefs[playbackUrlsKey]?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
     }
     val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
+    val initialCatalogItems: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[initialCatalogItemsKey]?.takeIf { it in INITIAL_CATALOG_OPTIONS } ?: 14
+    }
     val playerControlsTimeoutSeconds: Flow<Int> = context.dataStore.data.map { it[playerControlsTimeoutKey] ?: 3 }
     val keepAwakeOnlyDuringPlayback: Flow<Boolean> = context.dataStore.data.map {
         (it[keepAwakeOnlyDuringPlaybackKey] ?: 0) == 1
@@ -276,6 +280,10 @@ class ProfileStore(private val context: Context) {
         )
     }
     suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
+    suspend fun setInitialCatalogItems(items: Int) = context.dataStore.edit {
+        it[initialCatalogItemsKey] =
+            items.takeIf { value -> value in INITIAL_CATALOG_OPTIONS } ?: 14
+    }
     suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = context.dataStore.edit {
         it[playerControlsTimeoutKey] = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
     }
@@ -473,9 +481,11 @@ class ProfileStore(private val context: Context) {
         )
         private val BACKUP_INT_KEYS = setOf(
             "catalog_cache_interval_minutes",
+            "initial_catalog_items",
             "player_controls_timeout_seconds",
             "automatic_reauthentication",
             "modern_ui_enabled"
         )
+        private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)
     }
 }

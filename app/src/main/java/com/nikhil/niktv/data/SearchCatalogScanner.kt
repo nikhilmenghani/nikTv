@@ -11,7 +11,10 @@ import kotlinx.coroutines.flow.first
 data class SearchCatalogScanProgress(
     val categoryTitle: String,
     val page: Int,
-    val fraction: Float
+    val fraction: Float,
+    val categoryPosition: Int,
+    val categoryCount: Int,
+    val discoveredItems: Int
 )
 
 data class SearchCatalogScanResult(
@@ -67,7 +70,10 @@ class SearchCatalogScanner(context: Context) {
                         SearchCatalogScanProgress(
                             category.title,
                             page,
-                            categoryIndex.toFloat() / categories.size.coerceAtLeast(1)
+                            categoryIndex.toFloat() / categories.size.coerceAtLeast(1),
+                            categoryIndex + 1,
+                            categories.size,
+                            cache.itemsByCategory.values.sumOf { it.size }
                         )
                     )
                     val pageResult = runCatching {
@@ -101,7 +107,10 @@ class SearchCatalogScanner(context: Context) {
                 SearchCatalogScanProgress(
                     category.title,
                     page,
-                    (categoryIndex + 1f) / categories.size.coerceAtLeast(1)
+                    (categoryIndex + 1f) / categories.size.coerceAtLeast(1),
+                    categoryIndex + 1,
+                    categories.size,
+                    cache.itemsByCategory.values.sumOf { it.size }
                 )
             )
             if (categoryIndex < categories.lastIndex) delay(requestDelayMillis)

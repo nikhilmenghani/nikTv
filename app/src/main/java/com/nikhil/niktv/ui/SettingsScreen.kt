@@ -187,6 +187,7 @@ internal fun ModernSettingsScreen(
     setPreconfiguredProfileEnabled: (PortalProfile, Boolean) -> Unit,
     logout: () -> Unit,
     setCacheIntervalMinutes: (Int) -> Unit,
+    setInitialCatalogItems: (Int) -> Unit,
     setPlayerControlsTimeoutSeconds: (Int) -> Unit,
     setKeepAwakeOnlyDuringPlayback: (Boolean) -> Unit,
     setAutomaticReauthentication: (Boolean) -> Unit,
@@ -1587,13 +1588,10 @@ internal fun ModernSettingsScreen(
                         ) {
                             performGitHubExport()
                         } else {
-                            val timestamp =
-                                java.text.SimpleDateFormat(
-                                    "yyyyMMdd-HHmmss",
-                                    java.util.Locale.getDefault()
-                                ).format(java.util.Date())
                             exportLauncher.launch(
-                                "NikTV-${BuildConfig.VERSION_NAME}-$timestamp-backup.json"
+                                githubBackupManager.suggestedBackupFileName(
+                                    encrypted = false
+                                )
                             )
                         }
                     },
@@ -1743,14 +1741,25 @@ internal fun ModernSettingsScreen(
                                                 headlineContent = {
                                                     Text(
                                                         backup.name,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
+                                                        maxLines = 4,
+                                                        overflow = TextOverflow.Visible,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.SemiBold
                                                     )
                                                 },
                                                 supportingContent = {
-                                                    Text(
-                                                        "${formatOfflineBytes(backup.size)} · " + if (backup.encrypted) "encrypted" else "plain JSON"
-                                                    )
+                                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                        Text(
+                                                            "${formatOfflineBytes(backup.size)} · " + if (backup.encrypted) "Encrypted backup" else "Readable JSON",
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                        Text(
+                                                            backup.path,
+                                                            maxLines = 2,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
                                                 },
                                                 leadingContent = {
                                                     Icon(if (backup.encrypted) Icons.Default.Lock else Icons.Default.Description, null)
@@ -1991,6 +2000,55 @@ internal fun ModernSettingsScreen(
                                 shape = intervalShape
                             ) {
                                 Text(label)
+                            }
+                        }
+                    }
+                }
+            }
+            if (state.savedProfile != null) {
+                val itemOptions = listOf(14, 28, 42, 56)
+                if (compactSettingsHeader) {
+                    CompactSettingsOptionRow(
+                        icon = Icons.Default.GridView,
+                        title = "Initial media load",
+                        subtitle = "Choose how many IPTV items load when a category opens.",
+                        belowContent = {
+                            Spacer(Modifier.height(8.dp))
+                            SingleChoiceSegmentedButtonRow(
+                                Modifier.fillMaxWidth().padding(start = 40.dp, end = 2.dp)
+                            ) {
+                                itemOptions.forEachIndexed { index, count ->
+                                    val shape = uniformSegmentShape(index, itemOptions.size)
+                                    SegmentedButton(
+                                        selected = state.initialCatalogItems == count,
+                                        onClick = { setInitialCatalogItems(count) },
+                                        modifier = Modifier.remoteFocusFrame(shape),
+                                        shape = shape
+                                    ) { Text(count.toString()) }
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    Column(
+                        Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Initial media load", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Choose how many IPTV items load when a category opens.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            itemOptions.forEachIndexed { index, count ->
+                                val shape = uniformSegmentShape(index, itemOptions.size)
+                                SegmentedButton(
+                                    selected = state.initialCatalogItems == count,
+                                    onClick = { setInitialCatalogItems(count) },
+                                    modifier = Modifier.remoteFocusFrame(shape),
+                                    shape = shape
+                                ) { Text(count.toString()) }
                             }
                         }
                     }

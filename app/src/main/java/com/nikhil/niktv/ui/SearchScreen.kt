@@ -651,7 +651,7 @@ internal fun ModernSearchScreen(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            state.searchCatalogScanMessage?.let { message ->
+            state.searchCatalogScanMessage?.takeIf { !state.searchCatalogScanning }?.let { message ->
                 Text(
                     message,
                     modifier = Modifier.weight(1f).padding(end = 12.dp),
@@ -687,8 +687,9 @@ internal fun ModernSearchScreen(
 
         if (state.searchCatalogScanning) {
             Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(
-                progress = { state.searchCatalogScanProgress },
+            SyncProgressCard(
+                message = state.searchCatalogScanMessage ?: "Preparing scan…",
+                progress = state.searchCatalogScanProgress,
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 1120.dp)
@@ -698,32 +699,16 @@ internal fun ModernSearchScreen(
 
         Spacer(Modifier.height(10.dp))
 
-        if (state.searchServerLoading) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (state.searchServerLoading || showLocalSearchProgress) {
+            SearchActivityCard(
+                title = state.searchActivityTitle
+                    ?: if (state.searchServerLoading) "Searching IPTV provider" else "Searching this device",
+                detail = state.searchActivityDetail
+                    ?: if (state.searchServerLoading) "Waiting for provider results" else "Checking local indexes",
+                progress = state.searchActivityProgress,
+                providerSearch = state.searchServerLoading
+            )
             Spacer(Modifier.height(10.dp))
-        }
-
-        if (showLocalSearchProgress) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 34.dp)
-                    .padding(vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(22.dp),
-                    strokeWidth = 2.5.dp,
-                    color = SearchAccent,
-                    trackColor = SearchOutline
-                )
-                Text(
-                    "Checking available items…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
 
         /*
@@ -926,6 +911,136 @@ internal fun ModernSearchScreen(
             },
             close = { categoryPickerOpen = false }
         )
+    }
+}
+
+@Composable
+private fun SearchActivityCard(
+    title: String,
+    detail: String,
+    progress: Float?,
+    providerSearch: Boolean
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = SearchSurface,
+        border = BorderStroke(1.dp, SearchOutline)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(SearchAccent.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    if (providerSearch) Icons.Default.CloudDownload else Icons.Default.Storage,
+                    contentDescription = null,
+                    tint = SearchAccent
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        title,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        if (providerSearch) "IPTV" else "DEVICE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SearchAccent
+                    )
+                }
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SearchMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(3.dp))
+                if (progress != null) {
+                    LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncProgressCard(
+    message: String,
+    progress: Float,
+    modifier: Modifier = Modifier
+) {
+    val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = SearchSurface,
+        border = BorderStroke(1.dp, SearchAccent.copy(alpha = 0.45f))
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Sync, null, tint = SearchAccent)
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        when {
+                            progress < 0.82f -> "Scanning IPTV catalogue"
+                            progress < 1f -> "Synchronizing shared index"
+                            else -> "Synchronization complete"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SearchMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    "$percent%",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = SearchAccent,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Provider scan", style = MaterialTheme.typography.labelSmall, color = SearchMuted)
+                Text("Local merge", style = MaterialTheme.typography.labelSmall, color = SearchMuted)
+                Text("GitHub upload", style = MaterialTheme.typography.labelSmall, color = SearchMuted)
+            }
+        }
     }
 }
 
