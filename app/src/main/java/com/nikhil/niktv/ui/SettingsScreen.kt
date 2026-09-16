@@ -122,53 +122,145 @@ import kotlinx.coroutines.withTimeoutOrNull
 private fun TvSafeSettingsTextField(
     value: String,
     onValueChange: (String) -> Unit,
-    label: String,
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
     modifier: Modifier = Modifier,
     placeholder: String? = null,
-    supportingText: String? = null,
     password: Boolean = false,
+    requester: FocusRequester? = null,
+    upRequester: FocusRequester? = null,
+    downRequester: FocusRequester? = null,
     singleLine: Boolean = true
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val isTv = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
-        (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION ||
-        !context.packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
-    var editing by remember { mutableStateOf(!isTv) }
+    val isTv = context.isTvLikeDevice(configuration)
+    var editing by remember(isTv) { mutableStateOf(!isTv) }
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
+    val iconBoxSize = if (isTv) 32.dp else 28.dp
+    val iconSize = if (isTv) 24.dp else 22.dp
+    val contentInset = if (isTv) 44.dp else 40.dp
+    val fieldShape = RoundedCornerShape(12.dp)
 
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        placeholder = placeholder?.let { text -> ({ Text(text) }) },
-        supportingText = supportingText?.let { text -> ({ Text(text) }) },
-        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
-        readOnly = isTv && !editing,
-        singleLine = singleLine,
+    /* GITHUB_BACKUP_FIELDS_MODERN_V1
+     * GitHub credentials use the same icon/title/supporting-text hierarchy
+     * as the rest of Settings. The editable control sits on the shared text
+     * grid; TV keeps OK-to-edit behavior and D-pad focus navigation.
+     */
+    Column(
         modifier = modifier
-            .onFocusChanged {
-                if (!it.isFocused && isTv) {
-                    editing = false
-                    keyboard?.hide()
-                }
+            .fillMaxWidth()
+            .padding(vertical = if (isTv) 4.dp else 2.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement =
+                Arrangement.spacedBy(if (isTv) 14.dp else 12.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(iconBoxSize),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(iconSize),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            .onPreviewKeyEvent { event ->
-                if (
-                    isTv && !editing && event.type == KeyEventType.KeyDown &&
-                    event.key in setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
-                ) {
-                    editing = true
-                    scope.launch {
-                        delay(50L)
-                        keyboard?.show()
+
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    title,
+                    style =
+                        if (isTv) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.bodyLarge
+                        },
+                    fontWeight =
+                        if (isTv) FontWeight.SemiBold
+                        else FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = placeholder?.let { text -> ({ Text(text) }) },
+            visualTransformation =
+                if (password) {
+                    PasswordVisualTransformation()
+                } else {
+                    VisualTransformation.None
+                },
+            readOnly = isTv && !editing,
+            singleLine = singleLine,
+            shape = fieldShape,
+            textStyle = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = contentInset)
+                .heightIn(min = if (isTv) 60.dp else 56.dp)
+                .then(
+                    if (requester != null) {
+                        Modifier.focusRequester(requester)
+                    } else {
+                        Modifier
                     }
-                    true
-                } else false
-            }
-            .remoteFocusFrame(RoundedCornerShape(12.dp))
-    )
+                )
+                .focusProperties {
+                    if (upRequester != null) {
+                        up = upRequester
+                    }
+                    if (downRequester != null) {
+                        down = downRequester
+                    }
+                }
+                .onFocusChanged {
+                    if (!it.isFocused && isTv) {
+                        editing = false
+                        keyboard?.hide()
+                    }
+                }
+                .onPreviewKeyEvent { event ->
+                    if (
+                        isTv &&
+                        !editing &&
+                        event.type == KeyEventType.KeyDown &&
+                        event.key in setOf(
+                            Key.DirectionCenter,
+                            Key.Enter,
+                            Key.NumPadEnter
+                        )
+                    ) {
+                        editing = true
+                        scope.launch {
+                            delay(50L)
+                            keyboard?.show()
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                }
+                .remoteFocusFrame(fieldShape)
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -1661,15 +1753,28 @@ SettingsSection("Backup and restore") {
                     ),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    val githubUsernameRequester =
+                        remember { FocusRequester() }
+                    val githubRepositoryRequester =
+                        remember { FocusRequester() }
+                    val githubTokenRequester =
+                        remember { FocusRequester() }
+                    val githubPasswordRequester =
+                        remember { FocusRequester() }
+
                     TvSafeSettingsTextField(
                         value = githubBackupConfig.username,
                         onValueChange = {
                             githubBackupConfig =
                                 githubBackupConfig.copy(username = it)
                         },
-                        label = "GitHub username",
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        icon = Icons.Default.AccountCircle,
+                        title = "GitHub username",
+                        subtitle =
+                            "Account that owns the backup repository.",
+                        placeholder = "GitHub username",
+                        requester = githubUsernameRequester,
+                        downRequester = githubRepositoryRequester
                     )
                     TvSafeSettingsTextField(
                         value = githubBackupConfig.repository,
@@ -1677,10 +1782,14 @@ SettingsSection("Backup and restore") {
                             githubBackupConfig =
                                 githubBackupConfig.copy(repository = it)
                         },
-                        label = "Repository",
-                        placeholder = "tracker",
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        icon = Icons.Default.Folder,
+                        title = "Repository",
+                        subtitle =
+                            "Repository where NikTV stores backup files.",
+                        placeholder = "Repository name",
+                        requester = githubRepositoryRequester,
+                        upRequester = githubUsernameRequester,
+                        downRequester = githubTokenRequester
                     )
                     TvSafeSettingsTextField(
                         value = githubBackupConfig.token,
@@ -1688,13 +1797,16 @@ SettingsSection("Backup and restore") {
                             githubBackupConfig =
                                 githubBackupConfig.copy(token = it)
                         },
-                        label = "GitHub personal access token",
-                        supportingText =
-                            "Defaults to the build-time G_TOKEN. " +
-                                "A changed value is stored encrypted on this device.",
+                        icon = Icons.Default.Key,
+                        title = "Personal access token (PAT)",
+                        subtitle =
+                            "Uses the build-time G_TOKEN when blank. " +
+                                "A changed token is stored encrypted on this device.",
+                        placeholder = "Personal access token",
                         password = true,
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        requester = githubTokenRequester,
+                        upRequester = githubRepositoryRequester,
+                        downRequester = githubPasswordRequester
                     )
                     TvSafeSettingsTextField(
                         value = githubBackupConfig.passphrase,
@@ -1705,13 +1817,15 @@ SettingsSection("Backup and restore") {
                                     rememberPassphrase = it.isNotBlank()
                                 )
                         },
-                        label = "Backup password (optional)",
-                        supportingText =
-                            "Leave blank for plain JSON. Use 12+ characters " +
-                                "to encrypt GitHub backups.",
+                        icon = Icons.Default.Lock,
+                        title = "Backup password",
+                        subtitle =
+                            "Optional · Leave blank for readable JSON. " +
+                                "Use 12+ characters to encrypt GitHub backups.",
+                        placeholder = "Optional backup password",
                         password = true,
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        requester = githubPasswordRequester,
+                        upRequester = githubTokenRequester
                     )
 
                     if (githubBackupConfig.passphrase.isBlank()) {
