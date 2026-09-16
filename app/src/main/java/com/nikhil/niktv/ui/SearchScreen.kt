@@ -2033,101 +2033,14 @@ private fun ModernSearchPosterResultCard(
     isTv: Boolean,
     modifier: Modifier = Modifier
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
-    val context = LocalContext.current
-    val artworkModel = remember(item.id, item.title, item.logo) {
-        artworkRequest(context, item)
-    }
-    val shape = RoundedCornerShape(14.dp)
-    val fallbackIcon = if (type == SearchContentType.SERIES) Icons.Default.VideoLibrary else Icons.Default.Movie
-
-    Box {
-        Surface(
-            modifier = modifier
-                .fillMaxWidth()
-                .remoteFocusFrame(shape)
-                .remoteCombinedClickable(
-                    onClick = onClick,
-                    onLongClick = { menuOpen = true }
-                ),
-            shape = shape,
-            color = SearchSurface,
-            border = BorderStroke(1.dp, SearchOutline)
-        ) {
-            Column {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(2f / 3f)
-                        .background(Color(0xFF292D34)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (item.logo.isNullOrBlank()) {
-                        Icon(
-                            fallbackIcon,
-                            null,
-                            Modifier.size(if (isTv) 40.dp else 44.dp),
-                            tint = Color.LightGray
-                        )
-                    } else {
-                        SubcomposeAsyncImage(
-                            artworkModel,
-                            item.title,
-                            Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        ) {
-                            when (painter.state.value) {
-                                is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
-                                else -> Icon(
-                                    fallbackIcon,
-                                    null,
-                                    Modifier.size(if (isTv) 40.dp else 44.dp),
-                                    tint = Color.LightGray
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Column(
-                    Modifier.padding(
-                        horizontal = if (isTv) 9.dp else 11.dp,
-                        vertical = if (isTv) 8.dp else 10.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        item.title,
-                        color = Color.White,
-                        style = if (isTv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    categoryTitle?.takeIf { it.isNotBlank() }?.let {
-                        Text(
-                            it,
-                            color = SearchMuted,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-
-        SearchFavoriteMenu(
-            expanded = menuOpen,
-            isFavorite = isFavorite,
-            onDismiss = { menuOpen = false },
-            onToggle = {
-                menuOpen = false
-                toggleFavorite()
-            }
-        )
-    }
+    ModernCompactMediaCard(
+        item = item,
+        subtitle = categoryTitle.orEmpty(),
+        onClick = onClick,
+        isFavorite = isFavorite,
+        onFavorite = toggleFavorite,
+        modifier = modifier.fillMaxWidth()
+    )
 }
 
 @Composable

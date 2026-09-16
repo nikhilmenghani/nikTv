@@ -1607,7 +1607,7 @@ private fun ModernContinueRow(
 }
 
 @Composable
-private fun ModernCompactMediaCard(
+internal fun ModernCompactMediaCard(
     item: MediaItem,
     subtitle: String,
     onClick: () -> Unit,

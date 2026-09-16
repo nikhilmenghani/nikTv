@@ -203,7 +203,8 @@ class SearchMetadataSyncManager(context: Context) {
 
     suspend fun upload(
         index: SearchMetadataIndex,
-        config: GitHubBackupConfig = backupManager.loadConfig()
+        config: GitHubBackupConfig = backupManager.loadConfig(),
+        profileName: String? = null
     ): SearchMetadataUpload = withContext(Dispatchers.IO) {
         require(index.schemaVersion == SCHEMA_VERSION)
         require(PROFILE_ID.matches(index.anonymousProfileId))
@@ -216,7 +217,7 @@ class SearchMetadataSyncManager(context: Context) {
             "https://api.github.com/repos/${cfg.username}/${cfg.repository}/contents/$path"
         val existingSha = readExistingSha(cfg, contentsUrl, branch)
         val payload = JSONObject()
-            .put("message", SearchSyncCommitPreferences.message(appContext, index.type.title.lowercase()))
+            .put("message", SearchSyncCommitPreferences.message(appContext, index.type.title.lowercase(), profileName))
             .put("content", Base64.encodeToString(content.toByteArray(), Base64.NO_WRAP))
             .put("branch", branch)
             .apply { existingSha?.let { put("sha", it) } }

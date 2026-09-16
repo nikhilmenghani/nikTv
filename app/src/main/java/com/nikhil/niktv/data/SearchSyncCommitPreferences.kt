@@ -17,8 +17,10 @@ object SearchSyncCommitPreferences {
         .filter { it.isNotBlank() }.joinToString(" ")
         .replace(Regex("[\\r\\n]+"), " ").take(100).ifBlank { "Android device" }
 
-    fun message(context: Context, mediaType: String): String {
-        val base = "Update NikTV $mediaType search metadata"
+    fun message(context: Context, mediaType: String, profileName: String? = null): String {
+        val profile = profileName?.replace(Regex("[\\r\\n]+"), " ")?.trim()?.take(100)
+        val base = "Update NikTV $mediaType search metadata" +
+            (profile?.takeIf { it.isNotBlank() }?.let { " · Profile: $it" } ?: "")
         return if (enabled(context)) "$base · ${deviceName()}" else base
     }
 }

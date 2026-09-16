@@ -176,7 +176,7 @@ class SearchMetadataSyncWorker(
                                 PROGRESS_FRACTION to (completed + 0.75f) / total
                             )
                         )
-                        sync.upload(merged, config)
+                        sync.upload(merged, config, profileName = profile.name)
                     }
                 } catch (_: IllegalArgumentException) {
                     // Oversized/invalid documents are isolated to this type.
