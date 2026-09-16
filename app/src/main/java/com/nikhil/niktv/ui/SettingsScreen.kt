@@ -136,18 +136,32 @@ private fun TvSafeSettingsTextField(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isTvLikeDevice(configuration)
-    var editing by remember(isTv) { mutableStateOf(!isTv) }
+    var editing by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
+    val fallbackRequester = remember { FocusRequester() }
+    val fieldRequester = requester ?: fallbackRequester
     val iconBoxSize = if (isTv) 32.dp else 28.dp
     val iconSize = if (isTv) 24.dp else 22.dp
     val contentInset = if (isTv) 44.dp else 40.dp
     val fieldShape = RoundedCornerShape(12.dp)
 
-    /* GITHUB_BACKUP_FIELDS_MODERN_V1
-     * GitHub credentials use the same icon/title/supporting-text hierarchy
-     * as the rest of Settings. The editable control sits on the shared text
-     * grid; TV keeps OK-to-edit behavior and D-pad focus navigation.
+    fun beginEditing() {
+        if (editing) return
+        editing = true
+        scope.launch {
+            withFrameNanos { }
+            runCatching { fieldRequester.requestFocus() }
+            delay(50L)
+            keyboard?.show()
+        }
+    }
+
+    /* GITHUB_BACKUP_FIELDS_DPAD_EDIT_V1
+     * Focus and edit mode are deliberately separate on every device:
+     * D-pad traversal may focus the field without opening the IME, while
+     * OK/Enter or a real pointer tap explicitly enters editing. Once editing
+     * begins, normal TextField touch/cursor behavior is restored.
      */
     Column(
         modifier = modifier
@@ -208,7 +222,7 @@ private fun TvSafeSettingsTextField(
                 } else {
                     VisualTransformation.None
                 },
-            readOnly = isTv && !editing,
+            readOnly = !editing,
             singleLine = singleLine,
             shape = fieldShape,
             textStyle = MaterialTheme.typography.bodyLarge,
@@ -217,12 +231,19 @@ private fun TvSafeSettingsTextField(
                 .padding(start = contentInset)
                 .heightIn(min = if (isTv) 60.dp else 56.dp)
                 .then(
-                    if (requester != null) {
-                        Modifier.focusRequester(requester)
+                    if (!editing) {
+                        Modifier.pointerInput(fieldRequester) {
+                            detectTapGestures(
+                                onTap = {
+                                    beginEditing()
+                                }
+                            )
+                        }
                     } else {
                         Modifier
                     }
                 )
+                .focusRequester(fieldRequester)
                 .focusProperties {
                     if (upRequester != null) {
                         up = upRequester
@@ -232,14 +253,13 @@ private fun TvSafeSettingsTextField(
                     }
                 }
                 .onFocusChanged {
-                    if (!it.isFocused && isTv) {
+                    if (!it.isFocused) {
                         editing = false
                         keyboard?.hide()
                     }
                 }
                 .onPreviewKeyEvent { event ->
                     if (
-                        isTv &&
                         !editing &&
                         event.type == KeyEventType.KeyDown &&
                         event.key in setOf(
@@ -248,11 +268,7 @@ private fun TvSafeSettingsTextField(
                             Key.NumPadEnter
                         )
                     ) {
-                        editing = true
-                        scope.launch {
-                            delay(50L)
-                            keyboard?.show()
-                        }
+                        beginEditing()
                         true
                     } else {
                         false
