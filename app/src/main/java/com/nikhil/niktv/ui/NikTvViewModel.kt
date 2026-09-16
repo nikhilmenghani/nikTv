@@ -30,6 +30,8 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.async
@@ -3925,7 +3927,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         type: SearchContentType,
         query: String,
         categoryId: String
-    ): List<MediaItem> {
+    ): List<MediaItem> = withContext(Dispatchers.Default) {
         val catalogType = catalogTypeForSearch(type)
         val snapshot = _state.value
         val profileKey = snapshot.session?.profile?.cacheKey()
@@ -4001,7 +4003,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     persistedBrowse
             }
 
-        return source
+        source
             .distinctBy { it.id }
             .filter { it.title.matchesTitleKeywords(query) }
             .sortedByDescending {

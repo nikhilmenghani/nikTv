@@ -136,6 +136,7 @@ internal fun ModernSearchScreen(
     var editSessionSawIme by remember { mutableStateOf(false) }
     var restoreQueryFocus by rememberSaveable { mutableStateOf(false) }
     var queryFocused by remember { mutableStateOf(false) }
+    var showLocalSearchProgress by remember { mutableStateOf(false) }
 
     val searchRequester = remember { FocusRequester() }
     val clearSearchRequester = remember { FocusRequester() }
@@ -149,6 +150,18 @@ internal fun ModernSearchScreen(
     val context = LocalContext.current
     val isTv = context.isSearchTvLikeDevice(configuration)
     val remoteNavigationActive = context.usesRemoteNavigation(configuration)
+
+    LaunchedEffect(state.searchLocalLoading, state.searchServerLoading) {
+        if (state.searchLocalLoading && !state.searchServerLoading) {
+            // Avoid flashing a partial spinner for cache hits that finish within
+            // a frame or two. Longer index searches still get clear feedback.
+            kotlinx.coroutines.delay(180L)
+            showLocalSearchProgress =
+                state.searchLocalLoading && !state.searchServerLoading
+        } else {
+            showLocalSearchProgress = false
+        }
+    }
 
     val selectedCategoryTitle =
         state.searchCategories
@@ -690,17 +703,20 @@ internal fun ModernSearchScreen(
             Spacer(Modifier.height(10.dp))
         }
 
-        if (state.searchLocalLoading && !state.searchServerLoading) {
+        if (showLocalSearchProgress) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp),
+                    .heightIn(min = 34.dp)
+                    .padding(vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 CircularProgressIndicator(
-                    Modifier.size(16.dp),
-                    strokeWidth = 2.dp
+                    modifier = Modifier.size(22.dp),
+                    strokeWidth = 2.5.dp,
+                    color = SearchAccent,
+                    trackColor = SearchOutline
                 )
                 Text(
                     "Checking available items…",
