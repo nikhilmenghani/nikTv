@@ -227,7 +227,10 @@ class ProfileStore(private val context: Context) {
                 ?.takeIf { it.profileKey == profileKey }
         }
     }
-    suspend fun saveBrowseCatalog(cache: BrowseCatalogCache) {
+    suspend fun saveBrowseCatalog(
+        cache: BrowseCatalogCache,
+        scheduleMetadataSync: Boolean = true
+    ) {
         val browseKey = browseCatalogKey(cache.type, cache.profileKey)
         val legacyKey = stringPreferencesKey("browse_catalog_${cache.type.name.lowercase()}")
         context.dataStore.edit { prefs ->
@@ -236,7 +239,7 @@ class ProfileStore(private val context: Context) {
             // value. Never deserialize it; the scoped cache replaces it safely.
             prefs.remove(legacyKey)
         }
-        SearchMetadataSyncScheduler.request(context)
+        if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
 
     suspend fun mergeSearchMetadata(cache: SearchCatalogCache) {

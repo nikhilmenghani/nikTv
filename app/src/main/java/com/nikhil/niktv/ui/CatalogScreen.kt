@@ -170,6 +170,7 @@ internal fun CatalogScreen(
     deleteRecentSearch: (RecentSearch) -> Unit,
     openSearchResult: (MediaItem) -> Unit,
     loadMoreSearch: () -> Unit,
+    scanAndSyncSearchCatalog: () -> Unit,
     loadMoreCatalog: () -> Unit,
     loadMoreEpisodes: () -> Unit,
     setSearchCategory: (String) -> Unit,
@@ -329,7 +330,8 @@ internal fun CatalogScreen(
                     deleteRecent = deleteRecentSearch,
                     openResult = openSearchResult,
                     loadMore = loadMoreSearch,
-                    toggleFavorite = toggleFavoriteEntry
+                    toggleFavorite = toggleFavoriteEntry,
+                    scanAndSync = scanAndSyncSearchCatalog
                 )
                 state.favoritesOpen -> ModernFavoritesScreen(
                     state = state,

@@ -20,6 +20,8 @@ import com.nikhil.niktv.data.TmdbSeries
 import com.nikhil.niktv.data.prefetchArtwork
 import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
+import com.nikhil.niktv.data.SearchMetadataSyncScheduler
+import com.nikhil.niktv.data.SearchCatalogScanner
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -27,6 +29,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.async
@@ -125,6 +128,9 @@ data class NikTvState(
     val searchHasMore: Boolean = false,
     val searchCategories: List<Category> = emptyList(),
     val searchCategoryId: String = "*",
+    val searchCatalogScanning: Boolean = false,
+    val searchCatalogScanProgress: Float = 0f,
+    val searchCatalogScanMessage: String? = null,
     val categoryFilters: Map<String, List<String>> = emptyMap(),
     val categoryManagerOpen: Boolean = false,
     val categoryManagerType: CatalogType = CatalogType.LIVE_TV
@@ -162,6 +168,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
+    private var searchCatalogScanJob: Job? = null
 
     init {
         prepareProfileChooser()
@@ -3297,6 +3304,58 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
+    fun scanAndSyncSearchCatalog() {
+        if (searchCatalogScanJob?.isActive == true) return
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        val type = catalogTypeForSearch(snapshot.searchType)
+
+        searchCatalogScanJob = viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    searchCatalogScanning = true,
+                    searchCatalogScanProgress = 0f,
+                    searchCatalogScanMessage = "Preparing ${type.title.lowercase()} scan…"
+                )
+            }
+            try {
+                val result = SearchCatalogScanner(getApplication()).scan(
+                    session = session,
+                    type = type,
+                    requestDelayMillis = METADATA_SCAN_REQUEST_DELAY_MS
+                ) { progress ->
+                    _state.update {
+                        it.copy(
+                            searchCatalogScanProgress = progress.fraction,
+                            searchCatalogScanMessage =
+                                "Scanning ${progress.categoryTitle} · page ${progress.page}"
+                        )
+                    }
+                }
+                SearchMetadataSyncScheduler.requestNow(getApplication())
+                _state.update {
+                    it.copy(
+                        browseCachesByType = it.browseCachesByType + (type to result.cache),
+                        searchCatalogScanning = false,
+                        searchCatalogScanProgress = 1f,
+                        searchCatalogScanMessage = if (result.failures == 0) {
+                            "${result.itemCount} ${type.title.lowercase()} items ready to sync"
+                        } else {
+                            "${result.itemCount} items found · ${result.failures} categories will retry later"
+                        }
+                    )
+                }
+            } catch (error: Throwable) {
+                _state.update {
+                    it.copy(
+                        searchCatalogScanning = false,
+                        searchCatalogScanMessage = error.message ?: "Scan could not be completed"
+                    )
+                }
+            }
+        }
+    }
+
     private fun catalogTypeForSearch(type: SearchContentType): CatalogType = when (type) {
         SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
         SearchContentType.MOVIES -> CatalogType.MOVIES
@@ -5518,5 +5577,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val SEARCH_PREVIEW_DEBOUNCE_MS = 220L
         private const val SEARCH_CATEGORY_CONCURRENCY = 3
         private const val SEARCH_ALL_CATEGORY_RESULT_LIMIT = 24
+        private const val METADATA_SCAN_REQUEST_DELAY_MS = 500L
     }
 }

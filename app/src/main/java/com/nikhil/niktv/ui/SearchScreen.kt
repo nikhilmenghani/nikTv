@@ -123,7 +123,8 @@ internal fun ModernSearchScreen(
     deleteRecent: (RecentSearch) -> Unit,
     openResult: (MediaItem) -> Unit,
     loadMore: () -> Unit,
-    toggleFavorite: (FavoriteItem) -> Unit
+    toggleFavorite: (FavoriteItem) -> Unit,
+    scanAndSync: () -> Unit
 ) {
     var categoryPickerOpen by rememberSaveable(state.searchType) {
         mutableStateOf(false)
@@ -140,6 +141,7 @@ internal fun ModernSearchScreen(
     val clearSearchRequester = remember { FocusRequester() }
     val submitSearchRequester = remember { FocusRequester() }
     val categoryRequester = remember { FocusRequester() }
+    val scanRequester = remember { FocusRequester() }
     val contentRequester = remember { FocusRequester() }
     val typeRequesters = remember { searchVisibleTypes.associateWith { FocusRequester() } }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -557,7 +559,7 @@ internal fun ModernSearchScreen(
                         .focusRequester(categoryRequester)
                         .focusProperties {
                             up = selectedTypeRequester
-                            down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                            down = scanRequester
                         }
                 )
             } else {
@@ -600,7 +602,7 @@ internal fun ModernSearchScreen(
                                 up = searchRequester
                                 left = typeRequesters.getValue(searchVisibleTypes.last())
                                 right = FocusRequester.Cancel
-                                down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                                down = scanRequester
                             }
                     )
                 }
@@ -621,12 +623,67 @@ internal fun ModernSearchScreen(
                     .focusRequester(categoryRequester)
                     .focusProperties {
                         up = searchRequester
-                        down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                        down = scanRequester
                     }
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 1120.dp)
+                .align(Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            state.searchCatalogScanMessage?.let { message ->
+                Text(
+                    message,
+                    modifier = Modifier.weight(1f).padding(end = 12.dp),
+                    color = SearchMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            FilledTonalButton(
+                onClick = scanAndSync,
+                enabled = !state.searchCatalogScanning,
+                modifier = Modifier
+                    .focusRequester(scanRequester)
+                    .focusProperties {
+                        up = categoryRequester
+                        down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                    }
+                    .remoteFocusFrame(RoundedCornerShape(50))
+            ) {
+                if (state.searchCatalogScanning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(Icons.Default.Sync, contentDescription = null)
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(if (state.searchCatalogScanning) "Scanning…" else "Scan & sync")
+            }
+        }
+
+        if (state.searchCatalogScanning) {
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { state.searchCatalogScanProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 1120.dp)
+                    .align(Alignment.CenterHorizontally)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
 
         if (state.searchServerLoading) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
