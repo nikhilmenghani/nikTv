@@ -795,7 +795,7 @@ internal fun ModernSettingsScreen(
                     subtitle =
                         "Show a movable remote control overlay for testing focus navigation on this phone.",
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked = onScreenDpad,
                             onCheckedChange = {
                                 OnScreenDpadPreferences.setEnabled(context, it)
@@ -805,7 +805,6 @@ internal fun ModernSettingsScreen(
                                 .focusProperties {
                                     down = followSystemBrightnessRequester
                                 }
-                                .remoteFocusFrame(CircleShape)
                         )
                     }
                 )
@@ -819,7 +818,7 @@ internal fun ModernSettingsScreen(
                     subtitle =
                         "Use the brightness configured by this device or TV.",
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked = followSystemBrightness,
                             onCheckedChange = {
                                 followSystemBrightness = it
@@ -847,9 +846,6 @@ internal fun ModernSettingsScreen(
                                             appBrightnessRequester
                                         }
                                 }
-                                .remoteFocusFrame(
-                                    RoundedCornerShape(16.dp)
-                                )
                         )
                     }
                 )
@@ -953,7 +949,7 @@ internal fun ModernSettingsScreen(
                             "Keep the screen awake while NikTV is open."
                         },
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked =
                                 state.keepAwakeOnlyDuringPlayback,
                             onCheckedChange =
@@ -969,9 +965,6 @@ internal fun ModernSettingsScreen(
                                         }
                                     down = orientationRequester
                                 }
-                                .remoteFocusFrame(
-                                    RoundedCornerShape(16.dp)
-                                )
                         )
                     }
                 )
@@ -996,16 +989,14 @@ internal fun ModernSettingsScreen(
                         Icon(Icons.Default.BrightnessAuto, null)
                     },
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked = followSystemBrightness,
                             onCheckedChange = {
                                 followSystemBrightness = it
                                 AppBrightnessPreferences
                                     .setFollowsSystem(context, it)
                             },
-                            modifier = Modifier.remoteFocusFrame(
-                                RoundedCornerShape(16.dp)
-                            )
+                            modifier = Modifier
                         )
                     },
                     colors = ListItemDefaults.colors(
@@ -1075,14 +1066,12 @@ internal fun ModernSettingsScreen(
                         Icon(Icons.Default.LightMode, null)
                     },
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked =
                                 state.keepAwakeOnlyDuringPlayback,
                             onCheckedChange =
                                 setKeepAwakeOnlyDuringPlayback,
-                            modifier = Modifier.remoteFocusFrame(
-                                RoundedCornerShape(16.dp)
-                            )
+                            modifier = Modifier
                         )
                     },
                     colors = ListItemDefaults.colors(
@@ -1420,7 +1409,7 @@ internal fun ModernSettingsScreen(
                             "Hidden from the profile screen"
                         },
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked = enabled,
                             onCheckedChange = {
                                 setPreconfiguredProfileEnabled(
@@ -1440,9 +1429,7 @@ internal fun ModernSettingsScreen(
                                                         .isNotBlank()
                                                 )
                                         ),
-                            modifier = Modifier.remoteFocusFrame(
-                                CircleShape
-                            )
+                            modifier = Modifier
                         )
                     }
                 )
@@ -1600,12 +1587,10 @@ internal fun ModernSettingsScreen(
                         "Show the Session expired prompt and wait for confirmation."
                     },
                 trailingContent = {
-                    Switch(
+SettingsSwitch(
                         checked = state.automaticReauthentication,
                         onCheckedChange = setAutomaticReauthentication,
-                        modifier = Modifier.remoteFocusFrame(
-                            RoundedCornerShape(16.dp)
-                        )
+                        modifier = Modifier
                     )
                 }
             )
@@ -2348,13 +2333,11 @@ SettingsSection("Backup and restore") {
                             "Block access until an available update is installed"
                         },
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked = updateEnforcementEnabled,
                             onCheckedChange =
                                 AppUpdates::setUpdateEnforcementEnabled,
-                            modifier = Modifier.remoteFocusFrame(
-                                CircleShape
-                            )
+                            modifier = Modifier
                         )
                     }
                 )
@@ -2369,13 +2352,11 @@ SettingsSection("Backup and restore") {
                             "Disabled · no launch-time update check"
                         },
                     trailingContent = {
-                        Switch(
+SettingsSwitch(
                             checked = startupUpdateCheckEnabled,
                             onCheckedChange =
                                 AppUpdates::setStartupUpdateCheckEnabled,
-                            modifier = Modifier.remoteFocusFrame(
-                                CircleShape
-                            )
+                            modifier = Modifier
                         )
                     }
                 )
@@ -4852,10 +4833,10 @@ internal fun TmdbCredentialSettingsSection() {
             subtitle =
                 "Credentials are hidden by default because anyone viewing this screen can copy them.",
             trailingContent = {
-                Switch(
+SettingsSwitch(
                     checked = revealCredentials,
                     onCheckedChange = { revealCredentials = it },
-                    modifier = Modifier.remoteFocusFrame(CircleShape)
+                    modifier = Modifier
                 )
             }
         )

@@ -254,10 +254,9 @@ internal fun Modifier.remoteFocusFrame(
                             Modifier
                         }
                     )
-                    .background(Color(0xFF3A1014), shape)
                     .border(
-                        if (remoteNavigationActive) 3.dp else 4.dp,
-                        Color(0xFFFF3340),
+                        2.dp,
+                        Color(0xFFFFB3B8),
                         shape
                     )
             } else {
