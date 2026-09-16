@@ -511,6 +511,15 @@ internal fun ModernSettingsScreen(
     val settingsConfiguration = LocalConfiguration.current
     val settingsIsTv = context.isTvLikeDevice(settingsConfiguration)
     val compactSettingsHeader = settingsConfiguration.screenWidthDp < 600
+    /* TABLET_SETTINGS_MODERN_V1
+     * Touch tablets reuse the mobile preference hierarchy while keeping the
+     * split rail/detail navigation. TVs retain their couch-distance layout.
+     */
+    val tabletSettingsLayout =
+        !settingsIsTv &&
+            settingsConfiguration.smallestScreenWidthDp >= 600
+    val modernSettingsRows =
+        compactSettingsHeader || tabletSettingsLayout
     val settingsDestinations = SettingsDestination.entries
     var selectedSettingsDestination by remember {
         mutableStateOf(SettingsDestination.GENERAL)
@@ -601,10 +610,26 @@ internal fun ModernSettingsScreen(
             .padding(padding)
             .verticalScroll(rememberScrollState())
             .padding(
-                horizontal = if (compactSettingsHeader) 16.dp else 18.dp,
-                vertical = if (compactSettingsHeader) 20.dp else 18.dp
+                horizontal =
+                    when {
+                        compactSettingsHeader -> 16.dp
+                        tabletSettingsLayout -> 24.dp
+                        else -> 18.dp
+                    },
+                vertical =
+                    when {
+                        compactSettingsHeader -> 20.dp
+                        tabletSettingsLayout -> 20.dp
+                        else -> 18.dp
+                    }
             ),
-        verticalArrangement = Arrangement.spacedBy(if (compactSettingsHeader) 20.dp else 12.dp)
+        verticalArrangement = Arrangement.spacedBy(
+            when {
+                compactSettingsHeader -> 20.dp
+                tabletSettingsLayout -> 18.dp
+                else -> 12.dp
+            }
+        )
     ) {
         val activeDestination =
             LocalSettingsDestination.current
@@ -613,7 +638,7 @@ internal fun ModernSettingsScreen(
         if (!compactSettingsHeader) {
             SettingsDestinationHeader(
                 destination = activeDestination,
-                compact = false
+                compact = tabletSettingsLayout
             )
 
             SettingsSummaryRow(
@@ -679,7 +704,7 @@ internal fun ModernSettingsScreen(
 
                 HorizontalDivider()
             }
-            if (compactSettingsHeader) {
+            if (modernSettingsRows) {
                 CompactSettingsOptionRow(
                     icon = Icons.Default.BrightnessAuto,
                     title = "Follow system brightness",
@@ -698,7 +723,15 @@ internal fun ModernSettingsScreen(
                                     followSystemBrightnessRequester
                                 )
                                 .focusProperties {
-                                    up = mobileDpadRequester
+                                    up =
+                                        when {
+                                            showMobileAppearance -> mobileDpadRequester
+                                            tabletSettingsLayout -> settingsSummaryEntryRequester
+                                            else -> FocusRequester.Default
+                                        }
+                                    if (tabletSettingsLayout) {
+                                        left = settingsRailRequesters.getValue(activeDestination)
+                                    }
                                     down =
                                         if (followSystemBrightness) {
                                             keepAwakeRequester
@@ -955,13 +988,13 @@ internal fun ModernSettingsScreen(
             PlaybackEngineSettingsContent(
                 selectedEngine = state.playbackEngine,
                 setPlaybackEngine = setPlaybackEngine,
-                compact = compactSettingsHeader,
+                compact = modernSettingsRows,
                 entryRequester = playbackEngineRequester,
                 upRequester = orientationRequester,
                 downRequester = seriesSeasonRequester
             )
             HorizontalDivider()
-            if (compactSettingsHeader) {
+            if (modernSettingsRows) {
                 CompactSettingsOptionRow(
                     icon = Icons.Default.VideoLibrary,
                     title = "Default season",
@@ -1076,7 +1109,7 @@ internal fun ModernSettingsScreen(
 
         }
         SettingsSection("Storage & refresh") {
-            if (compactSettingsHeader) {
+            if (modernSettingsRows) {
                 val refreshOptions =
                     listOf(
                         30 to "30m",
@@ -1186,7 +1219,7 @@ internal fun ModernSettingsScreen(
             }
             if (state.savedProfile != null) {
                 val itemOptions = listOf(14, 28, 42, 56)
-                if (compactSettingsHeader) {
+                if (modernSettingsRows) {
                     CompactSettingsOptionRow(
                         icon = Icons.Default.GridView,
                         title = "Initial media load",
@@ -1249,7 +1282,7 @@ internal fun ModernSettingsScreen(
 
         }
         SettingsSection("Profiles") {
-            if (!compactSettingsHeader) {
+            if (!modernSettingsRows) {
                 Text(
                     "Preconfigured profiles",
                     modifier = Modifier.padding(
@@ -1404,7 +1437,7 @@ internal fun ModernSettingsScreen(
         }
         val activeSettingsDestination = LocalSettingsDestination.current
         if (
-            !compactSettingsHeader &&
+            !modernSettingsRows &&
             (
                 activeSettingsDestination == null ||
                     activeSettingsDestination == SettingsDestination.GENERAL
@@ -1509,7 +1542,7 @@ SettingsSection("Backup and restore") {
                     com.nikhil.niktv.data.BackupMode.DEVICE to "Device"
                 )
 
-            if (compactSettingsHeader) {
+            if (modernSettingsRows) {
                 CompactSettingsOptionRow(
                     icon = Icons.Default.CloudUpload,
                     title = "Backup mode",
@@ -1623,7 +1656,7 @@ SettingsSection("Backup and restore") {
                 Column(
                     Modifier.padding(
                         horizontal =
-                            if (compactSettingsHeader) 16.dp else 12.dp,
+                            if (modernSettingsRows) 16.dp else 12.dp,
                         vertical = 10.dp
                     ),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1713,7 +1746,7 @@ SettingsSection("Backup and restore") {
                             "Check every ${githubBackupConfig.autoBackupIntervalHours} hours and upload only when data changes."
                         }
 
-                    if (compactSettingsHeader) {
+                    if (modernSettingsRows) {
                         CompactSettingsOptionRow(
                             icon = Icons.Default.Refresh,
                             title = "Automatic GitHub backup",
@@ -2225,7 +2258,7 @@ SettingsSection("Backup and restore") {
                         "Use ${updatePackagePreference.displayName} for future updates"
                     }
 
-                if (compactSettingsHeader) {
+                if (modernSettingsRows) {
                     CompactSettingsOptionRow(
                         icon = Icons.Default.SystemUpdate,
                         title = "Update APK",
@@ -2408,7 +2441,7 @@ SettingsSection("Backup and restore") {
                     .fillMaxWidth()
                     .padding(
                         start =
-                            if (compactSettingsHeader) 56.dp else 16.dp,
+                            if (modernSettingsRows) 56.dp else 16.dp,
                         end = 16.dp
                     )
 
@@ -2456,7 +2489,7 @@ SettingsSection("Backup and restore") {
                         },
                         Modifier.padding(
                             start =
-                                if (compactSettingsHeader) 56.dp
+                                if (modernSettingsRows) 56.dp
                                 else 16.dp,
                             end = 16.dp,
                             top = 8.dp,
@@ -2483,7 +2516,7 @@ SettingsSection("Backup and restore") {
                         "Saved in ${AppUpdates.savedLocation(version)}",
                         Modifier.padding(
                             start =
-                                if (compactSettingsHeader) 56.dp
+                                if (modernSettingsRows) 56.dp
                                 else 16.dp,
                             end = 16.dp,
                             top = 4.dp,
@@ -2697,7 +2730,13 @@ SettingsSection("Backup and restore") {
                     requesters = settingsRailRequesters,
                     detailRequester = settingsSummaryEntryRequester,
                     modifier = Modifier
-                        .width(if (settingsIsTv) 248.dp else 218.dp)
+                        .width(
+                            when {
+                                settingsIsTv -> 248.dp
+                                tabletSettingsLayout -> 204.dp
+                                else -> 218.dp
+                            }
+                        )
                         .fillMaxHeight()
                         .padding(padding)
                 )
@@ -4194,9 +4233,22 @@ private fun CompactSettingsOptionRow(
     trailingContent: @Composable RowScope.() -> Unit = {},
     belowContent: @Composable ColumnScope.() -> Unit = {}
 ) {
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val tabletSettingsLayout =
+        !context.isTvLikeDevice(configuration) &&
+            configuration.smallestScreenWidthDp >= 600
+
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .then(
+                if (tabletSettingsLayout) {
+                    Modifier.heightIn(min = 72.dp)
+                } else {
+                    Modifier
+                }
+            )
             .padding(
                 horizontal = horizontalPadding,
                 vertical = verticalPadding
@@ -4254,8 +4306,14 @@ private fun ResponsiveSettingsOptionRow(
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     trailingContent: @Composable RowScope.() -> Unit = {}
 ) {
-    val compact = LocalConfiguration.current.screenWidthDp < 600
-    if (compact) {
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val compact = configuration.screenWidthDp < 600
+    val tablet =
+        !context.isTvLikeDevice(configuration) &&
+            configuration.smallestScreenWidthDp >= 600
+
+    if (compact || tablet) {
         CompactSettingsOptionRow(
             icon = icon,
             title = title,
@@ -4371,7 +4429,13 @@ internal fun SettingsSection(
         return
     }
 
-    val compact = LocalConfiguration.current.screenWidthDp < 600
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val compact = configuration.screenWidthDp < 600
+    val tablet =
+        !context.isTvLikeDevice(configuration) &&
+            configuration.smallestScreenWidthDp >= 600
+    val touchCard = compact || tablet
     val danger = title == "Data & reset"
     val accent =
         if (danger) {
@@ -4381,26 +4445,25 @@ internal fun SettingsSection(
         }
 
     /*
-     * MOBILE_SETTINGS_CATEGORY_HEADER_V3
+     * MOBILE_SETTINGS_CATEGORY_HEADER_V3 + TABLET_SETTINGS_MODERN_V1
      *
-     * A mobile section title is a category label, not an action. Keep it
-     * larger than option text, remove decorative title icons, and use one
-     * restrained accent rail. The header remains non-focusable so the first
-     * actual setting stays the first D-pad/touch target.
+     * Phones and touch tablets share one category-card hierarchy. Tablet
+     * typography is slightly tighter, but row geometry and icon/text alignment
+     * remain the same as mobile. Category headers are never focus targets.
      */
-    if (compact) {
+    if (touchCard) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusGroup(),
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(if (compact) 18.dp else 16.dp),
             color =
                 if (danger) {
                     Color(0xFF1A1012)
                 } else {
                     Color(0xFF111318)
                 },
-            shadowElevation = 1.dp,
+            shadowElevation = if (compact) 1.dp else 2.dp,
             border = BorderStroke(
                 1.dp,
                 if (danger) {
@@ -4414,21 +4477,34 @@ internal fun SettingsSection(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 15.dp),
+                        .padding(
+                            horizontal = if (compact) 16.dp else 18.dp,
+                            vertical = if (compact) 15.dp else 13.dp
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(
                         Modifier
                             .width(3.dp)
-                            .height(26.dp)
+                            .height(if (compact) 26.dp else 22.dp)
                             .background(accent, CircleShape)
                     )
                     Text(
                         title,
                         modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
+                        style =
+                            if (compact) {
+                                MaterialTheme.typography.titleLarge
+                            } else {
+                                MaterialTheme.typography.titleMedium
+                            },
+                        fontWeight =
+                            if (compact) {
+                                FontWeight.Bold
+                            } else {
+                                FontWeight.SemiBold
+                            },
                         letterSpacing = .1.sp,
                         color =
                             if (danger) {
@@ -4522,8 +4598,14 @@ internal fun SettingsValueRow(
     label: String,
     value: String
 ) {
-    val compact = LocalConfiguration.current.screenWidthDp < 600
-    if (compact) {
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val compact = configuration.screenWidthDp < 600
+    val tablet =
+        !context.isTvLikeDevice(configuration) &&
+            configuration.smallestScreenWidthDp >= 600
+
+    if (compact || tablet) {
         CompactSettingsOptionRow(
             icon = icon,
             title = label,
