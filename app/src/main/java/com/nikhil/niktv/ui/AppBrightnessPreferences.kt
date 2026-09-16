@@ -41,6 +41,13 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.material3.TextButton
 
 internal object AppBrightnessPreferences {
     private const val FILE = "app_display_preferences"
@@ -148,7 +155,11 @@ internal fun AppBrightnessControl(
     trigger: @Composable (open: () -> Unit) -> Unit
 ) {
     val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
+    val switchFocus = remember { FocusRequester() }
+    val sliderFocus = remember { FocusRequester() }
+    val dimmerFocus = remember { FocusRequester() }
+    val brighterFocus = remember { FocusRequester() }
+    val closeFocus = remember { FocusRequester() }
     var expanded by remember { mutableStateOf(false) }
     var brightness by remember(context) {
         mutableFloatStateOf(AppBrightnessPreferences.get(context))
@@ -180,11 +191,16 @@ internal fun AppBrightnessControl(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
+            properties = PopupProperties(focusable = true),
             containerColor = androidx.compose.ui.graphics.Color(0xFF202020),
             shape = RoundedCornerShape(14.dp)
         ) {
+            LaunchedEffect(followsSystem) {
+                withFrameNanos { }
+                switchFocus.requestFocus()
+            }
             Column(
-                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
@@ -197,7 +213,13 @@ internal fun AppBrightnessControl(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("Follow system", style = MaterialTheme.typography.labelMedium)
-                    Switch(
+                    SettingsSwitch(
+                        modifier = Modifier.focusRequester(switchFocus).focusProperties {
+                            up = FocusRequester.Cancel
+                            down = if (followsSystem) closeFocus else sliderFocus
+                            left = FocusRequester.Cancel
+                            right = FocusRequester.Cancel
+                        },
                         checked = followsSystem,
                         onCheckedChange = {
                             followsSystem = it
@@ -213,13 +235,14 @@ internal fun AppBrightnessControl(
                     steps = 16,
                     modifier = Modifier
                         .width(190.dp)
+                        .focusRequester(sliderFocus)
+                        .focusProperties { up = switchFocus; down = dimmerFocus }
                         .onPreviewKeyEvent { event ->
                             when (event.key) {
                                 Key.DirectionUp, Key.DirectionDown -> {
                                     if (event.type == KeyEventType.KeyDown) {
-                                        focusManager.moveFocus(
-                                            if (event.key == Key.DirectionUp) FocusDirection.Up else FocusDirection.Down
-                                        )
+                                        if (event.key == Key.DirectionUp) switchFocus.requestFocus()
+                                        else dimmerFocus.requestFocus()
                                     }
                                     // Slider maps vertical arrows to value changes;
                                     // consume them after explicitly leaving the bar.
@@ -234,6 +257,10 @@ internal fun AppBrightnessControl(
                     horizontalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
                     IconButton(
+                        modifier = Modifier.focusRequester(dimmerFocus).focusProperties {
+                            up = sliderFocus; down = closeFocus
+                            left = FocusRequester.Cancel; right = brighterFocus
+                        }.remoteFocusFrame(CircleShape),
                         onClick = { update(brightness - .05f) },
                         enabled = !followsSystem
                     ) {
@@ -241,12 +268,24 @@ internal fun AppBrightnessControl(
                     }
                     Text("${(brightness * 100).toInt()}%")
                     IconButton(
+                        modifier = Modifier.focusRequester(brighterFocus).focusProperties {
+                            up = sliderFocus; down = closeFocus
+                            left = dimmerFocus; right = FocusRequester.Cancel
+                        }.remoteFocusFrame(CircleShape),
                         onClick = { update(brightness + .05f) },
                         enabled = !followsSystem
                     ) {
                         Icon(Icons.Default.Add, "Brighter")
                     }
                 }
+                TextButton(
+                    onClick = { expanded = false },
+                    modifier = Modifier.focusRequester(closeFocus).focusProperties {
+                        up = if (followsSystem) switchFocus else dimmerFocus
+                        down = FocusRequester.Cancel
+                        left = FocusRequester.Cancel; right = FocusRequester.Cancel
+                    }.remoteFocusFrame(CircleShape)
+                ) { Text("Close") }
             }
         }
     }
