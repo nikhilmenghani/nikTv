@@ -8,6 +8,41 @@ import org.junit.Test
 class GlobalSearchPagerTest {
     private fun media(id: String) = MediaItem(id, "Title $id", null, null)
 
+    @Test fun publishesEachPageBeforeRequestingTheNextType() = runBlocking {
+        val pager = GlobalSearchPager()
+        val events = mutableListOf<String>()
+        val published = mutableListOf<MediaItem>()
+        pager.next(
+            search = { type, _, page ->
+                events += "request:$type"
+                PortalSearchPage(listOf(media("shared-id")), page, false)
+            },
+            onItems = { items ->
+                events += "publish:${items.single().searchResultType}"
+                published += items
+            },
+            categories = { emptyList() }
+        )
+        assertEquals(globalSearchTypes.flatMap { listOf("request:$it", "publish:$it") }, events)
+        assertEquals(3, published.map { it.searchIdentity(SearchContentType.ALL) }.toSet().size)
+    }
+
+    @Test fun laterFailureDoesNotHideEarlierPublishedResults() = runBlocking {
+        val pager = GlobalSearchPager()
+        val published = mutableListOf<MediaItem>()
+        val batch = pager.next(
+            search = { type, _, page ->
+                if (type == SearchContentType.MOVIES) throw java.io.IOException("Unavailable")
+                PortalSearchPage(listOf(media("1")), page, false)
+            },
+            onItems = { published += it },
+            categories = { emptyList() }
+        )
+        assertEquals(listOf(SearchContentType.SERIES, SearchContentType.LIVE_TV), published.map { it.searchResultType })
+        assertEquals(1, batch.failures)
+        assertTrue(pager.hasMore)
+    }
+
     @Test fun pagesAdvanceIndependentlyAndExhaustedTypesAreNotRequestedAgain() = runBlocking {
         val pager = GlobalSearchPager()
         val calls = mutableListOf<Pair<SearchContentType, Int>>()

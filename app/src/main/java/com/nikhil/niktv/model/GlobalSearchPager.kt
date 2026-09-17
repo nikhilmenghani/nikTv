@@ -16,12 +16,14 @@ class GlobalSearchPager {
     /** At most three page requests per activation, plus category discovery for rejected wildcards. */
     suspend fun next(
         search: suspend (SearchContentType, String, Int) -> PortalSearchPage,
+        onItems: suspend (List<MediaItem>) -> Unit = {},
         categories: suspend (SearchContentType) -> List<String>
     ): Batch {
         val items = mutableListOf<MediaItem>()
         var failures = 0
         repeat(minOf(3, pending.size)) {
             val cursor = pending.removeFirst()
+            var discovered = emptyList<MediaItem>()
             try {
                 val result = search(cursor.type, cursor.category, cursor.page)
                 if (cursor.category == "*" && cursor.page == 1 && result.items.isEmpty()) {
@@ -32,7 +34,8 @@ class GlobalSearchPager {
                     }
                 } else {
                     val fresh = result.items.filter { cursor.seen.add(it.id) }
-                    items += fresh.map { it.copy(searchResultType = cursor.type) }
+                    discovered = fresh.map { it.copy(searchResultType = cursor.type) }
+                    items += discovered
                     if (result.hasMore && fresh.isNotEmpty()) {
                         cursor.page++
                         pending.addLast(cursor)
@@ -43,6 +46,8 @@ class GlobalSearchPager {
                 if (error is CancellationException) throw error
                 failures++
             }
+            // Publish each completed page before requesting the next type/category.
+            if (discovered.isNotEmpty()) onItems(discovered)
         }
         return Batch(items, failures)
     }

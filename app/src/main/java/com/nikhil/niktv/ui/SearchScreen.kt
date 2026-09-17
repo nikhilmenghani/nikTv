@@ -192,6 +192,7 @@ internal fun ModernSearchScreen(
             .take(8)
     }
     val hasContentFocusTarget =
+        (state.searchType == SearchContentType.ALL && state.searchQuery.isNotBlank()) ||
         state.searchResults.isNotEmpty() ||
             (state.searchQuery.isBlank() && visibleRecentSearches.isNotEmpty()) ||
             (state.searchQuery.isNotBlank() && !state.searchLocalLoading && !state.searchServerLoading)
@@ -277,7 +278,7 @@ internal fun ModernSearchScreen(
         state.searchUsedServer,
         searchEditing
     ) {
-        if (!resultsFocused && remoteNavigationActive && !searchEditing &&
+        if (state.searchType != SearchContentType.ALL && !resultsFocused && remoteNavigationActive && !searchEditing &&
             !state.searchLocalLoading && !state.searchServerLoading &&
             state.searchResults.isNotEmpty()
         ) {
@@ -781,6 +782,7 @@ internal fun ModernSearchScreen(
         }
         if (
             state.searchQuery.isNotBlank() &&
+            state.searchType != SearchContentType.ALL &&
             state.searchResults.isEmpty() &&
             !state.searchHasMore &&
             !state.searchLocalLoading &&
@@ -866,7 +868,8 @@ internal fun ModernSearchScreen(
             }
         }
 
-        if (state.searchResults.isNotEmpty() || state.searchHasMore) {
+        if (state.searchResults.isNotEmpty() || state.searchHasMore ||
+            (state.searchType == SearchContentType.ALL && state.searchQuery.isNotBlank())) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -1559,6 +1562,9 @@ private fun SearchResultsContent(
     modifier: Modifier = Modifier
 ) {
     val all = state.searchType == SearchContentType.ALL
+    var resultTab by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(SearchContentType.SERIES) }
+    val tabRequesters = remember { globalSearchTypes.associateWith { FocusRequester() } }
+    val resultRequester = if (all) remember { FocusRequester() } else firstItemRequester
     val posterGrid = !all && state.searchType in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) &&
         (isTv || screenWidthDp >= 600)
     val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
@@ -1570,12 +1576,11 @@ private fun SearchResultsContent(
         screenWidthDp >= 840 -> 4
         else -> 3
     }
-    val entries = remember(state.searchResults, state.searchType) {
+    val entries = remember(state.searchResults, state.searchType, resultTab) {
         buildList {
             if (all) {
-                state.searchResults.groupBy { it.searchResultType }.forEach { (type, items) ->
-                    add(SearchResultEntry("heading-$type", heading = "${type?.title.orEmpty()} · ${items.size}"))
-                    items.forEach { add(SearchResultEntry(it.searchIdentity(state.searchType), media = it)) }
+                state.searchResults.filter { it.searchResultType == resultTab }.forEach {
+                    add(SearchResultEntry(it.searchIdentity(state.searchType), media = it))
                 }
             } else state.searchResults.forEach {
                 add(SearchResultEntry(it.searchIdentity(state.searchType), media = it))
@@ -1586,24 +1591,33 @@ private fun SearchResultsContent(
     val keys = results.map { it.searchIdentity(state.searchType) }
     val resultIndices = keys.withIndex().associate { it.value to it.index }
     val lazyIndices = entries.withIndex().associate { it.value.key to it.index }
-    val footer = state.searchHasMore || state.searchUsedServer
+    val footer = state.searchHasMore || state.searchUsedServer || (all && results.isEmpty())
     val footerKey = "search-pagination"
-    val gridState = rememberLazyGridState()
+    val scopedGridState = rememberLazyGridState()
+    val seriesGridState = rememberLazyGridState()
+    val moviesGridState = rememberLazyGridState()
+    val channelsGridState = rememberLazyGridState()
+    val gridState = if (!all) scopedGridState else when (resultTab) {
+        SearchContentType.SERIES -> seriesGridState
+        SearchContentType.MOVIES -> moviesGridState
+        else -> channelsGridState
+    }
     val scope = rememberCoroutineScope()
     val requesters = remember(state.searchType, state.searchQuery, state.searchCategoryId) { mutableMapOf<String, FocusRequester>() }
     val footerRequester = remember { FocusRequester() }
-    var footerFocused by remember { mutableStateOf(false) }
+    var footerFocused by remember(resultTab) { mutableStateOf(false) }
     var navigationJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    var pendingPage by remember(state.searchType, state.searchQuery, state.searchCategoryId) {
+    LaunchedEffect(resultTab) { navigationJob?.cancel() }
+    var pendingPage by remember(state.searchType, state.searchQuery, state.searchCategoryId, resultTab) {
         mutableStateOf<Pair<Int, Set<String>>?>(null)
     }
     fun requesterAt(index: Int): FocusRequester = when {
-        index == results.size -> if (results.isEmpty()) firstItemRequester else footerRequester
-        index == 0 -> firstItemRequester
+        index == results.size -> if (results.isEmpty()) resultRequester else footerRequester
+        index == 0 -> resultRequester
         else -> requesters.getOrPut(keys[index]) { FocusRequester() }
     }
     fun moveTo(index: Int) {
-        if (index < 0) { runCatching { topRequester.requestFocus() }; return }
+        if (index < 0) { runCatching { (if (all) tabRequesters.getValue(resultTab) else topRequester).requestFocus() }; return }
         if (index > results.size || (index == results.size && !footer)) return
         val requester = requesterAt(index)
         val lazyIndex = if (index == results.size) entries.size else lazyIndices.getValue(keys[index])
@@ -1624,7 +1638,8 @@ private fun SearchResultsContent(
                 true
             }
             Key.DirectionLeft -> {
-                if (index < results.size && index % columns > 0) moveTo(index - 1)
+                if (all) moveTo(-1)
+                else if (index < results.size && index % columns > 0) moveTo(index - 1)
                 true
             }
             Key.DirectionRight -> {
@@ -1646,10 +1661,50 @@ private fun SearchResultsContent(
             if (firstNew >= 0) moveTo(firstNew)
         }
     }
+    Column(modifier.fillMaxWidth()) {
+    if (all) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            globalSearchTypes.forEachIndexed { index, type ->
+                val selected = type == resultTab
+                val count = state.searchResults.count { it.searchResultType == type }
+                val shape = RoundedCornerShape(12.dp)
+                Surface(
+                    onClick = { resultTab = type },
+                    shape = shape,
+                    color = if (selected) SearchAccent.copy(alpha = 0.2f) else SearchSurface,
+                    border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) SearchAccent else SearchOutline),
+                    modifier = Modifier.weight(1f).height(44.dp)
+                        .then(if (selected) Modifier.focusRequester(firstItemRequester) else Modifier)
+                        .focusRequester(tabRequesters.getValue(type))
+                        .onFocusChanged { if (it.isFocused) resultTab = type }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                Key.DirectionLeft, Key.DirectionRight -> {
+                                    val target = (index + if (event.key == Key.DirectionLeft) -1 else 1)
+                                        .coerceIn(globalSearchTypes.indices)
+                                    tabRequesters.getValue(globalSearchTypes[target]).requestFocus()
+                                    true
+                                }
+                                Key.DirectionDown -> { moveTo(0); true }
+                                Key.DirectionUp -> { topRequester.requestFocus(); true }
+                                else -> false
+                            }
+                        }.remoteFocusFrame(shape)
+                ) {
+                    Box(Modifier.fillMaxSize().padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
+                        Text("${type.title} · $count", color = Color.White,
+                            style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        if (isTv) Text("← Return to tabs from any result · ↓ Browse results", color = SearchMuted,
+            style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(bottom = 4.dp))
+    }
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = gridState,
-        modifier = modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().weight(1f),
         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1689,6 +1744,12 @@ private fun SearchResultsContent(
             SearchLoadMoreButton(
                 loading = state.searchServerLoading,
                 hasMore = state.searchHasMore,
+                idleLabel = when {
+                    all && state.searchLocalLoading -> "Checking local indexes…"
+                    all && !state.searchUsedServer && results.isEmpty() -> "No cached ${resultTab.title.lowercase()} matches · Search provider for more"
+                    all && state.searchHasMore -> "Load more across all tabs"
+                    else -> null
+                },
                 onClick = {
                     pendingPage = state.searchPaginationGeneration to keys.toSet()
                     loadMore()
@@ -1698,6 +1759,7 @@ private fun SearchResultsContent(
                     .then(navigation(results.size))
             )
         }
+    }
     }
 }
 
@@ -1730,6 +1792,7 @@ private fun SearchLoadMoreButton(
     loading: Boolean,
     hasMore: Boolean,
     onClick: () -> Unit,
+    idleLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
     NikTvSecondaryActionButton(
@@ -1748,7 +1811,7 @@ private fun SearchLoadMoreButton(
             Icon(Icons.Default.ExpandMore, null)
         }
         Spacer(Modifier.width(8.dp))
-        Text(if (loading) "Loading more…" else if (hasMore) "Load more results" else "All results loaded")
+        Text(if (loading) "Loading more…" else idleLabel ?: if (hasMore) "Load more results" else "All results loaded")
     }
 }
 

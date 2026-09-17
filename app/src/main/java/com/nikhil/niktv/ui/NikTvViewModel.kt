@@ -36,6 +36,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -3796,7 +3797,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     localSearch(
                         type = type,
                         query = normalizedQuery,
-                        categoryId = categoryId
+                        categoryId = categoryId,
+                        onPartial = { partial -> publishLocalSearchPartial(profileKey, type, normalizedQuery, categoryId, partial) }
                     ) +
                         saved?.items.orEmpty()
                     )
@@ -3860,7 +3862,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 localSearch(
                     type = snapshot.searchType,
                     query = query,
-                    categoryId = snapshot.searchCategoryId
+                    categoryId = snapshot.searchCategoryId,
+                    onPartial = { partial -> publishLocalSearchPartial(profileKey, snapshot.searchType, query, snapshot.searchCategoryId, partial) }
                 )
 
             val available =
@@ -3984,6 +3987,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 it.searchType == SearchContentType.ALL && it.searchQuery.trim() == query
         }
         _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false,
+            searchResults = existing,
             searchUsedServer = true, searchHasMore = pager.hasMore,
             searchActivityTitle = "Loading provider results") }
         try {
@@ -4003,12 +4007,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categories = { type ->
                     store.browseCatalog(catalogTypeForSearch(type), profileKey).first()?.categories
                         .orEmpty().ifEmpty { portal.categories(session, catalogTypeForSearch(type)) }.map { it.id }
+                },
+                onItems = { items ->
+                    if (current()) _state.update { latest -> latest.copy(
+                        searchResults = (latest.searchResults + items.rankSearchResults(query, SearchContentType.ALL))
+                            .distinctBy { it.searchIdentity(SearchContentType.ALL) }
+                    ) }
                 }
             )
             if (current()) _state.update { it.copy(
-                // Keep existing positions stable when appending. IDs are scoped by media type.
-                searchResults = if (append) (existing + batch.items).distinctBy { it.searchIdentity(SearchContentType.ALL) }
-                    else (existing + batch.items).rankSearchResults(query, SearchContentType.ALL),
                 error = if (batch.failures > 0) "Some provider pages failed. Load more retries them; existing results are retained." else it.error
             ) }
         } finally {
@@ -4172,20 +4179,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun publishLocalSearchPartial(
+        profileKey: String, type: SearchContentType, query: String, categoryId: String, items: List<MediaItem>
+    ) {
+        _state.update { current ->
+            if (current.searchOpen && current.session?.profile?.cacheKey() == profileKey &&
+                current.searchType == type && current.searchQuery.trim() == query && current.searchCategoryId == categoryId) {
+                current.copy(searchResults = items)
+            } else current
+        }
+    }
+
     private suspend fun localSearch(
         type: SearchContentType,
         query: String,
-        categoryId: String
+        categoryId: String,
+        onPartial: (List<MediaItem>) -> Unit = {}
     ): List<MediaItem> = withContext(Dispatchers.Default) {
         if (type == SearchContentType.ALL) {
             val profileKey = _state.value.session?.profile?.cacheKey()
             val saved = store.pagedSearches.first().filter {
                 it.profileKey == profileKey && it.query.equals(query, true)
             }
-            return@withContext globalSearchTypes.flatMap { child ->
-                (localSearch(child, query, "*") + saved.filter { it.type == child }.flatMap { it.items })
+            val found = mutableListOf<MediaItem>()
+            for (child in globalSearchTypes) {
+                found += (localSearch(child, query, "*") + saved.filter { it.type == child }.flatMap { it.items })
                     .map { it.copy(searchResultType = child) }
-            }.rankSearchResults(query, type)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                onPartial(found.rankSearchResults(query, type))
+            }
+            return@withContext found.rankSearchResults(query, type)
         }
         val catalogType = catalogTypeForSearch(type)
         val snapshot = _state.value
