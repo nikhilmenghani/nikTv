@@ -280,19 +280,6 @@ internal fun VlcPlayerScreen(
             gestureFeedback = null
         }
     }
-    // Reapply the selected scale after the VLC surface is attached. Applying
-    // BEST_FIT before attach can be lost, leaving the new fullscreen surface
-    // at VLC's crop-prone default while Media3 still renders correctly.
-    LaunchedEffect(player, resizeMode, videoView) {
-        player.setVideoScale(
-            when (resizeMode) {
-                VideoResizeMode.FIT -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
-                VideoResizeMode.FILL -> MediaPlayer.ScaleType.SURFACE_FILL
-                VideoResizeMode.ZOOM -> MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
-                VideoResizeMode.STRETCH -> MediaPlayer.ScaleType.SURFACE_16_9
-            }
-        )
-    }
 
     val pipActivity = activity as? MainActivity
     val pipAvailable = remember(context) {
@@ -540,14 +527,11 @@ internal fun VlcPlayerScreen(
             awaitCancellation()
         } finally {
             try {
-            // VideoHelper posts surface updates to the main looper. Detaching
-            // on a worker races those callbacks and can crash inside LibVLC.
+            // Stop native output before explicitly abandoning its surface. Detaching
+            // first lets the hardware decoder enqueue into an invalid BufferQueue.
             withContext(NonCancellable + Dispatchers.Main.immediate) {
                 player.setEventListener(null)
-                player.detachViews()
             }
-            // Teardown uses the same native lock and must not run in Compose's
-            // synchronous disposal path either.
             val finalTiming = withContext(NonCancellable + Dispatchers.IO) {
                 val position = (
                     if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
@@ -555,9 +539,19 @@ internal fun VlcPlayerScreen(
                 ).coerceAtLeast(0L)
                 val length = player.length.coerceAtLeast(0L)
                 runCatching { player.stop() }
-                runCatching { player.release() }
-                runCatching { libVlc.release() }
                 position to length
+            }
+            // VideoHelper surface callbacks belong to the main looper. Keep
+            // detach there, while potentially blocking native calls stay on IO.
+            try {
+                withContext(NonCancellable + Dispatchers.Main.immediate) {
+                    player.detachViews()
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    runCatching { player.release() }
+                    runCatching { libVlc.release() }
+                }
             }
             if (media.progressKey.isNotBlank() &&
                 media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
@@ -883,6 +877,21 @@ internal fun VlcPlayerScreen(
                     // using SurfaceView. TextureView silently drops SPU text.
                     player.attachViews(layout, null, true, false)
                     }
+                },
+                update = { layout ->
+                    // Apply after attachment and on every size-mode change. Fill preserves
+                    // aspect ratio; Zoom adds visible magnification even for 16:9 streams.
+                    player.setVideoScale(
+                        when (resizeMode) {
+                            VideoResizeMode.FIT -> MediaPlayer.ScaleType.SURFACE_BEST_FIT
+                            VideoResizeMode.FILL, VideoResizeMode.ZOOM -> MediaPlayer.ScaleType.SURFACE_FIT_SCREEN
+                            VideoResizeMode.STRETCH -> MediaPlayer.ScaleType.SURFACE_FILL
+                        }
+                    )
+                    val zoom = if (resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
+                    layout.scaleX = zoom
+                    layout.scaleY = zoom
+                    player.updateVideoSurfaces()
                 },
                 modifier = Modifier.fillMaxSize().then(
                     if (!focusMode && !embeddedMode) Modifier.padding(
