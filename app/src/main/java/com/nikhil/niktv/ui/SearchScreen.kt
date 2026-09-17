@@ -723,6 +723,10 @@ internal fun ModernSearchScreen(
 
         Spacer(Modifier.height(10.dp))
 
+        state.searchProviderMessage?.let { message ->
+            Text(message, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+        }
         if (state.searchServerLoading || showLocalSearchProgress) {
             SearchActivityCard(
                 title = state.searchActivityTitle

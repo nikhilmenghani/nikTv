@@ -3,6 +3,8 @@ package com.nikhil.niktv.data
 import android.content.Context
 import androidx.work.*
 import com.nikhil.niktv.model.CatalogType
+import com.nikhil.niktv.model.PortalProfile
+import kotlinx.coroutines.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -21,9 +23,11 @@ object SearchMetadataSyncScheduler {
         // Cancel the previous always-on GitHub search-index implementation on upgrade.
         listOf("niktv-search-metadata-sync", "niktv-search-metadata-periodic-sync").forEach(manager::cancelUniqueWork)
         CatalogType.entries.forEach { manager.cancelUniqueWork("niktv-provider-metadata-scan-${it.name}") }
-        manager.enqueueUniquePeriodicWork(REFRESH, ExistingPeriodicWorkPolicy.UPDATE,
-            PeriodicWorkRequestBuilder<PeriodicCatalogScanWorker>(24, TimeUnit.HOURS)
-                .setInitialDelay(30, TimeUnit.MINUTES).setConstraints(constraints()).build())
+        manager.cancelUniqueWork(REFRESH)
+        manager.cancelUniqueWork("$REFRESH-now")
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            ProfileStore(context).profiles.first().forEach { configureProfile(context, it) }
+        }
         if (CatalogPreferences.backupEnabled(context)) {
             manager.enqueueUniquePeriodicWork(BACKUP, ExistingPeriodicWorkPolicy.UPDATE,
                 PeriodicWorkRequestBuilder<SearchMetadataSyncWorker>(12, TimeUnit.HOURS)
@@ -45,10 +49,40 @@ object SearchMetadataSyncScheduler {
         return work.id
     }
 
-    fun refresh(context: Context) {
-        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now", ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>().setConstraints(constraints()).build())
-        BackupActivityLog.record(context, "IPTV catalog refresh", "Requested", "A refresh is queued or already active.")
+    const val PROFILE_ID = "profile_id"
+    fun configureProfile(context: Context, profile: PortalProfile) {
+        val id = CatalogScanPreferences.id(profile)
+        val hours = CatalogScanPreferences.hours(context, id)
+        val manager = WorkManager.getInstance(context)
+        val name = "$REFRESH-$id"
+        if (hours == 0) manager.cancelUniqueWork(name)
+        else manager.enqueueUniquePeriodicWork(name, ExistingPeriodicWorkPolicy.UPDATE,
+            PeriodicWorkRequestBuilder<PeriodicCatalogScanWorker>(hours.toLong(), TimeUnit.HOURS)
+                .setInitialDelay(hours.toLong(), TimeUnit.HOURS)
+                .setInputData(workDataOf(PROFILE_ID to id)).setConstraints(constraints()).build())
+    }
+
+    fun refresh(context: Context, profile: PortalProfile? = null) {
+        if (profile == null) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                ProfileStore(context).profiles.first().forEach { refresh(context, it) }
+            }
+            return
+        }
+        val id = CatalogScanPreferences.id(profile)
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                .setInputData(workDataOf(PROFILE_ID to id)).setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS).build())
+        CatalogScanPreferences.status(context, id, "Scan requested; queued or already running. Existing listings remain searchable.")
+        BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Requested")
+    }
+
+    fun continueScan(context: Context, id: String) {
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                .setInputData(workDataOf(PROFILE_ID to id)).setInitialDelay(10, TimeUnit.SECONDS)
+                .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS).build())
     }
 
     private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED)
@@ -57,27 +91,60 @@ object SearchMetadataSyncScheduler {
 
 class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = scanMutex.withLock {
-        val store = ProfileStore(applicationContext)
-        val portal = StalkerPortalClient(applicationContext)
-        var failed = false
-        BackupActivityLog.record(applicationContext, "IPTV catalog refresh", "Started", "Reading provider catalogs into the local database.")
+        val context = applicationContext
+        val id = inputData.getString(SearchMetadataSyncScheduler.PROFILE_ID) ?: return@withLock Result.success()
+        val profile = ProfileStore(context).profiles.first().firstOrNull { CatalogScanPreferences.id(it) == id }
+            ?: return@withLock Result.success()
+        val operation = "Catalog scan · ${profile.name}"
         try {
-            for (profile in store.profiles.first()) {
-                try {
-                    val session = portal.authenticate(profile)
-                    for (type in listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) {
-                        val result = SearchCatalogScanner(applicationContext).scan(session, type, 750L)
-                        if (result.failures > 0) failed = true
-                    }
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { failed = true }
+            if (CatalogPlaybackActivity.playing) {
+                CatalogScanPreferences.status(context, id, "Paused during playback; saved scan progress will resume automatically.")
+                return@withLock Result.retry()
             }
-            BackupActivityLog.record(applicationContext, "IPTV catalog refresh", if (failed) "Retry scheduled" else "Completed",
-                if (failed) "Some categories could not finish. Existing records are preserved; background work will retry." else "Provider catalog scan completed.")
-            if (failed) Result.retry() else Result.success()
-        } catch (cancelled: CancellationException) {
-            BackupActivityLog.record(applicationContext, "IPTV catalog refresh", "Cancelled", "Saved page checkpoints are retained for the next scan.")
-            throw cancelled
+            CatalogScanPreferences.status(context, id, "Connecting to ${profile.name}…")
+            val session = StalkerPortalClient(context).authenticate(profile)
+            val types = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+            var cursor = CatalogScanPreferences.cursor(context, id)
+            if (cursor < 0) {
+                types.forEach { CatalogRepository(context).restartScan(profile, it) }
+                cursor = 0
+                CatalogScanPreferences.cursor(context, id, cursor)
+                BackupActivityLog.record(context, operation, "Started", "Updating channels, movies and series; saved listings stay available.")
+            }
+            val deadline = android.os.SystemClock.elapsedRealtime() + 120_000L
+            for (index in cursor until types.size) {
+                val type = types[index]
+                val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0)
+                val result = SearchCatalogScanner(context).scan(session, type, 750L,
+                    refreshCompleted = false, timeBudgetMillis = remaining) { progress ->
+                    CatalogScanPreferences.status(context, id,
+                        "${type.title} · ${progress.categoryTitle} · category ${progress.categoryPosition}/${progress.categoryCount} · page ${progress.page} · ${progress.discoveredItems} items")
+                }
+                if (result.deferred || result.failures > 0) {
+                    CatalogScanPreferences.status(context, id, if (CatalogPlaybackActivity.playing)
+                        "Paused during playback; scan progress saved." else if (result.failures > 0)
+                        "Some provider pages failed; saved progress will retry automatically." else
+                        "Scan progress saved; continuing in the background…")
+                    if (result.deferred && !CatalogPlaybackActivity.playing && result.failures == 0) {
+                        SearchMetadataSyncScheduler.continueScan(context, id)
+                        return@withLock Result.success()
+                    }
+                    return@withLock Result.retry()
+                }
+                CatalogScanPreferences.cursor(context, id, index + 1)
+            }
+            val now = System.currentTimeMillis()
+            CatalogScanPreferences.completed(context, id, now)
+            CatalogScanPreferences.cursor(context, id, -1)
+            CatalogScanPreferences.status(context, id, "Complete · ${java.util.Date(now)} · channels, movies and series indexed.")
+            BackupActivityLog.record(context, operation, "Completed", "Local catalog is ready for search.")
+            if (CatalogPreferences.backupEnabled(context)) SearchMetadataSyncScheduler.requestNow(context)
+            Result.success()
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            CatalogScanPreferences.status(context, id, "Provider scan could not finish; progress saved and retry scheduled.")
+            BackupActivityLog.record(context, operation, "Retry scheduled", "Check provider connectivity if this continues.")
+            Result.retry()
         }
     }
     companion object { private val scanMutex = Mutex() }

@@ -1,6 +1,7 @@
 package com.nikhil.niktv.data
 
 import android.content.Context
+import androidx.room.withTransaction
 import android.util.Base64
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.Dispatchers
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -38,6 +40,17 @@ object CatalogPreferences {
     fun fingerprint(context: Context, key: String, value: String) { prefs(context).edit().putString("fingerprint:$key", value).apply() }
 }
 
+@Serializable
+internal data class CatalogCheckpoint(
+    val version: Int = 1,
+    val profileId: String,
+    val createdAt: Long,
+    val scanCompletedAt: Long = 0,
+    val snapshots: List<CatalogSnapshot>
+)
+
+data class CatalogCheckpointFile(val path: String, val timestamp: Long, val device: String)
+
 /** Optionally encrypted logical database snapshots, one writer per file; imports merge instead of replacing Room. */
 class CatalogBackupManager(context: Context) {
     private val app = context.applicationContext
@@ -55,10 +68,15 @@ class CatalogBackupManager(context: Context) {
         val config = config()
         var uploaded = 0
         for (profile in ProfileStore(app).profiles.first()) {
+            val profileId = CatalogScanPreferences.id(profile)
+            val scanCompleteBefore = if (CatalogScanPreferences.cursor(app, profileId) == -1)
+                CatalogScanPreferences.completed(app, profileId) else 0L
+            val snapshots = mutableListOf<CatalogSnapshot>()
             for (type in types) {
                 currentCoroutineContext().ensureActive()
                 while (CatalogPlaybackActivity.playing) kotlinx.coroutines.delay(1_000L)
                 val snapshot = repository.snapshot(profile, type)
+                snapshots += snapshot
                 if (snapshot.items.isEmpty() && snapshot.episodes.isEmpty()) continue
                 val bytes = ByteArrayOutputStream().also { output ->
                     GZIPOutputStream(output).use { it.write(json.encodeToString(snapshot).toByteArray()) }
@@ -73,6 +91,9 @@ class CatalogBackupManager(context: Context) {
                 put(config, path, encrypted)
                 CatalogPreferences.fingerprint(app, fingerprintKey, fingerprint)
                 uploaded++
+            }
+            if (snapshots.any { it.items.isNotEmpty() || it.episodes.isNotEmpty() }) {
+                uploadCheckpoint(config, profile, snapshots, scanCompleteBefore)
             }
         }
         CatalogPreferences.status(app, "Backed up $uploaded catalog snapshots · ${java.util.Date()}")
@@ -110,6 +131,59 @@ class CatalogBackupManager(context: Context) {
         CatalogPreferences.status(app, "Merged $imported catalog snapshots · ${java.util.Date()}")
         imported
     }
+
+    private suspend fun uploadCheckpoint(config: GitHubBackupConfig, profile: PortalProfile, snapshots: List<CatalogSnapshot>, scanCompleteBefore: Long) {
+        val id = CatalogScanPreferences.id(profile)
+        // Never advertise an in-progress refresh as a complete checkpoint.
+        val completeAt = if (CatalogScanPreferences.cursor(app, id) == -1 &&
+            CatalogScanPreferences.completed(app, id) == scanCompleteBefore) scanCompleteBefore else 0L
+        val canonical = json.encodeToString(snapshots) + ":$completeAt"
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val key = "checkpoint:${config.username}/${config.repository}/$id/${crypto.catalogKeyRevision()}/${config.passphrase.isBlank()}"
+        if (CatalogPreferences.fingerprint(app, key) == fingerprint) return
+        val timestamp = System.currentTimeMillis()
+        val checkpoint = CatalogCheckpoint(profileId = id, createdAt = timestamp, scanCompletedAt = completeAt, snapshots = snapshots)
+        val bytes = ByteArrayOutputStream().also { output ->
+            GZIPOutputStream(output).use { it.write(json.encodeToString(checkpoint).toByteArray()) }
+        }.toByteArray()
+        val path = "catalog-checkpoints-v1/$id/$timestamp-${CatalogPreferences.deviceId(app)}.niktv"
+        put(config, path, encodePayload(Base64.encodeToString(bytes, Base64.NO_WRAP), config.passphrase))
+        CatalogPreferences.fingerprint(app, key, fingerprint)
+        BackupActivityLog.record(app, "Catalog checkpoint · ${profile.name}", "Completed", "Created restore checkpoint at ${java.util.Date(timestamp)}.")
+    }
+
+    suspend fun checkpoints(profile: PortalProfile): List<CatalogCheckpointFile> = withContext(Dispatchers.IO) {
+        val folder = "catalog-checkpoints-v1/${CatalogScanPreferences.id(profile)}"
+        val listing = get(config(), folder) ?: return@withContext emptyList()
+        val files = JSONArray(listing)
+        (0 until files.length()).mapNotNull { index ->
+            val file = files.getJSONObject(index)
+            val path = file.optString("path")
+            val match = Regex("([0-9]{13})-([a-f0-9-]+)\\.niktv").matchEntire(path.substringAfterLast('/'))
+            if (match == null || path.substringBeforeLast('/') != folder) null
+            else CatalogCheckpointFile(path, match.groupValues[1].toLong(), match.groupValues[2].take(8))
+        }.sortedByDescending { it.timestamp }
+    }
+
+    suspend fun restoreCheckpoint(profile: PortalProfile, file: CatalogCheckpointFile): Int =
+        BackupActivityLog.track(app, "Catalog checkpoint restore · ${profile.name}", success = { "Merged $it media catalogs. Reopen the profile to refresh the dashboard." }) {
+            withContext(Dispatchers.IO) {
+                val id = CatalogScanPreferences.id(profile)
+                require(file.path.substringBeforeLast('/') == "catalog-checkpoints-v1/$id")
+                require(Regex("[0-9]{13}-[a-f0-9-]+\\.niktv").matches(file.path.substringAfterLast('/')))
+                val config = config()
+                val content = requireNotNull(get(config, file.path, raw = true)) { "Checkpoint no longer exists." }
+                val compressed = Base64.decode(decodePayload(content, config.passphrase), Base64.NO_WRAP)
+                val decoded = GZIPInputStream(compressed.inputStream()).use { bounded(it, MAX_EXPANDED) }
+                val checkpoint = json.decodeFromString<CatalogCheckpoint>(decoded)
+                repository.mergeCheckpoint(profile, checkpoint)
+                CatalogScanPreferences.completed(app, id, maxOf(CatalogScanPreferences.completed(app, id), checkpoint.scanCompletedAt))
+                CatalogScanPreferences.status(app, id, "Restored checkpoint · ${java.util.Date(checkpoint.createdAt)}" +
+                    if (checkpoint.scanCompletedAt > 0) " · full catalog scan included." else " · partial catalog; scan to complete coverage.")
+                checkpoint.snapshots.size
+            }
+        }
 
     internal fun encodePayload(compressedBase64: String, passphrase: String): String =
         if (passphrase.isBlank()) JSONObject()

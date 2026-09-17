@@ -140,4 +140,30 @@ class CatalogRepositoryTest {
         assertEquals(listOf(favorite), Json.decodeFromString<List<FavoriteItem>>(exported["favorites"]!!.jsonPrimitive.content))
         assertEquals(listOf(recent), Json.decodeFromString<List<RecentItem>>(exported["recently_played"]!!.jsonPrimitive.content))
     }
+
+    @Test fun checkpointRestoreIsAtomicAndSearchableWithoutScanning() = runBlocking {
+        repository.saveBrowse(cache("10"))
+        val id = SearchMetadataDocuments.anonymousProfileId(profile)
+        val snapshots = listOf(CatalogType.MOVIES, CatalogType.LIVE_TV, CatalogType.SERIES).map { repository.snapshot(profile, it) }
+        val checkpoint = CatalogCheckpoint(profileId = id, createdAt = 100, scanCompletedAt = 90, snapshots = snapshots)
+        repository.clear()
+        repository.mergeCheckpoint(profile, checkpoint)
+        assertEquals(listOf("10"), repository.search(profile.cacheKey(), type)!!.items.map { it.id })
+        repository.clear()
+        val corruptSeries = snapshots.last().copy(items = listOf(snapshots.first().items.first().copy(type = CatalogType.SERIES.name, payload = "invalid")))
+        try {
+            repository.mergeCheckpoint(profile, checkpoint.copy(snapshots = snapshots.dropLast(1) + corruptSeries))
+            fail("Malformed checkpoint must fail")
+        } catch (_: IllegalArgumentException) { }
+        assertNull(repository.media(profile.cacheKey(), type, "10"))
+    }
+
+    @Test fun scanRestartRetainsSearchableItemsButResetsPaginationOnlyForSelectedProfile() = runBlocking {
+        repository.saveBrowse(cache("10"))
+        repository.restartScan(profile, type)
+        val browse = repository.browse(profile.cacheKey(), type)!!
+        assertEquals(0, browse.pagesByCategory["1"])
+        assertEquals(true, browse.hasMoreByCategory["1"])
+        assertEquals("10", repository.search(profile.cacheKey(), type)!!.items.single().id)
+    }
 }

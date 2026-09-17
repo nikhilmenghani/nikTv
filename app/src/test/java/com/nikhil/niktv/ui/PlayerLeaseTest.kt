@@ -51,4 +51,9 @@ class PlayerLeaseTest {
 
         assertSame(cast, selectActivePlayer(true, cast, null))
     }
+    @org.junit.Test
+    fun localPlaybackDoesNotRequireCastModule() {
+        val local = Any()
+        assertSame(local, selectActivePlayer(false, null, local))
+    }
 }

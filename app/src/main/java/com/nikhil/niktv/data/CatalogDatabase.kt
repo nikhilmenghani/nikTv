@@ -94,11 +94,11 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
                 .groupBy { it.portalCategoryId } else emptyMap()
             BrowseCatalogCache(profile, type, buckets.maxOf { it.observedAt },
                 buckets.map { Category(it.bucket, it.title, type) },
-                buckets.filter { it.page > 0 || allComplete }.associate { b -> b.bucket to
+                buckets.filter { it.page > 0 || allComplete || rows[it.bucket].orEmpty().isNotEmpty() }.associate { b -> b.bucket to
                     (if (allComplete && b.bucket != "*") derived[b.bucket].orEmpty()
                      else rows[b.bucket].orEmpty().map { json.decodeFromString<MediaItem>(it.payload) }) },
-                buckets.filter { it.page > 0 || allComplete }.associate { it.bucket to (if (allComplete) 1 else it.page) },
-                buckets.filter { it.page > 0 || allComplete }.associate { it.bucket to (if (allComplete) false else it.hasMore) })
+                buckets.filter { it.page > 0 || allComplete || rows[it.bucket].orEmpty().isNotEmpty() }.associate { it.bucket to (if (allComplete) 1 else it.page) },
+                buckets.filter { it.page > 0 || allComplete || rows[it.bucket].orEmpty().isNotEmpty() }.associate { it.bucket to (if (allComplete) false else it.hasMore) })
         }
     }
 
@@ -205,6 +205,24 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
             require(cache.seriesId == it.series && (cache.season ?: -1) == it.season)
             it.copy(profile = key, payload = json.encodeToString(cache.copy(profileKey = key)))
         })
+    }
+
+    internal suspend fun mergeCheckpoint(profile: PortalProfile, checkpoint: CatalogCheckpoint) = db.withTransaction {
+        val types = setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+        val id = SearchMetadataDocuments.anonymousProfileId(profile)
+        require(checkpoint.version == 1 && checkpoint.profileId == id)
+        require(checkpoint.snapshots.size == types.size && checkpoint.snapshots.map { it.type }.toSet() == types)
+        require(checkpoint.snapshots.all { it.profileId == id && it.schemaVersion == 1 })
+        checkpoint.snapshots.forEach { mergeSnapshot(profile, it) }
+    }
+
+    suspend fun restartScan(profile: PortalProfile, type: CatalogType) {
+        migrate(profile.cacheKey(), type)
+        db.withTransaction {
+            dao.putBuckets(dao.buckets(profile.cacheKey(), type.name).map {
+                it.copy(page = 0, hasMore = true, observedAt = System.currentTimeMillis())
+            })
+        }
     }
 
     suspend fun clear() = db.withTransaction { dao.clearItems(); dao.clearBuckets(); dao.clearEpisodes() }

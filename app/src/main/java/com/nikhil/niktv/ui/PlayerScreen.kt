@@ -615,8 +615,12 @@ fun PlayerScreen(
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
-    val castContext = remember { CastContext.getSharedInstance(context) }
-    val castPlayer = remember(castContext) { CastPlayer(castContext) }
+    val isTvDevice = rememberPlayerTvDevice()
+    // Fire TV has no Google Cast module. Local playback must not depend on it.
+    val castPlayer = remember(context, isTvDevice) {
+        if (isTvDevice) null
+        else runCatching { CastPlayer(CastContext.getSharedInstance(context)) }.getOrNull()
+    }
     val castMediaItem = remember(media.url, media.media.title, media.playbackFormat) {
         MediaItem.Builder()
             .setUri(media.url)
@@ -630,7 +634,7 @@ fun PlayerScreen(
     }
 
     var castSessionActive by remember(castPlayer) {
-        mutableStateOf(castPlayer.isCastSessionAvailable)
+        mutableStateOf(castPlayer?.isCastSessionAvailable == true)
     }
     var pendingCastStartPosition by remember(media.progressKey) {
         mutableStateOf<Long?>(null)
@@ -698,6 +702,7 @@ fun PlayerScreen(
     val currentCastSessionActive by rememberUpdatedState(castSessionActive)
 
     DisposableEffect(castPlayer, media.progressKey) {
+        if (castPlayer == null) return@DisposableEffect onDispose {}
         val listener = object : SessionAvailabilityListener {
             override fun onCastSessionAvailable() {
                 if (currentCastSessionActive) return
@@ -741,7 +746,7 @@ fun PlayerScreen(
      * URL changes.
      */
     LaunchedEffect(castSessionActive, castMediaItem) {
-        if (!castSessionActive) return@LaunchedEffect
+        if (!castSessionActive || castPlayer == null) return@LaunchedEffect
 
         val requestedPosition = pendingCastStartPosition
         val currentUri =

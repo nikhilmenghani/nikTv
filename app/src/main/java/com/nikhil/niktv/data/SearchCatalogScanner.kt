@@ -23,7 +23,8 @@ data class SearchCatalogScanProgress(
 data class SearchCatalogScanResult(
     val cache: BrowseCatalogCache,
     val itemCount: Int,
-    val failures: Int
+    val failures: Int,
+    val deferred: Boolean = false
 )
 
 /** Checkpointed, sequential catalogue crawler shared by UI and periodic work. */
@@ -37,15 +38,17 @@ class SearchCatalogScanner(context: Context) {
         type: CatalogType,
         requestDelayMillis: Long,
         refreshCompleted: Boolean = true,
+        timeBudgetMillis: Long = Long.MAX_VALUE,
         onProgress: (SearchCatalogScanProgress) -> Unit = {}
     ): SearchCatalogScanResult = scanMutex.withLock {
-        scanInternal(session, type, requestDelayMillis, refreshCompleted, onProgress)
+        scanInternal(session, type, requestDelayMillis, refreshCompleted, timeBudgetMillis, onProgress)
     }
 
     private suspend fun scanInternal(
         session: PortalSession, type: CatalogType, requestDelayMillis: Long,
-        refreshCompleted: Boolean, onProgress: (SearchCatalogScanProgress) -> Unit
+        refreshCompleted: Boolean, timeBudgetMillis: Long, onProgress: (SearchCatalogScanProgress) -> Unit
     ): SearchCatalogScanResult {
+        val started = android.os.SystemClock.elapsedRealtime()
         val profileKey = session.profile.cacheKey()
         val persisted = store.browseCatalog(type, profileKey).first()
         val availableCategories = portal.categories(session, type)
@@ -70,7 +73,7 @@ class SearchCatalogScanner(context: Context) {
             var page = cache.pagesByCategory[category.id] ?: 0
             var items = knownItems
 
-            if (knownHasMore != false || knownItems.isEmpty() || refreshCompleted) {
+            if (knownHasMore != false || refreshCompleted) {
                 val refreshFromStart = knownHasMore == false
                 if (refreshFromStart || page <= 0) page = 1 else page += 1
                 val startedAtFirstPage = page == 1
@@ -78,7 +81,13 @@ class SearchCatalogScanner(context: Context) {
                 var pagesRead = 0
                 val seenThisScan = mutableSetOf<String>()
                 while (keepLoading && pagesRead < MAX_PAGES_PER_CATEGORY) {
-                    while (CatalogPlaybackActivity.playing) delay(1_000L)
+                    if (timeBudgetMillis == Long.MAX_VALUE) {
+                        while (CatalogPlaybackActivity.playing) delay(1_000L)
+                    }
+                    if (CatalogPlaybackActivity.playing || android.os.SystemClock.elapsedRealtime() - started >= timeBudgetMillis) {
+                        return SearchCatalogScanResult(cache, cache.itemsByCategory.values.flatten().distinctBy { it.id }.size,
+                            failures, deferred = true)
+                    }
                     onProgress(
                         SearchCatalogScanProgress(
                             category.title,

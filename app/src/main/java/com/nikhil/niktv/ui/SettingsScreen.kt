@@ -1673,15 +1673,7 @@ SettingsSection("Backup and restore") {
                 }
             )
             HorizontalDivider()
-            BackupSettingsActionRow(
-                icon = Icons.Default.Refresh,
-                title = "Refresh IPTV catalog",
-                subtitle = "Update local media listings from your provider in the background.",
-                onClick = {
-                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.refresh(context)
-                    catalogStatus = "Provider refresh queued. Existing catalog stays available."
-                }
-            )
+            CatalogProfileSettings(state.profiles, state.savedProfile)
             BackupSettingsActionRow(
                 icon = Icons.Default.CloudUpload,
                 title = "Back up IPTV catalog now",
@@ -5021,7 +5013,7 @@ internal fun MediaItem.actionEpisodeLabel(): String {
 }
 
 @Composable
-private fun BackupSettingsActionRow(
+internal fun BackupSettingsActionRow(
     icon: ImageVector,
     title: String,
     subtitle: String,

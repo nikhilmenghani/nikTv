@@ -23,11 +23,11 @@ internal class PlayerLease<T : Any>(
  */
 internal fun <T : Any> selectActivePlayer(
     castSessionActive: Boolean,
-    castPlayer: T,
+    castPlayer: T?,
     localPlayer: T?
 ): T =
     if (castSessionActive) {
-        castPlayer
+        requireNotNull(castPlayer) { "Cast playback requires an available Cast player" }
     } else {
         requireNotNull(localPlayer) {
             "Local playback requires an owned local player"

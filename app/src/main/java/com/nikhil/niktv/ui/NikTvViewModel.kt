@@ -74,6 +74,7 @@ data class NikTvState(
     val feedRefreshMessage: String = "Refreshing feed…",
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
+    val profilePreparationMessage: String? = null,
     val profileLoadMessage: String = "Preparing profile…",
     val error: String? = null,
     val reauthenticating: Boolean = false,
@@ -130,6 +131,7 @@ data class NikTvState(
     val searchLocalLoading: Boolean = false,
     val searchResults: List<MediaItem> = emptyList(),
     val searchServerLoading: Boolean = false,
+    val searchProviderMessage: String? = null,
     val searchActivityTitle: String? = null,
     val searchActivityDetail: String? = null,
     val searchActivityProgress: Float? = null,
@@ -178,6 +180,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val favoriteEpisodeCacheRefreshMutex = Mutex()
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
+    private var profilePreparationJob: Job? = null
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
     private var searchCatalogScanJob: Job? = null
@@ -307,9 +310,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connect(profile: PortalProfile) = task {
+        profilePreparationJob?.cancel()
+        _state.update { it.copy(profilePreparationMessage = null) }
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
-        val session = portal.authenticate(profile)
+        val session = authenticateProfileForOpening(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         store.save(session)
         _state.update {
@@ -338,60 +343,49 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 thrillerMoviesError = null
             )
         }
+        updateProfileLoad(0.26f, "Loading saved favorites and watch history…")
         loadProfileLibrary(session.profile.cacheKey())
-        preloadDashboard(session)
-        SearchMetadataSyncScheduler.refresh(getApplication())
+        prepareDashboardInBackground(session)
+        SearchMetadataSyncScheduler.configureProfile(getApplication(), session.profile)
     }
 
-    /**
-     * Warms only the first enabled category for each dashboard type. Requests are
-     * deliberately sequential and loadTypeInternal observes the configured cache
-     * TTL, so choosing a profile cannot fan out into a burst of portal calls.
-     */
-    private suspend fun preloadDashboard(session: PortalSession) {
-        // Old builds combined every profile's browse data in a single value.
-        // Remove it without decoding before creating bounded, profile-scoped caches.
-        store.discardLegacyBrowseCatalogs()
-        if (_state.value.modernUiEnabled) {
-            updateProfileLoad(0.30f, "Loading Movie categories…")
-            loadTypeMetadataInternal(session, CatalogType.MOVIES)
-            updateProfileLoad(0.48f, "Loading Series categories…")
-            loadTypeMetadataInternal(session, CatalogType.SERIES)
-            updateProfileLoad(0.66f, "Loading Live TV categories…")
-            loadTypeMetadataInternal(session, CatalogType.LIVE_TV)
-            updateProfileLoad(0.82f, "Preparing destinations…")
-        } else {
-            updateProfileLoad(0.30f, "Loading Movies…")
-            loadTypeInternal(session, CatalogType.MOVIES)
-            updateProfileLoad(0.40f, "Preparing Movies…")
-            updateProfileLoad(0.48f, "Loading Series…")
-            loadTypeInternal(session, CatalogType.SERIES)
-            updateProfileLoad(0.60f, "Preparing Series…")
-            updateProfileLoad(0.68f, "Loading Live TV…")
-            loadTypeInternal(session, CatalogType.LIVE_TV)
-            updateProfileLoad(0.82f, "Preparing Live TV…")
+    private fun prepareDashboardInBackground(session: PortalSession) {
+        profilePreparationJob?.cancel()
+        profilePreparationJob = viewModelScope.launch {
+            val profileKey = session.profile.cacheKey()
+            fun status(message: String?) {
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() == profileKey)
+                        current.copy(profilePreparationMessage = message) else current
+                }
+            }
+            val failed = mutableListOf<String>()
+            suspend fun step(label: String, block: suspend () -> Unit) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                status("$label · You can continue browsing")
+                try {
+                    if (withTimeoutOrNull(15_000L) { block(); true } != true) failed += label
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { failed += label }
+            }
+            try {
+                step("Preparing local catalog storage") { store.discardLegacyBrowseCatalogs() }
+                for (type in listOf(CatalogType.MOVIES, CatalogType.SERIES, CatalogType.LIVE_TV)) {
+                    step("Loading ${type.title} categories from local storage or provider") {
+                        if (_state.value.modernUiEnabled) loadTypeMetadataInternal(session, type)
+                        else loadTypeInternal(session, type)
+                    }
+                }
+                // These are optional enrichments, never a prerequisite for opening Home.
+                step("Refreshing watched series") { refreshWatchedSeriesIfDue() }
+                loadDashboardDiscovery()
+                step("Updating home artwork") { enrichHomeArtwork(profileKey) }
+                status(if (failed.isEmpty()) null else
+                    "Some background preparation could not finish. Browse a section to retry, or use Refresh IPTV catalog in Settings.")
+            } finally {
+                if (!kotlinx.coroutines.currentCoroutineContext().isActive) status(null)
+            }
         }
-        updateProfileLoad(0.90f, "Preparing your dashboard…")
-        refreshWatchedSeriesIfDue()
-        loadDashboardDiscovery()
-        updateProfileLoad(
-            0.94f,
-            if (_state.value.modernUiEnabled) "Opening your destinations…"
-            else "Loading selected TMDB sections…"
-        )
-        // Keep the existing profile loading screen visible while discovery
-        // rows settle. The dashboard is never exposed in a half-composed state
-        // where late row insertion can steal focus or appear frozen.
-        withTimeoutOrNull(20_000L) {
-            state.map { current ->
-                current.tmdbSectionsLoading.isEmpty() &&
-                    !current.trendingMoviesLoading &&
-                    !current.trendingSeriesLoading &&
-                    !current.thrillerMoviesLoading
-            }.first { ready -> ready }
-        }
-        viewModelScope.launch { enrichHomeArtwork(session.profile.cacheKey()) }
-        updateProfileLoad(1f, "Opening dashboard…")
     }
 
     private suspend fun enrichHomeArtwork(profileKey: String) = coroutineScope {
@@ -787,7 +781,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             store.saveBrowseCatalog(cache)
         }
 
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profileKey) return@update current
             val active = current.selectedType == type
             current.copy(
                 rawCategoriesByType =
@@ -3752,6 +3748,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 searchQuery = query,
+                searchProviderMessage = null,
                 searchServerLoading = false,
                 searchResults = emptyList(),
                 searchLocalLoading = false,
@@ -3834,7 +3831,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+            val latest = _state.value
+            if (latest.searchOpen && latest.session?.profile?.cacheKey() == profileKey &&
+                latest.searchQuery.trim() == normalizedQuery && latest.searchType == type && latest.searchCategoryId == categoryId &&
+                shouldSearchProvider(local.isEmpty())) {
+                // Publish local results first, then let the cancellable provider job supplement them.
+                search()
+            }
         }
+    }
+
+    private fun shouldSearchProvider(emptyResults: Boolean): Boolean {
+        val profile = _state.value.session?.profile ?: return false
+        val id = com.nikhil.niktv.data.CatalogScanPreferences.id(profile)
+        return com.nikhil.niktv.data.needsProviderSearch(emptyResults,
+            com.nikhil.niktv.data.CatalogScanPreferences.completed(getApplication(), id),
+            com.nikhil.niktv.data.CatalogScanPreferences.cursor(getApplication(), id))
     }
 
     fun search(forceServer: Boolean = false) {
@@ -3902,17 +3914,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            /*
-             * SEARCH_PROVIDER_EXPLICIT_V2
-             *
-             * Normal Search/IME submission never escalates to the IPTV
-             * provider. The provider is contacted only from the explicit
-             * Search provider action.
-             */
-            if (!forceServer) return@launch
+            if (!forceServer && !shouldSearchProvider(available.isEmpty())) return@launch
 
             if (snapshot.searchType == SearchContentType.ALL) {
-                fetchGlobalSearch(query, profileKey, localOnly)
+                fetchGlobalSearch(query, profileKey, available)
                 return@launch
             }
 
@@ -3921,7 +3926,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 type = snapshot.searchType,
                 categoryId = snapshot.searchCategoryId,
                 page = 1,
-                existing = localOnly
+                existing = available
             )
         }
     }
@@ -3995,7 +4000,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             it.searchOpen && it.session?.profile?.cacheKey() == profileKey &&
                 it.searchType == SearchContentType.ALL && it.searchQuery.trim() == query
         }
-        _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false,
+        _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false, searchProviderMessage = null,
             searchResults = existing,
             searchUsedServer = true, searchHasMore = pager.hasMore,
             searchActivityTitle = "Loading provider results") }
@@ -4025,7 +4030,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             )
             if (current()) _state.update { it.copy(
-                error = if (batch.failures > 0) "Some provider pages failed. Load more retries them; existing results are retained." else it.error
+                searchProviderMessage = if (batch.failures > 0) "Some provider pages failed. Local results remain available; use Search provider to retry." else null
             ) }
         } finally {
             if (current()) _state.update { it.copy(searchServerLoading = false, searchHasMore = pager.hasMore,
@@ -4044,6 +4049,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 searchServerLoading = true,
                 searchLocalLoading = false,
+                searchProviderMessage = null,
                 searchActivityTitle = "Searching IPTV provider",
                 searchActivityDetail = "Requesting ${type.title.lowercase()} from the selected provider scope",
                 searchActivityProgress = null
@@ -4181,7 +4187,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         searchActivityTitle = null,
                         searchActivityDetail = null,
                         searchActivityProgress = null,
-                        error = error.message ?: "Provider search failed"
+                        searchProviderMessage = "Provider unavailable. Local results remain available; use Search provider to retry."
                     )
                 }
             }
@@ -5448,10 +5454,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
     }
 
+    private suspend fun authenticateProfileForOpening(profile: PortalProfile): PortalSession =
+        withTimeoutOrNull(20_000L) { portal.authenticate(profile) }
+            ?: throw IllegalStateException("${profile.name} did not finish authentication within 20 seconds. Check the provider connection and try again.")
+
     private suspend fun localFirstSession(profile: PortalProfile): PortalSession {
         val cached = if (com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) store.sessionFor(profile) else null
-        val hasCatalog = cached != null && store.browseCatalog(CatalogType.LIVE_TV, profile.cacheKey()).first() != null
-        if (cached != null && hasCatalog) {
+        if (cached != null) {
             viewModelScope.launch {
                 try {
                     val fresh = portal.authenticate(profile)
@@ -5464,14 +5473,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
             return cached.copy(profile = profile)
         }
-        return portal.authenticate(profile).also { store.save(it) }
+        updateProfileLoad(0.12f, "Connecting to ${profile.name}; waiting for provider authentication…")
+        return authenticateProfileForOpening(profile).also { store.save(it) }
     }
     fun switchProfile(profile: PortalProfile) = task {
+        profilePreparationJob?.cancel()
+        _state.update { it.copy(profilePreparationMessage = null) }
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.04f, "Loading ${profile.name}…")
         store.activate(profile)
         // Reuse a saved session for local browsing while renewing it in the background.
-        updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
+        updateProfileLoad(0.08f, "Reading saved session for ${profile.name}…")
         val session = localFirstSession(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
@@ -5481,9 +5493,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             trendingMovies = emptyList(), trendingMoviesLoading = false, trendingMoviesError = null,
             trendingSeries = emptyList(), trendingSeriesLoading = false, trendingSeriesError = null,
             thrillerMovies = emptyList(), thrillerMoviesLoading = false, thrillerMoviesError = null) }
+        updateProfileLoad(0.26f, "Loading saved favorites and watch history…")
         loadProfileLibrary(session.profile.cacheKey())
-        preloadDashboard(session)
-        SearchMetadataSyncScheduler.refresh(getApplication())
+        prepareDashboardInBackground(session)
+        SearchMetadataSyncScheduler.configureProfile(getApplication(), session.profile)
     }
     fun removeProfile(profile: PortalProfile) = viewModelScope.launch {
         store.removeProfile(profile)
