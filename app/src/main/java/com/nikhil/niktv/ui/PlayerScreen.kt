@@ -578,7 +578,6 @@ fun PlayerScreen(
     var inPictureInPicture by remember { mutableStateOf(false) }
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val backFocusRequester = remember(media.progressKey) { FocusRequester() }
-    val castFocusRequester = remember(media.progressKey) { FocusRequester() }
     val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -590,7 +589,6 @@ fun PlayerScreen(
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
     val moreFocusRequester = remember(media.progressKey) { FocusRequester() }
-    val fullscreenFocusRequester = remember(media.progressKey) { FocusRequester() }
     val previousFocusRequester = remember(media.progressKey) { FocusRequester() }
     val rewindFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1664,11 +1662,9 @@ fun PlayerScreen(
                 add(resizeFocusRequester)
                 add(pictureModeFocusRequester)
                 add(playerSwitchFocusRequester)
-                if (!isFireTv) add(castFocusRequester)
                 add(controlsTimeoutFocusRequester)
                 add(moreFocusRequester)
                 if (pipAvailable) add(pipFocusRequester)
-                if (!isFireTv) add(fullscreenFocusRequester)
             }
             val firstQuickActionRequester = if (extraControlsOpen) secondaryActionRequesters.first() else extraControlsRequester
             val lastPlaybackActionRequester = when {
@@ -1863,12 +1859,7 @@ PlayerChromeIconButton(
                                     selected = false,
                                     onFocused = { controlsFocused = it }
                                 )
-                        if (!isFireTv) {
-                        com.nikhil.niktv.ui.components.CastButton(
-                            modifier = Modifier
-                                .playerSecondaryFocus(castFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester)
-                        )
-                        }
+                        
                         PlayerChromeIconButton(
                             icon = Icons.Default.Timer,
                             badgeText = playerControlsTimeoutBadge(controlsTimeoutSeconds),
@@ -2118,33 +2109,7 @@ PlayerChromeIconButton(
                                     )
                                 }
 
-                                if (!isFireTv) {
-PlayerChromeIconButton(
-                                    icon = if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                                    contentDescription = if (focusMode) "Exit fullscreen" else "Fullscreen",
-                                    onClick = {
-                                        val enteringFullscreen = !focusMode
-                                        if (startFullscreen && !enteringFullscreen) {
-                                            onBack()
-                                        } else {
-                                            focusMode = enteringFullscreen
-                                            onFullscreenChanged?.invoke(enteringFullscreen)
-                                            controlsVisible = !enteringFullscreen
-                                            controlsFocused = false
-                                            if (enteringFullscreen) {
-                                                runCatching { videoSurfaceFocusRequester.requestFocus() }
-                                            } else {
-                                                showControlsAndFocusPlayPause()
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .playerSecondaryFocus(fullscreenFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
-                                    size = utilityButtonSize,
-                                    selected = false,
-                                    onFocused = { controlsFocused = it }
-                                )
-                                }
+                                
                                 }
                                 }
                                 PlayerChromeIconButton(
