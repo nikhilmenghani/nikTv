@@ -8,6 +8,7 @@ package com.nikhil.niktv.ui
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.view.Gravity
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -80,6 +82,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -113,6 +116,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
@@ -652,9 +657,9 @@ private fun ModernDestinationHub(
                         color = Color.White,
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(
+                    NikTvSecondaryActionButton(
                         onClick = { customizeHomeOpen = true },
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Icon(Icons.Default.DashboardCustomize, null, Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
@@ -886,9 +891,8 @@ private fun ModernDestinationHub(
                             color = Color(0xFFB9B9B9)
                         )
                         if (dashboardSurface == DashboardSurface.HOME) {
-                            Button(
-                                onClick = { customizeHomeOpen = true },
-                                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
+                            NikTvSecondaryActionButton(
+                                onClick = { customizeHomeOpen = true }
                             ) {
                                 Text("Choose what appears on Home")
                             }
@@ -1019,15 +1023,36 @@ private fun ModernCustomizeHomeDialog(
     resetSurface: () -> Unit
 ) {
     val firstAction = remember { FocusRequester() }
+    val configuration = LocalConfiguration.current
+    val compactLandscape = configuration.smallestScreenWidthDp < 600 &&
+        configuration.screenWidthDp > configuration.screenHeightDp
+    val bodyMaxHeight =
+        (configuration.screenHeightDp * if (compactLandscape) .55f else .68f).dp
     AlertDialog(
         onDismissRequest = dismiss,
-        title = { Text("Customize Home") },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color(0xF21A1A1A),
+        title = {
+            val dialogView = LocalView.current
+            SideEffect {
+                (dialogView.parent as? DialogWindowProvider)?.window?.setGravity(Gravity.END)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Customize Home", color = Color.White)
+                Text(
+                    "Choose the collections and categories that appear on Home.",
+                    color = Color.White.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        },
         text = {
             Column(
-                Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                Modifier.widthIn(max = 520.dp)
+                    .heightIn(max = bodyMaxHeight)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Choose the collections and categories that appear on Home.")
                 val actions = listOf<Pair<String, () -> Unit>>(
                     "TMDB sections" to configureTmdb,
                     "Live TV categories" to { configureIptv(CatalogType.LIVE_TV) },
@@ -1036,12 +1061,13 @@ private fun ModernCustomizeHomeDialog(
                     "Restore Home defaults" to resetSurface
                 )
                 actions.forEachIndexed { index, (label, action) ->
-                    if (index == actions.lastIndex) HorizontalDivider()
-                    TextButton(
+                    if (index == actions.lastIndex) {
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
+                    }
+                    NikTvSecondaryActionButton(
                         onClick = { dismiss(); action() },
                         modifier = Modifier.fillMaxWidth()
                             .then(if (index == 0) Modifier.focusRequester(firstAction) else Modifier)
-                            .remoteFocusFrame(RoundedCornerShape(12.dp))
                     ) {
                         Text(label, Modifier.weight(1f))
                     }
@@ -1049,13 +1075,15 @@ private fun ModernCustomizeHomeDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = dismiss,
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
+            NikTvTextActionButton(
+                onClick = dismiss
             ) { Text("Done") }
         }
     )
-    LaunchedEffect(Unit) { firstAction.requestFocus() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        firstAction.requestFocus()
+    }
 }
 
 @Composable
