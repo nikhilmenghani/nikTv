@@ -1,210 +1,100 @@
 package com.nikhil.niktv.data
 
 import android.content.Context
-import androidx.work.Constraints
-import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.WorkerParameters
-import androidx.work.workDataOf
+import androidx.work.*
 import com.nikhil.niktv.model.CatalogType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 
-/** Keeps the sanitized GitHub search index fresh without blocking catalog UI. */
+/** Local refresh is independent of opt-in encrypted catalog backups. */
 object SearchMetadataSyncScheduler {
-    private const val IMMEDIATE_WORK = "niktv-search-metadata-sync"
-    private const val PERIODIC_WORK = "niktv-search-metadata-periodic-sync"
-    private const val PERIODIC_SCAN_WORK = "niktv-provider-metadata-scan"
-    private const val DEBOUNCE_SECONDS = 45L
-    private const val PERIODIC_HOURS = 12L
-    private const val PERIODIC_SCAN_HOURS = 24L
+    private const val BACKUP = "niktv-catalog-backup-v1"
+    private const val MANUAL = "niktv-catalog-backup-now-v1"
+    private const val REFRESH = "niktv-catalog-refresh-v1"
 
     fun initialize(context: Context) {
-        val appContext = context.applicationContext
-        val config = GitHubBackupManager(appContext).loadConfig()
-        val workManager = WorkManager.getInstance(appContext)
-        if (!isEnabled(config)) {
-            workManager.cancelUniqueWork(IMMEDIATE_WORK)
-            workManager.cancelUniqueWork(PERIODIC_WORK)
-            CatalogType.entries.forEach {
-                workManager.cancelUniqueWork("$PERIODIC_SCAN_WORK-${it.name}")
-            }
-            return
+        val manager = WorkManager.getInstance(context)
+        // Cancel the previous always-on GitHub search-index implementation on upgrade.
+        listOf("niktv-search-metadata-sync", "niktv-search-metadata-periodic-sync").forEach(manager::cancelUniqueWork)
+        CatalogType.entries.forEach { manager.cancelUniqueWork("niktv-provider-metadata-scan-${it.name}") }
+        manager.enqueueUniquePeriodicWork(REFRESH, ExistingPeriodicWorkPolicy.UPDATE,
+            PeriodicWorkRequestBuilder<PeriodicCatalogScanWorker>(24, TimeUnit.HOURS)
+                .setInitialDelay(30, TimeUnit.MINUTES).setConstraints(constraints()).build())
+        if (CatalogPreferences.backupEnabled(context)) {
+            manager.enqueueUniquePeriodicWork(BACKUP, ExistingPeriodicWorkPolicy.UPDATE,
+                PeriodicWorkRequestBuilder<SearchMetadataSyncWorker>(12, TimeUnit.HOURS)
+                    .setInitialDelay(15, TimeUnit.MINUTES).setConstraints(constraints()).build())
+        } else {
+            manager.cancelUniqueWork(BACKUP)
+            manager.cancelUniqueWork(MANUAL)
         }
-        val request = PeriodicWorkRequestBuilder<SearchMetadataSyncWorker>(
-            PERIODIC_HOURS, TimeUnit.HOURS
-        ).setConstraints(networkConstraints()).build()
-        workManager.enqueueUniquePeriodicWork(
-            PERIODIC_WORK,
-            ExistingPeriodicWorkPolicy.UPDATE,
-            request
-        )
-        listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
-            .forEachIndexed { index, type ->
-                val scanRequest = PeriodicWorkRequestBuilder<PeriodicCatalogScanWorker>(
-                    PERIODIC_SCAN_HOURS, TimeUnit.HOURS
-                )
-                    .setInitialDelay((index + 1L) * 2L, TimeUnit.HOURS)
-                    .setInputData(workDataOf(PeriodicCatalogScanWorker.TYPE_KEY to type.name))
-                    .setConstraints(networkConstraints())
-                    .build()
-                workManager.enqueueUniquePeriodicWork(
-                    "$PERIODIC_SCAN_WORK-${type.name}",
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    scanRequest
-                )
-            }
-        request(appContext)
     }
 
-    fun request(context: Context) {
-        enqueue(context, immediate = false)
+    // Catalog writes stay local. Periodic/manual backup owns uploads, never a save callback.
+    fun request(context: Context) = Unit
+
+    fun requestNow(context: Context): UUID? {
+        if (!CatalogPreferences.backupEnabled(context)) return null
+        val work = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>().setConstraints(constraints()).build()
+        WorkManager.getInstance(context).enqueueUniqueWork(MANUAL, ExistingWorkPolicy.REPLACE, work)
+        return work.id
     }
 
-    fun requestNow(context: Context): UUID? = enqueue(context, immediate = true)
-
-    private fun enqueue(context: Context, immediate: Boolean): UUID? {
-        val appContext = context.applicationContext
-        if (!isEnabled(GitHubBackupManager(appContext).loadConfig())) return null
-        val builder = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>()
-            .setConstraints(networkConstraints())
-        if (!immediate) builder.setInitialDelay(DEBOUNCE_SECONDS, TimeUnit.SECONDS)
-        val request = builder.build()
-        WorkManager.getInstance(appContext).enqueueUniqueWork(
-            IMMEDIATE_WORK,
-            if (immediate) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
-            request
-        )
-        return request.id
+    fun refresh(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now", ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>().setConstraints(constraints()).build())
     }
 
-    private fun isEnabled(config: GitHubBackupConfig): Boolean =
-        config.backupMode == BackupMode.GITHUB && config.token.isNotBlank()
-
-    private fun networkConstraints() = Constraints.Builder()
-        .setRequiredNetworkType(NetworkType.CONNECTED)
-        .build()
+    private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED)
+        .setRequiresStorageNotLow(true).build()
 }
 
-class PeriodicCatalogScanWorker(
-    appContext: Context,
-    params: WorkerParameters
-) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result {
-        val type = inputData.getString(TYPE_KEY)
-            ?.let { runCatching { CatalogType.valueOf(it) }.getOrNull() }
-            ?: return Result.failure()
+class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = scanMutex.withLock {
         val store = ProfileStore(applicationContext)
-        val scanner = SearchCatalogScanner(applicationContext)
-        var transientFailure = false
-
-        store.profiles.first().forEach { profile ->
-            val session = store.sessionFor(profile) ?: return@forEach
-            runCatching {
-                scanner.scan(
-                    session = session,
-                    type = type,
-                    requestDelayMillis = PERIODIC_REQUEST_DELAY_MS,
-                    refreshCompleted = true
-                )
-            }.onFailure { transientFailure = true }
-        }
-        SearchMetadataSyncScheduler.requestNow(applicationContext)
-        return if (transientFailure) Result.retry() else Result.success()
-    }
-
-    companion object {
-        const val TYPE_KEY = "catalog_type"
-        private const val PERIODIC_REQUEST_DELAY_MS = 750L
-    }
-}
-
-class SearchMetadataSyncWorker(
-    appContext: Context,
-    params: WorkerParameters
-) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result = syncMutex.withLock { syncOnce() }
-
-    private suspend fun syncOnce(): Result {
-        val backupManager = GitHubBackupManager(applicationContext)
-        val config = backupManager.loadConfig()
-        if (config.backupMode != BackupMode.GITHUB || config.token.isBlank()) {
-            return Result.success()
-        }
-
-        val store = ProfileStore(applicationContext)
-        val sync = SearchMetadataSyncManager(applicationContext)
-        var transientFailure = false
-        val profiles = store.profiles.first()
-        val total = (profiles.size * SYNC_TYPES.size).coerceAtLeast(1)
-        var completed = 0
-
-        profiles.forEach { profile ->
-            val profileKey = profile.cacheKey()
-            SYNC_TYPES.forEach { type ->
+        val portal = StalkerPortalClient(applicationContext)
+        var failed = false
+        try {
+            for (profile in store.profiles.first()) {
                 try {
-                    setProgress(
-                        workDataOf(
-                            PROGRESS_MESSAGE to "Downloading ${type.title} index for ${profile.name}",
-                            PROGRESS_FRACTION to completed.toFloat() / total
-                        )
-                    )
-                    val searchCache = store.searchCatalog(type, profileKey).first()
-                    val browseCache = store.browseCatalog(type, profileKey).first()
-                    val remote = sync.download(profile, type, config)
-                    setProgress(
-                        workDataOf(
-                            PROGRESS_MESSAGE to "Merging ${type.title} metadata",
-                            PROGRESS_FRACTION to (completed + 0.45f) / total
-                        )
-                    )
-                    val local = sync.buildIndex(profile, type, searchCache, browseCache)
-                    val merged = sync.merge(local, remote)
-
-                    if (remote != null) {
-                        val remoteCache = sync.asLocalSearchCache(remote, profileKey)
-                        store.mergeSearchMetadata(remoteCache)
+                    val session = portal.authenticate(profile)
+                    for (type in listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) {
+                        val result = SearchCatalogScanner(applicationContext).scan(session, type, 750L)
+                        if (result.failures > 0) failed = true
                     }
-                    if (merged.items.isNotEmpty() && (remote?.items != merged.items ||
-                            SearchMetadataDocuments.legacyProfileId(profile) != sync.anonymousProfileId(profile))) {
-                        setProgress(
-                            workDataOf(
-                                PROGRESS_MESSAGE to "Uploading ${type.title} changes",
-                                PROGRESS_FRACTION to (completed + 0.75f) / total
-                            )
-                        )
-                        sync.upload(merged, config, profileName = profile.name)
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: IllegalArgumentException) {
-                    return Result.failure()
-                } catch (_: Throwable) {
-                    transientFailure = true
-                }
-                completed += 1
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { failed = true }
             }
-        }
-        return if (transientFailure) Result.retry() else Result.success()
+            if (failed) Result.retry() else Result.success()
+        } catch (cancelled: CancellationException) { throw cancelled }
     }
+    companion object { private val scanMutex = Mutex() }
+}
 
+/** Class name retained so already-enqueued work remains resolvable across app upgrades. */
+class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = backupMutex.withLock {
+        if (!CatalogPreferences.backupEnabled(applicationContext)) return@withLock Result.success()
+        try {
+            setProgress(workDataOf(PROGRESS_MESSAGE to "Backing up encrypted catalog", PROGRESS_FRACTION to 0.1f))
+            CatalogBackupManager(applicationContext).uploadAll()
+            Result.success()
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (invalid: IllegalArgumentException) {
+            CatalogPreferences.status(applicationContext, invalid.message ?: "Configure catalog backup in Settings")
+            Result.failure()
+        } catch (error: Exception) {
+            CatalogPreferences.status(applicationContext, error.message ?: "Catalog backup will retry")
+            Result.retry()
+        }
+    }
     companion object {
-        private val syncMutex = Mutex()
+        private val backupMutex = Mutex()
         const val PROGRESS_MESSAGE = "sync_message"
         const val PROGRESS_FRACTION = "sync_fraction"
-        private val SYNC_TYPES = listOf(
-            CatalogType.LIVE_TV,
-            CatalogType.MOVIES,
-            CatalogType.SERIES
-        )
     }
 }

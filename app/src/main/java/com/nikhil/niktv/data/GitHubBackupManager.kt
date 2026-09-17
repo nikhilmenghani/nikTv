@@ -129,6 +129,9 @@ class GitHubBackupManager(context: Context) {
     }
 
     fun saveConfig(config: GitHubBackupConfig) {
+        if (loadSecret(KEY_PASSPHRASE_CIPHERTEXT, KEY_PASSPHRASE_IV) != config.passphrase) {
+            prefs.edit().putLong("catalog_key_revision", catalogKeyRevision() + 1).apply()
+        }
         val normalized = normalizedNames(config)
         val interval =
             config.autoBackupIntervalHours
@@ -371,7 +374,9 @@ class GitHubBackupManager(context: Context) {
     fun decryptBackup(
         encryptedBackup: String,
         passphrase: String
-    ): GitHubBackupDecoded {
+    ): GitHubBackupDecoded = decodedBackup(decryptCatalogPayload(encryptedBackup, passphrase))
+
+    internal fun decryptCatalogPayload(encryptedBackup: String, passphrase: String): String {
         requireStrongPassphrase(passphrase)
 
         val envelope =
@@ -430,7 +435,7 @@ class GitHubBackupManager(context: Context) {
 
         val rawBackup = plaintext.toString(Charsets.UTF_8)
         plaintext.fill(0)
-        return decodedBackup(rawBackup)
+        return rawBackup
     }
 
     fun isBackupCurrent(
@@ -482,7 +487,9 @@ class GitHubBackupManager(context: Context) {
         )
     }
 
-    private fun encryptBackup(
+    internal fun catalogKeyRevision(): Long = prefs.getLong("catalog_key_revision", 0L)
+
+    internal fun encryptBackup(
         plaintext: String,
         passphrase: String
     ): String {

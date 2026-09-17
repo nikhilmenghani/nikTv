@@ -6,6 +6,9 @@ import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.PortalSession
 import com.nikhil.niktv.model.SearchCatalogCache
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.first
 
 data class SearchCatalogScanProgress(
@@ -35,11 +38,17 @@ class SearchCatalogScanner(context: Context) {
         requestDelayMillis: Long,
         refreshCompleted: Boolean = true,
         onProgress: (SearchCatalogScanProgress) -> Unit = {}
+    ): SearchCatalogScanResult = scanMutex.withLock {
+        scanInternal(session, type, requestDelayMillis, refreshCompleted, onProgress)
+    }
+
+    private suspend fun scanInternal(
+        session: PortalSession, type: CatalogType, requestDelayMillis: Long,
+        refreshCompleted: Boolean, onProgress: (SearchCatalogScanProgress) -> Unit
     ): SearchCatalogScanResult {
         val profileKey = session.profile.cacheKey()
         val persisted = store.browseCatalog(type, profileKey).first()
-        val availableCategories = persisted?.categories.orEmpty()
-            .ifEmpty { portal.categories(session, type) }
+        val availableCategories = portal.categories(session, type)
             .filter { it.id.isNotBlank() }
             .distinctBy { it.id }
         val categories = availableCategories.firstOrNull { it.id == "*" }
@@ -53,6 +62,7 @@ class SearchCatalogScanner(context: Context) {
             itemsByCategory = emptyMap()
         )
         var failures = 0
+        val completed = mutableMapOf<String, Set<String>>()
 
         categories.forEachIndexed { categoryIndex, category ->
             val knownItems = cache.itemsByCategory[category.id].orEmpty()
@@ -61,12 +71,14 @@ class SearchCatalogScanner(context: Context) {
             var items = knownItems
 
             if (knownHasMore != false || knownItems.isEmpty() || refreshCompleted) {
-                val refreshFromStart = refreshCompleted && knownHasMore == false && knownItems.isNotEmpty()
+                val refreshFromStart = knownHasMore == false
                 if (refreshFromStart || page <= 0) page = 1 else page += 1
+                val startedAtFirstPage = page == 1
                 var keepLoading = true
                 var pagesRead = 0
                 val seenThisScan = mutableSetOf<String>()
                 while (keepLoading && pagesRead < MAX_PAGES_PER_CATEGORY) {
+                    while (CatalogPlaybackActivity.playing) delay(1_000L)
                     onProgress(
                         SearchCatalogScanProgress(
                             category.title,
@@ -81,6 +93,7 @@ class SearchCatalogScanner(context: Context) {
                         portal.catalogPage(session, category, page)
                     }
                     if (pageResult.isFailure) {
+                        (pageResult.exceptionOrNull() as? CancellationException)?.let { throw it }
                         failures += 1
                         break
                     }
@@ -94,13 +107,19 @@ class SearchCatalogScanner(context: Context) {
                         itemsByCategory = cache.itemsByCategory + (category.id to items),
                         pagesByCategory = cache.pagesByCategory + (category.id to page),
                         hasMoreByCategory = cache.hasMoreByCategory +
-                            (category.id to (result.hasMore && newlySeen > 0))
+                            (category.id to result.hasMore)
                     )
+                    // A repeated page is an incomplete scan, not evidence that the category ended.
+                    if (result.hasMore && newlySeen == 0) failures += 1
+                    if (!result.hasMore && startedAtFirstPage) completed[category.id] = seenThisScan.toSet()
                     pagesRead += 1
+                    // Persist each completed page so process death can resume instead of restarting a category.
+                    store.saveBrowseCatalog(cache, scheduleMetadataSync = false)
                     keepLoading = result.hasMore && newlySeen > 0
                     page += 1
                     if (keepLoading) delay(requestDelayMillis)
                 }
+                if (keepLoading) failures += 1
             }
 
             store.saveBrowseCatalog(cache, scheduleMetadataSync = false)
@@ -128,10 +147,17 @@ class SearchCatalogScanner(context: Context) {
             ),
             scheduleMetadataSync = false
         )
+        val repository = CatalogRepository(appContext)
+        completed.forEach { (category, seen) ->
+            repository.reconcileCategory(profileKey, type, category, seen, System.currentTimeMillis())
+        }
         return SearchCatalogScanResult(cache, allItems.size, failures)
     }
 
     companion object {
+        private val scanMutex = Mutex()
         private const val MAX_PAGES_PER_CATEGORY = 500
     }
 }
+
+internal object CatalogPlaybackActivity { @Volatile var playing = false }

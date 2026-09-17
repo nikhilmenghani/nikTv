@@ -968,6 +968,24 @@ private fun ModernRecentChannelsCollection(
         themed && configuration.screenWidthDp >= 800 -> 3
         else -> 2
     }
+    var categoryToClear by remember { mutableStateOf<Pair<String?, String>?>(null) }
+    val grouped = recents.groupBy { recent ->
+        recent.media.portalCategoryId to (recent.categoryTitle
+            ?: categories.firstOrNull { it.id == recent.media.portalCategoryId }?.title
+            ?: "Unknown category")
+    }
+    categoryToClear?.let { category ->
+        ProjectCardConfirmationDialog(
+            title = "Clear ${category.second} history?",
+            message = "Remove recently played channels in this category. Other categories and My List are kept.",
+            confirmLabel = "Clear category",
+            close = { categoryToClear = null },
+            confirm = {
+                grouped[category].orEmpty().forEach(clear)
+                categoryToClear = null
+            }
+        )
+    }
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         modifier = modifier.fillMaxWidth(),
@@ -992,14 +1010,23 @@ private fun ModernRecentChannelsCollection(
                 Text("Watch a live TV channel to find it here next time.", color = Color(0xFFAFAFAF))
             }
         }
-        val grouped = recents.groupBy { recent ->
-            recent.media.portalCategoryId to (recent.categoryTitle
-                ?: categories.firstOrNull { it.id == recent.media.portalCategoryId }?.title
-                ?: "Unknown category")
-        }
         grouped.forEach { (category, channels) ->
         item("recent-category-${category.first}-${category.second}", span = { GridItemSpan(maxLineSpan) }) {
-            Text(category.second, style = MaterialTheme.typography.titleMedium, color = Color.White)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    category.second,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White
+                )
+                NikTvTextActionButton(onClick = { categoryToClear = category }) {
+                    Text("Clear category")
+                }
+            }
         }
         gridItems(channels, key = { it.key }) { recent ->
             ModernLiveChannelTile(

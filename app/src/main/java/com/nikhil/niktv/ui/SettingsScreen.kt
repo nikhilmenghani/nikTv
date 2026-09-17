@@ -1627,25 +1627,67 @@ SettingsSwitch(
 
         }
 SettingsSection("Backup and restore") {
-            var includeSyncDevice by remember(context) {
-                mutableStateOf(com.nikhil.niktv.data.SearchSyncCommitPreferences.enabled(context))
-            }
+            Text(
+                "Favorites, recently watched and playback progress stay on this device and are included in profile/settings exports. IPTV catalogs are stored in Room and backed up separately; merging a catalog does not change your watch history or favorites.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            var catalogBackupEnabled by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.backupEnabled(context)) }
+            var preferLocalCatalog by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.preferLocal(context)) }
+            var catalogStatus by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.status(context)) }
+            var catalogRestoreBusy by remember { mutableStateOf(false) }
+            val catalogScope = rememberCoroutineScope()
             ResponsiveSettingsOptionRow(
-                icon = Icons.Default.Devices,
-                title = "Device name in sync commits",
-                subtitle = "Identify search metadata uploads as " +
-                    com.nikhil.niktv.data.SearchSyncCommitPreferences.deviceName() +
-                    ". Turning this off omits the name; metadata sync continues.",
+                icon = Icons.Default.Storage,
+                title = "Prefer local catalog",
+                subtitle = "Load saved channels, movies and series first. Missing data uses the provider. Turn off to request fresh provider catalogs.",
                 trailingContent = {
-                    SettingsSwitch(
-                        checked = includeSyncDevice,
-                        onCheckedChange = {
-                            includeSyncDevice = it
-                            com.nikhil.niktv.data.SearchSyncCommitPreferences.setEnabled(context, it)
-                        }
-                    )
+                    SettingsSwitch(checked = preferLocalCatalog, onCheckedChange = {
+                        preferLocalCatalog = it
+                        com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(context, it)
+                    })
                 }
             )
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.CloudUpload,
+                title = "Back up catalog from this device",
+                subtitle = "Off by default. Upload an encrypted catalog every 12 hours. Each device has its own snapshot; imports merge records. Requires GitHub and a saved backup password.",
+                trailingContent = {
+                    SettingsSwitch(checked = catalogBackupEnabled, onCheckedChange = {
+                        val saved = githubBackupManager.loadConfig()
+                        if (it && (saved.token.isBlank() || saved.passphrase.length < 12 || saved.backupMode != com.nikhil.niktv.data.BackupMode.GITHUB)) {
+                            catalogStatus = "Configure GitHub and save a backup password of at least 12 characters below, then enable catalog backup."
+                        } else {
+                            catalogBackupEnabled = it
+                            com.nikhil.niktv.data.CatalogPreferences.setBackupEnabled(context, it)
+                            com.nikhil.niktv.data.SearchMetadataSyncScheduler.initialize(context)
+                        }
+                    })
+                }
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NikTvTextActionButton(onClick = {
+                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.refresh(context)
+                    catalogStatus = "Provider refresh queued. Existing catalog stays available."
+                }) { Text("Refresh catalog from provider") }
+                if (catalogBackupEnabled) NikTvTextActionButton(onClick = {
+                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context)
+                    catalogStatus = "Catalog backup queued."
+                }) { Text("Back up catalog now") }
+                NikTvTextActionButton(onClick = {
+                    if (!catalogRestoreBusy) {
+                        catalogRestoreBusy = true
+                        catalogScope.launch {
+                            try {
+                                val count = com.nikhil.niktv.data.CatalogBackupManager(context).restoreAll()
+                                catalogStatus = "Merged $count snapshots. Reopen the profile to reload its catalog."
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                            catch (error: Exception) { catalogStatus = error.message ?: "Catalog import failed" }
+                            finally { catalogRestoreBusy = false }
+                        }
+                    }
+                }) { Text(if (catalogRestoreBusy) "Merging…" else "Merge catalogs from GitHub") }
+            }
+            Text(catalogStatus, style = MaterialTheme.typography.bodySmall)
             HorizontalDivider()
             val backupModes =
                 listOf(

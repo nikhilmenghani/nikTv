@@ -312,9 +312,29 @@ class StalkerPortalClient(private val context: Context) {
         PortalSearchPage(items, page, hasMore)
     }
 
+    suspend fun refreshPlaybackItem(session: PortalSession, item: MediaItem, type: CatalogType, series: MediaItem? = null): MediaItem {
+        if (type == CatalogType.SERIES && series != null) {
+            return episodes(session, series).firstOrNull { it.id == item.id ||
+                (it.portalEpisodeId != null && it.portalEpisodeId == item.portalEpisodeId && it.episodeNumber == item.episodeNumber) }
+                ?: error("This episode is no longer listed by the provider. Refresh the series.")
+        }
+        val searchType = when (type) {
+            CatalogType.LIVE_TV, CatalogType.RADIO -> SearchContentType.LIVE_TV
+            CatalogType.SERIES -> SearchContentType.SERIES
+            CatalogType.MOVIES -> SearchContentType.MOVIES
+        }
+        for (page in 1..10) {
+            val result = search(session, searchType, item.title, page, item.portalCategoryId ?: "*")
+            result.items.firstOrNull { it.id == item.id }?.let { return it }
+            if (!result.hasMore) break
+        }
+        // Existing Stalker commands can still be validated through create_link when search is incomplete.
+        return item.takeIf { !it.command.isNullOrBlank() } ?: error("Item is not available locally or in provider search.")
+    }
+
     suspend fun playableUrl(session: PortalSession, item: MediaItem, type: CatalogType): String = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
-            return@withContext item.command ?: error("This item has no playback URL")
+            return@withContext xtreamPlaybackUrl(session.profile, item, type)
         }
         val cmd = item.command ?: error("This item has no playback command")
         val playbackCommands = if (type == CatalogType.SERIES) {

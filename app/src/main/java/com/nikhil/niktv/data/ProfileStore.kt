@@ -27,6 +27,7 @@ import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.model.OfflineMediaDownload
 import com.nikhil.niktv.model.canonicalSearchQuery
 import com.nikhil.niktv.model.deduplicatedRecentSearches
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -140,8 +141,13 @@ class ProfileStore(private val context: Context) {
     val rememberedSeriesSeasons: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
         prefs[rememberedSeriesSeasonsKey]?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
     }
-    val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = context.dataStore.data.map { prefs ->
-        prefs[episodeSeasonCachesKey]?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
+    val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = kotlinx.coroutines.flow.flow {
+        val legacy = context.dataStore.data.first()[episodeSeasonCachesKey]
+            ?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
+        val repository = CatalogRepository(context)
+        repository.migrateEpisodes(legacy)
+        context.dataStore.edit { it.remove(episodeSeasonCachesKey) }
+        emitAll(repository.episodes())
     }
     val browseLayouts: Flow<Map<String, BrowseLayout>> = context.dataStore.data.map { prefs ->
         prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
@@ -191,11 +197,11 @@ class ProfileStore(private val context: Context) {
     }
     suspend fun clearSession() = context.dataStore.edit { it.remove(sessionKey) }
     fun searchCatalog(type: CatalogType, profileKey: String? = null): Flow<SearchCatalogCache?> = kotlinx.coroutines.flow.flow {
-        emit(profileKey?.let { CatalogDiskCache.read<SearchCatalogCache>(context, "search:$it:${type.name}") })
+        emit(profileKey?.let { CatalogRepository(context).search(it, type) })
     }
     suspend fun saveSearchCatalog(cache: SearchCatalogCache, scheduleMetadataSync: Boolean = true) {
         discardLegacyBrowseCatalogs()
-        CatalogDiskCache.write(context, "search:${cache.profileKey}:${cache.type.name}", cache)
+        CatalogRepository(context).saveSearch(cache)
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
     suspend fun saveFavorites(items: List<FavoriteItem>) = context.dataStore.edit {
@@ -211,11 +217,11 @@ class ProfileStore(private val context: Context) {
         it[playbackUrlsKey] = Json.encodeToString(items)
     }
     fun browseCatalog(type: CatalogType, profileKey: String? = null): Flow<BrowseCatalogCache?> = kotlinx.coroutines.flow.flow {
-        emit(profileKey?.let { CatalogDiskCache.read<BrowseCatalogCache>(context, "browse:$it:${type.name}") })
+        emit(profileKey?.let { CatalogRepository(context).browse(it, type) })
     }
     suspend fun saveBrowseCatalog(cache: BrowseCatalogCache, scheduleMetadataSync: Boolean = true) {
         discardLegacyBrowseCatalogs()
-        CatalogDiskCache.write(context, "browse:${cache.profileKey}:${cache.type.name}", cache)
+        CatalogRepository(context).saveBrowse(cache)
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
 
@@ -289,9 +295,8 @@ class ProfileStore(private val context: Context) {
         val current = prefs[rememberedSeriesSeasonsKey]?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
         prefs[rememberedSeriesSeasonsKey] = Json.encodeToString(current + ("$profileKey|$seriesId" to season))
     }
-    suspend fun saveEpisodeSeasonCache(cache: EpisodeSeasonCache) = context.dataStore.edit { prefs ->
-        val current = prefs[episodeSeasonCachesKey]?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }.orEmpty()
-        prefs[episodeSeasonCachesKey] = Json.encodeToString((listOf(cache) + current.filterNot { it.key == cache.key }).take(40))
+    suspend fun saveEpisodeSeasonCache(cache: EpisodeSeasonCache) {
+        CatalogRepository(context).saveEpisodes(cache)
     }
     suspend fun saveOfflineDownloads(items: List<OfflineMediaDownload>) = context.dataStore.edit { prefs ->
         prefs[offlineDownloadsKey] = Json.encodeToString(items)
@@ -412,6 +417,7 @@ class ProfileStore(private val context: Context) {
     }
     suspend fun clear() = context.dataStore.edit {
         CatalogDiskCache.clear(context)
+        CatalogRepository(context).clear()
         it.remove(key)
         it.remove(sessionKey)
         it.remove(profilesKey)

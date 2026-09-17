@@ -183,6 +183,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var searchCatalogScanJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            _state.collect { com.nikhil.niktv.data.CatalogPlaybackActivity.playing = it.nowPlaying != null }
+        }
         prepareProfileChooser()
         viewModelScope.launch { store.favorites.collect { favorites ->
             allFavorites = favorites
@@ -337,6 +340,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         loadProfileLibrary(session.profile.cacheKey())
         preloadDashboard(session)
+        SearchMetadataSyncScheduler.refresh(getApplication())
     }
 
     /**
@@ -628,7 +632,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             val snapshot = _state.value
             val session = snapshot.session ?: return
-            val cached = snapshot.browseCachesByType[type]
+            val cached = snapshot.browseCachesByType[type]?.takeIf { com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication()) }
             val categories = cached?.categories.orEmpty()
 
             if (categories.isNotEmpty()) {
@@ -704,6 +708,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Applies a profile-warmed tab in the caller's frame without disk, network or coroutine hops. */
     private fun activateWarmedType(type: CatalogType, closeOverlays: Boolean = false): Boolean {
+        if (!com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) return false
         val snapshot = _state.value
         val session = snapshot.session ?: return false
         val cache = snapshot.browseCachesByType[type]
@@ -744,12 +749,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val profileKey = session.profile.cacheKey()
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
-        var cachedBrowse = if (!forceRefresh) {
+        var cachedBrowse = if (!forceRefresh && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
             _state.value.browseCachesByType[type]
                 ?.takeIf { it.profileKey == profileKey }
         } else null
 
-        if (!forceRefresh && cachedBrowse == null) {
+        if (!forceRefresh && cachedBrowse == null && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
             cachedBrowse = store.browseCatalog(type, profileKey).first()
                 ?.takeIf { it.categories.isNotEmpty() }
         }
@@ -804,7 +809,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         var rawCategories: List<Category>? = null
         var cachedItems: Map<String, List<MediaItem>> = emptyMap()
-        var cachedBrowse: BrowseCatalogCache? = if (!forceRefresh) {
+        var cachedBrowse: BrowseCatalogCache? = if (!forceRefresh && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
             _state.value.browseCachesByType[type]?.takeIf { it.profileKey == profileKey }
         } else null
 
@@ -813,7 +818,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             cachedItems = cached.itemsByCategory
         }
 
-        if (!forceRefresh && cachedBrowse == null) {
+        if (!forceRefresh && cachedBrowse == null && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
             store.browseCatalog(type, profileKey).first()?.takeIf { it.categories.isNotEmpty() }?.let { cached ->
                 rawCategories = cached.categories
                 cachedItems = cached.itemsByCategory
@@ -837,7 +842,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 cachedBrowse?.pagesByCategory?.containsKey(selected.id) == true &&
                     cachedBrowse?.hasMoreByCategory?.containsKey(selected.id) == true
             }
-            if (!forceRefresh && cachedBrowse != null && cachedForSelected != null && (System.currentTimeMillis() - cachedBrowse.cachedAtMillis < maxAge)) {
+            if (!forceRefresh && cachedBrowse != null && cachedForSelected != null && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
                 cachedForSelected
             } else {
                 fetchInitialCatalogPage(session, selected).also { loadedPage = it }.items
@@ -911,7 +916,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
-        val categoryCache = _state.value.browseCachesByType[category.type]
+        val categoryCache = if (com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication()))
+            store.browseCatalog(category.type, session.profile.cacheKey()).first() else null
+        if (categoryCache != null) _state.update { it.copy(browseCache = categoryCache,
+            browseCachesByType = it.browseCachesByType + (category.type to categoryCache)) }
         val cached = categoryCache?.itemsByCategory?.get(category.id)?.takeIf {
             categoryCache.pagesByCategory.containsKey(category.id) &&
                 categoryCache.hasMoreByCategory.containsKey(category.id)
@@ -922,6 +930,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val existing = _state.value.browseCachesByType[category.type]
             if (existing != null && existing.type == category.type) {
                 val updated = existing.copy(
+                    cachedAtMillis = System.currentTimeMillis(),
                     itemsByCategory = existing.itemsByCategory + (category.id to items),
                     pagesByCategory = existing.pagesByCategory + (category.id to firstPage!!.page),
                     hasMoreByCategory = existing.hasMoreByCategory + (category.id to firstPage.hasMore)
@@ -2113,7 +2122,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 cache.metadataVersion == EPISODE_METADATA_VERSION &&
                 (desired == null || cache.season == desired)
         }
-        if (cached != null && !forceRefresh) {
+        if (cached != null && !forceRefresh && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
             publishEpisodeCache(cached)
             cached.season?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
             val now = System.currentTimeMillis()
@@ -3362,7 +3371,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             current.copy(fullSearchItems = cached.items, fullSearchCachedAtMillis = cached.cachedAtMillis)
                         else current
                     }
-                    if (now - cached.cachedAtMillis < searchCacheTtl) {
+                    if (com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication()) || now - cached.cachedAtMillis < searchCacheTtl) {
                         _state.update { it.copy(fullSearchLoading = false) }
                         return@launch
                     }
@@ -3427,7 +3436,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             it.browseCachesByType + (type to result.cache) else it.browseCachesByType,
                         searchCatalogScanProgress = (typeIndex + 1f) / types.size * 0.82f,
                         searchCatalogScanMessage =
-                            "Provider scan complete · ${result.itemCount} items · preparing shared index"
+                            "Provider scan complete · ${result.itemCount} items · saved to local database"
                     )
                 }
                 totalItems += result.itemCount
@@ -3457,15 +3466,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 it.copy(
                                     searchCatalogScanProgress = 0.84f + syncFraction * 0.16f,
                                     searchCatalogScanMessage = syncMessage
-                                        ?.let { message -> "Shared index · $message" }
-                                    ?: "Shared index · waiting for GitHub"
+                                        ?.let { message -> "Catalog backup · $message" }
+                                    ?: "Catalog backup · waiting for GitHub"
                                 )
                             }
                         if (info.state.isFinished) break
                         delay(350L)
                     }
                     if (completed?.state != WorkInfo.State.SUCCEEDED) {
-                        error("Shared index sync will retry in the background")
+                        error("Catalog backup will retry in the background")
                     }
                 }
                 _state.update {
@@ -3473,7 +3482,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         searchCatalogScanning = false,
                         searchCatalogScanProgress = 1f,
                         searchCatalogScanMessage = if (totalFailures == 0) {
-                            "Complete · $totalItems items scanned${if (syncId != null) " and synced" else " locally · GitHub sync not configured"}"
+                            "Complete · $totalItems items scanned${if (syncId != null) " and synced" else " locally · catalog backup disabled on this device"}"
                         } else {
                             "Scanned $totalItems items · $totalFailures categories need retry"
                         }
@@ -4571,7 +4580,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun resolvePlayback(
-        item: MediaItem,
+        requestedItem: MediaItem,
         type: CatalogType,
         series: MediaItem?,
         episodes: List<MediaItem>,
@@ -4581,26 +4590,26 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         directFullscreen: Boolean = false
     ) {
         val session = requireNotNull(_state.value.session)
-        val urlKey = "${type.name}:${item.id}"
-        // Stalker create_link results are signed/session-bound and can expire after playback.
-        // Only Xtream VOD paths are stable enough to reuse. Retry always bypasses every cache.
-        val mayReuseUrl = !forceFreshUrl &&
-            type != CatalogType.LIVE_TV &&
-            session.profile.portalType == PortalType.XTREAM
-        val cachedUrl = if (mayReuseUrl) {
-            _state.value.playbackUrls.firstOrNull { it.key == urlKey }?.url
-        } else null
         val offlineEntry = _state.value.offlineDownloads
-            .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${item.id}" }
+            .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${requestedItem.id}" }
         val offlineUrl = offlineEntry
             ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl, it.downloadId) }
-        val url = offlineUrl ?: cachedUrl ?: portal.playableUrl(session, item, type).also { resolved ->
-            if (type != CatalogType.LIVE_TV && session.profile.portalType == PortalType.XTREAM) {
-                val updated = (listOf(PlaybackUrl(urlKey, resolved)) + _state.value.playbackUrls.filterNot { it.key == urlKey })
-                    .take(MAX_PLAYBACK_URLS)
-                _state.update { it.copy(playbackUrls = updated) }
-                store.savePlaybackUrls(updated)
-            }
+        var item = if (offlineUrl != null) requestedItem else if (forceFreshUrl || !com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
+            portal.refreshPlaybackItem(session, requestedItem, type, series)
+        } else {
+            com.nikhil.niktv.data.CatalogRepository(getApplication()).media(session.profile.cacheKey(), type, requestedItem.id)
+                ?: requestedItem.takeIf { !it.command.isNullOrBlank() }
+                ?: portal.refreshPlaybackItem(session, requestedItem, type, series)
+        }
+        // Xtream URLs are cheaply built from current credentials. Stalker links are session-bound.
+        // Offline downloads never require a provider request, even when provider-first is selected.
+        val url = offlineUrl ?: try {
+            portal.playableUrl(session, item, type)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            if (forceFreshUrl) throw failure
+            item = portal.refreshPlaybackItem(session, item, type, series)
+            portal.playableUrl(session, item, type)
         }
         val playbackQueue = when (type) {
             CatalogType.SERIES -> episodes.sortedWith(
@@ -4845,7 +4854,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         val categoryId = item.portalCategoryId
         if (!categoryId.isNullOrBlank()) {
-            val cached = snapshot.browseCachesByType[type]
+            val cached = snapshot.browseCachesByType[type]?.takeIf { com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication()) }
                 ?.itemsByCategory
                 ?.get(categoryId)
                 .orEmpty()
@@ -5425,13 +5434,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.saveCategoryFilter(profileKey, type, emptyList())
     }
 
+    override fun onCleared() {
+        com.nikhil.niktv.data.CatalogPlaybackActivity.playing = false
+        super.onCleared()
+    }
+
+    private suspend fun localFirstSession(profile: PortalProfile): PortalSession {
+        val cached = if (com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) store.sessionFor(profile) else null
+        val hasCatalog = cached != null && store.browseCatalog(CatalogType.LIVE_TV, profile.cacheKey()).first() != null
+        if (cached != null && hasCatalog) {
+            viewModelScope.launch {
+                try {
+                    val fresh = portal.authenticate(profile)
+                    if (_state.value.savedProfile?.cacheKey() == profile.cacheKey()) {
+                        store.save(fresh)
+                        _state.update { if (it.session?.profile?.cacheKey() == profile.cacheKey()) it.copy(session = fresh) else it }
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Browsing remains available; playback can reauthenticate. */ }
+            }
+            return cached.copy(profile = profile)
+        }
+        return portal.authenticate(profile).also { store.save(it) }
+    }
     fun switchProfile(profile: PortalProfile) = task {
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.04f, "Loading ${profile.name}…")
         store.activate(profile)
-        // Profile selection is the session boundary: always obtain a fresh token.
+        // Reuse a saved session for local browsing while renewing it in the background.
         updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
-        val session = portal.authenticate(profile).also { store.save(it) }
+        val session = localFirstSession(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
@@ -5442,6 +5474,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             thrillerMovies = emptyList(), thrillerMoviesLoading = false, thrillerMoviesError = null) }
         loadProfileLibrary(session.profile.cacheKey())
         preloadDashboard(session)
+        SearchMetadataSyncScheduler.refresh(getApplication())
     }
     fun removeProfile(profile: PortalProfile) = viewModelScope.launch {
         store.removeProfile(profile)
