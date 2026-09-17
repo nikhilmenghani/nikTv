@@ -521,7 +521,8 @@ internal fun ModernSearchScreen(
                             down = typeBelowSearch
                         }
                         .remoteFocusFrame(CircleShape),
-                    enabled = !state.searchServerLoading,
+                    // Keep a remote focus target while a request is running.
+                    enabled = true,
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor =
                             if (canSubmit) SearchAccent else SearchOutline,
@@ -669,8 +670,7 @@ internal fun ModernSearchScreen(
             }
             Spacer(Modifier.weight(1f))
             NikTvSecondaryActionButton(
-                onClick = scanAndSync,
-                enabled = !state.searchCatalogScanning,
+                onClick = { if (!state.searchCatalogScanning) scanAndSync() },
                 modifier = Modifier
                     .focusRequester(scanRequester)
                     .focusProperties {
@@ -782,6 +782,7 @@ internal fun ModernSearchScreen(
         if (
             state.searchQuery.isNotBlank() &&
             state.searchResults.isEmpty() &&
+            !state.searchHasMore &&
             !state.searchLocalLoading &&
             !state.searchServerLoading
         ) {
@@ -822,9 +823,8 @@ internal fun ModernSearchScreen(
                 when {
                     !state.searchUsedServer -> {
                         NikTvSecondaryActionButton(
-                            onClick = { search(true) },
+                            onClick = { if (!state.searchServerLoading) search(true) },
                             modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
-                            enabled = !state.searchServerLoading,
                             border = BorderStroke(1.dp, SearchOutline)
                         ) {
                             Icon(Icons.Default.CloudDownload, null)
@@ -866,7 +866,7 @@ internal fun ModernSearchScreen(
             }
         }
 
-        if (state.searchResults.isNotEmpty()) {
+        if (state.searchResults.isNotEmpty() || state.searchHasMore) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -883,11 +883,11 @@ internal fun ModernSearchScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (!state.searchUsedServer || state.searchType == SearchContentType.ALL) {
+                // Keep the action mounted so a remote does not lose focus on completion.
+                run {
                     NikTvSecondaryActionButton(
-                        onClick = { search(true) },
+                        onClick = { if (!state.searchServerLoading) search(true) },
                         modifier = Modifier.remoteFocusFrame(),
-                        enabled = !state.searchServerLoading,
                         border = BorderStroke(1.dp, SearchOutline)
                     ) {
                         Text(
@@ -917,7 +917,6 @@ internal fun ModernSearchScreen(
             toggleFavorite = toggleFavorite,
             firstItemRequester = contentRequester,
             topRequester = categoryRequester,
-            autoFocusFirst = !searchEditing || state.searchUsedServer,
             modifier = Modifier.weight(1f)
             )
         }
@@ -1545,36 +1544,7 @@ private fun SearchRecentRow(
     }
 }
 
-private fun Modifier.searchResultGridDpadNavigation(
-    index: Int,
-    columns: Int,
-    itemCount: Int,
-    topRequester: FocusRequester,
-    moveFocus: (Int) -> Unit
-): Modifier = onPreviewKeyEvent { event ->
-    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    when (event.key) {
-        Key.DirectionUp -> {
-            val target = index - columns
-            if (target < 0) topRequester.requestFocus() else moveFocus(target)
-            true
-        }
-        Key.DirectionDown -> {
-            val target = index + columns
-            if (target < itemCount) { moveFocus(target); true } else false
-        }
-        Key.DirectionLeft -> {
-            if (index % columns > 0) moveFocus(index - 1)
-            true
-        }
-        Key.DirectionRight -> {
-            val target = index + 1
-            if (index % columns < columns - 1 && target < itemCount) moveFocus(target)
-            true
-        }
-        else -> false
-    }
-}
+private data class SearchResultEntry(val key: String, val media: MediaItem? = null, val heading: String? = null)
 
 @Composable
 private fun SearchResultsContent(
@@ -1586,167 +1556,147 @@ private fun SearchResultsContent(
     toggleFavorite: (FavoriteItem) -> Unit,
     firstItemRequester: FocusRequester,
     topRequester: FocusRequester,
-    autoFocusFirst: Boolean,
     modifier: Modifier = Modifier
 ) {
-    if (state.searchType == SearchContentType.ALL) {
-        GlobalSearchResults(state, openResult, toggleFavorite, firstItemRequester, modifier)
-        return
-    }
-    val posterGrid = state.searchType in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) && (isTv || screenWidthDp >= 600)
+    val all = state.searchType == SearchContentType.ALL
+    val posterGrid = !all && state.searchType in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) &&
+        (isTv || screenWidthDp >= 600)
     val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
-    if (posterGrid || liveGrid) {
-        val columns = when {
-            liveGrid -> 2
-            isTv -> 6
-            screenWidthDp >= 1200 -> 5
-            screenWidthDp >= 840 -> 4
-            else -> 3
-        }
-        val gridState = rememberLazyGridState()
-        val scope = rememberCoroutineScope()
-        val requesters = remember(state.searchType, state.searchQuery, state.searchCategoryId) { mutableMapOf<String, FocusRequester>() }
-        state.searchResults.forEachIndexed { index, item -> if (index > 0) requesters.getOrPut(item.id) { FocusRequester() } }
-        fun requesterAt(index: Int): FocusRequester = if (index == 0) firstItemRequester else requesters.getOrPut(state.searchResults[index].id) { FocusRequester() }
-        fun requestResultFocus(targetIndex: Int) {
-            if (targetIndex !in state.searchResults.indices) return
-            val requester = requesterAt(targetIndex)
-            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return
-            scope.launch {
-                if (gridState.layoutInfo.visibleItemsInfo.none { it.index == targetIndex }) gridState.scrollToItem(targetIndex)
-                repeat(5) { attempt ->
-                    withFrameNanos { }
-                    if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
-                    kotlinx.coroutines.delay(30L * (attempt + 1))
-                }
-            }
-        }
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(columns),
-            state = gridState,
-            modifier = modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (isTv) 14.dp else 12.dp),
-            verticalArrangement = Arrangement.spacedBy(if (isTv) 18.dp else 14.dp)
-        ) {
-            gridItemsIndexed(state.searchResults, key = { _, item -> "search-${state.searchType}-${item.id}" }) { index, item ->
-                if (index == 0) SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
-                val category = state.searchCategoryTitle(item)
-                val favorite = state.isSearchFavorite(item)
-                val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
-                val itemModifier = Modifier
-                    .focusRequester(requesterAt(index))
-                    .searchResultGridDpadNavigation(index, columns, state.searchResults.size, topRequester, ::requestResultFocus)
-                if (liveGrid) {
-                    ModernSearchLiveResultRow(item, category, favorite, toggle, { openResult(item) }, true, itemModifier)
-                } else {
-                    ModernSearchPosterResultCard(
-                        item = item,
-                        type = state.searchType,
-                        categoryTitle = category,
-                        isFavorite = favorite,
-                        toggleFavorite = toggle,
-                        onClick = { openResult(item) },
-                        isTv = isTv,
-                        modifier = itemModifier
-                    )
-                }
-            }
-            if (state.searchHasMore) {
-                item(key = "search-load-more", span = { GridItemSpan(maxLineSpan) }) {
-                    SearchLoadMoreButton(state.searchServerLoading, loadMore)
-                }
-            } else if (state.searchUsedServer) {
-                item(key = "search-provider-complete", span = { GridItemSpan(maxLineSpan) }) { SearchProviderCompleteMessage() }
-            }
-        }
-        return
+    val columns = when {
+        liveGrid -> 2
+        !posterGrid -> 1
+        isTv -> 6
+        screenWidthDp >= 1200 -> 5
+        screenWidthDp >= 840 -> 4
+        else -> 3
     }
-    LazyColumn(
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        items(state.searchResults, key = { "search-${state.searchType}-${it.id}" }) { item ->
-            if (item == state.searchResults.first()) SearchFirstResultFocusEffect(firstItemRequester, autoFocusFirst, item.id)
-            val category = state.searchCategoryTitle(item)
-            val favorite = state.isSearchFavorite(item)
-            val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
-            val firstModifier = if (item == state.searchResults.first()) Modifier.focusRequester(firstItemRequester) else Modifier
-            if (state.searchType == SearchContentType.LIVE_TV) {
-                ModernSearchLiveResultRow(item, category, favorite, toggle, { openResult(item) }, isTv, firstModifier)
-            } else {
-                ModernSearchMediaResultRow(item, state.searchType, category, favorite, toggle, { openResult(item) }, isTv, firstModifier)
+    val entries = remember(state.searchResults, state.searchType) {
+        buildList {
+            if (all) {
+                state.searchResults.groupBy { it.searchResultType }.forEach { (type, items) ->
+                    add(SearchResultEntry("heading-$type", heading = "${type?.title.orEmpty()} · ${items.size}"))
+                    items.forEach { add(SearchResultEntry(it.searchIdentity(state.searchType), media = it)) }
+                }
+            } else state.searchResults.forEach {
+                add(SearchResultEntry(it.searchIdentity(state.searchType), media = it))
             }
-        }
-        if (state.searchHasMore) {
-            item("search-load-more") { SearchLoadMoreButton(state.searchServerLoading, loadMore) }
-        } else if (state.searchUsedServer) {
-            item("search-provider-complete") { SearchProviderCompleteMessage() }
         }
     }
-}
-
-@Composable
-private fun GlobalSearchResults(
-    state: NikTvState,
-    openResult: (MediaItem) -> Unit,
-    toggleFavorite: (FavoriteItem) -> Unit,
-    firstRequester: FocusRequester,
-    modifier: Modifier
-) {
-    val groups = remember(state.searchResults) { state.searchResults.groupBy { it.searchResultType } }
-    val configuration = LocalConfiguration.current
-    val isTv = LocalContext.current.isSearchTvLikeDevice(configuration)
-    LazyColumn(
+    val results = entries.mapNotNull { it.media }
+    val keys = results.map { it.searchIdentity(state.searchType) }
+    val resultIndices = keys.withIndex().associate { it.value to it.index }
+    val lazyIndices = entries.withIndex().associate { it.value.key to it.index }
+    val footer = state.searchHasMore || state.searchUsedServer
+    val footerKey = "search-pagination"
+    val gridState = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val requesters = remember(state.searchType, state.searchQuery, state.searchCategoryId) { mutableMapOf<String, FocusRequester>() }
+    val footerRequester = remember { FocusRequester() }
+    var footerFocused by remember { mutableStateOf(false) }
+    var navigationJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var pendingPage by remember(state.searchType, state.searchQuery, state.searchCategoryId) {
+        mutableStateOf<Pair<Int, Set<String>>?>(null)
+    }
+    fun requesterAt(index: Int): FocusRequester = when {
+        index == results.size -> if (results.isEmpty()) firstItemRequester else footerRequester
+        index == 0 -> firstItemRequester
+        else -> requesters.getOrPut(keys[index]) { FocusRequester() }
+    }
+    fun moveTo(index: Int) {
+        if (index < 0) { runCatching { topRequester.requestFocus() }; return }
+        if (index > results.size || (index == results.size && !footer)) return
+        val requester = requesterAt(index)
+        val lazyIndex = if (index == results.size) entries.size else lazyIndices.getValue(keys[index])
+        navigationJob?.cancel()
+        navigationJob = scope.launch {
+            if (gridState.layoutInfo.visibleItemsInfo.none { it.index == lazyIndex }) gridState.scrollToItem(lazyIndex)
+            repeat(6) {
+                withFrameNanos { }
+                if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
+            }
+        }
+    }
+    fun navigation(index: Int): Modifier = Modifier.onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (event.key) {
+            Key.DirectionUp, Key.DirectionDown -> {
+                moveTo(searchVerticalTarget(index, columns, results.size, event.key == Key.DirectionDown, footer))
+                true
+            }
+            Key.DirectionLeft -> {
+                if (index < results.size && index % columns > 0) moveTo(index - 1)
+                true
+            }
+            Key.DirectionRight -> {
+                if (index < results.size && index % columns < columns - 1 && index + 1 < results.size) {
+                    moveTo(index + 1)
+                }
+                true
+            }
+            else -> false
+        }
+    }
+    LaunchedEffect(state.searchPaginationGeneration, state.searchServerLoading) {
+        val pending = pendingPage ?: return@LaunchedEffect
+        if (state.searchServerLoading || state.searchPaginationGeneration == pending.first) return@LaunchedEffect
+        pendingPage = null
+        // Never steal focus if the user navigated away while the request was running.
+        if (footerFocused) {
+            val firstNew = keys.indexOfFirst { it !in pending.second }
+            if (firstNew >= 0) moveTo(firstNew)
+        }
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(columns),
+        state = gridState,
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        groups.forEach { (type, results) ->
-            if (type != null && type != SearchContentType.ALL) {
-                item("heading-$type") {
-                    Text("${type.title} · ${results.size}", color = type.searchAccent(),
-                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                }
-                items(results, key = { it.searchIdentity(type) }) { item ->
-                    val category = state.browseCachesByType[when (type) {
+        gridItems(entries, key = { it.key }, span = { if (it.media == null) GridItemSpan(maxLineSpan) else GridItemSpan(1) }) { entry ->
+            val item = entry.media
+            if (item == null) {
+                Text(entry.heading.orEmpty(), color = SearchAccent, style = MaterialTheme.typography.titleSmall)
+            } else {
+                val index = resultIndices.getValue(entry.key)
+                val type = item.searchResultType ?: state.searchType
+                val category = if (!all) state.searchCategoryTitle(item) else {
+                    val catalog = when (type) {
                         SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
                         SearchContentType.MOVIES -> CatalogType.MOVIES
                         else -> CatalogType.SERIES
-                    }]?.categories?.firstOrNull { it.id == item.portalCategoryId }?.title
-                    val label = listOfNotNull(type.title, category).joinToString(" · ")
-                    val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
-                    val itemModifier = if (item == state.searchResults.firstOrNull()) Modifier.focusRequester(firstRequester) else Modifier
-                    if (type == SearchContentType.LIVE_TV) {
-                        ModernSearchLiveResultRow(item, label, state.isSearchFavorite(item), toggle,
-                            { openResult(item) }, isTv, itemModifier)
-                    } else {
-                        ModernSearchMediaResultRow(item, type, label, state.isSearchFavorite(item), toggle,
-                            { openResult(item) }, isTv, itemModifier)
                     }
+                    state.browseCachesByType[catalog]?.categories?.firstOrNull { it.id == item.portalCategoryId }?.title
+                }
+                val label = if (all) listOfNotNull(type.title, category).joinToString(" · ") else category
+                val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
+                val itemModifier = Modifier.focusRequester(requesterAt(index))
+                    .then(navigation(index))
+                if (type == SearchContentType.LIVE_TV) {
+                    ModernSearchLiveResultRow(item, label, state.isSearchFavorite(item), toggle,
+                        { openResult(item) }, isTv, itemModifier)
+                } else if (posterGrid) {
+                    ModernSearchPosterResultCard(item, type, label, state.isSearchFavorite(item), toggle,
+                        { openResult(item) }, isTv, itemModifier)
+                } else {
+                    ModernSearchMediaResultRow(item, type, label, state.isSearchFavorite(item), toggle,
+                        { openResult(item) }, isTv, itemModifier)
                 }
             }
         }
-        if (state.searchUsedServer) item("global-provider-scope") {
-            Text("Showing provider discovery results. Select Live TV, Movies or Series to search further and load more.",
-                color = SearchMuted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun SearchFirstResultFocusEffect(
-    requester: FocusRequester,
-    enabled: Boolean,
-    resultId: String
-) {
-    LaunchedEffect(enabled, resultId) {
-        if (!enabled) return@LaunchedEffect
-        repeat(6) { attempt ->
-            withFrameNanos { }
-            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-            kotlinx.coroutines.delay(35L * (attempt + 1))
+        if (footer) item(key = footerKey, span = { GridItemSpan(maxLineSpan) }) {
+            SearchLoadMoreButton(
+                loading = state.searchServerLoading,
+                hasMore = state.searchHasMore,
+                onClick = {
+                    pendingPage = state.searchPaginationGeneration to keys.toSet()
+                    loadMore()
+                },
+                modifier = Modifier.focusRequester(requesterAt(results.size))
+                    .onFocusChanged { footerFocused = it.hasFocus }
+                    .then(navigation(results.size))
+            )
         }
     }
 }
@@ -1778,12 +1728,13 @@ private fun NikTvState.searchFavoriteItem(
 @Composable
 private fun SearchLoadMoreButton(
     loading: Boolean,
-    onClick: () -> Unit
+    hasMore: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     NikTvSecondaryActionButton(
-        onClick = onClick,
-        enabled = !loading,
-        modifier = Modifier
+        onClick = { if (!loading && hasMore) onClick() },
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp)
             .remoteFocusFrame()
@@ -1797,20 +1748,8 @@ private fun SearchLoadMoreButton(
             Icon(Icons.Default.ExpandMore, null)
         }
         Spacer(Modifier.width(8.dp))
-        Text("Load more results")
+        Text(if (loading) "Loading more…" else if (hasMore) "Load more results" else "All results loaded")
     }
-}
-
-@Composable
-private fun SearchProviderCompleteMessage() {
-    Text(
-        "No more provider results",
-        Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
 }
 
 @Composable

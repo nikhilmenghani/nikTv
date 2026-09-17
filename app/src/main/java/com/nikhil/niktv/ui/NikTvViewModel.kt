@@ -136,6 +136,7 @@ data class NikTvState(
     val recentSearches: List<RecentSearch> = emptyList(),
     val searchPage: Int = 0,
     val searchHasMore: Boolean = false,
+    val searchPaginationGeneration: Int = 0,
     val searchCategories: List<Category> = emptyList(),
     val searchCategoryId: String = "*",
     val searchCatalogScanning: Boolean = false,
@@ -3815,9 +3816,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     current.copy(
                         searchResults = local,
                         searchLocalLoading = false,
-                        searchUsedServer = saved != null,
+                        searchUsedServer = saved != null || (type == SearchContentType.ALL && hasGlobalSearchSession(profileKey, normalizedQuery)),
                         searchPage = saved?.lastPage ?: 0,
-                        searchHasMore = saved?.hasMore ?: false
+                        searchHasMore = if (type == SearchContentType.ALL && hasGlobalSearchSession(profileKey, normalizedQuery))
+                            globalSearchPager?.hasMore == true else saved?.hasMore ?: false
                     )
                 }
             }
@@ -3878,9 +3880,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     searchResults = available,
                     searchLocalLoading = false,
-                    searchUsedServer = saved != null,
+                    searchUsedServer = saved != null || (snapshot.searchType == SearchContentType.ALL && hasGlobalSearchSession(profileKey, query)),
                     searchPage = saved?.lastPage ?: 0,
-                    searchHasMore = saved?.hasMore ?: false
+                    searchHasMore = if (snapshot.searchType == SearchContentType.ALL && hasGlobalSearchSession(profileKey, query))
+                        globalSearchPager?.hasMore == true else saved?.hasMore ?: false
                     ,searchActivityTitle = null
                     ,searchActivityDetail = null
                     ,searchActivityProgress = null
@@ -3933,72 +3936,84 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             /*
-             * SEARCH_ONE_PAGE_LOAD_MORE_V3
-             *
-             * One activation owns one provider request. This prevents the
-             * previous three-page burst and keeps request cost predictable on
-             * IPTV portals.
+             * Scoped search requests one page; global search has a bounded
+             * batch of independently tracked type/category cursors.
              */
-            fetchSearchPage(
-                query = current.searchQuery.trim(),
-                type = current.searchType,
-                categoryId = current.searchCategoryId,
-                page = current.searchPage + 1,
-                existing = current.searchResults
-            )
+            try {
+                if (current.searchType == SearchContentType.ALL) {
+                    fetchGlobalSearch(current.searchQuery.trim(), current.session?.profile?.cacheKey() ?: return@launch,
+                        current.searchResults, append = true)
+                } else {
+                    fetchSearchPage(
+                        query = current.searchQuery.trim(),
+                        type = current.searchType,
+                        categoryId = current.searchCategoryId,
+                        page = current.searchPage + 1,
+                        existing = current.searchResults
+                    )
+                }
+            } finally {
+                _state.update { latest ->
+                    if (latest.searchType == current.searchType && latest.searchQuery == current.searchQuery &&
+                        latest.searchCategoryId == current.searchCategoryId && latest.session == current.session) {
+                        latest.copy(searchPaginationGeneration = latest.searchPaginationGeneration + 1)
+                    } else latest
+                }
+            }
         }
     }
 
-    /** Global discovery is bounded to one page per scope. Type filters own further paging. */
-    private suspend fun fetchGlobalSearch(query: String, profileKey: String, existing: List<MediaItem>) {
+    private var globalSearchPager: GlobalSearchPager? = null
+    private var globalSearchPagerKey: String? = null
+
+    private fun hasGlobalSearchSession(profileKey: String, query: String) =
+        globalSearchPager != null && globalSearchPagerKey == "$profileKey|$query"
+
+    private suspend fun fetchGlobalSearch(
+        query: String, profileKey: String, existing: List<MediaItem>, append: Boolean = false
+    ) {
         val session = _state.value.session ?: return
-        var combined = existing
-        var failures = 0
+        val key = "$profileKey|$query"
+        if (!append || globalSearchPagerKey != key) {
+            globalSearchPager = GlobalSearchPager()
+            globalSearchPagerKey = key
+        }
+        val pager = requireNotNull(globalSearchPager)
         fun current() = _state.value.let {
             it.searchOpen && it.session?.profile?.cacheKey() == profileKey &&
                 it.searchType == SearchContentType.ALL && it.searchQuery.trim() == query
         }
-        _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false) }
+        _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false,
+            searchUsedServer = true, searchHasMore = pager.hasMore,
+            searchActivityTitle = "Loading provider results") }
         try {
-            for ((index, type) in globalSearchTypes.withIndex()) {
-                if (!current()) return
-                _state.update { it.copy(searchActivityTitle = "Searching IPTV provider",
-                    searchActivityDetail = "${type.title} · ${index + 1} of 3 · first page",
-                    searchActivityProgress = index / 3f) }
-                try {
-                    var page = portal.search(session, type, query, 1, "*")
-                    if (page.items.isEmpty()) {
-                        val catalogType = catalogTypeForSearch(type)
-                        val categories = store.browseCatalog(catalogType, profileKey).first()?.categories
-                            .orEmpty().ifEmpty { portal.categories(session, catalogType) }
-                            .filter { it.id != "*" }.distinctBy { it.id }
-                        val matches = mutableListOf<MediaItem>()
-                        for ((position, category) in categories.withIndex()) {
-                            if (!current()) return
-                            _state.update { it.copy(searchActivityDetail =
-                                "${type.title} · category ${position + 1}/${categories.size} · ${category.title}") }
-                            delay(METADATA_SCAN_REQUEST_DELAY_MS)
-                            val found = portal.search(session, type, query, 1, category.id)
-                            matches += found.items
-                            if (matches.any { it.title.normalizedSearchQuery() == query.normalizedSearchQuery() } ||
-                                matches.size >= SEARCH_ALL_CATEGORY_RESULT_LIMIT) break
-                        }
-                        // Discovery is deliberately partial; selecting a type can search/page further.
-                        page = page.copy(items = matches.distinctBy { it.id }, hasMore = true)
+            val batch = pager.next(
+                search = { type, category, page ->
+                    _state.update { it.copy(searchActivityDetail = "${type.title} · page $page",
+                        searchActivityProgress = null) }
+                    delay(METADATA_SCAN_REQUEST_DELAY_MS)
+                    val result = portal.search(session, type, query, page, category)
+                    val previous = store.pagedSearches.first().firstOrNull {
+                        it.profileKey == profileKey && it.type == type && it.query.equals(query, true) && it.categoryId == category
                     }
-                    store.savePagedSearch(SearchResultCache(profileKey, type, query, "*", 1, page.hasMore, page.items))
-                    combined = (combined + page.items.map { it.copy(searchResultType = type) })
-                        .rankSearchResults(query, SearchContentType.ALL)
-                    if (current()) _state.update { it.copy(searchResults = combined, searchUsedServer = true) }
-                } catch (error: Exception) {
-                    if (error is kotlinx.coroutines.CancellationException) throw error
-                    failures++
+                    store.savePagedSearch(SearchResultCache(profileKey, type, query, category, page, result.hasMore,
+                        ((if (page > 1) previous?.items.orEmpty() else emptyList()) + result.items).distinctBy { it.id }))
+                    result
+                },
+                categories = { type ->
+                    store.browseCatalog(catalogTypeForSearch(type), profileKey).first()?.categories
+                        .orEmpty().ifEmpty { portal.categories(session, catalogTypeForSearch(type)) }.map { it.id }
                 }
-            }
+            )
+            if (current()) _state.update { it.copy(
+                // Keep existing positions stable when appending. IDs are scoped by media type.
+                searchResults = if (append) (existing + batch.items).distinctBy { it.searchIdentity(SearchContentType.ALL) }
+                    else (existing + batch.items).rankSearchResults(query, SearchContentType.ALL),
+                error = if (batch.failures > 0) "Some provider pages failed. Load more retries them; existing results are retained." else it.error
+            ) }
         } finally {
-            if (current()) _state.update { it.copy(searchServerLoading = false, searchHasMore = false,
-                searchActivityTitle = null, searchActivityDetail = null, searchActivityProgress = null,
-                error = if (failures > 0) "$failures media types could not be searched. Available results are retained; retry or select a type." else it.error) }
+            if (current()) _state.update { it.copy(searchServerLoading = false, searchHasMore = pager.hasMore,
+                searchActivityTitle = null, searchActivityDetail = null, searchActivityProgress = null) }
         }
     }
 
@@ -4165,7 +4180,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (type == SearchContentType.ALL) {
             val profileKey = _state.value.session?.profile?.cacheKey()
             val saved = store.pagedSearches.first().filter {
-                it.profileKey == profileKey && it.categoryId == "*" && it.query.equals(query, true)
+                it.profileKey == profileKey && it.query.equals(query, true)
             }
             return@withContext globalSearchTypes.flatMap { child ->
                 (localSearch(child, query, "*") + saved.filter { it.type == child }.flatMap { it.items })
