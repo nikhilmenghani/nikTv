@@ -211,6 +211,7 @@ internal fun ModernTileBrowseScreen(
     openProfileSwitcher: () -> Unit,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
@@ -290,6 +291,7 @@ internal fun ModernTileBrowseScreen(
                             dashboardSurface = dashboardSurface,
                             openRecent = openRecent,
                             removeRecent = removeRecent,
+                            clearRecentChannels = clearRecentChannels,
                             openWatchedEpisode = openWatchedEpisode,
                             dismissWatchedEpisode = dismissWatchedEpisode,
                             toggleFavorite = toggleFavorite,
@@ -493,6 +495,7 @@ private fun ModernDestinationHub(
     dashboardSurface: DashboardSurface,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
@@ -509,6 +512,16 @@ private fun ModernDestinationHub(
     val context = LocalContext.current
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
     var recentChannelsOpen by rememberSaveable(profileKey, dashboardSurface) { mutableStateOf(false) }
+    var confirmClearChannels by remember(profileKey) { mutableStateOf(false) }
+    if (confirmClearChannels) {
+        ProjectCardConfirmationDialog(
+            title = "Clear recently played channels?",
+            message = "This removes the channel history for this profile. Your channels and My List are kept.",
+            confirmLabel = "Clear history",
+            close = { confirmClearChannels = false },
+            confirm = { clearRecentChannels(); confirmClearChannels = false }
+        )
+    }
     val recentChannels = state.recentlyPlayed
         .filter { it.kind == FavoriteKind.CHANNEL && it.profileKey == profileKey }
         .sortedByDescending { it.playedAtMillis }
@@ -517,6 +530,9 @@ private fun ModernDestinationHub(
         ModernRecentChannelsCollection(
             recents = recentChannels,
             favorites = state.favorites,
+            categories = state.rawCategoriesByType[CatalogType.LIVE_TV].orEmpty(),
+            clear = removeRecent,
+            clearAll = { confirmClearChannels = true },
             open = openRecent,
             toggleFavorite = toggleFavorite,
             close = { recentChannelsOpen = false },
@@ -711,6 +727,9 @@ private fun ModernDestinationHub(
                         configureTmdb = configureTmdb,
                         configureIptv = configureIptv,
                         resetSurface = resetSurface,
+                        openRecentChannels = { recentChannelsOpen = true },
+                        clearRecentChannels = { confirmClearChannels = true },
+                        recentChannelCount = recentChannels.size,
                         isTv = isTv
                     )
                 }
@@ -756,20 +775,6 @@ private fun ModernDestinationHub(
                 }
             }
 
-        }
-
-        if (dashboardSurface == DashboardSurface.LIVE_TV) {
-            item("recent-channels") {
-                ModernDestinationTile(
-                    title = "Recently Played",
-                    subtitle = if (recentChannels.isEmpty()) "Your watched channels will appear here"
-                        else "${recentChannels.size} channels · Most recent first",
-                    icon = Icons.Default.History,
-                    seed = "live-recent-channels",
-                    isTv = isTv,
-                    onClick = { recentChannelsOpen = true }
-                )
-            }
         }
 
         if (tmdbSections.isNotEmpty()) {
@@ -941,6 +946,9 @@ private fun ModernDestinationHub(
 private fun ModernRecentChannelsCollection(
     recents: List<RecentItem>,
     favorites: List<FavoriteItem>,
+    categories: List<Category>,
+    clear: (RecentItem) -> Unit,
+    clearAll: () -> Unit,
     open: (RecentItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     close: () -> Unit,
@@ -970,8 +978,13 @@ private fun ModernRecentChannelsCollection(
         item("header", span = { GridItemSpan(maxLineSpan) }) {
             ModernCollectionHeader(
                 title = "Recently Played",
-                subtitle = "Live TV · Most recent first",
-                close = close
+                subtitle = "Live TV · Grouped by category · Most recent first",
+                close = close,
+                action = {
+                    if (recents.isNotEmpty()) {
+                        NikTvTextActionButton(onClick = clearAll) { Text("Clear channel history") }
+                    }
+                }
             )
         }
         if (recents.isEmpty()) {
@@ -979,10 +992,19 @@ private fun ModernRecentChannelsCollection(
                 Text("Watch a live TV channel to find it here next time.", color = Color(0xFFAFAFAF))
             }
         }
-        gridItems(recents, key = { it.key }) { recent ->
+        val grouped = recents.groupBy { recent ->
+            recent.media.portalCategoryId to (recent.categoryTitle
+                ?: categories.firstOrNull { it.id == recent.media.portalCategoryId }?.title
+                ?: "Unknown category")
+        }
+        grouped.forEach { (category, channels) ->
+        item("recent-category-${category.first}-${category.second}", span = { GridItemSpan(maxLineSpan) }) {
+            Text(category.second, style = MaterialTheme.typography.titleMedium, color = Color.White)
+        }
+        gridItems(channels, key = { it.key }) { recent ->
             ModernLiveChannelTile(
                 item = recent.media,
-                categoryTitle = "Recently Played",
+                categoryTitle = category.second,
                 themed = themed,
                 isFavorite = favorites.any { it.key == recent.key },
                 onFavorite = {
@@ -994,9 +1016,11 @@ private fun ModernRecentChannelsCollection(
                 },
                 isPinned = false,
                 onTogglePin = null,
+                onClear = { clear(recent) },
                 onClick = { open(recent) },
                 isTv = isTv
             )
+        }
         }
     }
 }
@@ -1191,6 +1215,9 @@ private fun ModernHubQuickActions(
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
     resetSurface: () -> Unit,
+    openRecentChannels: () -> Unit,
+    clearRecentChannels: () -> Unit,
+    recentChannelCount: Int,
     isTv: Boolean
 ) {
     LazyRow(
@@ -1211,6 +1238,34 @@ private fun ModernHubQuickActions(
                 isTv = isTv,
                 onClick = openSearch
             )
+        }
+        if (dashboardSurface == DashboardSurface.LIVE_TV) {
+            item("quick-recent-channels") {
+                var menuOpen by remember { mutableStateOf(false) }
+                Box {
+                    ModernQuickActionTile(
+                        title = "Recently Played",
+                        subtitle = "$recentChannelCount channels · Hold for options",
+                        icon = Icons.Default.History,
+                        accent = ModernBrandViolet,
+                        isTv = isTv,
+                        onClick = openRecentChannels,
+                        onLongClick = { menuOpen = true }
+                    )
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                        containerColor = Color(0xFF202020),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        NikDropdownMenuItem(
+                            text = { Text("Clear recently played channels") },
+                            leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                            onClick = { menuOpen = false; clearRecentChannels() }
+                        )
+                    }
+                }
+            }
         }
         if (dashboardSurface != DashboardSurface.LIVE_TV) {
             item("quick-tmdb") {
@@ -1316,7 +1371,8 @@ private fun ModernQuickActionTile(
     icon: ImageVector,
     accent: Color,
     isTv: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -1359,9 +1415,8 @@ private fun ModernQuickActionTile(
     }
 
     Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
         modifier = Modifier
+            .remoteCombinedClickable(interactionSource = interactionSource, onClick = onClick, onLongClick = onLongClick)
             .width(tileWidth)
             .height(tileHeight)
             .zIndex(visualProgress)
@@ -2875,6 +2930,7 @@ private fun ModernLiveChannelTile(
     isPinned: Boolean,
     onTogglePin: (() -> Unit)?,
     onClick: () -> Unit,
+    onClear: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     isTv: Boolean
 ) {
@@ -3095,7 +3151,7 @@ private fun ModernLiveChannelTile(
             isFavorite = isFavorite,
             dismiss = { menuOpen = false },
             toggleFavorite = onFavorite,
-            clear = null,
+            clear = onClear,
             isPinned = isPinned,
             togglePin = onTogglePin
         )

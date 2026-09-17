@@ -5032,7 +5032,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 CatalogType.MOVIES -> FavoriteKind.MOVIE
                 CatalogType.SERIES -> FavoriteKind.SERIES
                 CatalogType.RADIO -> FavoriteKind.CHANNEL
-            }, item, series, profileKey = profileKey))
+            }, item, series, profileKey = profileKey,
+                categoryTitle = _state.value.rawCategoriesByType[type]
+                    .orEmpty().firstOrNull { it.id == item.portalCategoryId }?.title))
         }
         val updated = (additions + _state.value.recentlyPlayed.filterNot { it.kind == FavoriteKind.EPISODE })
             .distinctBy { it.key }.take(MAX_RECENT_ITEMS)

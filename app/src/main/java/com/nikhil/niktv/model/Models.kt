@@ -269,7 +269,8 @@ data class RecentItem(
     val series: MediaItem? = null,
     val lastPlayed: MediaItem? = null,
     val playedAtMillis: Long = System.currentTimeMillis(),
-    val profileKey: String = ""
+    val profileKey: String = "",
+    val categoryTitle: String? = null
 ) {
     val key: String get() = "$profileKey:${kind.name}:${media.id}"
 }

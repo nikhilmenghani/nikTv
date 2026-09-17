@@ -175,6 +175,7 @@ internal fun ModernBrowseScreen(
             openProfileSwitcher = openProfileSwitcher,
             openRecent = openRecent,
             removeRecent = removeRecent,
+            clearRecentChannels = { clearRecent(FavoriteKind.CHANNEL) },
             openWatchedEpisode = openWatchedEpisode,
             dismissWatchedEpisode = dismissWatchedEpisode,
             openTmdbSection = openModernTmdbSection,
