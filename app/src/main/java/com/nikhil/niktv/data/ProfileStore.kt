@@ -190,24 +190,12 @@ class ProfileStore(private val context: Context) {
         }
     }
     suspend fun clearSession() = context.dataStore.edit { it.remove(sessionKey) }
-    fun searchCatalog(type: CatalogType, profileKey: String? = null): Flow<SearchCatalogCache?> {
-        val cacheKey = stringPreferencesKey("search_catalog_${type.name.lowercase()}")
-        return context.dataStore.data.map { prefs ->
-            val raw = prefs[cacheKey] ?: return@map null
-            val caches = runCatching { Json.decodeFromString<List<SearchCatalogCache>>(raw) }.getOrNull()
-                ?: runCatching { listOf(Json.decodeFromString<SearchCatalogCache>(raw)) }.getOrDefault(emptyList())
-            caches.firstOrNull { profileKey == null || it.profileKey == profileKey }
-        }
+    fun searchCatalog(type: CatalogType, profileKey: String? = null): Flow<SearchCatalogCache?> = kotlinx.coroutines.flow.flow {
+        emit(profileKey?.let { CatalogDiskCache.read<SearchCatalogCache>(context, "search:$it:${type.name}") })
     }
-    suspend fun saveSearchCatalog(
-        cache: SearchCatalogCache,
-        scheduleMetadataSync: Boolean = true
-    ) {
-        val cacheKey = stringPreferencesKey("search_catalog_${cache.type.name.lowercase()}")
-        context.dataStore.edit { prefs ->
-            val existing = prefs[cacheKey]?.let { raw -> runCatching { Json.decodeFromString<List<SearchCatalogCache>>(raw) }.getOrNull() }.orEmpty()
-            prefs[cacheKey] = Json.encodeToString(listOf(cache) + existing.filterNot { it.profileKey == cache.profileKey })
-        }
+    suspend fun saveSearchCatalog(cache: SearchCatalogCache, scheduleMetadataSync: Boolean = true) {
+        discardLegacyBrowseCatalogs()
+        CatalogDiskCache.write(context, "search:${cache.profileKey}:${cache.type.name}", cache)
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
     suspend fun saveFavorites(items: List<FavoriteItem>) = context.dataStore.edit {
@@ -222,27 +210,12 @@ class ProfileStore(private val context: Context) {
     suspend fun savePlaybackUrls(items: List<PlaybackUrl>) = context.dataStore.edit {
         it[playbackUrlsKey] = Json.encodeToString(items)
     }
-    fun browseCatalog(type: CatalogType, profileKey: String? = null): Flow<BrowseCatalogCache?> {
-        if (profileKey == null) return context.dataStore.data.map { null }
-        val browseKey = browseCatalogKey(type, profileKey)
-        return context.dataStore.data.map { prefs ->
-            val raw = prefs[browseKey] ?: return@map null
-            runCatching { Json.decodeFromString<BrowseCatalogCache>(raw) }.getOrNull()
-                ?.takeIf { it.profileKey == profileKey }
-        }
+    fun browseCatalog(type: CatalogType, profileKey: String? = null): Flow<BrowseCatalogCache?> = kotlinx.coroutines.flow.flow {
+        emit(profileKey?.let { CatalogDiskCache.read<BrowseCatalogCache>(context, "browse:$it:${type.name}") })
     }
-    suspend fun saveBrowseCatalog(
-        cache: BrowseCatalogCache,
-        scheduleMetadataSync: Boolean = true
-    ) {
-        val browseKey = browseCatalogKey(cache.type, cache.profileKey)
-        val legacyKey = stringPreferencesKey("browse_catalog_${cache.type.name.lowercase()}")
-        context.dataStore.edit { prefs ->
-            prefs[browseKey] = Json.encodeToString(cache)
-            // Older builds kept every profile in one potentially enormous JSON
-            // value. Never deserialize it; the scoped cache replaces it safely.
-            prefs.remove(legacyKey)
-        }
+    suspend fun saveBrowseCatalog(cache: BrowseCatalogCache, scheduleMetadataSync: Boolean = true) {
+        discardLegacyBrowseCatalogs()
+        CatalogDiskCache.write(context, "browse:${cache.profileKey}:${cache.type.name}", cache)
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
 
@@ -260,8 +233,12 @@ class ProfileStore(private val context: Context) {
     }
 
     suspend fun discardLegacyBrowseCatalogs() = context.dataStore.edit { prefs ->
-        CatalogType.entries.forEach { type ->
-            prefs.remove(stringPreferencesKey("browse_catalog_${type.name.lowercase()}"))
+        // These are rebuildable caches, not user settings. Drop the legacy
+        // strings without decoding their potentially enormous object graphs.
+        prefs.asMap().keys.filter {
+            it.name.startsWith("browse_catalog_") || it.name.startsWith("search_catalog_")
+        }.forEach {
+            prefs.remove(stringPreferencesKey(it.name))
         }
     }
 
@@ -434,6 +411,7 @@ class ProfileStore(private val context: Context) {
         }
     }
     suspend fun clear() = context.dataStore.edit {
+        CatalogDiskCache.clear(context)
         it.remove(key)
         it.remove(sessionKey)
         it.remove(profilesKey)

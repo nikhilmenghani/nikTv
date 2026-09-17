@@ -659,7 +659,8 @@ internal fun ModernPosterCard(
                 onLongClick = if (toggleFavorite != null || removeAction != null) {
                     { menuOpen = true }
                 } else onLongClick,
-                interactionSource = interactionSource
+                interactionSource = interactionSource,
+                showIndication = false
             )
     ) {
         Column(
@@ -674,7 +675,7 @@ internal fun ModernPosterCard(
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(aspectRatio)
                 .then(
-                    if (focused || touchPressed) {
+                    if (touchPressed) {
                         Modifier.touchTileShadow(
                             isTv = isTv,
                             elevation = if (isTablet) 10.dp else 6.dp,

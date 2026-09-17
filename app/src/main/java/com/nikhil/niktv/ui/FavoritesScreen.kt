@@ -193,7 +193,7 @@ internal fun ModernFavoriteCard(
         onClick = open,
         onLongClick = { removalConfirmationOpen = true },
         titleMaxLines = Int.MAX_VALUE,
-        focusedScale = 1.08f
+        focusedScale = 1f
     ) {
         Text(
             listOfNotNull(

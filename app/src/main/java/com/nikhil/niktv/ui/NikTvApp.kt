@@ -445,7 +445,8 @@ internal fun Modifier.remoteCombinedClickable(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
-    interactionSource: MutableInteractionSource? = null
+    interactionSource: MutableInteractionSource? = null,
+    showIndication: Boolean = true
 ): Modifier {
     val scope = rememberCoroutineScope()
     val remoteNavigationActive =
@@ -493,7 +494,7 @@ internal fun Modifier.remoteCombinedClickable(
                 // TV cards draw their own shape-aware focus border. The
                 // platform indication is rectangular and leaks beyond
                 // rounded poster corners while focused.
-                indication = if (remoteNavigationActive) null else LocalIndication.current,
+                indication = if (remoteNavigationActive || !showIndication) null else LocalIndication.current,
                 enabled = enabled,
                 onClick = onClick,
                 onLongClick = onLongClick

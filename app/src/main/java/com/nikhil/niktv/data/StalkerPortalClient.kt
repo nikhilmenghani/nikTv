@@ -144,15 +144,15 @@ class StalkerPortalClient(private val context: Context) {
         pageSize: Int? = null
     ): PortalCatalogPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
-            val allItems = xtreamCatalog(session, category)
-            if (pageSize == null) return@withContext PortalCatalogPage(allItems, 1, false)
+            if (pageSize == null) return@withContext PortalCatalogPage(xtreamCatalog(session, category), 1, false)
             val requestedPage = page.coerceAtLeast(1)
             val start = (requestedPage - 1) * pageSize
-            val items = if (start >= allItems.size) emptyList() else allItems.drop(start).take(pageSize)
+            val window = xtreamCatalog(session, category.type, category.id, start, pageSize + 1)
+            val items = window.take(pageSize)
             return@withContext PortalCatalogPage(
                 items = items,
                 page = requestedPage,
-                hasMore = start + items.size < allItems.size
+                hasMore = window.size > pageSize
             )
         }
         val action = "get_ordered_list"
@@ -597,7 +597,7 @@ class StalkerPortalClient(private val context: Context) {
         xtreamCatalog(session, category.type, category.id)
 
     @OptIn(ExperimentalSerializationApi::class)
-    private fun xtreamCatalog(session: PortalSession, type: CatalogType, categoryId: String?): List<MediaItem> {
+    private fun xtreamCatalog(session: PortalSession, type: CatalogType, categoryId: String?, offset: Int = 0, limit: Int = Int.MAX_VALUE): List<MediaItem> {
         val action = when (type) {
             CatalogType.LIVE_TV -> "get_live_streams"
             CatalogType.MOVIES -> "get_vod_streams"
@@ -612,15 +612,13 @@ class StalkerPortalClient(private val context: Context) {
             .apply { categoryId?.let { addQueryParameter("category_id", it) } }
             .build()
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").header("Accept", "application/json").build()
-        val nodes = http.newCall(request).execute().use { response ->
+        return http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("Xtream server returned HTTP ${response.code}")
             val body = response.body ?: error("Xtream server returned an empty response")
             // Xtream returns the selected category as one response rather than
             // exposing provider-side catalogue pages. Decode the complete
             // sequence so valid media is not silently hidden after item 120.
-            json.decodeToSequence<JsonElement>(body.byteStream()).toList()
-        }
-        return nodes.mapNotNull { node ->
+            json.decodeToSequence<JsonElement>(body.byteStream()).mapNotNull { node ->
             val o = node as? JsonObject ?: return@mapNotNull null
             val id = o.string("stream_id") ?: o.string("series_id") ?: return@mapNotNull null
             val extension = o.string("container_extension") ?: "mp4"
@@ -648,6 +646,7 @@ class StalkerPortalClient(private val context: Context) {
                 externalTmdbId = listOf("tmdb", "tmdb_id", "tmdbid")
                     .firstNotNullOfOrNull { key -> o.string(key)?.toIntOrNull() }
             )
+            }.drop(offset).take(limit).toList()
         }
     }
 
