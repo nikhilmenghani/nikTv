@@ -46,7 +46,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Downloading
@@ -63,6 +62,9 @@ import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -499,6 +501,15 @@ private fun ModernDestinationHub(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
+    var customizeHomeOpen by rememberSaveable(profileKey, dashboardSurface) { mutableStateOf(false) }
+    if (customizeHomeOpen && dashboardSurface == DashboardSurface.HOME) {
+        ModernCustomizeHomeDialog(
+            dismiss = { customizeHomeOpen = false },
+            configureTmdb = configureTmdb,
+            configureIptv = configureIptv,
+            resetSurface = resetSurface
+        )
+    }
     var pinnedLiveCategories by remember(profileKey) {
         mutableStateOf(IptvPinPreferences.pinnedCategories(context, profileKey, CatalogType.LIVE_TV))
     }
@@ -627,6 +638,31 @@ private fun ModernDestinationHub(
             else 12.dp
         )
     ) {
+        if (dashboardSurface == DashboardSurface.HOME) {
+            item("home-header", span = fullSpan) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Home",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Black,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = { customizeHomeOpen = true },
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
+                    ) {
+                        Icon(Icons.Default.DashboardCustomize, null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Customize Home")
+                    }
+                }
+            }
+        }
         if (dashboardSurface != DashboardSurface.HOME) {
             item("hub-header", span = fullSpan) {
                 Column(
@@ -696,26 +732,6 @@ private fun ModernDestinationHub(
                 }
             }
 
-            item("home-browse-header", span = fullSpan) {
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ModernHubSectionHeading(
-                        "Browse",
-                        "Search NikTV or choose which destinations appear on Home."
-                    )
-                    ModernHubQuickActions(
-                        dashboardSurface = dashboardSurface,
-                        screenTitle = screenTitle,
-                        openSearch = openSearch,
-                        configureTmdb = configureTmdb,
-                        configureIptv = configureIptv,
-                        resetSurface = resetSurface,
-                        isTv = isTv
-                    )
-                }
-            }
         }
 
         if (tmdbSections.isNotEmpty()) {
@@ -864,9 +880,19 @@ private fun ModernDestinationHub(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "Add TMDB sections above. For IPTV tiles on Home, explicitly choose Live TV, Movie, or Series categories.",
+                            if (dashboardSurface == DashboardSurface.HOME)
+                                "Add collections and provider categories to make Home your own."
+                            else "Choose collections or provider categories using the controls above.",
                             color = Color(0xFFB9B9B9)
                         )
+                        if (dashboardSurface == DashboardSurface.HOME) {
+                            Button(
+                                onClick = { customizeHomeOpen = true },
+                                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
+                            ) {
+                                Text("Choose what appears on Home")
+                            }
+                        }
                     }
                 }
             }
@@ -986,6 +1012,53 @@ private fun ModernHubSectionHeading(
 }
 
 @Composable
+private fun ModernCustomizeHomeDialog(
+    dismiss: () -> Unit,
+    configureTmdb: () -> Unit,
+    configureIptv: (CatalogType) -> Unit,
+    resetSurface: () -> Unit
+) {
+    val firstAction = remember { FocusRequester() }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("Customize Home") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text("Choose the collections and categories that appear on Home.")
+                val actions = listOf<Pair<String, () -> Unit>>(
+                    "TMDB sections" to configureTmdb,
+                    "Live TV categories" to { configureIptv(CatalogType.LIVE_TV) },
+                    "Movie categories" to { configureIptv(CatalogType.MOVIES) },
+                    "Series categories" to { configureIptv(CatalogType.SERIES) },
+                    "Restore Home defaults" to resetSurface
+                )
+                actions.forEachIndexed { index, (label, action) ->
+                    if (index == actions.lastIndex) HorizontalDivider()
+                    TextButton(
+                        onClick = { dismiss(); action() },
+                        modifier = Modifier.fillMaxWidth()
+                            .then(if (index == 0) Modifier.focusRequester(firstAction) else Modifier)
+                            .remoteFocusFrame(RoundedCornerShape(12.dp))
+                    ) {
+                        Text(label, Modifier.weight(1f))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = dismiss,
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))
+            ) { Text("Done") }
+        }
+    )
+    LaunchedEffect(Unit) { firstAction.requestFocus() }
+}
+
+@Composable
 private fun ModernHubQuickActions(
     dashboardSurface: DashboardSurface,
     screenTitle: String,
@@ -1013,20 +1086,6 @@ private fun ModernHubQuickActions(
                 isTv = isTv,
                 onClick = openSearch
             )
-        }
-        if (dashboardSurface == DashboardSurface.HOME) {
-            item("quick-brightness") {
-                AppBrightnessControl { open ->
-                    ModernQuickActionTile(
-                        title = "Brightness",
-                        subtitle = "System or app level",
-                        icon = Icons.Default.Brightness6,
-                        accent = Color(0xFFFFC857),
-                        isTv = isTv,
-                        onClick = open
-                    )
-                }
-            }
         }
         if (dashboardSurface != DashboardSurface.LIVE_TV) {
             item("quick-tmdb") {
