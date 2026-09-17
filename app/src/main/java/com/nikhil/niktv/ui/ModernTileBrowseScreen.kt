@@ -176,7 +176,7 @@ private val ModernBrandViolet = Color(0xFFA275FF)
 private fun modernTvTileTitleStyle(shadowed: Boolean = false): TextStyle =
     MaterialTheme.typography.labelMedium.copy(
         fontSize = 12.sp,
-        lineHeight = 15.sp,
+        lineHeight = 14.sp,
         shadow = if (shadowed) Shadow(
             color = Color.Black.copy(alpha = 0.95f),
             offset = Offset(1f, 1f),
@@ -1443,6 +1443,7 @@ private fun ModernQuickActionTile(
 
     Surface(
         modifier = Modifier
+            .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(interactionSource = interactionSource, onClick = onClick, onLongClick = onLongClick)
             .width(tileWidth)
             .height(tileHeight)
@@ -1457,8 +1458,7 @@ private fun ModernQuickActionTile(
                 clip = false,
                 ambientColor = Color.Black.copy(alpha = 0.42f),
                 spotColor = accent.copy(alpha = if (isTv) 0.34f else 0.18f)
-            )
-            .onFocusChanged { focused = it.isFocused },
+            ),
         shape = shape,
         color = ModernCardSurface,
         border = BorderStroke(
@@ -2069,8 +2069,8 @@ internal fun ModernCompactMediaCard(
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
                         .padding(
-                            start = if (isTv) 11.dp else 9.dp,
-                            end = if (isTv) 11.dp else 9.dp,
+                            start = 9.dp,
+                            end = 9.dp,
                             bottom = if (watchedFraction > 0f) 11.dp else 8.dp
                         ),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -2900,7 +2900,9 @@ private fun modernPosterColumns(
     configuration: Configuration,
     isTv: Boolean
 ): Int = when {
-    isTv || configuration.screenWidthDp >= 1400 -> 6
+    // TV's 960dp viewport used to force six narrow posters while retaining tablet-size text.
+    // Use the same width breakpoints as tablets to preserve the artwork-to-caption proportions.
+    configuration.screenWidthDp >= 1400 -> 6
     configuration.screenWidthDp >= 1100 -> 5
     configuration.screenWidthDp >= 760 -> 4
     configuration.screenWidthDp >= 430 -> 3

@@ -1656,12 +1656,12 @@ SettingsSection("Backup and restore") {
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.CloudUpload,
                 title = "Back up catalog from this device",
-                subtitle = "Off by default. Upload an encrypted catalog every 12 hours. Each device has its own snapshot; imports merge records. Requires GitHub and a saved backup password.",
+                subtitle = "Off by default. Upload a catalog every 12 hours. Each device has its own snapshot; imports merge records. Requires GitHub; a backup password is optional.",
                 trailingContent = {
                     SettingsSwitch(checked = catalogBackupEnabled, onCheckedChange = {
                         val saved = githubBackupManager.loadConfig()
-                        if (it && (saved.token.isBlank() || saved.passphrase.length < 12 || saved.backupMode != com.nikhil.niktv.data.BackupMode.GITHUB)) {
-                            catalogStatus = "Configure GitHub and save a backup password of at least 12 characters below, then enable catalog backup."
+                        if (it && (saved.token.isBlank() || (saved.passphrase.isNotBlank() && saved.passphrase.length < 12) || saved.backupMode != com.nikhil.niktv.data.BackupMode.GITHUB)) {
+                            catalogStatus = "Save GitHub settings below, then enable catalog backup. Leave the password blank, or use at least 12 characters."
                         } else {
                             catalogBackupEnabled = it
                             com.nikhil.niktv.data.CatalogPreferences.setBackupEnabled(context, it)
@@ -1914,7 +1914,7 @@ SettingsSection("Backup and restore") {
                         title = "Backup password",
                         subtitle =
                             "Optional · Leave blank for readable JSON. " +
-                                "Use 12+ characters to encrypt GitHub backups.",
+                                "Use 12+ characters to encrypt profile and catalog GitHub backups.",
                         placeholder = "Optional backup password",
                         password = true,
                         requester = githubPasswordRequester,

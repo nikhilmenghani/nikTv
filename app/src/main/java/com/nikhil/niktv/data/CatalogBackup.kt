@@ -38,7 +38,7 @@ object CatalogPreferences {
     fun fingerprint(context: Context, key: String, value: String) { prefs(context).edit().putString("fingerprint:$key", value).apply() }
 }
 
-/** Encrypted logical database snapshots, one writer per file; imports merge instead of replacing Room. */
+/** Optionally encrypted logical database snapshots, one writer per file; imports merge instead of replacing Room. */
 class CatalogBackupManager(context: Context) {
     private val app = context.applicationContext
     private val crypto = GitHubBackupManager(app)
@@ -47,7 +47,7 @@ class CatalogBackupManager(context: Context) {
     private val http = OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build()
 
     suspend fun uploadAll(): Int = BackupActivityLog.track(app, "IPTV catalog backup", success = {
-        if (it == 0) "No changed catalog snapshots to upload." else "Uploaded $it encrypted catalog snapshots to GitHub."
+        if (it == 0) "No changed catalog snapshots to upload." else "Uploaded $it catalog snapshots to GitHub."
     }) { uploadAllInternal() }
 
     private suspend fun uploadAllInternal(): Int = withContext(Dispatchers.IO) {
@@ -67,9 +67,9 @@ class CatalogBackupManager(context: Context) {
                 // Changing the backup password must rewrite even unchanged catalog data.
                 val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
                     .joinToString("") { "%02x".format(it) }
-                val fingerprintKey = "${config.username}/${config.repository}/$path/${crypto.catalogKeyRevision()}"
+                val fingerprintKey = "${config.username}/${config.repository}/$path/${crypto.catalogKeyRevision()}/${if (config.passphrase.isBlank()) "plain-v1" else "encrypted-v1"}"
                 if (CatalogPreferences.fingerprint(app, fingerprintKey) == fingerprint) continue
-                val encrypted = crypto.encryptBackup(Base64.encodeToString(bytes, Base64.NO_WRAP), config.passphrase)
+                val encrypted = encodePayload(Base64.encodeToString(bytes, Base64.NO_WRAP), config.passphrase)
                 put(config, path, encrypted)
                 CatalogPreferences.fingerprint(app, fingerprintKey, fingerprint)
                 uploaded++
@@ -98,7 +98,7 @@ class CatalogBackupManager(context: Context) {
                     val path = file.optString("path")
                     require(path.startsWith("$folder/") && path.substringAfterLast('/').matches(Regex("[a-f0-9-]+\\.niktv")))
                     val encrypted = get(config, path, raw = true) ?: continue
-                    val compressed = Base64.decode(crypto.decryptCatalogPayload(encrypted, config.passphrase), Base64.NO_WRAP)
+                    val compressed = Base64.decode(decodePayload(encrypted, config.passphrase), Base64.NO_WRAP)
                     val decoded = GZIPInputStream(compressed.inputStream()).use { bounded(it, MAX_EXPANDED) }
                     val snapshot = json.decodeFromString<CatalogSnapshot>(decoded)
                     require(snapshot.type == type && snapshot.profileId == id && snapshot.schemaVersion == 1)
@@ -111,10 +111,29 @@ class CatalogBackupManager(context: Context) {
         imported
     }
 
+    internal fun encodePayload(compressedBase64: String, passphrase: String): String =
+        if (passphrase.isBlank()) JSONObject()
+            .put("catalogContainerVersion", 1)
+            .put("encoding", "gzip-base64")
+            .put("payload", compressedBase64)
+            .toString()
+        else crypto.encryptBackup(compressedBase64, passphrase)
+
+    internal fun decodePayload(content: String, passphrase: String): String {
+        val envelope = JSONObject(content)
+        if (!envelope.has("catalogContainerVersion")) {
+            // Preserve support for existing encrypted catalog snapshots.
+            return crypto.decryptCatalogPayload(content, passphrase)
+        }
+        require(envelope.optInt("catalogContainerVersion", -1) == 1 &&
+            envelope.optString("encoding") == "gzip-base64") { "Unsupported catalog backup format." }
+        return envelope.getString("payload").also { require(it.isNotBlank()) { "Catalog backup payload is empty." } }
+    }
+
     private fun config(): GitHubBackupConfig = crypto.loadConfig().also {
         require(it.backupMode == BackupMode.GITHUB && it.token.isNotBlank()) { "Configure GitHub backup first." }
         require(it.username.matches(Regex("[A-Za-z0-9-]+")) && it.repository.matches(Regex("[A-Za-z0-9_.-]+")))
-        require(it.passphrase.length >= 12) { "Save a backup password of at least 12 characters in Backup & Restore first." }
+        require(it.passphrase.isBlank() || it.passphrase.length >= 12) { "Backup password must be blank or at least 12 characters." }
     }
     private fun request(config: GitHubBackupConfig, path: String, raw: Boolean = false) = Request.Builder()
         .url("https://api.github.com/repos/${config.username}/${config.repository}/contents/$path")
@@ -135,7 +154,7 @@ class CatalogBackupManager(context: Context) {
             currentCoroutineContext().ensureActive()
             check(CatalogPreferences.backupEnabled(app)) { "Catalog backup was disabled" }
             val sha = get(config, path)?.let { JSONObject(it).optString("sha") }
-            val body = JSONObject().put("message", "Update encrypted NikTV catalog snapshot")
+            val body = JSONObject().put("message", "Update NikTV catalog snapshot")
                 .put("content", Base64.encodeToString(encrypted.toByteArray(), Base64.NO_WRAP))
                 .apply { if (!sha.isNullOrBlank()) put("sha", sha) }
             http.newCall(request(config, path).put(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { response ->

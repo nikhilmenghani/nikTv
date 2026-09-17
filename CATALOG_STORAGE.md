@@ -14,17 +14,17 @@ Only a scan that starts at page one and reaches the provider's end can mark miss
 
 ## Opt-in backup
 
-**Back up catalog from this device** is OFF by default and is a device-only preference. Configure GitHub and save a backup password of at least 12 characters in the existing backup settings first. All devices importing the same snapshots need that password.
+**Back up catalog from this device** is OFF by default and is a device-only preference. Configure and save GitHub settings first. The backup password is optional: leave it blank for password-free uploads, or use at least 12 characters for encryption. Existing encrypted snapshots still require their original password to restore.
 
-Enabled devices upload approximately every 12 hours; **Back up catalog now** queues an immediate run. Each installation writes only its own encrypted file at:
+Enabled devices upload approximately every 12 hours; **Back up catalog now** queues an immediate run. Each installation writes only its own snapshot file at:
 
 `catalog-v1/<account-hash>/<media-type>/<device-uuid>.niktv`
 
-Files are compressed, encrypted logical snapshots of Room records, not copies of an open SQLite file. Playback commands can contain account-specific information, so unencrypted catalog uploads are not supported. These snapshots exclude personal history/favorites and device settings. Unchanged snapshots are skipped. Existing settings/profile backups remain separate.
+Files are compressed logical snapshots of Room records, not copies of an open SQLite file. With a blank password, a versioned gzip/base64 envelope is uploaded without encryption; with a password, the existing encrypted format is used. Playback commands can contain account-specific information readable by anyone with repository access in password-free mode. These snapshots exclude personal history/favorites and device settings. Unchanged snapshots are skipped. Existing settings/profile backups remain separate.
 
 **Merge catalogs from GitHub** is available on any device, including devices with uploading disabled. It imports snapshots for matching saved profiles, unions distinct records and selects the newest observed version of conflicting records. It does not replace the live database or personal preferences. Reopen the profile after an import to reload in-memory screen state. Each device has its own upload file, so two devices cannot overwrite each other's snapshots. Imports are explicit; enabling upload does not silently replace or merge data on another device.
 
-Catalog payload version 1 is independent of the Room schema. Unsupported versions or mismatched profile/type identities are rejected. Restores run in database transactions. Backups are currently limited to 20 MiB encrypted / 80 MiB expanded per profile and media type; exceeding the limit fails visibly instead of silently truncating data.
+Catalog payload version 1 is independent of the Room schema. Unsupported versions or mismatched profile/type identities are rejected. Restores run in database transactions. Backups are currently limited to 20 MiB uploaded / 80 MiB expanded per profile and media type; exceeding the limit fails visibly instead of silently truncating data.
 
 The old periodic GitHub search-index uploader is removed and its scheduled work is cancelled on upgrade. Old remote search-index files are left untouched; they are not full catalog backups and are not imported by the new snapshot action.
 

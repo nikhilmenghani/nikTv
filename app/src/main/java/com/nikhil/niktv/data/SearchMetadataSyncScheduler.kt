@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 
-/** Local refresh is independent of opt-in encrypted catalog backups. */
+/** Local refresh is independent of opt-in catalog backups. */
 object SearchMetadataSyncScheduler {
     private const val BACKUP = "niktv-catalog-backup-v1"
     private const val MANUAL = "niktv-catalog-backup-now-v1"
@@ -88,7 +88,7 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
     override suspend fun doWork(): Result = backupMutex.withLock {
         if (!CatalogPreferences.backupEnabled(applicationContext)) return@withLock Result.success()
         try {
-            setProgress(workDataOf(PROGRESS_MESSAGE to "Backing up encrypted catalog", PROGRESS_FRACTION to 0.1f))
+            setProgress(workDataOf(PROGRESS_MESSAGE to "Backing up IPTV catalog", PROGRESS_FRACTION to 0.1f))
             CatalogBackupManager(applicationContext).uploadAll()
             Result.success()
         } catch (cancelled: CancellationException) { throw cancelled }
