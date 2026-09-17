@@ -13,6 +13,9 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.nikhil.niktv.model.CatalogType
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 
@@ -129,7 +132,9 @@ class SearchMetadataSyncWorker(
     appContext: Context,
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = syncMutex.withLock { syncOnce() }
+
+    private suspend fun syncOnce(): Result {
         val backupManager = GitHubBackupManager(applicationContext)
         val config = backupManager.loadConfig()
         if (config.backupMode != BackupMode.GITHUB || config.token.isBlank()) {
@@ -169,7 +174,8 @@ class SearchMetadataSyncWorker(
                         val remoteCache = sync.asLocalSearchCache(remote, profileKey)
                         store.mergeSearchMetadata(remoteCache)
                     }
-                    if (merged.items.isNotEmpty() && remote?.items != merged.items) {
+                    if (merged.items.isNotEmpty() && (remote?.items != merged.items ||
+                            SearchMetadataDocuments.legacyProfileId(profile) != sync.anonymousProfileId(profile))) {
                         setProgress(
                             workDataOf(
                                 PROGRESS_MESSAGE to "Uploading ${type.title} changes",
@@ -178,8 +184,10 @@ class SearchMetadataSyncWorker(
                         )
                         sync.upload(merged, config, profileName = profile.name)
                     }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (_: IllegalArgumentException) {
-                    // Oversized/invalid documents are isolated to this type.
+                    return Result.failure()
                 } catch (_: Throwable) {
                     transientFailure = true
                 }
@@ -190,6 +198,7 @@ class SearchMetadataSyncWorker(
     }
 
     companion object {
+        private val syncMutex = Mutex()
         const val PROGRESS_MESSAGE = "sync_message"
         const val PROGRESS_FRACTION = "sync_fraction"
         private val SYNC_TYPES = listOf(

@@ -82,7 +82,7 @@ class SearchMetadataDocumentsTest {
             anonymousProfileId = "0123456789abcdef01234567",
             type = CatalogType.SERIES,
             updatedAtMillis = 20,
-            items = listOf(SearchMetadataItem("1", "Local title"))
+            items = listOf(SearchMetadataItem("1", "Local title", observedAtMillis = 20))
         )
         val remote = local.copy(
             updatedAtMillis = 10,
@@ -97,5 +97,32 @@ class SearchMetadataDocumentsTest {
         assertEquals(listOf("Local title", "Remote title"), merged.items.map { it.title })
         assertEquals(20, merged.updatedAtMillis)
         assertSame(local, SearchMetadataDocuments.merge(local, null))
+    }
+
+    @Test fun merge_isOrderIndependentAndPreservesRichFields() {
+        val older = SearchMetadataIndex(anonymousProfileId = "same", type = CatalogType.MOVIES,
+            updatedAtMillis = 1, items = listOf(SearchMetadataItem("1", "Old", externalTmdbId = 42, observedAtMillis = 1)))
+        val newer = older.copy(updatedAtMillis = 2,
+            items = listOf(SearchMetadataItem("1", "New", observedAtMillis = 2), SearchMetadataItem("2", "Other")))
+        val result = SearchMetadataDocuments.merge(older, newer)
+        assertEquals(result.items, SearchMetadataDocuments.merge(newer, older).items)
+        assertEquals("New", result.items.first { it.id == "1" }.title)
+        assertEquals(42, result.items.first { it.id == "1" }.externalTmdbId)
+        assertEquals(2, result.items.size)
+        assertEquals(result.items, SearchMetadataDocuments.merge(result, result).items)
+    }
+
+    @Test fun profileIdentity_normalizesAddressAndMacButIgnoresDisplayName() {
+        val formatted = profile.copy(name = "Tablet", portalUrl = "HTTPS://PROVIDER.EXAMPLE:443/",
+            macAddress = "00-11-22-33-44-55")
+        assertEquals(SearchMetadataDocuments.anonymousProfileId(profile), SearchMetadataDocuments.anonymousProfileId(formatted))
+    }
+
+    @Test fun merge_keepsContributionsFromThreeDevices() {
+        fun index(id: String) = SearchMetadataIndex(anonymousProfileId = "same", type = CatalogType.SERIES,
+            updatedAtMillis = 1, items = listOf(SearchMetadataItem(id, id)))
+        val latest = SearchMetadataDocuments.merge(index("A"), index("B"))
+        val retried = SearchMetadataDocuments.merge(index("C"), latest)
+        assertEquals(listOf("A", "B", "C"), retried.items.map { it.id })
     }
 }

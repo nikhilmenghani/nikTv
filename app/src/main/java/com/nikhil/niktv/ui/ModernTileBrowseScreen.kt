@@ -317,6 +317,8 @@ private fun ModernTilePhoneHeader(
     openSettings: () -> Unit,
     openProfileSwitcher: () -> Unit
 ) {
+    val isPhone = LocalConfiguration.current.smallestScreenWidthDp < 600
+    var profileMenuOpen by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -334,23 +336,61 @@ private fun ModernTilePhoneHeader(
                 modifier = Modifier.size(32.dp)
             )
             Spacer(Modifier.width(9.dp))
-            IconButton(onClick = openProfileSwitcher) {
-                Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
+            if (!isPhone) {
+                IconButton(onClick = openProfileSwitcher) {
+                    Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
+                }
             }
-            Text(
-                "NikTV",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Black,
-                modifier = Modifier.weight(1f)
-            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "NikTV",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1
+                )
+                if (isPhone) {
+                    Text(
+                        state.savedProfile?.name ?: "Profile",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
             IconButton(onClick = openSearch) {
                 Icon(Icons.Default.Search, "Search")
             }
-            IconButton(onClick = openFavorites) {
-                Icon(Icons.Default.FavoriteBorder, "My List")
+            if (!isPhone) {
+                IconButton(onClick = openFavorites) {
+                    Icon(Icons.Default.FavoriteBorder, "My List")
+                }
             }
-            IconButton(onClick = openSettings) {
-                Icon(Icons.Default.Settings, "Settings")
+            if (isPhone) {
+                Box {
+                    IconButton(onClick = { profileMenuOpen = true }) {
+                        Icon(Icons.Default.AccountCircle, "Profile menu")
+                    }
+                    DropdownMenu(
+                        expanded = profileMenuOpen,
+                        onDismissRequest = { profileMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Switch profile") },
+                            leadingIcon = { Icon(Icons.Default.AccountCircle, null) },
+                            onClick = { profileMenuOpen = false; openProfileSwitcher() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            leadingIcon = { Icon(Icons.Default.Settings, null) },
+                            onClick = { profileMenuOpen = false; openSettings() }
+                        )
+                    }
+                }
+            } else {
+                IconButton(onClick = openSettings) {
+                    Icon(Icons.Default.Settings, "Settings")
+                }
             }
         }
 

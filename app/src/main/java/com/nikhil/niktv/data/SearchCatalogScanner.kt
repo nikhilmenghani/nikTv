@@ -65,6 +65,7 @@ class SearchCatalogScanner(context: Context) {
                 if (refreshFromStart || page <= 0) page = 1 else page += 1
                 var keepLoading = true
                 var pagesRead = 0
+                val seenThisScan = mutableSetOf<String>()
                 while (keepLoading && pagesRead < MAX_PAGES_PER_CATEGORY) {
                     onProgress(
                         SearchCatalogScanProgress(
@@ -84,8 +85,8 @@ class SearchCatalogScanner(context: Context) {
                         break
                     }
                     val result = pageResult.getOrThrow()
-                    val merged = (items + result.items).distinctBy { it.id }
-                    val added = merged.size - items.size
+                    val newlySeen = result.items.count { seenThisScan.add(it.id) }
+                    val merged = (result.items + items).distinctBy { it.id }
                     items = merged
                     cache = cache.copy(
                         cachedAtMillis = System.currentTimeMillis(),
@@ -93,10 +94,10 @@ class SearchCatalogScanner(context: Context) {
                         itemsByCategory = cache.itemsByCategory + (category.id to items),
                         pagesByCategory = cache.pagesByCategory + (category.id to page),
                         hasMoreByCategory = cache.hasMoreByCategory +
-                            (category.id to (result.hasMore && added > 0))
+                            (category.id to (result.hasMore && newlySeen > 0))
                     )
                     pagesRead += 1
-                    keepLoading = result.hasMore && added > 0
+                    keepLoading = result.hasMore && newlySeen > 0
                     page += 1
                     if (keepLoading) delay(requestDelayMillis)
                 }
