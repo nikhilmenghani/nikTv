@@ -175,7 +175,6 @@ internal fun VlcPlayerScreen(
     }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
-    var programmeGuideExpanded by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
@@ -963,7 +962,7 @@ internal fun VlcPlayerScreen(
             } else {
                 downloadRequester
             }
-            val firstQuickActionRequester = extraControlsRequester
+
             val secondaryActionRequesters = buildList {
                 if (media.catalogType == CatalogType.LIVE_TV) add(programmeGuideRequester)
                 else add(subtitleRequester)
@@ -978,7 +977,7 @@ internal fun VlcPlayerScreen(
                 if (pipAvailable) add(pipRequester)
                 if (!isFireTv) add(fullscreenRequester)
             }
-            val firstExpandedRequester = secondaryActionRequesters.first()
+            val firstQuickActionRequester = if (extraControlsOpen) secondaryActionRequesters.first() else extraControlsRequester
             val lastPlaybackActionRequester = when {
                 media.nextEpisode != null -> nextRequester
                 seekable -> forwardRequester
@@ -1005,10 +1004,7 @@ internal fun VlcPlayerScreen(
                 Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .then(
-                                        if (compactMobileControls) Modifier.horizontalScroll(controlRowScrollState)
-                                        else Modifier
-                                    )
+
                         .zIndex(2f)
                         .then(if (focusMode) Modifier.statusBarsPadding() else Modifier)
                         .padding(
@@ -1067,8 +1063,8 @@ internal fun VlcPlayerScreen(
                                 icon = Icons.Default.EventNote,
                                 badgeText = media.media.liveSchedule.size.takeIf { it > 0 }?.toString(),
                                 contentDescription = "Programme guide",
-                                onClick = { programmeGuideExpanded = false; programmeGuideOpen = true },
-                                modifier = Modifier.playerSecondaryFocus(programmeGuideRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                onClick = { programmeGuideOpen = true },
+                                modifier = Modifier.playerSecondaryFocus(programmeGuideRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                 onFocused = { controlsFocused = it }
                             )
                         }
@@ -1078,7 +1074,7 @@ PlayerChromeIconButton(
                             contentDescription = "Subtitles",
                             onClick = { refreshSubtitleTracks(); subtitleDialogOpen = true },
                             modifier = Modifier
-                                .playerSecondaryFocus(subtitleRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                .playerSecondaryFocus(subtitleRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
                         }
@@ -1091,7 +1087,7 @@ PlayerChromeIconButton(
                                     onDownload()
                                 },
                                 modifier = Modifier
-                                    .playerSecondaryFocus(downloadRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                    .playerSecondaryFocus(downloadRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                 selected = offlineDownloadPresent,
                                 progress = offlineDownloadProgress.takeIf { displayedDownloadInProgress },
                                 indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
@@ -1107,7 +1103,7 @@ PlayerChromeIconButton(
                                         else LiveTvRecorder.pause(context)
                                     },
                                     modifier = Modifier
-                                        .playerSecondaryFocus(recordingPauseRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                        .playerSecondaryFocus(recordingPauseRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                     selected = false,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1120,7 +1116,7 @@ PlayerChromeIconButton(
                                     else LiveTvRecorder.start(context, media.media.title, media.url)
                                 },
                                 modifier = Modifier
-                                    .playerSecondaryFocus(downloadRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                    .playerSecondaryFocus(downloadRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
@@ -1140,7 +1136,7 @@ PlayerChromeIconButton(
                                 modeFeedback = "Video fit · ${nextMode.label}"
                             },
                             modifier = Modifier
-                                .playerSecondaryFocus(resizeRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                .playerSecondaryFocus(resizeRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             selected = false,
                             onFocused = {
                                 controlsFocused = it
@@ -1151,7 +1147,7 @@ PlayerChromeIconButton(
                             contentDescription = "Choose picture mode: ${activeAppearanceProfile.name}",
                             onClick = { pictureModePickerVisible = true },
                             modifier = Modifier
-                                .playerSecondaryFocus(pictureModeRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                .playerSecondaryFocus(pictureModeRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -1164,7 +1160,7 @@ PlayerChromeIconButton(
                                     onSelectPlayer(selectedEngine, player.time.coerceAtLeast(0L))
                                 },
                                 modifier = Modifier
-                                    .playerSecondaryFocus(playerSwitchRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                    .playerSecondaryFocus(playerSwitchRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                 size = if (compactMobileControls) 44.dp else 48.dp,
                                 selected = false,
                                 onFocused = { controlsFocused = it }
@@ -1172,7 +1168,7 @@ PlayerChromeIconButton(
                         if (!isFireTv) {
                         com.nikhil.niktv.ui.components.CastButton(
                             modifier = Modifier
-                                .playerSecondaryFocus(castRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                .playerSecondaryFocus(castRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onCastConnected = {
                                 onSelectPlayer(PlaybackEngine.MEDIA3, player.time.coerceAtLeast(0L))
                             }
@@ -1187,7 +1183,7 @@ PlayerChromeIconButton(
                                 onControlsTimeoutChanged(seconds)
                                 modeFeedback = playerControlsTimeoutFeedback(seconds)
                             },
-                            modifier = Modifier.playerSecondaryFocus(controlsTimeoutRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                            modifier = Modifier.playerSecondaryFocus(controlsTimeoutRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
                         PlayerChromeIconButton(
@@ -1195,7 +1191,7 @@ PlayerChromeIconButton(
                             contentDescription = "Playback information",
                             onClick = { onMoreOptionsOpenChanged(true) },
                             modifier = Modifier
-                                .playerSecondaryFocus(moreRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                .playerSecondaryFocus(moreRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
                 }
@@ -1284,6 +1280,11 @@ PlayerChromeIconButton(
                         ) {
                             val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
                                 val isTv = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
+                                Row(
+                                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 0.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                                 if (media.previousEpisode != null) {
                                     PlayerChromeIconButton(
@@ -1406,25 +1407,7 @@ PlayerChromeIconButton(
                                 }
 
                                 if (compactMobileControls) Spacer(Modifier.width(8.dp))
-                                else Spacer(Modifier.weight(1f))
-                                PlayerChromeIconButton(
-                                    icon = Icons.Default.Tune,
-                                    contentDescription = if (extraControlsOpen) "Hide extra controls" else "More controls",
-                                    onClick = { extraControlsOpen = !extraControlsOpen },
-                                    selected = extraControlsOpen,
-                                    modifier = Modifier.focusRequester(extraControlsRequester)
-                                        .focusProperties {
-                                            left = lastPlaybackActionRequester
-                                            right = if (extraControlsOpen) firstExpandedRequester else FocusRequester.Default
-                                            up = if (seekable) progressRequester else backRequester
-                                        }
-                                        .playerDpadFocusRoutes(
-                                            left = lastPlaybackActionRequester,
-                                            right = if (extraControlsOpen) firstExpandedRequester else null,
-                                            up = if (seekable) progressRequester else backRequester
-                                        ),
-                                    onFocused = { controlsFocused = it }
-                                )
+                                else Spacer(Modifier.width(8.dp))
                                 PlayerExtraControls(visible = extraControlsOpen) {
                                 quickActions()
                                 if (pipAvailable) {
@@ -1438,7 +1421,7 @@ PlayerChromeIconButton(
                                         pipActivity?.enterPlayerPictureInPicture()
                                     },
                                     modifier = Modifier
-                                        .playerSecondaryFocus(pipRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                        .playerSecondaryFocus(pipRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
                                     onFocused = { controlsFocused = it }
                                 )
@@ -1465,13 +1448,32 @@ PlayerChromeIconButton(
                                     }
                                 },
                                 modifier = Modifier
-                                    .playerSecondaryFocus(fullscreenRequester, secondaryActionRequesters, extraControlsRequester, if (seekable) progressRequester else backRequester),
+                                    .playerSecondaryFocus(fullscreenRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                 size = utilityButtonSize,
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
                                 }
                                 }
+                                }
+                                PlayerChromeIconButton(
+                                    icon = Icons.Default.Tune,
+                                    contentDescription = if (extraControlsOpen) "Hide extra controls" else "More controls",
+                                    onClick = { extraControlsOpen = !extraControlsOpen },
+                                    selected = extraControlsOpen,
+                                    modifier = Modifier.focusRequester(extraControlsRequester)
+                                        .focusProperties {
+                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else lastPlaybackActionRequester
+                                            right = FocusRequester.Cancel
+                                            up = if (seekable) progressRequester else backRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = if (extraControlsOpen) secondaryActionRequesters.last() else lastPlaybackActionRequester,
+                                            right = FocusRequester.Cancel,
+                                            up = if (seekable) progressRequester else backRequester
+                                        ),
+                                    onFocused = { controlsFocused = it }
+                                )
                         }
                     }
                 }
@@ -1489,18 +1491,9 @@ PlayerChromeIconButton(
                 )
             }
             if (programmeGuideOpen) {
-                if (programmeGuideExpanded) {
-                    PlayerLiveScheduleOverlay(media.media) { programmeGuideExpanded = false }
-                } else {
-                    PlayerLiveScheduleSummary(
-                        item = media.media,
-                        compact = compactMobileControls,
-                        onExpand = { programmeGuideExpanded = true },
-                        onDismiss = {
-                            programmeGuideOpen = false
-                            scope.launch { delay(80L); runCatching { programmeGuideRequester.requestFocus() } }
-                        }
-                    )
+                PlayerLiveScheduleOverlay(media.media) {
+                    programmeGuideOpen = false
+                    scope.launch { delay(80L); runCatching { programmeGuideRequester.requestFocus() } }
                 }
             }
         }

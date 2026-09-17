@@ -72,8 +72,8 @@ internal fun BoxScope.PlayerControlsLayer(
 internal fun PlayerExtraControls(visible: Boolean, content: @Composable RowScope.() -> Unit) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(140)) + expandHorizontally(tween(160), expandFrom = Alignment.Start),
-        exit = fadeOut(tween(100)) + shrinkHorizontally(tween(140), shrinkTowards = Alignment.Start)
+        enter = fadeIn(tween(140)) + expandHorizontally(tween(160), expandFrom = Alignment.End),
+        exit = fadeOut(tween(100)) + shrinkHorizontally(tween(140), shrinkTowards = Alignment.End)
     ) {
         Row(
             modifier = Modifier.focusProperties { canFocus = visible },
@@ -88,15 +88,16 @@ internal fun Modifier.playerSecondaryFocus(
     requester: FocusRequester,
     order: List<FocusRequester>,
     toggle: FocusRequester,
+    playback: FocusRequester,
     up: FocusRequester
 ): Modifier {
     val index = order.indexOf(requester)
-    val previous = order.getOrNull(index - 1) ?: toggle
-    val next = order.getOrNull(index + 1)
+    val previous = order.getOrNull(index - 1) ?: playback
+    val next = order.getOrNull(index + 1) ?: toggle
     return focusRequester(requester)
         .focusProperties {
             left = previous
-            right = next ?: FocusRequester.Default
+            right = next
             this.up = up
         }
         .playerDpadFocusRoutes(left = previous, right = next, up = up)
