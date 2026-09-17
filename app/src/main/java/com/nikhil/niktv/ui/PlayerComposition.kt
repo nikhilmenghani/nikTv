@@ -3,6 +3,11 @@ package com.nikhil.niktv.ui
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.input.InputMode
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -38,6 +43,11 @@ internal fun rememberPlayerTvDevice(): Boolean {
     return remember(context, configuration.uiMode) { context.isTvLikeDevice(configuration) }
 }
 
+// Follow the active input mode so touch interaction does not inherit D-pad highlights.
+@Composable
+internal fun playerUsesDirectionalInput(): Boolean =
+    rememberPlayerTvDevice() || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+
 // Deliberately non-inline: each layer gets its own generated Compose method.
 // Inlining the entire player into Box exceeded ART's method compilation limit
 // on Fire TV. Animation is confined to controls, never the video surface.
@@ -64,8 +74,8 @@ internal fun BoxScope.PlayerControlsLayer(
     AnimatedVisibility(
         visible = visible,
         modifier = Modifier.fillMaxSize(),
-        enter = fadeIn(tween(140)),
-        exit = fadeOut(tween(100))
+        enter = fadeIn(tween(240, easing = FastOutSlowInEasing)),
+        exit = fadeOut(tween(200, easing = FastOutSlowInEasing))
     ) {
         Box(Modifier.fillMaxSize().focusProperties { canFocus = visible }, content = content)
     }
@@ -73,17 +83,24 @@ internal fun BoxScope.PlayerControlsLayer(
 
 @Composable
 internal fun PlayerExtraControls(visible: Boolean, content: @Composable RowScope.() -> Unit) {
+    // Keep the focus-ring clearance in the layout even while the actions are hidden.
+    // TV actions are 56dp; touch actions are at most 48dp, with 4dp clearance per edge.
+    Box(
+        modifier = Modifier.height(if (rememberPlayerTvDevice()) 64.dp else 56.dp),
+        contentAlignment = Alignment.CenterEnd
+    ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(140)) + expandHorizontally(tween(160), expandFrom = Alignment.End),
-        exit = fadeOut(tween(100)) + shrinkHorizontally(tween(140), shrinkTowards = Alignment.End)
+        enter = fadeIn(tween(240)) + expandHorizontally(tween(320, easing = FastOutSlowInEasing), expandFrom = Alignment.End),
+        exit = fadeOut(tween(200)) + shrinkHorizontally(tween(280, easing = FastOutSlowInEasing), shrinkTowards = Alignment.End)
     ) {
         Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()).focusProperties { canFocus = visible },
+            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(4.dp).focusProperties { canFocus = visible },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content
         )
+    }
     }
 }
 

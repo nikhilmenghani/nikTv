@@ -586,6 +586,7 @@ fun PlayerScreen(
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val programmeGuideFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val directionalInput = playerUsesDirectionalInput()
     val pictureSettingsFocusRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutFocusRequester = remember(media.progressKey) { FocusRequester() }
     val moreFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -2150,7 +2151,7 @@ PlayerChromeIconButton(
             if (programmeGuideOpen) {
                 PlayerLiveScheduleOverlay(media.media) {
                     programmeGuideOpen = false
-                    coroutineScope.launch { delay(80L); runCatching { programmeGuideFocusRequester.requestFocus() } }
+                    if (directionalInput) coroutineScope.launch { delay(80L); runCatching { programmeGuideFocusRequester.requestFocus() } }
                 }
             }
         }
@@ -3262,6 +3263,9 @@ internal fun Modifier.playerControlFocus(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = rememberPlayerTvDevice()
+    val directionalInput = playerUsesDirectionalInput()
+    val showFocus = focused && directionalInput
+    LaunchedEffect(showFocus) { onFocused(showFocus) }
     val minimumSize = when {
         isTv -> 56.dp
         configuration.smallestScreenWidthDp < 600 -> 44.dp
@@ -3271,10 +3275,10 @@ internal fun Modifier.playerControlFocus(
         .requiredSizeIn(minWidth = minimumSize, minHeight = minimumSize)
         .onFocusChanged {
             focused = it.isFocused
-            onFocused(it.isFocused)
+
         }
         .then(
-            if (focused) {
+            if (showFocus) {
                 Modifier
                     .zIndex(2f)
                     .then(

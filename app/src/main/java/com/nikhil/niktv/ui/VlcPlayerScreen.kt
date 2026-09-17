@@ -217,6 +217,7 @@ internal fun VlcPlayerScreen(
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeRequester = remember(media.progressKey) { FocusRequester() }
     val programmeGuideRequester = remember(media.progressKey) { FocusRequester() }
+    val directionalInput = playerUsesDirectionalInput()
     val pictureSettingsRequester = remember(media.progressKey) { FocusRequester() }
     val controlsTimeoutRequester = remember(media.progressKey) { FocusRequester() }
     val moreRequester = remember(media.progressKey) { FocusRequester() }
@@ -1453,7 +1454,7 @@ PlayerChromeIconButton(
             if (programmeGuideOpen) {
                 PlayerLiveScheduleOverlay(media.media) {
                     programmeGuideOpen = false
-                    scope.launch { delay(80L); runCatching { programmeGuideRequester.requestFocus() } }
+                    if (directionalInput) scope.launch { delay(80L); runCatching { programmeGuideRequester.requestFocus() } }
                 }
             }
         }
