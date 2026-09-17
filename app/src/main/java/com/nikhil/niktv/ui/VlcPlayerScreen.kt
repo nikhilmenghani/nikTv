@@ -101,6 +101,10 @@ internal fun VlcPlayerScreen(
     onPlayerSwitchFocusRestored: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
+        context.isTvLikeDevice(LocalConfiguration.current)
+    var extraControlsOpen by remember(media.progressKey) { mutableStateOf(false) }
+    val extraControlsRequester = remember(media.progressKey) { FocusRequester() }
     val liveRecording by LiveTvRecorder.state.collectAsState()
     val recordingThisChannel = liveRecording.active && liveRecording.sourceUrl == media.url
     var downloadRequested by remember(media.progressKey) { mutableStateOf(false) }
@@ -397,6 +401,9 @@ internal fun VlcPlayerScreen(
         }
     }
 
+    LaunchedEffect(controlsVisible) {
+        if (!controlsVisible) extraControlsOpen = false
+    }
     BackHandler {
         when {
             programmeGuideOpen -> programmeGuideOpen = false
@@ -405,6 +412,10 @@ internal fun VlcPlayerScreen(
             pictureEditorVisible -> {
                 pictureEditorVisible = false
                 appearancePreview = null
+            }
+            extraControlsOpen -> {
+                extraControlsOpen = false
+                extraControlsRequester.requestFocus()
             }
             controlsVisible -> {
                 controlsVisible = false
@@ -952,7 +963,8 @@ internal fun VlcPlayerScreen(
             } else {
                 downloadRequester
             }
-            val firstQuickActionRequester = castRequester
+            val firstQuickActionRequester = extraControlsRequester
+            val firstExpandedRequester = if (isFireTv) firstMediaActionRequester else castRequester
             val lastPlaybackActionRequester = when {
                 media.nextEpisode != null -> nextRequester
                 seekable -> forwardRequester
@@ -1036,16 +1048,17 @@ internal fun VlcPlayerScreen(
                 }
 
                 val quickActions: @Composable RowScope.() -> Unit = {
+                        if (!isFireTv) {
                         com.nikhil.niktv.ui.components.CastButton(
                             modifier = Modifier
                                 .focusRequester(castRequester)
                                 .focusProperties {
-                                    left = lastPlaybackActionRequester
+                                    left = extraControlsRequester
                                     right = firstMediaActionRequester
                                     up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = lastPlaybackActionRequester,
+                                    left = extraControlsRequester,
                                     right = firstMediaActionRequester,
                                     up = if (seekable) progressRequester else backRequester
                                 ),
@@ -1053,6 +1066,7 @@ internal fun VlcPlayerScreen(
                                 onSelectPlayer(PlaybackEngine.MEDIA3, player.time.coerceAtLeast(0L))
                             }
                         )
+                        }
                         if (media.catalogType != CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
@@ -1064,13 +1078,13 @@ internal fun VlcPlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadRequester)
                                     .focusProperties {
-                                        left = castRequester
-                                        right = subtitleRequester
+                                        left = if (isFireTv) extraControlsRequester else castRequester
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeRequester else subtitleRequester
                                         up = if (seekable) progressRequester else backRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = castRequester,
-                                        right = subtitleRequester,
+                                        left = if (isFireTv) extraControlsRequester else castRequester,
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeRequester else subtitleRequester,
                                         up = if (seekable) progressRequester else backRequester
                                     ),
                                 selected = offlineDownloadPresent,
@@ -1090,12 +1104,12 @@ internal fun VlcPlayerScreen(
                                     modifier = Modifier
                                         .focusRequester(recordingPauseRequester)
                                         .focusProperties {
-                                            left = castRequester
+                                            left = if (isFireTv) extraControlsRequester else castRequester
                                             right = downloadRequester
                                             up = backRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = castRequester,
+                                            left = if (isFireTv) extraControlsRequester else castRequester,
                                             right = downloadRequester,
                                             up = backRequester
                                         ),
@@ -1113,20 +1127,21 @@ internal fun VlcPlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadRequester)
                                     .focusProperties {
-                                        left = if (recordingThisChannel) recordingPauseRequester else castRequester
-                                        right = subtitleRequester
+                                        left = if (recordingThisChannel) recordingPauseRequester else (if (isFireTv) extraControlsRequester else castRequester)
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeRequester else subtitleRequester
                                         up = backRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = if (recordingThisChannel) recordingPauseRequester else castRequester,
-                                        right = subtitleRequester,
+                                        left = if (recordingThisChannel) recordingPauseRequester else (if (isFireTv) extraControlsRequester else castRequester),
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeRequester else subtitleRequester,
                                         up = backRequester
                                     ),
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        PlayerChromeIconButton(
+                        if (media.catalogType != CatalogType.LIVE_TV) {
+PlayerChromeIconButton(
                             icon = Icons.Default.Subtitles,
                             contentDescription = "Subtitles",
                             onClick = { refreshSubtitleTracks(); subtitleDialogOpen = true },
@@ -1144,6 +1159,7 @@ internal fun VlcPlayerScreen(
                                 ),
                             onFocused = { controlsFocused = it }
                         )
+                        }
                         PlayerChromeIconButton(
                             icon = when (resizeMode) {
                                 VideoResizeMode.FIT -> Icons.Default.FitScreen
@@ -1161,12 +1177,12 @@ internal fun VlcPlayerScreen(
                             modifier = Modifier
                                 .focusRequester(resizeRequester)
                                 .focusProperties {
-                                    left = subtitleRequester
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) downloadRequester else subtitleRequester
                                     right = pictureModeRequester
                                     up = if (seekable) progressRequester else backRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = subtitleRequester,
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) downloadRequester else subtitleRequester,
                                     right = pictureModeRequester,
                                     up = if (seekable) progressRequester else backRequester
                                 ),
@@ -1452,6 +1468,25 @@ internal fun VlcPlayerScreen(
 
                                 if (compactMobileControls) Spacer(Modifier.width(8.dp))
                                 else Spacer(Modifier.weight(1f))
+                                PlayerChromeIconButton(
+                                    icon = Icons.Default.Tune,
+                                    contentDescription = if (extraControlsOpen) "Hide extra controls" else "More controls",
+                                    onClick = { extraControlsOpen = !extraControlsOpen },
+                                    selected = extraControlsOpen,
+                                    modifier = Modifier.focusRequester(extraControlsRequester)
+                                        .focusProperties {
+                                            left = lastPlaybackActionRequester
+                                            right = if (extraControlsOpen) firstExpandedRequester else FocusRequester.Default
+                                            up = if (seekable) progressRequester else backRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = lastPlaybackActionRequester,
+                                            right = if (extraControlsOpen) firstExpandedRequester else null,
+                                            up = if (seekable) progressRequester else backRequester
+                                        ),
+                                    onFocused = { controlsFocused = it }
+                                )
+                                if (extraControlsOpen) {
                                 quickActions()
                                 if (pipAvailable) {
                                 val pipLeftRequester = moreRequester
@@ -1492,19 +1527,20 @@ internal fun VlcPlayerScreen(
                                     .focusRequester(playerSwitchRequester)
                                     .focusProperties {
                                         left = if (pipAvailable) pipRequester else moreRequester
-                                        right = fullscreenRequester
+                                        right = if (isFireTv) FocusRequester.Default else fullscreenRequester
                                         up = if (seekable) progressRequester else backRequester
                                     }
                                     .playerDpadFocusRoutes(
                                         left = if (pipAvailable) pipRequester else moreRequester,
-                                        right = fullscreenRequester,
+                                        right = if (isFireTv) null else fullscreenRequester,
                                         up = if (seekable) progressRequester else backRequester
                                     ),
                                 size = utilityButtonSize,
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
-                            PlayerChromeIconButton(
+                            if (!isFireTv) {
+PlayerChromeIconButton(
                                 icon = if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                                 contentDescription = if (focusMode) "Exit fullscreen" else "Fullscreen",
                                 onClick = {
@@ -1537,6 +1573,8 @@ internal fun VlcPlayerScreen(
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
+                                }
+                                }
                         }
                     }
                 }

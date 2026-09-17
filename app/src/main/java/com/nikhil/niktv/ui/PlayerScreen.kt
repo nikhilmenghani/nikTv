@@ -313,6 +313,10 @@ fun PlayerScreen(
     onFullscreenChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
+        context.isTvLikeDevice(LocalConfiguration.current)
+    var extraControlsOpen by remember(media.progressKey) { mutableStateOf(false) }
+    val extraControlsRequester = remember(media.progressKey) { FocusRequester() }
     val transportActivity = remember(context) {
         context.findActivity() as? MainActivity
     }
@@ -1162,6 +1166,9 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(controlsVisible) {
+        if (!controlsVisible) extraControlsOpen = false
+    }
     BackHandler {
         when {
             programmeGuideOpen -> programmeGuideOpen = false
@@ -1170,6 +1177,10 @@ fun PlayerScreen(
             pictureEditorVisible -> {
                 pictureEditorVisible = false
                 appearancePreview = null
+            }
+            extraControlsOpen -> {
+                extraControlsOpen = false
+                extraControlsRequester.requestFocus()
             }
             controlsVisible -> {
                 controlsVisible = false
@@ -1645,7 +1656,8 @@ fun PlayerScreen(
             } else {
                 downloadFocusRequester
             }
-            val firstQuickActionRequester = castFocusRequester
+            val firstQuickActionRequester = extraControlsRequester
+            val firstExpandedRequester = if (isFireTv) firstMediaActionRequester else castFocusRequester
             val lastPlaybackActionRequester = when {
                 media.nextEpisode != null -> nextFocusRequester
                 seekable -> forwardFocusRequester
@@ -1726,20 +1738,22 @@ fun PlayerScreen(
                 }
 
                 val quickActions: @Composable RowScope.() -> Unit = {
+                        if (!isFireTv) {
                         com.nikhil.niktv.ui.components.CastButton(
                             modifier = Modifier
                                 .focusRequester(castFocusRequester)
                                 .focusProperties {
-                                    left = lastPlaybackActionRequester
+                                    left = extraControlsRequester
                                     right = firstMediaActionRequester
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = lastPlaybackActionRequester,
+                                    left = extraControlsRequester,
                                     right = firstMediaActionRequester,
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 )
                         )
+                        }
                         if (media.catalogType != CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
@@ -1751,13 +1765,13 @@ fun PlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadFocusRequester)
                                     .focusProperties {
-                                        left = castFocusRequester
-                                        right = subtitleFocusRequester
+                                        left = if (isFireTv) extraControlsRequester else castFocusRequester
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeFocusRequester else subtitleFocusRequester
                                         up = if (seekable) progressFocusRequester else backFocusRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = castFocusRequester,
-                                        right = subtitleFocusRequester,
+                                        left = if (isFireTv) extraControlsRequester else castFocusRequester,
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeFocusRequester else subtitleFocusRequester,
                                         up = if (seekable) progressFocusRequester else backFocusRequester
                                     ),
                                 selected = offlineDownloadPresent,
@@ -1777,12 +1791,12 @@ fun PlayerScreen(
                                     modifier = Modifier
                                         .focusRequester(recordingPauseFocusRequester)
                                         .focusProperties {
-                                            left = castFocusRequester
+                                            left = if (isFireTv) extraControlsRequester else castFocusRequester
                                             right = downloadFocusRequester
                                             up = backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
-                                            left = castFocusRequester,
+                                            left = if (isFireTv) extraControlsRequester else castFocusRequester,
                                             right = downloadFocusRequester,
                                             up = backFocusRequester
                                         ),
@@ -1800,20 +1814,21 @@ fun PlayerScreen(
                                 modifier = Modifier
                                     .focusRequester(downloadFocusRequester)
                                     .focusProperties {
-                                        left = if (recordingThisChannel) recordingPauseFocusRequester else castFocusRequester
-                                        right = subtitleFocusRequester
+                                        left = if (recordingThisChannel) recordingPauseFocusRequester else (if (isFireTv) extraControlsRequester else castFocusRequester)
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeFocusRequester else subtitleFocusRequester
                                         up = backFocusRequester
                                     }
                                     .playerDpadFocusRoutes(
-                                        left = if (recordingThisChannel) recordingPauseFocusRequester else castFocusRequester,
-                                        right = subtitleFocusRequester,
+                                        left = if (recordingThisChannel) recordingPauseFocusRequester else (if (isFireTv) extraControlsRequester else castFocusRequester),
+                                        right = if (media.catalogType == CatalogType.LIVE_TV) resizeFocusRequester else subtitleFocusRequester,
                                         up = backFocusRequester
                                     ),
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        PlayerChromeIconButton(
+                        if (media.catalogType != CatalogType.LIVE_TV) {
+PlayerChromeIconButton(
                             icon = Icons.Default.Subtitles,
                             contentDescription = "Subtitles",
                             onClick = { subtitleDialogOpen = true },
@@ -1831,6 +1846,7 @@ fun PlayerScreen(
                                 ),
                             onFocused = { controlsFocused = it }
                         )
+                        }
                         PlayerChromeIconButton(
                             icon = when (resizeMode) {
                                 VideoResizeMode.FIT -> Icons.Default.FitScreen
@@ -1850,12 +1866,12 @@ fun PlayerScreen(
                             modifier = Modifier
                                 .focusRequester(resizeFocusRequester)
                                 .focusProperties {
-                                    left = subtitleFocusRequester
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester
                                     right = pictureModeFocusRequester
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 }
                                 .playerDpadFocusRoutes(
-                                    left = subtitleFocusRequester,
+                                    left = if (media.catalogType == CatalogType.LIVE_TV) downloadFocusRequester else subtitleFocusRequester,
                                     right = pictureModeFocusRequester,
                                     up = if (seekable) progressFocusRequester else backFocusRequester
                                 ),
@@ -2142,6 +2158,25 @@ fun PlayerScreen(
 
                                 if (compactMobileControls) Spacer(Modifier.width(8.dp))
                                 else Spacer(Modifier.weight(1f))
+                                PlayerChromeIconButton(
+                                    icon = Icons.Default.Tune,
+                                    contentDescription = if (extraControlsOpen) "Hide extra controls" else "More controls",
+                                    onClick = { extraControlsOpen = !extraControlsOpen },
+                                    selected = extraControlsOpen,
+                                    modifier = Modifier.focusRequester(extraControlsRequester)
+                                        .focusProperties {
+                                            left = lastPlaybackActionRequester
+                                            right = if (extraControlsOpen) firstExpandedRequester else FocusRequester.Default
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                        }
+                                        .playerDpadFocusRoutes(
+                                            left = lastPlaybackActionRequester,
+                                            right = if (extraControlsOpen) firstExpandedRequester else null,
+                                            up = if (seekable) progressFocusRequester else backFocusRequester
+                                        ),
+                                    onFocused = { controlsFocused = it }
+                                )
+                                if (extraControlsOpen) {
                                 quickActions()
                                 if (pipAvailable) {
                                     val pipLeftRequester = moreFocusRequester
@@ -2185,19 +2220,20 @@ fun PlayerScreen(
                                         .focusRequester(playerSwitchFocusRequester)
                                         .focusProperties {
                                             left = if (pipAvailable) pipFocusRequester else moreFocusRequester
-                                            right = fullscreenFocusRequester
+                                            right = if (isFireTv) FocusRequester.Default else fullscreenFocusRequester
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         }
                                         .playerDpadFocusRoutes(
                                             left = if (pipAvailable) pipFocusRequester else moreFocusRequester,
-                                            right = fullscreenFocusRequester,
+                                            right = if (isFireTv) null else fullscreenFocusRequester,
                                             up = if (seekable) progressFocusRequester else backFocusRequester
                                         ),
                                     size = utilityButtonSize,
                                     selected = false,
                                     onFocused = { controlsFocused = it }
                                 )
-                                PlayerChromeIconButton(
+                                if (!isFireTv) {
+PlayerChromeIconButton(
                                     icon = if (focusMode) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                                     contentDescription = if (focusMode) "Exit fullscreen" else "Fullscreen",
                                     onClick = {
@@ -2230,6 +2266,8 @@ fun PlayerScreen(
                                     selected = false,
                                     onFocused = { controlsFocused = it }
                                 )
+                                }
+                                }
                             }
                         }
                     }
