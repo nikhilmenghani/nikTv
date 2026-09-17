@@ -82,6 +82,20 @@ jobs:
           cp app/build/outputs/apk/debug/app-universal-debug.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}.apk"
           ./gradlew clean assembleDebug -PfireTvApk=true
           cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/niktv-apks/NikTV-${TAG}-firetv.apk"
+      - name: Verify published APK identities
+        shell: bash
+        run: |
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)
+          [[ -n "$AAPT" ]] || { echo "aapt not found"; exit 1; }
+          for APK in "$RUNNER_TEMP"/niktv-apks/*.apk; do
+            BADGING=$("$AAPT" dump badging "$APK")
+            PACKAGE=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$BADGING")
+            APK_VERSION=$(sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" <<< "$BADGING")
+            [[ "$PACKAGE" == "com.nikhil.niktv.debug" && "$APK_VERSION" == "${VERSION}-dev" ]] || {
+              echo "::error::Incorrect distribution in $APK: $PACKAGE $APK_VERSION"
+              exit 1
+            }
+          done
       - name: Publish prerelease
         uses: softprops/action-gh-release@v2
         with:

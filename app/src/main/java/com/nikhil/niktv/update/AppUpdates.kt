@@ -138,6 +138,7 @@ enum class InstallHandoff {
 }
 
 object AppUpdates {
+    private val distribution = UpdateChannel.forPackage(BuildConfig.APPLICATION_ID)
     private const val PERIODIC = "niktv-periodic-update"
     private const val STARTUP = "niktv-startup-update"
     private const val PREFS = "app_update_download"
@@ -167,7 +168,7 @@ object AppUpdates {
     val downloadState: StateFlow<UpdateDownloadState> = mutableDownloadState.asStateFlow()
     private val mutablePendingUpdate = MutableStateFlow<UpdateInfo?>(null)
     val pendingUpdate: StateFlow<UpdateInfo?> = mutablePendingUpdate.asStateFlow()
-    private val mutableUpdateEnforcementEnabled = MutableStateFlow(!BuildConfig.DEBUG)
+    private val mutableUpdateEnforcementEnabled = MutableStateFlow(!distribution.development)
     val updateEnforcementEnabled: StateFlow<Boolean> = mutableUpdateEnforcementEnabled.asStateFlow()
     private val mutableStartupUpdateCheckEnabled = MutableStateFlow(true)
     val startupUpdateCheckEnabled: StateFlow<Boolean> = mutableStartupUpdateCheckEnabled.asStateFlow()
@@ -187,9 +188,10 @@ object AppUpdates {
     @Synchronized
     fun initialize(context: Context) {
         if (initialized) return
+        check(context.packageName == distribution.applicationId) { "Update package identity mismatch" }
         appContext = context.applicationContext
         initialized = true
-        mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !BuildConfig.DEBUG)
+        mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !distribution.development)
         mutableStartupUpdateCheckEnabled.value =
             preferences().getBoolean(PREF_STARTUP_CHECK, true)
         mutableUpdatePackage.value = runCatching {
@@ -198,6 +200,8 @@ object AppUpdates {
             )
         }.getOrDefault(UpdatePackage.AUTO)
         createChannel(appContext)
+        notificationManager().cancel(AVAILABLE_NOTIFICATION_ID)
+        notificationManager().cancel(READY_NOTIFICATION_ID)
         restorePendingUpdate()
 
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
@@ -237,8 +241,8 @@ object AppUpdates {
     }
 
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
-        val versionFileName = if (BuildConfig.DEBUG) "dev.txt" else "release.txt"
-        val versionFileUrl = if (BuildConfig.DEBUG) DEV_VERSION_URL else RELEASE_VERSION_URL
+        val versionFileName = if (distribution.development) "dev.txt" else "release.txt"
+        val versionFileUrl = if (distribution.development) DEV_VERSION_URL else RELEASE_VERSION_URL
 
         val version = fetchText(versionFileUrl).trim()
 
@@ -274,8 +278,8 @@ object AppUpdates {
         val prerelease =
             release["prerelease"]?.jsonPrimitive?.booleanOrNull == true
 
-        if (prerelease != BuildConfig.DEBUG) {
-            val expectedChannel = if (BuildConfig.DEBUG) "development" else "release"
+        if (prerelease != distribution.development) {
+            val expectedChannel = if (distribution.development) "development" else "release"
             error(
                 "GitHub release '$expectedTag' does not belong to the " +
                     "$expectedChannel update channel"
@@ -317,7 +321,7 @@ object AppUpdates {
         require(update.version.isNotBlank()) { "Update version is missing" }
         require(update.downloadUrl.startsWith("https://")) { "Update download URL is invalid" }
         require(isUpdateForCurrentChannel(update)) {
-            val channel = if (BuildConfig.DEBUG) "debug" else "release"
+            val channel = if (distribution.development) "debug" else "release"
             "The requested APK does not belong to the $channel update channel"
         }
         if (!canWritePublicDownloads(context)) {
@@ -346,7 +350,7 @@ object AppUpdates {
 
         val fileName = apkFileName(update.version, update.updatePackage)
         val request = DownloadManager.Request(Uri.parse(update.downloadUrl))
-            .setTitle("NikTV ${update.version}")
+            .setTitle("${distribution.appName} ${update.version}")
             .setDescription("Downloading NikTV update")
             .setMimeType(APK_MIME)
             .setAllowedOverMetered(true)
@@ -586,7 +590,7 @@ object AppUpdates {
         )
         return directory.listFiles().orEmpty().filter { file ->
             file.isFile &&
-                file.name.startsWith("NikTV-") &&
+                file.name.startsWith(if (distribution.development) "NikTV-dev-v" else "NikTV-v") &&
                 file.extension.equals("apk", ignoreCase = true) &&
                 file.name != protectedName
         }
@@ -606,6 +610,8 @@ object AppUpdates {
     )
 
     fun notifyAvailable(context: Context, update: UpdateInfo) {
+        ensureInitialized(context)
+        if (!isUpdateForCurrentChannel(update) || !isNewer(update.version, BuildConfig.VERSION_NAME)) return
         if (!notificationsAllowed(context)) return
         val intent = Intent(context, UpdateActionReceiver::class.java)
             .setAction(UpdateActionReceiver.DOWNLOAD_AND_INSTALL)
@@ -622,7 +628,7 @@ object AppUpdates {
             AVAILABLE_NOTIFICATION_ID,
             NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("NikTV ${update.version} is available")
+                .setContentTitle("${distribution.appName} ${update.version} is available")
                 .setContentText("Download the update and open Android's installer.")
                 .setAutoCancel(true)
                 .addAction(android.R.drawable.stat_sys_download, "Download & Install", action)
@@ -645,7 +651,7 @@ object AppUpdates {
             READY_NOTIFICATION_ID,
             NotificationCompat.Builder(appContext, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("NikTV $version is ready")
+                .setContentTitle("${distribution.appName} $version is ready")
                 .setContentText("Tap to finish installing the update.")
                 .setContentIntent(action)
                 .setAutoCancel(true)
@@ -834,6 +840,7 @@ object AppUpdates {
     }
 
     private fun persistPendingUpdate(update: UpdateInfo) {
+        require(isUpdateForCurrentChannel(update)) { "Update belongs to a different distribution" }
         preferences().edit()
             .putString(PREF_PENDING_VERSION, update.version)
             .putString(PREF_PENDING_URL, update.downloadUrl)
@@ -874,36 +881,13 @@ object AppUpdates {
         }
     }
 
-    private fun expectedReleaseTag(version: String): String =
-        if (BuildConfig.DEBUG) {
-            "dev-v$version"
-        } else {
-            "v$version"
-        }
+    private fun expectedReleaseTag(version: String): String = distribution.releaseTag(version)
 
     private fun expectedApkAssetName(version: String, updatePackage: UpdatePackage): String =
         "NikTV-${expectedReleaseTag(version)}-${updatePackage.assetSuffix}.apk"
 
-    private fun isUpdateForCurrentChannel(update: UpdateInfo): Boolean {
-        if (!isValidUpdateVersion(update.version)) {
-            return false
-        }
-
-        return runCatching {
-            val uri = Uri.parse(update.downloadUrl)
-            val expectedTag = expectedReleaseTag(update.version)
-            val allowedPaths = UpdatePackage.entries
-                .filterNot { it == UpdatePackage.AUTO }
-                .map { updatePackage ->
-                    "/nikhilmenghani/nikTv/releases/download/$expectedTag/" +
-                        expectedApkAssetName(update.version, updatePackage)
-                }
-
-            uri.scheme.equals("https", ignoreCase = true) &&
-                uri.host.equals("github.com", ignoreCase = true) &&
-                uri.path in allowedPaths
-        }.getOrDefault(false)
-    }
+    private fun isUpdateForCurrentChannel(update: UpdateInfo): Boolean =
+        distribution.accepts(update.version, update.downloadUrl)
 
     @Suppress("DEPRECATION")
     private fun validateDownloadedApk(
@@ -1076,7 +1060,7 @@ object AppUpdates {
             version.replace(Regex("[^A-Za-z0-9._-]"), "_")
                 .ifBlank { "update" }
 
-        return if (BuildConfig.DEBUG) {
+        return if (distribution.development) {
             "NikTV-dev-v$safeVersion-${updatePackage.assetSuffix}.apk"
         } else {
             "NikTV-v$safeVersion-${updatePackage.assetSuffix}.apk"
