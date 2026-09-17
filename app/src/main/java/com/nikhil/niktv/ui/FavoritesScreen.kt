@@ -186,7 +186,19 @@ internal fun ModernFavoriteCard(
         }
     }
 
-    ModernPosterCard(
+    if (favorite.kind == FavoriteKind.MOVIE || favorite.kind == FavoriteKind.SERIES) {
+        ModernCompactMediaCard(
+            item = favorite.media,
+            subtitle = listOfNotNull(
+                favorite.kind.mediaTypeLabel(),
+                favorite.categoryTitle?.takeIf { it.isNotBlank() }
+            ).joinToString(" · "),
+            onClick = open,
+            isFavorite = true,
+            onFavorite = { removalConfirmationOpen = true },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
+        )
+    } else ModernPosterCard(
         item = favorite.media,
         aspectRatio = aspectRatio,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
