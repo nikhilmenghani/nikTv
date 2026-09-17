@@ -42,7 +42,12 @@ internal object CatalogDiskCache {
             val destination = file(context, key)
             val output = destination.startWrite()
             try {
-                json.encodeToStream(value, output)
+                // The streaming JSON encoder emits many tiny writes. Batch them
+                // instead of issuing a filesystem write for each field/character.
+                // Keep the raw stream open for AtomicFile's sync/commit operation.
+                val buffered = java.io.BufferedOutputStream(output, 64 * 1024)
+                json.encodeToStream(value, buffered)
+                buffered.flush()
                 destination.finishWrite(output)
             } catch (error: Throwable) {
                 destination.failWrite(output)

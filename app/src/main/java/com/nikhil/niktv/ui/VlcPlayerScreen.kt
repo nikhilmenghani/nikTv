@@ -498,7 +498,9 @@ internal fun VlcPlayerScreen(
             var preparedExternalSubtitle = false
             withContext(Dispatchers.IO) {
                 val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
-                    setHWDecoderEnabled(false, false)
+                    // Prefer device-supported hardware decoders. With force=false,
+                    // VLC retains its software decoder fallback and device exclusions.
+                    setHWDecoderEnabled(true, false)
                     addOption(":network-caching=1500")
                     externalSubtitleFile?.takeIf(File::exists)?.let { file ->
                         addSlave(
@@ -548,7 +550,8 @@ internal fun VlcPlayerScreen(
                 runCatching { libVlc.release() }
                 position to length
             }
-            if (media.progressKey.isNotBlank()) {
+            if (media.progressKey.isNotBlank() &&
+                media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
                 onProgress(media.progressKey, finalTiming.first, finalTiming.second)
             }
             } finally {
@@ -558,6 +561,7 @@ internal fun VlcPlayerScreen(
     }
 
     LaunchedEffect(player, media.progressKey) {
+        var lastProgressSave = android.os.SystemClock.elapsedRealtime()
         while (true) {
             val knownDuration = player.length.coerceAtLeast(0L)
             duration = knownDuration
@@ -594,9 +598,12 @@ internal fun VlcPlayerScreen(
 
             if (
                 media.progressKey.isNotBlank() &&
-                pendingInitialResumePosition == 0L
+                media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
+                pendingInitialResumePosition == 0L &&
+                android.os.SystemClock.elapsedRealtime() - lastProgressSave >= 5_000L
             ) {
                 onProgress(media.progressKey, position, duration)
+                lastProgressSave = android.os.SystemClock.elapsedRealtime()
             }
 
             delay(500L)
@@ -631,7 +638,7 @@ internal fun VlcPlayerScreen(
         }
     }
 
-    Box(
+    PlayerSurfaceHost(
         modifier.fillMaxSize()
             .playerQueueSwipeObserver(
                 enabled = focusMode && hasPlaybackQueue && !pictureEditorVisible,
@@ -658,6 +665,7 @@ internal fun VlcPlayerScreen(
                 else Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
             )
     ) {
+        PlayerVideoLayer {
         // VLC_PLAYER_SURFACE_PER_MEDIA_V2
         //
         // AndroidView normally survives recomposition. Previous/Next replaces
@@ -936,7 +944,8 @@ internal fun VlcPlayerScreen(
             }
         )
 
-        if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+        }
+        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val topDownRequester = if (seekable) progressRequester else playRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseRequester
@@ -1560,6 +1569,7 @@ internal fun VlcPlayerScreen(
                 }
             }
         }
+        PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
             playingId = media.media.id,
@@ -1751,6 +1761,7 @@ internal fun VlcPlayerScreen(
                     }
                 }
             )
+        }
         }
     }
 }

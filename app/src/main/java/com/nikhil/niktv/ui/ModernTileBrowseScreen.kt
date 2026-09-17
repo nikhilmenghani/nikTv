@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.view.Gravity
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -54,6 +55,7 @@ import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.HeartBroken
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
@@ -506,6 +508,23 @@ private fun ModernDestinationHub(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
+    var recentChannelsOpen by rememberSaveable(profileKey, dashboardSurface) { mutableStateOf(false) }
+    val recentChannels = state.recentlyPlayed
+        .filter { it.kind == FavoriteKind.CHANNEL && it.profileKey == profileKey }
+        .sortedByDescending { it.playedAtMillis }
+        .distinctBy { it.media.id }
+    if (recentChannelsOpen && dashboardSurface == DashboardSurface.LIVE_TV) {
+        ModernRecentChannelsCollection(
+            recents = recentChannels,
+            favorites = state.favorites,
+            open = openRecent,
+            toggleFavorite = toggleFavorite,
+            close = { recentChannelsOpen = false },
+            isTv = isTv,
+            modifier = modifier
+        )
+        return
+    }
     var customizeHomeOpen by rememberSaveable(profileKey, dashboardSurface) { mutableStateOf(false) }
     if (customizeHomeOpen && dashboardSurface == DashboardSurface.HOME) {
         ModernCustomizeHomeDialog(
@@ -739,6 +758,20 @@ private fun ModernDestinationHub(
 
         }
 
+        if (dashboardSurface == DashboardSurface.LIVE_TV) {
+            item("recent-channels") {
+                ModernDestinationTile(
+                    title = "Recently Played",
+                    subtitle = if (recentChannels.isEmpty()) "Your watched channels will appear here"
+                        else "${recentChannels.size} channels · Most recent first",
+                    icon = Icons.Default.History,
+                    seed = "live-recent-channels",
+                    isTv = isTv,
+                    onClick = { recentChannelsOpen = true }
+                )
+            }
+        }
+
         if (tmdbSections.isNotEmpty()) {
             item("tmdb-heading", span = fullSpan) {
                 ModernHubSectionHeading(
@@ -900,6 +933,70 @@ private fun ModernDestinationHub(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ModernRecentChannelsCollection(
+    recents: List<RecentItem>,
+    favorites: List<FavoriteItem>,
+    open: (RecentItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
+    close: () -> Unit,
+    isTv: Boolean,
+    modifier: Modifier = Modifier
+) {
+    BackHandler(onBack = close)
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val themed = remember {
+        context.getSharedPreferences("modern_live_tv_tiles", Context.MODE_PRIVATE)
+            .getBoolean("themed", true)
+    }
+    val columns = when {
+        !isTv && configuration.smallestScreenWidthDp < 600 -> 1
+        isTv -> 2
+        themed && configuration.screenWidthDp >= 800 -> 3
+        else -> 2
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(columns),
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(if (isTv) 24.dp else 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item("header", span = { GridItemSpan(maxLineSpan) }) {
+            ModernCollectionHeader(
+                title = "Recently Played",
+                subtitle = "Live TV · Most recent first",
+                close = close
+            )
+        }
+        if (recents.isEmpty()) {
+            item("empty", span = { GridItemSpan(maxLineSpan) }) {
+                Text("Watch a live TV channel to find it here next time.", color = Color(0xFFAFAFAF))
+            }
+        }
+        gridItems(recents, key = { it.key }) { recent ->
+            ModernLiveChannelTile(
+                item = recent.media,
+                categoryTitle = "Recently Played",
+                themed = themed,
+                isFavorite = favorites.any { it.key == recent.key },
+                onFavorite = {
+                    toggleFavorite(FavoriteItem(
+                        kind = recent.kind,
+                        media = recent.media,
+                        profileKey = recent.profileKey
+                    ))
+                },
+                isPinned = false,
+                onTogglePin = null,
+                onClick = { open(recent) },
+                isTv = isTv
+            )
         }
     }
 }
@@ -2776,7 +2873,7 @@ private fun ModernLiveChannelTile(
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     isPinned: Boolean,
-    onTogglePin: () -> Unit,
+    onTogglePin: (() -> Unit)?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     isTv: Boolean
@@ -2971,7 +3068,7 @@ private fun ModernLiveChannelTile(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                if (!isTv) {
+                if (!isTv && onTogglePin != null) {
                     IconButton(
                         onClick = onTogglePin,
                         modifier = Modifier.size(40.dp).remoteFocusFrame(CircleShape)

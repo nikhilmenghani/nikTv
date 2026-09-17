@@ -925,11 +925,13 @@ fun PlayerScreen(
     }
     DisposableEffect(player, media.progressKey, localLease) {
         onDispose {
-            onProgress(
-                media.progressKey,
-                player.currentPosition,
-                player.duration
-            )
+            if (media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
+                onProgress(
+                    media.progressKey,
+                    player.currentPosition,
+                    player.duration
+                )
+            }
             if (player === localLease?.player) {
                 localLease.releaseOnce()
             }
@@ -996,6 +998,7 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(player, media.progressKey) {
+        var lastProgressSave = android.os.SystemClock.elapsedRealtime()
         while (true) {
             delay(1_000)
             position = player.currentPosition.coerceAtLeast(0L)
@@ -1007,7 +1010,11 @@ fun PlayerScreen(
                     if (format.bitrate > 0) add("%.1f Mbps".format(Locale.ROOT, format.bitrate / 1_000_000f))
                 }.joinToString(" · ")
             }.orEmpty()
-            if (position % 5_000L < 1_000L) onProgress(media.progressKey, player.currentPosition, player.duration)
+            if (media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
+                android.os.SystemClock.elapsedRealtime() - lastProgressSave >= 5_000L) {
+                onProgress(media.progressKey, player.currentPosition, player.duration)
+                lastProgressSave = android.os.SystemClock.elapsedRealtime()
+            }
         }
     }
     LaunchedEffect(player, media.url) {
@@ -1185,7 +1192,7 @@ fun PlayerScreen(
             else -> onBack()
         }
     }
-    Box(
+    PlayerSurfaceHost(
         modifier
             .fillMaxSize()
             .playerQueueSwipeObserver(
@@ -1205,6 +1212,7 @@ fun PlayerScreen(
             .then(if (focusMode || inPictureInPicture) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
             .clipToBounds()
     ) {
+        PlayerVideoLayer {
         // AndroidView instances survive recomposition by default. When autoplay advances to
         // another episode, recreate PlayerView so its touch/key listeners capture the new
         // episode's player and Compose control state instead of the disposed episode's state.
@@ -1628,7 +1636,8 @@ fun PlayerScreen(
                 queueVisible = true
             }
         )
-        if ((controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
+        }
+        PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
             val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
@@ -2254,6 +2263,7 @@ fun PlayerScreen(
                 }
             }
         }
+        PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
             playingId = media.media.id,
@@ -2507,6 +2517,7 @@ fun PlayerScreen(
                 }
             )
         }
+        }
     }
 }
 
@@ -2727,7 +2738,7 @@ internal fun PlayerChromeIconButton(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val minimumFocusSize = when {
-        context.isTvLikeDevice(configuration) -> 56.dp
+        rememberPlayerTvDevice() -> 56.dp
         configuration.smallestScreenWidthDp < 600 -> 44.dp
         else -> 48.dp
     }
@@ -3359,7 +3370,7 @@ internal fun Modifier.playerControlFocus(
     var focused by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
-    val isTv = context.isTvLikeDevice(configuration)
+    val isTv = rememberPlayerTvDevice()
     val minimumSize = when {
         isTv -> 56.dp
         configuration.smallestScreenWidthDp < 600 -> 44.dp
