@@ -141,7 +141,8 @@ class StalkerPortalClient(private val context: Context) {
         session: PortalSession,
         category: Category,
         page: Int,
-        pageSize: Int? = null
+        pageSize: Int? = null,
+        includeEpg: Boolean = true
     ): PortalCatalogPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             if (pageSize == null) return@withContext PortalCatalogPage(xtreamCatalog(session, category), 1, false)
@@ -196,7 +197,7 @@ class StalkerPortalClient(private val context: Context) {
                     } else null
                 )
             }
-        val items = if (category.type == CatalogType.LIVE_TV) enrichWithPortalEpg(session, rawItems) else rawItems
+        val items = if (includeEpg && category.type == CatalogType.LIVE_TV) enrichWithPortalEpg(session, rawItems) else rawItems
         val metadata = payload as? JsonObject
         val maxPage = metadata?.string("max_page")?.toIntOrNull()
             ?: metadata?.string("total_pages")?.toIntOrNull()

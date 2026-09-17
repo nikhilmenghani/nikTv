@@ -35,6 +35,17 @@ class CatalogRepositoryTest {
     }
     @After fun after() { db.close() }
 
+    @Test fun inspectorCountsDeduplicateBucketsAndExcludeLatestTombstones() = runBlocking {
+        repository.saveBrowse(cache("10", "20"))
+        repository.saveSearch(SearchCatalogCache(profile.cacheKey(), type, 100, listOf(movie("10"), movie("20"))))
+        assertEquals(2, db.catalog().storedCounts(profile.cacheKey()).first().single().count)
+        repository.reconcileCategory(profile.cacheKey(), type, "1", setOf("20"), 300)
+        assertEquals(1, db.catalog().storedCounts(profile.cacheKey()).first().single().count)
+        assertEquals(listOf("20"), db.catalog().storedPage(profile.cacheKey(), type.name, 50, 0).map { it.id })
+        assertTrue(db.catalog().storedPage("other", type.name, 50, 0).isEmpty())
+        assertTrue(db.catalog().storedPage(profile.cacheKey(), type.name, 50, 50).isEmpty())
+    }
+
     @Test fun legacyCatalogIsImportedOnceAndRemainsAfterLegacyFileRemoval() = runBlocking {
         CatalogDiskCache.write(RuntimeEnvironment.getApplication(), "browse:${profile.cacheKey()}:${type.name}", cache("10"))
         assertEquals("10", repository.browse(profile.cacheKey(), type)!!.itemsByCategory["1"]!!.single().id)
@@ -120,8 +131,8 @@ class CatalogRepositoryTest {
 
     @Test fun catalogRestoreLeavesPersonalDataLocalWhileExportsIncludeIt() = runBlocking {
         val store = ProfileStore(RuntimeEnvironment.getApplication())
-        val favorite = FavoriteItem(FavoriteKind.MOVIE, movie("personal-favorite"), profileKey = profile.cacheKey())
-        val recent = RecentItem(FavoriteKind.MOVIE, movie("personal-history"), profileKey = profile.cacheKey())
+        val favorite = FavoriteItem(FavoriteKind.MOVIE, movie("personal-favorite"), addedAtMillis = 100L, profileKey = profile.cacheKey())
+        val recent = RecentItem(FavoriteKind.MOVIE, movie("personal-history"), playedAtMillis = 100L, profileKey = profile.cacheKey())
         store.saveFavorites(listOf(favorite))
         store.saveRecentlyPlayed(listOf(recent))
         repository.saveBrowse(cache("10"))
@@ -165,5 +176,15 @@ class CatalogRepositoryTest {
         assertEquals(0, browse.pagesByCategory["1"])
         assertEquals(true, browse.hasMoreByCategory["1"])
         assertEquals("10", repository.search(profile.cacheKey(), type)!!.items.single().id)
+    }
+
+    @Test fun tmdbSeriesMatchingFindsPersistedTitleWithoutVisibleBrowseItems() = runBlocking {
+        val item = movie("463114").copy(title = "India's Got Latent (Hindi)")
+        repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.SERIES, 100,
+            listOf(Category("1", "Series", CatalogType.SERIES)), mapOf("1" to listOf(item)),
+            mapOf("1" to 1), mapOf("1" to false)))
+        val tmdb = TmdbSeries(123, "India's Got Latent", "India's Got Latent", null, null, null, "2024-01-01", null)
+        val persisted = repository.search(profile.cacheKey(), CatalogType.SERIES)!!.items
+        assertEquals("463114", rankTmdbSeriesMatches(tmdb, persisted).single().id)
     }
 }

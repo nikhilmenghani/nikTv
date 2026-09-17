@@ -3137,18 +3137,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         session: PortalSession,
         entry: TrendingSeries
     ): List<MediaItem> {
+        val persisted = store.searchCatalog(CatalogType.SERIES, session.profile.cacheKey()).first()?.items.orEmpty()
+        val localMatches = rankTmdbSeriesMatches(entry.tmdb,
+            (persisted + localSeriesCandidates(_state.value)).distinctBy { it.id })
+        if (localMatches.isNotEmpty()) return localMatches
         if (session.profile.portalType == PortalType.XTREAM) {
             val profileKey = session.profile.cacheKey()
-            val cached = store.searchCatalog(CatalogType.SERIES, profileKey).first()?.items
-            val catalog = if (!cached.isNullOrEmpty()) cached else {
-                portal.fullCatalog(session, CatalogType.SERIES, emptyList()).also { items ->
+            val catalog = portal.fullCatalog(session, CatalogType.SERIES, emptyList()).also { items ->
                     if (items.isNotEmpty()) {
                         store.saveSearchCatalog(
                             SearchCatalogCache(profileKey, CatalogType.SERIES, System.currentTimeMillis(), items)
                         )
                     }
                 }
-            }
             return rankTmdbSeriesMatches(entry.tmdb, catalog)
         }
 
@@ -3489,6 +3490,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     current.session?.profile?.cacheKey() == session.profile.cacheKey()) {
                     scheduleSearchPreview(current.searchQuery, current.searchType, current.searchCategoryId)
                 }
+            } catch (held: com.nikhil.niktv.data.CatalogOperationHeld) {
+                _state.update { it.copy(searchCatalogScanning = false,
+                    searchCatalogScanMessage = "${held.state}. Resume in Settings > Catalog & backup.") }
             } catch (error: Throwable) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 _state.update {

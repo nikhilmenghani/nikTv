@@ -10,6 +10,7 @@ class SettingsNavigationTest {
             listOf(
                 "General",
                 "Profiles",
+                "Catalog & backup",
                 "System"
             ),
             SettingsDestination.entries.map { it.title }
@@ -24,7 +25,7 @@ class SettingsNavigationTest {
             "Storage & refresh" to SettingsDestination.GENERAL,
             "Profiles" to SettingsDestination.PROFILES,
             "Connection" to SettingsDestination.PROFILES,
-            "Backup and restore" to SettingsDestination.SYSTEM,
+            "Backup and restore" to SettingsDestination.CATALOG,
             "App updates" to SettingsDestination.SYSTEM,
             "Advanced" to SettingsDestination.SYSTEM,
             "Data & reset" to SettingsDestination.SYSTEM

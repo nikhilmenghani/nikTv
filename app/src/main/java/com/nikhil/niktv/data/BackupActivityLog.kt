@@ -58,6 +58,9 @@ object BackupActivityLog {
         record(context, operation, "Started")
         try {
             return block().also { record(context, operation, "Completed", success(it)) }
+        } catch (held: CatalogOperationHeld) {
+            record(context, operation, held.state, "Completed files are retained. Resume explicitly from Catalog & backup.")
+            throw held
         } catch (cancelled: CancellationException) {
             record(context, operation, "Cancelled", "Stopped before completion; any completed catalog imports are kept.")
             throw cancelled

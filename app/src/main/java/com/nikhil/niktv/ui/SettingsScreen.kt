@@ -997,6 +997,7 @@ SettingsSwitch(
                                     .setFollowsSystem(context, it)
                             },
                             modifier = Modifier
+                                .focusRequester(followSystemBrightnessRequester)
                         )
                     },
                     colors = ListItemDefaults.colors(
@@ -1674,13 +1675,17 @@ SettingsSection("Backup and restore") {
             )
             HorizontalDivider()
             CatalogProfileSettings(state.profiles, state.savedProfile)
+            CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.BACKUP, "GitHub catalog upload", catalogBackupEnabled) {
+                com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true)
+            }
+            CatalogRestoreProgress()
             BackupSettingsActionRow(
                 icon = Icons.Default.CloudUpload,
                 title = "Back up IPTV catalog now",
                 subtitle = if (catalogBackupEnabled) "Upload changed catalog snapshots to GitHub." else "Enable catalog backup on this device first.",
                 enabled = catalogBackupEnabled,
                 onClick = {
-                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context)
+                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true)
                     catalogStatus = "Catalog backup queued."
                 }
             )
@@ -4210,7 +4215,7 @@ private fun SettingsSummaryRow(
                 Icons.Default.CloudDone,
                 "Backup",
                 backup,
-                SettingsDestination.SYSTEM
+                SettingsDestination.CATALOG
             ),
             SettingsSummary(
                 Icons.Default.SystemUpdate,

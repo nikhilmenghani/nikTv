@@ -34,8 +34,22 @@ data class CatalogEpisodeRow(val profile: String, val series: String, val season
 @Entity
 data class CatalogMigration(@PrimaryKey val key: String)
 
+data class CatalogStoredCount(val type: String, val count: Int)
+
 @Dao
 interface CatalogDao {
+    @Query("""SELECT a.type, COUNT(DISTINCT a.id) AS count FROM CatalogItemRow a
+        WHERE a.profile = :profile AND a.deleted = 0 AND NOT EXISTS
+        (SELECT 1 FROM CatalogItemRow b WHERE b.profile = a.profile AND b.type = a.type AND b.id = a.id
+          AND (b.observedAt > a.observedAt OR (b.observedAt = a.observedAt AND b.deleted = 1)))
+        GROUP BY a.type""")
+    fun storedCounts(profile: String): Flow<List<CatalogStoredCount>>
+    @Query("""SELECT a.* FROM CatalogItemRow a WHERE a.profile = :profile AND a.type = :type AND a.deleted = 0
+        AND NOT EXISTS (SELECT 1 FROM CatalogItemRow b WHERE b.profile = a.profile AND b.type = a.type AND b.id = a.id
+          AND (b.observedAt > a.observedAt OR (b.observedAt = a.observedAt AND b.deleted = 1)))
+        GROUP BY a.id ORDER BY a.id LIMIT :limit OFFSET :offset""")
+    suspend fun storedPage(profile: String, type: String, limit: Int, offset: Int): List<CatalogItemRow>
+
     @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type ORDER BY position, id")
     suspend fun items(profile: String, type: String): List<CatalogItemRow>
     @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type AND id = :id ORDER BY observedAt DESC, deleted DESC")

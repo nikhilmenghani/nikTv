@@ -41,15 +41,19 @@ object SearchMetadataSyncScheduler {
     // Catalog writes stay local. Periodic/manual backup owns uploads, never a save callback.
     fun request(context: Context) = Unit
 
-    fun requestNow(context: Context): UUID? {
+    fun requestNow(context: Context, resume: Boolean = false): UUID? {
         if (!CatalogPreferences.backupEnabled(context)) return null
+        if (resume) CatalogOperations.control(context, CatalogOperations.BACKUP, "Ready")
+        if (CatalogOperations.held(context, CatalogOperations.BACKUP)) return null
         val work = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>().setConstraints(constraints()).build()
-        WorkManager.getInstance(context).enqueueUniqueWork(MANUAL, ExistingWorkPolicy.REPLACE, work)
+        WorkManager.getInstance(context).enqueueUniqueWork(MANUAL, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
+        CatalogOperations.message(context, CatalogOperations.BACKUP, "Backup queued. Waiting for network/background execution.")
         BackupActivityLog.record(context, "IPTV catalog backup", "Queued", "Waiting for network and background execution.")
         return work.id
     }
 
     const val PROFILE_ID = "profile_id"
+    const val RESUME_ONLY = "resume_only"
     fun configureProfile(context: Context, profile: PortalProfile) {
         val id = CatalogScanPreferences.id(profile)
         val hours = CatalogScanPreferences.hours(context, id)
@@ -62,7 +66,7 @@ object SearchMetadataSyncScheduler {
                 .setInputData(workDataOf(PROFILE_ID to id)).setConstraints(constraints()).build())
     }
 
-    fun refresh(context: Context, profile: PortalProfile? = null) {
+    fun refresh(context: Context, profile: PortalProfile? = null, resume: Boolean = false) {
         if (profile == null) {
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 ProfileStore(context).profiles.first().forEach { refresh(context, it) }
@@ -70,19 +74,22 @@ object SearchMetadataSyncScheduler {
             return
         }
         val id = CatalogScanPreferences.id(profile)
-        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.KEEP,
+        if (resume) CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
+        if (CatalogOperations.held(context, CatalogOperations.scan(id))) return
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", if (resume) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
-                .setInputData(workDataOf(PROFILE_ID to id)).setConstraints(constraints())
-                .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS).build())
+                .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to resume)).setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
         CatalogScanPreferences.status(context, id, "Scan requested; queued or already running. Existing listings remain searchable.")
+        CatalogOperations.message(context, CatalogOperations.scan(id), "Scan queued. Waiting for network/background execution; saved listings remain available.")
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Requested")
     }
 
     fun continueScan(context: Context, id: String) {
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.APPEND_OR_REPLACE,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
-                .setInputData(workDataOf(PROFILE_ID to id)).setInitialDelay(10, TimeUnit.SECONDS)
-                .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS).build())
+                .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to true)).setInitialDelay(10, TimeUnit.SECONDS)
+                .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
     }
 
     private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED)
@@ -96,13 +103,23 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
         val profile = ProfileStore(context).profiles.first().firstOrNull { CatalogScanPreferences.id(it) == id }
             ?: return@withLock Result.success()
         val operation = "Catalog scan · ${profile.name}"
+        val control = CatalogOperations.scan(id)
         try {
+            CatalogOperations.check(context, control)
+            if (inputData.getBoolean(SearchMetadataSyncScheduler.RESUME_ONLY, false) &&
+                CatalogScanPreferences.cursor(context, id) == -1 && CatalogScanPreferences.completed(context, id) > 0) {
+                CatalogOperations.message(context, control, "Scan already complete. Use Scan and update to start a new refresh.")
+                return@withLock Result.success()
+            }
             if (CatalogPlaybackActivity.playing) {
+                CatalogOperations.message(context, control, "Waiting for playback to finish; saved progress will resume automatically.")
                 CatalogScanPreferences.status(context, id, "Paused during playback; saved scan progress will resume automatically.")
                 return@withLock Result.retry()
             }
             CatalogScanPreferences.status(context, id, "Connecting to ${profile.name}…")
+            CatalogOperations.message(context, control, "Connecting to ${profile.name}…")
             val session = StalkerPortalClient(context).authenticate(profile)
+            CatalogOperations.check(context, control)
             val types = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
             var cursor = CatalogScanPreferences.cursor(context, id)
             if (cursor < 0) {
@@ -113,9 +130,10 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             }
             val deadline = android.os.SystemClock.elapsedRealtime() + 120_000L
             for (index in cursor until types.size) {
+                CatalogOperations.check(context, control)
                 val type = types[index]
                 val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0)
-                val result = SearchCatalogScanner(context).scan(session, type, 750L,
+                val result = SearchCatalogScanner(context).scan(session, type, 2_000L,
                     refreshCompleted = false, timeBudgetMillis = remaining) { progress ->
                     CatalogScanPreferences.status(context, id,
                         "${type.title} · ${progress.categoryTitle} · category ${progress.categoryPosition}/${progress.categoryCount} · page ${progress.page} · ${progress.discoveredItems} items")
@@ -125,6 +143,8 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                         "Paused during playback; scan progress saved." else if (result.failures > 0)
                         "Some provider pages failed; saved progress will retry automatically." else
                         "Scan progress saved; continuing in the background…")
+                    CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
+                    CatalogOperations.check(context, control)
                     if (result.deferred && !CatalogPlaybackActivity.playing && result.failures == 0) {
                         SearchMetadataSyncScheduler.continueScan(context, id)
                         return@withLock Result.success()
@@ -133,16 +153,22 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                 }
                 CatalogScanPreferences.cursor(context, id, index + 1)
             }
+            CatalogOperations.check(context, control)
             val now = System.currentTimeMillis()
             CatalogScanPreferences.completed(context, id, now)
             CatalogScanPreferences.cursor(context, id, -1)
             CatalogScanPreferences.status(context, id, "Complete · ${java.util.Date(now)} · channels, movies and series indexed.")
+            CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
             BackupActivityLog.record(context, operation, "Completed", "Local catalog is ready for search.")
             if (CatalogPreferences.backupEnabled(context)) SearchMetadataSyncScheduler.requestNow(context)
+            Result.success()
+        } catch (held: CatalogOperationHeld) {
+            BackupActivityLog.record(context, operation, held.state, "Committed pages retained. Resume from Catalog & backup.")
             Result.success()
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
             CatalogScanPreferences.status(context, id, "Provider scan could not finish; progress saved and retry scheduled.")
+            if (!CatalogOperations.held(context, control)) CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
             BackupActivityLog.record(context, operation, "Retry scheduled", "Check provider connectivity if this continues.")
             Result.retry()
         }
@@ -155,15 +181,20 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
     override suspend fun doWork(): Result = backupMutex.withLock {
         if (!CatalogPreferences.backupEnabled(applicationContext)) return@withLock Result.success()
         try {
+            CatalogOperations.check(applicationContext, CatalogOperations.BACKUP)
             setProgress(workDataOf(PROGRESS_MESSAGE to "Backing up IPTV catalog", PROGRESS_FRACTION to 0.1f))
             CatalogBackupManager(applicationContext).uploadAll()
             Result.success()
-        } catch (cancelled: CancellationException) { throw cancelled }
+        } catch (held: CatalogOperationHeld) { Result.success() }
+        catch (cancelled: CancellationException) { throw cancelled }
         catch (invalid: IllegalArgumentException) {
             CatalogPreferences.status(applicationContext, invalid.message ?: "Configure catalog backup in Settings")
+            CatalogOperations.message(applicationContext, CatalogOperations.BACKUP, "Backup settings are incomplete. See activity for details.")
             Result.failure()
         } catch (error: Exception) {
             CatalogPreferences.status(applicationContext, error.message ?: "Catalog backup will retry")
+            if (!CatalogOperations.held(applicationContext, CatalogOperations.BACKUP))
+                CatalogOperations.message(applicationContext, CatalogOperations.BACKUP, "Backup failed; saved files retained. Retry scheduled. See activity for details.")
             Result.retry()
         }
     }

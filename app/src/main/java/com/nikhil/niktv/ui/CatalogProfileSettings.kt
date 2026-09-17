@@ -44,8 +44,12 @@ internal fun CatalogProfileSettings(profiles: List<PortalProfile>, active: Porta
                 modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(12.dp))) { Text(entry.name) }
         } } }, confirmButton = { TextButton(onClick = { chooseProfile = false }) { Text("Close") } })
     BackupSettingsActionRow(Icons.Default.Refresh, "Scan and update this profile",
-        "Update all channel, movie and series listings in Room. Runs in the background and resumes saved progress; pauses during playback.",
+        "Update channel, movie and series listings in Room in the background. If paused or stopped, use Resume below. Yields during playback.",
         onClick = { SearchMetadataSyncScheduler.refresh(context, profile) })
+    CatalogOperationPanel(CatalogOperations.scan(id), "Scan progress · ${profile.name}") {
+        SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
+    }
+    CatalogDatabasePanel(profile)
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Local database update schedule", style = MaterialTheme.typography.titleSmall)
         Text("For ${profile.name} on this device. Off allows restoring a checkpoint before scanning.", style = MaterialTheme.typography.bodySmall)
@@ -58,6 +62,7 @@ internal fun CatalogProfileSettings(profiles: List<PortalProfile>, active: Porta
                 }, label = { Text(label) }, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)))
             }
         }
+        Text("Provider requests run one at a time with a minimum two-second gap. Failures use exponential backoff; scans yield during playback. Episode details are cached when opened.", style = MaterialTheme.typography.bodySmall)
         Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("When catalog backup is enabled below, completed scans also queue a GitHub backup and dated checkpoint. Episodes are cached when opened.", style = MaterialTheme.typography.bodySmall)
     }
