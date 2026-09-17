@@ -60,6 +60,9 @@ import org.videolan.libvlc.util.VLCVideoLayout
 import org.videolan.libvlc.interfaces.IMedia
 import java.io.File
 
+// A replacement stream must wait for the previous native decoder to stop.
+private val vlcPlaybackLifecycle = kotlinx.coroutines.sync.Mutex()
+
 @Composable
 internal fun VlcPlayerScreen(
     media: PlayingMedia,
@@ -234,11 +237,11 @@ internal fun VlcPlayerScreen(
         }
     }
 
-    val libVlc = remember(media.progressKey) {
+    val libVlc = remember(media.progressKey, media.url) {
         LibVLC(context, arrayListOf("--network-caching=1500", "--clock-jitter=0"))
     }
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
-    val player = remember(media.progressKey) { MediaPlayer(libVlc) }
+    val player = remember(libVlc) { MediaPlayer(libVlc) }
     fun refreshSubtitleTracks() {
         subtitleTracks = player.spuTracks.orEmpty()
             .filter { it.id >= 0 }
@@ -426,6 +429,7 @@ internal fun VlcPlayerScreen(
     }
 
     LaunchedEffect(player, media.url) {
+        var ownsPlaybackSlot = false
         player.setEventListener { event ->
             when (event.type) {
                 MediaPlayer.Event.Opening -> buffering = true
@@ -486,6 +490,8 @@ internal fun VlcPlayerScreen(
             }
         }
         try {
+            vlcPlaybackLifecycle.lock()
+            ownsPlaybackSlot = true
             // Media construction can wait on LibVLC's native mutex. Keeping all
             // preparation on a worker prevents that mutex from freezing Compose
             // input dispatch and triggering an ANR.
@@ -514,7 +520,21 @@ internal fun VlcPlayerScreen(
             }
             if (preparedExternalSubtitle) externalSubtitleAttached = true
             awaitCancellation()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            buffering = false
+            error = "VLC could not open this stream. Try another channel or retry playback."
+            controlsVisible = true
+            awaitCancellation()
         } finally {
+            try {
+            // VideoHelper posts surface updates to the main looper. Detaching
+            // on a worker races those callbacks and can crash inside LibVLC.
+            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                player.setEventListener(null)
+                player.detachViews()
+            }
             // Teardown uses the same native lock and must not run in Compose's
             // synchronous disposal path either.
             val finalTiming = withContext(NonCancellable + Dispatchers.IO) {
@@ -524,13 +544,15 @@ internal fun VlcPlayerScreen(
                 ).coerceAtLeast(0L)
                 val length = player.length.coerceAtLeast(0L)
                 runCatching { player.stop() }
-                runCatching { player.detachViews() }
                 runCatching { player.release() }
                 runCatching { libVlc.release() }
                 position to length
             }
             if (media.progressKey.isNotBlank()) {
                 onProgress(media.progressKey, finalTiming.first, finalTiming.second)
+            }
+            } finally {
+                if (ownsPlaybackSlot) vlcPlaybackLifecycle.unlock()
             }
         }
     }

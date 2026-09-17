@@ -4546,7 +4546,31 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val latestPlaybackRequest = LatestPlaybackRequest()
+    private var pendingNavigationId: String? = null
+    private var channelScheduleJob: Job? = null
+
     private suspend fun playInternal(
+        item: MediaItem,
+        type: CatalogType,
+        series: MediaItem?,
+        episodes: List<MediaItem>,
+        forceFreshUrl: Boolean = false,
+        authorizationRetryCount: Int = 0,
+        resumePositionOverride: Long? = null,
+        directFullscreen: Boolean = false
+    ) = latestPlaybackRequest.run {
+        try {
+            // Coalesce a burst of remote presses before opening another stream.
+            if (type == CatalogType.LIVE_TV && _state.value.nowPlaying != null) delay(250L)
+            resolvePlayback(item, type, series, episodes, forceFreshUrl,
+                authorizationRetryCount, resumePositionOverride, directFullscreen)
+        } finally {
+            if (pendingNavigationId == item.id) pendingNavigationId = null
+        }
+    }
+
+    private suspend fun resolvePlayback(
         item: MediaItem,
         type: CatalogType,
         series: MediaItem?,
@@ -4722,6 +4746,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     false
             }
 
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        channelScheduleJob?.cancel()
         _state.update {
             it.copy(
                 nowPlaying = PlayingMedia(
@@ -4758,8 +4784,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (type == CatalogType.LIVE_TV && item.liveSchedule.isEmpty()) {
             // Playback is already available; guide enrichment is deliberately
             // asynchronous and updates only this still-playing channel.
-            viewModelScope.launch {
-                val enriched = portal.playingChannelSchedule(session, item)
+            channelScheduleJob = viewModelScope.launch {
+                val enriched = try {
+                    portal.playingChannelSchedule(session, item)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    return@launch
+                }
                 if (enriched.liveSchedule.isEmpty()) return@launch
                 _state.update { current ->
                     val playing = current.nowPlaying
@@ -4928,7 +4960,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         val index =
             queue.indexOfFirst {
-                it.id == playing.media.id
+                it.id == (pendingNavigationId ?: playing.media.id)
             }
 
         if (index < 0) return
@@ -4944,6 +4976,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 ?: return
 
+        pendingNavigationId = next.id
         task {
             playInternal(
                 item = next,
@@ -4961,7 +4994,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         val index =
             queue.indexOfFirst {
-                it.id == playing.media.id
+                it.id == (pendingNavigationId ?: playing.media.id)
             }
 
         if (index < 0) return
@@ -4977,6 +5010,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 ?: return
 
+        pendingNavigationId = previous.id
         task {
             playInternal(
                 item = previous,
@@ -5043,6 +5077,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlayer() {
+        latestPlaybackRequest.cancel()
+        pendingNavigationId = null
+        channelScheduleJob?.cancel()
         val snapshot = _state.value
         val session = snapshot.session
 
@@ -5771,6 +5808,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         block()
                     } catch (firstError: Throwable) {
+                        if (firstError is kotlinx.coroutines.CancellationException) throw firstError
                         val snapshot = _state.value
                         val profile = snapshot.savedProfile
                         if (!snapshot.automaticReauthentication ||
@@ -5794,6 +5832,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
                 _state.update { it.copy(error = "The portal did not respond within 90 seconds. Please try again.") }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 _state.update { it.copy(error = error.message ?: "Unexpected error") }
             } finally {
