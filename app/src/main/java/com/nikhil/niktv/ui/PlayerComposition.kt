@@ -1,5 +1,8 @@
 package com.nikhil.niktv.ui
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -76,7 +79,7 @@ internal fun PlayerExtraControls(visible: Boolean, content: @Composable RowScope
         exit = fadeOut(tween(100)) + shrinkHorizontally(tween(140), shrinkTowards = Alignment.End)
     ) {
         Row(
-            modifier = Modifier.focusProperties { canFocus = visible },
+            modifier = Modifier.horizontalScroll(rememberScrollState()).focusProperties { canFocus = visible },
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             content = content

@@ -1973,11 +1973,7 @@ PlayerChromeIconButton(
                             ) {
                                 val utilityButtonSize = if (compactMobileControls) 44.dp else 48.dp
                                 val isTv = LocalContext.current.isTvLikeDevice(LocalConfiguration.current)
-                                Row(
-                                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
+
                                 Row(horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 0.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                                     if (media.previousEpisode != null) {
                                         PlayerChromeIconButton(
@@ -2099,8 +2095,10 @@ PlayerChromeIconButton(
                                     }
                                 }
 
-                                if (compactMobileControls) Spacer(Modifier.width(8.dp))
-                                else Spacer(Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier.weight(1f),
+                                    contentAlignment = Alignment.CenterEnd
+                                ) {
                                 PlayerExtraControls(visible = extraControlsOpen) {
                                 quickActions()
                                 if (pipAvailable) {
