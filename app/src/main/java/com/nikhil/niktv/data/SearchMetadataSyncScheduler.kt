@@ -41,12 +41,14 @@ object SearchMetadataSyncScheduler {
         if (!CatalogPreferences.backupEnabled(context)) return null
         val work = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>().setConstraints(constraints()).build()
         WorkManager.getInstance(context).enqueueUniqueWork(MANUAL, ExistingWorkPolicy.REPLACE, work)
+        BackupActivityLog.record(context, "IPTV catalog backup", "Queued", "Waiting for network and background execution.")
         return work.id
     }
 
     fun refresh(context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now", ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>().setConstraints(constraints()).build())
+        BackupActivityLog.record(context, "IPTV catalog refresh", "Requested", "A refresh is queued or already active.")
     }
 
     private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED)
@@ -58,6 +60,7 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
         val store = ProfileStore(applicationContext)
         val portal = StalkerPortalClient(applicationContext)
         var failed = false
+        BackupActivityLog.record(applicationContext, "IPTV catalog refresh", "Started", "Reading provider catalogs into the local database.")
         try {
             for (profile in store.profiles.first()) {
                 try {
@@ -69,8 +72,13 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { failed = true }
             }
+            BackupActivityLog.record(applicationContext, "IPTV catalog refresh", if (failed) "Retry scheduled" else "Completed",
+                if (failed) "Some categories could not finish. Existing records are preserved; background work will retry." else "Provider catalog scan completed.")
             if (failed) Result.retry() else Result.success()
-        } catch (cancelled: CancellationException) { throw cancelled }
+        } catch (cancelled: CancellationException) {
+            BackupActivityLog.record(applicationContext, "IPTV catalog refresh", "Cancelled", "Saved page checkpoints are retained for the next scan.")
+            throw cancelled
+        }
     }
     companion object { private val scanMutex = Mutex() }
 }

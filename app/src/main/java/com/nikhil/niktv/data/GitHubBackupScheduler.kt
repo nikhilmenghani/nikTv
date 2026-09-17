@@ -91,6 +91,7 @@ class GitHubBackupWorker(
             // Periodic work still runs, but no GitHub write occurs unless one of
             // the values included in the NikTV backup has actually changed.
             if (manager.isBackupCurrent(fingerprint, config)) {
+                BackupActivityLog.record(applicationContext, "Automatic profile backup", "Skipped", "No changes since the last successful backup.")
                 return Result.success()
             }
 
@@ -101,6 +102,8 @@ class GitHubBackupWorker(
                 config
             )
             Result.success()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (_: IllegalArgumentException) {
             // Invalid password/configuration will not improve by immediate retry.
             Result.failure()

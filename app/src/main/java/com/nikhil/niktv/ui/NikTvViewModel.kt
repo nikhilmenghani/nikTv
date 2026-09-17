@@ -5262,9 +5262,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun exportBackup(uri: Uri) = viewModelScope.launch {
         runCatching {
+            com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile export · Device") {
+
             val content = store.exportBackup()
             requireNotNull(getApplication<Application>().contentResolver.openOutputStream(uri, "wt")).bufferedWriter().use {
                 it.write(content)
+            }
             }
         }.onSuccess {
             _state.update { it.copy(backupMessage = "NikTV backup exported") }
@@ -5274,8 +5277,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun importBackup(uri: Uri) = viewModelScope.launch {
         runCatching {
+            com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile restore · Device") {
+
             val content = requireNotNull(getApplication<Application>().contentResolver.openInputStream(uri)).bufferedReader().use { it.readText() }
             store.importBackup(content)
+            }
         }.onSuccess {
             val profiles = store.profiles.first()
             _state.update { NikTvState(
@@ -5291,7 +5297,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun importBackupContent(content: String) = viewModelScope.launch {
         runCatching {
+            com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile restore · GitHub") {
+
             store.importBackup(content)
+            }
         }.onSuccess {
             val profiles = store.profiles.first()
             _state.update {

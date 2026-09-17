@@ -1627,13 +1627,19 @@ SettingsSwitch(
 
         }
 SettingsSection("Backup and restore") {
-            Text(
-                "Favorites, recently watched and playback progress stay on this device and are included in profile/settings exports. IPTV catalogs are stored in Room and backed up separately; merging a catalog does not change your watch history or favorites.",
-                style = MaterialTheme.typography.bodySmall
+            ResponsiveSettingsOptionRow(
+                icon = Icons.Default.Info,
+                title = "Two separate backups",
+                subtitle = "Profile exports include favorites and watch history. IPTV catalog backups restore media listings without changing your personal data."
             )
+            HorizontalDivider()
+            var backupActivityOpen by remember { mutableStateOf(false) }
+            val backupEvents by remember(context) { com.nikhil.niktv.data.BackupActivityLog.observe(context) }
+                .collectAsState(initial = com.nikhil.niktv.data.BackupActivityLog.read(context))
+            if (backupActivityOpen) BackupActivityDialog { backupActivityOpen = false }
             var catalogBackupEnabled by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.backupEnabled(context)) }
             var preferLocalCatalog by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.preferLocal(context)) }
-            var catalogStatus by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.status(context)) }
+            var catalogStatus by remember { mutableStateOf("") }
             var catalogRestoreBusy by remember { mutableStateOf(false) }
             val catalogScope = rememberCoroutineScope()
             ResponsiveSettingsOptionRow(
@@ -1660,34 +1666,60 @@ SettingsSection("Backup and restore") {
                             catalogBackupEnabled = it
                             com.nikhil.niktv.data.CatalogPreferences.setBackupEnabled(context, it)
                             com.nikhil.niktv.data.SearchMetadataSyncScheduler.initialize(context)
+                            com.nikhil.niktv.data.BackupActivityLog.record(context, "Automatic IPTV catalog backup",
+                                if (it) "Enabled" else "Disabled", if (it) "Runs approximately every 12 hours on this device." else "Automatic catalog uploads are off on this device.")
                         }
                     })
                 }
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NikTvTextActionButton(onClick = {
+            HorizontalDivider()
+            BackupSettingsActionRow(
+                icon = Icons.Default.Refresh,
+                title = "Refresh IPTV catalog",
+                subtitle = "Update local media listings from your provider in the background.",
+                onClick = {
                     com.nikhil.niktv.data.SearchMetadataSyncScheduler.refresh(context)
                     catalogStatus = "Provider refresh queued. Existing catalog stays available."
-                }) { Text("Refresh catalog from provider") }
-                if (catalogBackupEnabled) NikTvTextActionButton(onClick = {
+                }
+            )
+            BackupSettingsActionRow(
+                icon = Icons.Default.CloudUpload,
+                title = "Back up IPTV catalog now",
+                subtitle = if (catalogBackupEnabled) "Upload changed catalog snapshots to GitHub." else "Enable catalog backup on this device first.",
+                enabled = catalogBackupEnabled,
+                onClick = {
                     com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context)
                     catalogStatus = "Catalog backup queued."
-                }) { Text("Back up catalog now") }
-                NikTvTextActionButton(onClick = {
-                    if (!catalogRestoreBusy) {
-                        catalogRestoreBusy = true
-                        catalogScope.launch {
-                            try {
-                                val count = com.nikhil.niktv.data.CatalogBackupManager(context).restoreAll()
-                                catalogStatus = "Merged $count snapshots. Reopen the profile to reload its catalog."
-                            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                            catch (error: Exception) { catalogStatus = error.message ?: "Catalog import failed" }
-                            finally { catalogRestoreBusy = false }
-                        }
+                }
+            )
+            BackupSettingsActionRow(
+                icon = Icons.Default.CloudDownload,
+                title = if (catalogRestoreBusy) "Restoring IPTV catalog…" else "Restore IPTV catalog",
+                subtitle = "Merge matching GitHub snapshots into this device's local catalog.",
+                enabled = !catalogRestoreBusy,
+                onClick = {
+                    catalogRestoreBusy = true
+                    catalogScope.launch {
+                        try {
+                            val count = com.nikhil.niktv.data.CatalogBackupManager(context).restoreAll()
+                            catalogStatus = "Merged $count snapshots. Reopen the profile to reload its catalog."
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                        catch (error: Exception) { catalogStatus = error.message ?: "Catalog import failed" }
+                        finally { catalogRestoreBusy = false }
                     }
-                }) { Text(if (catalogRestoreBusy) "Merging…" else "Merge catalogs from GitHub") }
-            }
-            Text(catalogStatus, style = MaterialTheme.typography.bodySmall)
+                }
+            )
+            if (catalogStatus.isNotBlank()) Text(catalogStatus, modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+            BackupSettingsActionRow(
+                icon = Icons.Default.History,
+                title = "Backup and restore activity",
+                subtitle = backupEvents.firstOrNull()?.let {
+                    "${it.operation} · ${it.status} · ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(it.timestamp))}"
+                } ?: "View timestamped activity on this device. No events yet.",
+                onClick = { backupActivityOpen = true }
+            )
             HorizontalDivider()
             val backupModes =
                 listOf(
@@ -4986,4 +5018,24 @@ internal fun MediaItem.actionEpisodeLabel(): String {
         else -> title.replace(Regex("[,.|]\\s*\\d{4}[-/]\\d{1,2}.*$"), "")
             .trim().ifBlank { title }.take(28).trimEnd('.', ',', '-', ' ')
     }
+}
+
+@Composable
+private fun BackupSettingsActionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    ResponsiveSettingsOptionRow(
+        icon = icon,
+        title = title,
+        subtitle = subtitle,
+        modifier = Modifier
+            .then(if (enabled) Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)) else Modifier)
+            .clickable(enabled = enabled, onClick = onClick),
+        titleColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.5f),
+        trailingContent = { Icon(Icons.Default.ChevronRight, null) }
+    )
 }

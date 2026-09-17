@@ -46,7 +46,11 @@ class CatalogBackupManager(context: Context) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val http = OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build()
 
-    suspend fun uploadAll() = withContext(Dispatchers.IO) {
+    suspend fun uploadAll(): Int = BackupActivityLog.track(app, "IPTV catalog backup", success = {
+        if (it == 0) "No changed catalog snapshots to upload." else "Uploaded $it encrypted catalog snapshots to GitHub."
+    }) { uploadAllInternal() }
+
+    private suspend fun uploadAllInternal(): Int = withContext(Dispatchers.IO) {
         check(CatalogPreferences.backupEnabled(app)) { "Catalog backup is disabled on this device" }
         val config = config()
         var uploaded = 0
@@ -72,9 +76,14 @@ class CatalogBackupManager(context: Context) {
             }
         }
         CatalogPreferences.status(app, "Backed up $uploaded catalog snapshots · ${java.util.Date()}")
+        uploaded
     }
 
-    suspend fun restoreAll(): Int = withContext(Dispatchers.IO) {
+    suspend fun restoreAll(): Int = BackupActivityLog.track(app, "IPTV catalog restore", success = {
+        if (it == 0) "No matching catalog snapshots found for saved profiles." else "Merged $it snapshots. Reopen the profile to reload its catalog."
+    }) { restoreAllInternal() }
+
+    private suspend fun restoreAllInternal(): Int = withContext(Dispatchers.IO) {
         val config = config()
         var imported = 0
         for (profile in ProfileStore(app).profiles.first()) {

@@ -189,7 +189,11 @@ class GitHubBackupManager(context: Context) {
     suspend fun uploadBackup(
         rawBackup: String,
         config: GitHubBackupConfig
-    ): GitHubBackupUpload = withContext(Dispatchers.IO) {
+    ): GitHubBackupUpload = BackupActivityLog.track(appContext, "Profile backup · GitHub", success = {
+        "Profile/settings backup uploaded successfully."
+    }) { uploadBackupInternal(rawBackup, config) }
+
+    private suspend fun uploadBackupInternal(rawBackup: String, config: GitHubBackupConfig): GitHubBackupUpload = withContext(Dispatchers.IO) {
         val cfg = validated(config)
         val branch = defaultBranch(cfg)
         val root =
@@ -317,7 +321,11 @@ class GitHubBackupManager(context: Context) {
     suspend fun downloadAndDecryptBackup(
         file: GitHubBackupFile,
         config: GitHubBackupConfig
-    ): GitHubBackupDecoded = withContext(Dispatchers.IO) {
+    ): GitHubBackupDecoded = BackupActivityLog.track(appContext, "Profile backup download", success = {
+        "Downloaded and validated. Awaiting your restore confirmation."
+    }) { downloadBackupInternal(file, config) }
+
+    private suspend fun downloadBackupInternal(file: GitHubBackupFile, config: GitHubBackupConfig): GitHubBackupDecoded = withContext(Dispatchers.IO) {
         require(file.path.startsWith("$BACKUP_DIRECTORY/")) {
             "Invalid backup path."
         }
