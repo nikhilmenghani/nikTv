@@ -122,7 +122,8 @@ data class NikTvState(
     val browseCache: BrowseCatalogCache? = null,
     val browseCachesByType: Map<CatalogType, BrowseCatalogCache> = emptyMap(),
     val searchOpen: Boolean = false,
-    val searchType: SearchContentType = SearchContentType.SERIES,
+    val searchType: SearchContentType = SearchContentType.ALL,
+    val searchIndexCoverage: Map<CatalogType, SearchIndexCoverage> = emptyMap(),
     val searchScopeLocked: Boolean = false,
     val searchQuery: String = "",
     val searchLocalLoading: Boolean = false,
@@ -3387,17 +3388,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (searchCatalogScanJob?.isActive == true) return
         val snapshot = _state.value
         val session = snapshot.session ?: return
-        val type = catalogTypeForSearch(snapshot.searchType)
+        val types = if (snapshot.searchType == SearchContentType.ALL) {
+            globalSearchTypes.map(::catalogTypeForSearch)
+        } else listOf(catalogTypeForSearch(snapshot.searchType))
 
         searchCatalogScanJob = viewModelScope.launch {
             _state.update {
                 it.copy(
                     searchCatalogScanning = true,
                     searchCatalogScanProgress = 0f,
-                    searchCatalogScanMessage = "Preparing ${type.title.lowercase()} scan…"
+                    searchCatalogScanMessage = "Preparing background scan…"
                 )
             }
             try {
+                var totalItems = 0
+                var totalFailures = 0
+                for ((typeIndex, type) in types.withIndex()) {
                 val result = SearchCatalogScanner(getApplication()).scan(
                     session = session,
                     type = type,
@@ -3405,9 +3411,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 ) { progress ->
                     _state.update {
                         it.copy(
-                            searchCatalogScanProgress = progress.fraction * 0.82f,
+                            searchCatalogScanProgress = (typeIndex + progress.fraction) / types.size * 0.82f,
                             searchCatalogScanMessage =
-                                "Category ${progress.categoryPosition}/${progress.categoryCount} · " +
+                                "${type.title} · Category ${progress.categoryPosition}/${progress.categoryCount} · " +
                                     "${progress.categoryTitle} · page ${progress.page} · " +
                                     "${progress.discoveredItems} items"
                         )
@@ -3415,11 +3421,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _state.update {
                     it.copy(
-                        browseCachesByType = it.browseCachesByType + (type to result.cache),
-                        searchCatalogScanProgress = 0.84f,
+                        browseCachesByType = if (it.session?.profile?.cacheKey() == session.profile.cacheKey())
+                            it.browseCachesByType + (type to result.cache) else it.browseCachesByType,
+                        searchCatalogScanProgress = (typeIndex + 1f) / types.size * 0.82f,
                         searchCatalogScanMessage =
                             "Provider scan complete · ${result.itemCount} items · preparing shared index"
                     )
+                }
+                totalItems += result.itemCount
+                totalFailures += result.failures
                 }
                 val syncId = SearchMetadataSyncScheduler.requestNow(getApplication())
                 if (syncId != null) {
@@ -3460,14 +3470,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         searchCatalogScanning = false,
                         searchCatalogScanProgress = 1f,
-                        searchCatalogScanMessage = if (result.failures == 0) {
-                            "Complete · ${result.itemCount} ${type.title.lowercase()} items scanned and synced"
+                        searchCatalogScanMessage = if (totalFailures == 0) {
+                            "Complete · $totalItems items scanned${if (syncId != null) " and synced" else " locally · GitHub sync not configured"}"
                         } else {
-                            "Synced ${result.itemCount} items · ${result.failures} categories will retry"
+                            "Scanned $totalItems items · $totalFailures categories need retry"
                         }
                     )
                 }
+                val current = _state.value
+                if (current.searchOpen && current.searchQuery.isNotBlank() && !current.searchServerLoading &&
+                    current.session?.profile?.cacheKey() == session.profile.cacheKey()) {
+                    scheduleSearchPreview(current.searchQuery, current.searchType, current.searchCategoryId)
+                }
             } catch (error: Throwable) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 _state.update {
                     it.copy(
                         searchCatalogScanning = false,
@@ -3479,6 +3495,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun catalogTypeForSearch(type: SearchContentType): CatalogType = when (type) {
+        SearchContentType.ALL -> error("All search must be split into media types")
         SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
         SearchContentType.MOVIES -> CatalogType.MOVIES
         SearchContentType.SERIES,
@@ -3494,6 +3511,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSearch() {
         searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
         _state.update { it.copy(offlineDownloadsOpen = false) }
 
         val snapshot = _state.value
@@ -3503,7 +3521,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 searchTypeForCatalog(snapshot.selectedType)
             }
-        val effectiveType = tabType ?: snapshot.searchType
+        val effectiveType = tabType ?: SearchContentType.ALL
 
         /*
          * SEARCH_CONTEXT_CATEGORY_V2
@@ -3537,6 +3555,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 settingsOpen = false,
                 favoritesOpen = false,
                 searchType = effectiveType,
+                searchIndexCoverage = emptyMap(),
+                searchServerLoading = false,
                 searchScopeLocked = tabType != null,
                 searchResults = emptyList(),
                 searchLocalLoading = current.searchQuery.isNotBlank(),
@@ -3586,6 +3606,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 searchType = type,
+                searchServerLoading = false,
                 searchResults = emptyList(),
                 searchLocalLoading = snapshot.searchQuery.isNotBlank(),
                 searchUsedServer = false,
@@ -3619,6 +3640,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 searchCategoryId = categoryId,
+                searchServerLoading = false,
                 searchResults = emptyList(),
                 searchLocalLoading = snapshot.searchQuery.isNotBlank(),
                 searchUsedServer = false,
@@ -3639,6 +3661,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadSearchCategories(type: SearchContentType) = viewModelScope.launch {
+        if (type == SearchContentType.ALL) return@launch
         val catalogType = catalogTypeForSearch(type)
         val session = _state.value.session ?: return@launch
         val profileKey = session.profile.cacheKey()
@@ -3718,6 +3741,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 searchQuery = query,
+                searchServerLoading = false,
                 searchResults = emptyList(),
                 searchLocalLoading = false,
                 searchUsedServer = false,
@@ -3775,7 +3799,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     ) +
                         saved?.items.orEmpty()
                     )
-                    .distinctBy { it.id }
+                    .distinctBy { it.searchIdentity(type) }
 
             _state.update { current ->
                 val stillCurrent =
@@ -3839,7 +3863,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             val available =
                 (localOnly + saved?.items.orEmpty())
-                    .distinctBy { it.id }
+                    .rankSearchResults(query, snapshot.searchType)
 
             val current = _state.value
             val stillCurrent =
@@ -3871,6 +3895,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
              * Search provider action.
              */
             if (!forceServer) return@launch
+
+            if (snapshot.searchType == SearchContentType.ALL) {
+                fetchGlobalSearch(query, profileKey, localOnly)
+                return@launch
+            }
 
             fetchSearchPage(
                 query = query,
@@ -3917,6 +3946,59 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 page = current.searchPage + 1,
                 existing = current.searchResults
             )
+        }
+    }
+
+    /** Global discovery is bounded to one page per scope. Type filters own further paging. */
+    private suspend fun fetchGlobalSearch(query: String, profileKey: String, existing: List<MediaItem>) {
+        val session = _state.value.session ?: return
+        var combined = existing
+        var failures = 0
+        fun current() = _state.value.let {
+            it.searchOpen && it.session?.profile?.cacheKey() == profileKey &&
+                it.searchType == SearchContentType.ALL && it.searchQuery.trim() == query
+        }
+        _state.update { it.copy(searchServerLoading = true, searchLocalLoading = false) }
+        try {
+            for ((index, type) in globalSearchTypes.withIndex()) {
+                if (!current()) return
+                _state.update { it.copy(searchActivityTitle = "Searching IPTV provider",
+                    searchActivityDetail = "${type.title} · ${index + 1} of 3 · first page",
+                    searchActivityProgress = index / 3f) }
+                try {
+                    var page = portal.search(session, type, query, 1, "*")
+                    if (page.items.isEmpty()) {
+                        val catalogType = catalogTypeForSearch(type)
+                        val categories = store.browseCatalog(catalogType, profileKey).first()?.categories
+                            .orEmpty().ifEmpty { portal.categories(session, catalogType) }
+                            .filter { it.id != "*" }.distinctBy { it.id }
+                        val matches = mutableListOf<MediaItem>()
+                        for ((position, category) in categories.withIndex()) {
+                            if (!current()) return
+                            _state.update { it.copy(searchActivityDetail =
+                                "${type.title} · category ${position + 1}/${categories.size} · ${category.title}") }
+                            delay(METADATA_SCAN_REQUEST_DELAY_MS)
+                            val found = portal.search(session, type, query, 1, category.id)
+                            matches += found.items
+                            if (matches.any { it.title.normalizedSearchQuery() == query.normalizedSearchQuery() } ||
+                                matches.size >= SEARCH_ALL_CATEGORY_RESULT_LIMIT) break
+                        }
+                        // Discovery is deliberately partial; selecting a type can search/page further.
+                        page = page.copy(items = matches.distinctBy { it.id }, hasMore = true)
+                    }
+                    store.savePagedSearch(SearchResultCache(profileKey, type, query, "*", 1, page.hasMore, page.items))
+                    combined = (combined + page.items.map { it.copy(searchResultType = type) })
+                        .rankSearchResults(query, SearchContentType.ALL)
+                    if (current()) _state.update { it.copy(searchResults = combined, searchUsedServer = true) }
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    failures++
+                }
+            }
+        } finally {
+            if (current()) _state.update { it.copy(searchServerLoading = false, searchHasMore = false,
+                searchActivityTitle = null, searchActivityDetail = null, searchActivityProgress = null,
+                error = if (failures > 0) "$failures media types could not be searched. Available results are retained; retry or select a type." else it.error) }
         }
     }
 
@@ -4037,7 +4119,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         current.searchQuery.trim().equals(query, true)
 
                 if (!stillCurrent) {
-                    current.copy(searchServerLoading = false)
+                    current
                 } else {
                     current.copy(
                         searchResults = combined,
@@ -4052,6 +4134,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }.onFailure { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
             _state.update { current ->
                 val stillCurrent =
                     current.session?.profile?.cacheKey() == profileKey &&
@@ -4060,7 +4143,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         current.searchQuery.trim().equals(query, true)
 
                 if (!stillCurrent) {
-                    current.copy(searchServerLoading = false)
+                    current
                 } else {
                     current.copy(
                         searchServerLoading = false,
@@ -4079,6 +4162,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         query: String,
         categoryId: String
     ): List<MediaItem> = withContext(Dispatchers.Default) {
+        if (type == SearchContentType.ALL) {
+            val profileKey = _state.value.session?.profile?.cacheKey()
+            val saved = store.pagedSearches.first().filter {
+                it.profileKey == profileKey && it.categoryId == "*" && it.query.equals(query, true)
+            }
+            return@withContext globalSearchTypes.flatMap { child ->
+                (localSearch(child, query, "*") + saved.filter { it.type == child }.flatMap { it.items })
+                    .map { it.copy(searchResultType = child) }
+            }.rankSearchResults(query, type)
+        }
         val catalogType = catalogTypeForSearch(type)
         val snapshot = _state.value
         val profileKey = snapshot.session?.profile?.cacheKey()
@@ -4100,10 +4193,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 store.browseCatalog(catalogType, profileKey).first()
             )
 
+        val indexCache = store.searchCatalog(catalogType, profileKey).first()
+        _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profileKey) current
+            else current.copy(searchIndexCoverage = current.searchIndexCoverage + (catalogType to
+                SearchIndexCoverage(indexCache?.items?.size ?: 0,
+                    indexCache?.completedCategoryIds?.size ?: 0, indexCache?.cachedAtMillis ?: 0L)))
+        }
         val indexed =
-            store.searchCatalog(catalogType, profileKey)
-                .first()
-                ?.items
+            indexCache?.items
                 .orEmpty()
                 .filter {
                     categoryId == "*" ||
@@ -4157,9 +4255,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         source
             .distinctBy { it.id }
             .filter { it.title.matchesTitleKeywords(query) }
-            .sortedByDescending {
-                it.title.titleKeywordScore(query)
-            }
+            .rankSearchResults(query, type)
     }
 
     private suspend fun rememberSearch(
@@ -4192,6 +4288,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun useRecentSearch(search: RecentSearch) {
         searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
 
         val snapshot = _state.value
         val effectiveType =
@@ -4213,6 +4310,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 searchQuery = search.query,
+                searchServerLoading = false,
                 searchType = effectiveType,
                 searchOpen = true,
                 searchCategoryId = effectiveCategoryId,
@@ -4239,7 +4337,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSearchResult(item: MediaItem) {
-        when (_state.value.searchType) {
+        when (item.searchResultType ?: _state.value.searchType) {
+            SearchContentType.ALL -> return
             SearchContentType.LIVE_TV -> play(item, CatalogType.LIVE_TV)
             SearchContentType.SERIES -> task {
                 val session = requireNotNull(_state.value.session)

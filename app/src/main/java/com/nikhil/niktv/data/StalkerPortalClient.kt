@@ -283,6 +283,7 @@ class StalkerPortalClient(private val context: Context) {
                 item.string("type").equals("series", ignoreCase = true) || item.string("name").orEmpty().contains("series", ignoreCase = true)
             val episode = item.boolish("is_episode") || item.string("episode_id") != null
             val matchesType = when (type) {
+                SearchContentType.ALL -> error("Search each provider media type separately")
                 SearchContentType.LIVE_TV -> true
                 SearchContentType.SERIES -> series && !episode
                 SearchContentType.MOVIES -> !series && !episode

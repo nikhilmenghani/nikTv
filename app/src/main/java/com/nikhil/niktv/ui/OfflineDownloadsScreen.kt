@@ -671,6 +671,7 @@ internal fun cast4kStyleDeviceMacAddress(context: android.content.Context): Stri
     return cast4kLegacyDeviceIdentity(context).macAddress
 }
 internal fun SearchContentType.favoriteKind() = when (this) {
+    SearchContentType.ALL -> error("Global results require a concrete media type")
     SearchContentType.LIVE_TV -> FavoriteKind.CHANNEL
     SearchContentType.MOVIES -> FavoriteKind.MOVIE
     SearchContentType.SERIES -> FavoriteKind.SERIES

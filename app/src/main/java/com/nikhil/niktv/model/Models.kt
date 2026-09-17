@@ -29,6 +29,7 @@ enum class CatalogType(val title: String, val apiType: String) {
 
 @Serializable
 enum class SearchContentType(val title: String) {
+    ALL("All"),
     LIVE_TV("Live TV"), SERIES("Series"), MOVIES("Movies"),
     /** Retained only so older on-device caches remain readable. */
     EPISODES("Episodes")
@@ -122,7 +123,9 @@ data class MediaItem(
     /** Provider-supplied TMDB identity, when available (not a guessed match). */
     val externalTmdbId: Int? = null,
     /** Episode air date in ISO-8601 form when supplied by IPTV or TMDB. */
-    val episodeAirDate: String? = null
+    val episodeAirDate: String? = null,
+    /** Search-only routing identity; never persisted in favourites or provider caches. */
+    @kotlinx.serialization.Transient val searchResultType: SearchContentType? = null
 )
 
 @Serializable

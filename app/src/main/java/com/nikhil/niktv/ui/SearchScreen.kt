@@ -67,6 +67,7 @@ import com.nikhil.niktv.model.*
 import kotlinx.coroutines.launch
 
 private val searchVisibleTypes = listOf(
+    SearchContentType.ALL,
     SearchContentType.LIVE_TV,
     SearchContentType.SERIES,
     SearchContentType.MOVIES
@@ -80,6 +81,7 @@ private val SearchMuted = Color(0xFFA7ABB5)
 private val SearchAccent = Color(0xFF7C8CFF)
 
 private fun SearchContentType.searchAccent(): Color = when (this) {
+    SearchContentType.ALL -> SearchAccent
     SearchContentType.LIVE_TV -> Color(0xFFE65D68)
     SearchContentType.MOVIES -> Color(0xFF55B8FF)
     SearchContentType.SERIES -> Color(0xFF9A80FF)
@@ -104,6 +106,7 @@ private fun Context.isSearchTvLikeDevice(configuration: Configuration): Boolean 
         !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
 
 private fun SearchContentType.searchFavoriteKind() = when (this) {
+    SearchContentType.ALL -> error("A global result must carry its media type")
     SearchContentType.LIVE_TV -> FavoriteKind.CHANNEL
     SearchContentType.MOVIES -> FavoriteKind.MOVIE
     SearchContentType.SERIES -> FavoriteKind.SERIES
@@ -137,6 +140,7 @@ internal fun ModernSearchScreen(
     var restoreQueryFocus by rememberSaveable { mutableStateOf(false) }
     var queryFocused by remember { mutableStateOf(false) }
     var showLocalSearchProgress by remember { mutableStateOf(false) }
+    var syncActivityExpanded by rememberSaveable { mutableStateOf(false) }
 
     val searchRequester = remember { FocusRequester() }
     val clearSearchRequester = remember { FocusRequester() }
@@ -150,6 +154,7 @@ internal fun ModernSearchScreen(
     val context = LocalContext.current
     val isTv = context.isSearchTvLikeDevice(configuration)
     val remoteNavigationActive = context.usesRemoteNavigation(configuration)
+    var resultsFocused by remember(state.searchQuery, state.searchType, state.searchCategoryId) { mutableStateOf(false) }
 
     LaunchedEffect(state.searchLocalLoading, state.searchServerLoading) {
         if (state.searchLocalLoading && !state.searchServerLoading) {
@@ -266,13 +271,13 @@ internal fun ModernSearchScreen(
     }
 
     LaunchedEffect(
-        state.searchResults.firstOrNull()?.id,
+        state.searchResults.firstOrNull()?.searchIdentity(state.searchType),
         state.searchLocalLoading,
         state.searchServerLoading,
         state.searchUsedServer,
         searchEditing
     ) {
-        if (remoteNavigationActive && !searchEditing &&
+        if (!resultsFocused && remoteNavigationActive && !searchEditing &&
             !state.searchLocalLoading && !state.searchServerLoading &&
             state.searchResults.isNotEmpty()
         ) {
@@ -281,6 +286,7 @@ internal fun ModernSearchScreen(
             repeat(6) { attempt ->
                 withFrameNanos { }
                 if (runCatching { contentRequester.requestFocus() }.getOrDefault(false)) {
+                    resultsFocused = true
                     return@LaunchedEffect
                 }
                 kotlinx.coroutines.delay(40L * (attempt + 1))
@@ -643,6 +649,12 @@ internal fun ModernSearchScreen(
 
         Spacer(Modifier.height(8.dp))
 
+        Text(
+            "Local index · coverage may be partial · provider search is manual",
+            color = SearchMuted,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -651,16 +663,11 @@ internal fun ModernSearchScreen(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            state.searchCatalogScanMessage?.takeIf { !state.searchCatalogScanning }?.let { message ->
-                Text(
-                    message,
-                    modifier = Modifier.weight(1f).padding(end = 12.dp),
-                    color = SearchMuted,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+            TextButton(onClick = { syncActivityExpanded = !syncActivityExpanded },
+                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(50))) {
+                Text(if (state.searchCatalogScanning) "Sync activity · ${(state.searchCatalogScanProgress * 100).toInt()}%" else "Index & sync activity")
             }
+            Spacer(Modifier.weight(1f))
             NikTvSecondaryActionButton(
                 onClick = scanAndSync,
                 enabled = !state.searchCatalogScanning,
@@ -685,16 +692,32 @@ internal fun ModernSearchScreen(
             }
         }
 
-        if (state.searchCatalogScanning) {
+        if (syncActivityExpanded) {
             Spacer(Modifier.height(6.dp))
-            SyncProgressCard(
-                message = state.searchCatalogScanMessage ?: "Preparing scan…",
+            val coverage = state.searchIndexCoverage.filterKeys { type ->
+                state.searchType == SearchContentType.ALL || type.name == state.searchType.name
+            }
+            val coverageText = remember(coverage) {
+                coverage.entries.joinToString("\n") { (type, info) ->
+                    val updated = if (info.cachedAtMillis > 0) java.text.DateFormat.getDateTimeInstance(
+                        java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
+                    ).format(java.util.Date(info.cachedAtMillis)) else "not yet cached"
+                    "${type.title}: ${info.items} indexed · ${info.scannedCategories} scanned scopes · cache $updated"
+                }
+            }
+            Text(coverageText.ifBlank { "Run a search to check the local index. GitHub sync runs in the background when configured." },
+                color = SearchMuted, style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(vertical = 4.dp))
+            if (state.searchCatalogScanning) SyncProgressCard(
+                message = state.searchCatalogScanMessage ?: "No scan started in this session. Scan & sync builds the index without blocking search.",
                 progress = state.searchCatalogScanProgress,
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 1120.dp)
                     .align(Alignment.CenterHorizontally)
             )
+            else Text(state.searchCatalogScanMessage ?: "No scan started in this session.",
+                color = SearchMuted, style = MaterialTheme.typography.bodySmall)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -782,14 +805,14 @@ internal fun ModernSearchScreen(
                         state.searchUsedServer ->
                             "No provider matches"
                         else ->
-                            "No matches available now"
+                            "No matches in this device’s index"
                     },
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     when {
                         !state.searchUsedServer ->
-                            "Search your provider or choose another category."
+                            "Index coverage may be partial. Scan & sync, or search the provider."
                         else ->
                             "Try another title or category."
                     },
@@ -860,7 +883,7 @@ internal fun ModernSearchScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (!state.searchUsedServer) {
+                if (!state.searchUsedServer || state.searchType == SearchContentType.ALL) {
                     NikTvSecondaryActionButton(
                         onClick = { search(true) },
                         modifier = Modifier.remoteFocusFrame(),
@@ -871,7 +894,7 @@ internal fun ModernSearchScreen(
                             if (searchingSpecificCategory) {
                                 "Search provider in category"
                             } else {
-                                "Search provider"
+                                if (state.searchUsedServer) "Search provider again" else "Search provider"
                             }
                         )
                     }
@@ -1100,8 +1123,10 @@ private fun SearchScopeButton(
     modifier: Modifier = Modifier
 ) {
     val accent = type.searchAccent()
+    val compact = LocalConfiguration.current.screenWidthDp < 600
     val shape = RoundedCornerShape(14.dp)
     val icon = when (type) {
+        SearchContentType.ALL -> Icons.Default.Search
         SearchContentType.LIVE_TV -> Icons.Default.LiveTv
         SearchContentType.SERIES -> Icons.Default.VideoLibrary
         SearchContentType.MOVIES -> Icons.Default.Movie
@@ -1115,12 +1140,14 @@ private fun SearchScopeButton(
         border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) accent.copy(alpha = 0.88f) else SearchOutline)
     ) {
         Row(
-            Modifier.fillMaxSize().padding(horizontal = 10.dp),
+            Modifier.fillMaxSize().padding(horizontal = if (compact) 4.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Icon(icon, null, Modifier.size(19.dp), tint = if (selected) accent else SearchMuted)
-            Spacer(Modifier.width(7.dp))
+            if (!compact) {
+                Icon(icon, null, Modifier.size(19.dp), tint = if (selected) accent else SearchMuted)
+                Spacer(Modifier.width(7.dp))
+            }
             Text(
                 type.title,
                 color = if (selected) Color.White else SearchMuted,
@@ -1562,6 +1589,10 @@ private fun SearchResultsContent(
     autoFocusFirst: Boolean,
     modifier: Modifier = Modifier
 ) {
+    if (state.searchType == SearchContentType.ALL) {
+        GlobalSearchResults(state, openResult, toggleFavorite, firstItemRequester, modifier)
+        return
+    }
     val posterGrid = state.searchType in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) && (isTv || screenWidthDp >= 600)
     val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
     if (posterGrid || liveGrid) {
@@ -1657,6 +1688,54 @@ private fun SearchResultsContent(
 }
 
 @Composable
+private fun GlobalSearchResults(
+    state: NikTvState,
+    openResult: (MediaItem) -> Unit,
+    toggleFavorite: (FavoriteItem) -> Unit,
+    firstRequester: FocusRequester,
+    modifier: Modifier
+) {
+    val groups = remember(state.searchResults) { state.searchResults.groupBy { it.searchResultType } }
+    val configuration = LocalConfiguration.current
+    val isTv = LocalContext.current.isSearchTvLikeDevice(configuration)
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        groups.forEach { (type, results) ->
+            if (type != null && type != SearchContentType.ALL) {
+                item("heading-$type") {
+                    Text("${type.title} · ${results.size}", color = type.searchAccent(),
+                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                }
+                items(results, key = { it.searchIdentity(type) }) { item ->
+                    val category = state.browseCachesByType[when (type) {
+                        SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
+                        SearchContentType.MOVIES -> CatalogType.MOVIES
+                        else -> CatalogType.SERIES
+                    }]?.categories?.firstOrNull { it.id == item.portalCategoryId }?.title
+                    val label = listOfNotNull(type.title, category).joinToString(" · ")
+                    val toggle = { toggleFavorite(state.searchFavoriteItem(item, category)) }
+                    val itemModifier = if (item == state.searchResults.firstOrNull()) Modifier.focusRequester(firstRequester) else Modifier
+                    if (type == SearchContentType.LIVE_TV) {
+                        ModernSearchLiveResultRow(item, label, state.isSearchFavorite(item), toggle,
+                            { openResult(item) }, isTv, itemModifier)
+                    } else {
+                        ModernSearchMediaResultRow(item, type, label, state.isSearchFavorite(item), toggle,
+                            { openResult(item) }, isTv, itemModifier)
+                    }
+                }
+            }
+        }
+        if (state.searchUsedServer) item("global-provider-scope") {
+            Text("Showing provider discovery results. Select Live TV, Movies or Series to search further and load more.",
+                color = SearchMuted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
 private fun SearchFirstResultFocusEffect(
     requester: FocusRequester,
     enabled: Boolean,
@@ -1683,7 +1762,7 @@ private fun NikTvState.searchCategoryTitle(item: MediaItem): String? =
 private fun NikTvState.isSearchFavorite(item: MediaItem): Boolean =
     favorites.any { favorite ->
         favorite.media.id == item.id &&
-            favorite.kind == searchType.searchFavoriteKind()
+            favorite.kind == (item.searchResultType ?: searchType).searchFavoriteKind()
     }
 
 private fun NikTvState.searchFavoriteItem(
@@ -1691,7 +1770,7 @@ private fun NikTvState.searchFavoriteItem(
     categoryTitle: String?
 ): FavoriteItem =
     FavoriteItem(
-        kind = searchType.searchFavoriteKind(),
+        kind = (item.searchResultType ?: searchType).searchFavoriteKind(),
         media = item,
         categoryTitle = categoryTitle
     )
