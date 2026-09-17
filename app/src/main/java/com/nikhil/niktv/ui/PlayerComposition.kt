@@ -2,6 +2,21 @@ package com.nikhil.niktv.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -22,7 +37,7 @@ internal fun rememberPlayerTvDevice(): Boolean {
 
 // Deliberately non-inline: each layer gets its own generated Compose method.
 // Inlining the entire player into Box exceeded ART's method compilation limit
-// on Fire TV. These boundaries add no extra layout nodes or focus targets.
+// on Fire TV. Animation is confined to controls, never the video surface.
 @Composable
 internal fun PlayerSurfaceHost(modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
     // Resolve hardware capabilities once, rather than querying PackageManager
@@ -43,7 +58,48 @@ internal fun BoxScope.PlayerControlsLayer(
     visible: Boolean,
     content: @Composable BoxScope.() -> Unit
 ) {
-    if (visible) content()
+    AnimatedVisibility(
+        visible = visible,
+        modifier = Modifier.fillMaxSize(),
+        enter = fadeIn(tween(140)),
+        exit = fadeOut(tween(100))
+    ) {
+        Box(Modifier.fillMaxSize().focusProperties { canFocus = visible }, content = content)
+    }
+}
+
+@Composable
+internal fun PlayerExtraControls(visible: Boolean, content: @Composable RowScope.() -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(140)) + expandHorizontally(tween(160), expandFrom = Alignment.Start),
+        exit = fadeOut(tween(100)) + shrinkHorizontally(tween(140), shrinkTowards = Alignment.Start)
+    ) {
+        Row(
+            modifier = Modifier.focusProperties { canFocus = visible },
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content
+        )
+    }
+}
+
+internal fun Modifier.playerSecondaryFocus(
+    requester: FocusRequester,
+    order: List<FocusRequester>,
+    toggle: FocusRequester,
+    up: FocusRequester
+): Modifier {
+    val index = order.indexOf(requester)
+    val previous = order.getOrNull(index - 1) ?: toggle
+    val next = order.getOrNull(index + 1)
+    return focusRequester(requester)
+        .focusProperties {
+            left = previous
+            right = next ?: FocusRequester.Default
+            this.up = up
+        }
+        .playerDpadFocusRoutes(left = previous, right = next, up = up)
 }
 
 @Composable
