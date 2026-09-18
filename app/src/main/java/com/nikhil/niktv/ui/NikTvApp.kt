@@ -827,7 +827,10 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             if (state.profileLoadProgress == null && state.playbackUrls.isEmpty()) {
                 state.profilePreparationMessage?.let { message ->
                     Surface(
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp, start = 16.dp, end = 16.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                            .padding(top = 76.dp, start = 16.dp, end = 16.dp),
                         shape = RoundedCornerShape(12.dp),
                         color = Color(0xEE202020)
                     ) {
