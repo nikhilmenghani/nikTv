@@ -972,10 +972,10 @@ internal fun VlcPlayerScreen(
             }
 
             val secondaryActionRequesters = buildList {
-                if (media.catalogType == CatalogType.LIVE_TV) add(programmeGuideRequester)
-                else add(subtitleRequester)
-                if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) add(recordingPauseRequester)
-                add(downloadRequester)
+                if (media.catalogType != CatalogType.LIVE_TV) {
+                    add(subtitleRequester)
+                    add(downloadRequester)
+                }
                 add(resizeRequester)
                 add(pictureModeRequester)
                 add(playerSwitchRequester)
@@ -983,7 +983,11 @@ internal fun VlcPlayerScreen(
                 add(moreRequester)
                 if (pipAvailable) add(pipRequester)
             }
-            val firstQuickActionRequester = if (extraControlsOpen) secondaryActionRequesters.first() else extraControlsRequester
+            val firstQuickActionRequester = when {
+                media.catalogType == CatalogType.LIVE_TV -> programmeGuideRequester
+                extraControlsOpen -> secondaryActionRequesters.first()
+                else -> extraControlsRequester
+            }
             val lastPlaybackActionRequester = when {
                 media.nextEpisode != null -> nextRequester
                 seekable -> forwardRequester
@@ -1064,16 +1068,6 @@ internal fun VlcPlayerScreen(
                 }
 
                 val quickActions: @Composable RowScope.() -> Unit = {
-                        if (media.catalogType == CatalogType.LIVE_TV) {
-                            PlayerChromeIconButton(
-                                icon = Icons.Default.EventNote,
-                                badgeText = media.media.liveSchedule.size.takeIf { it > 0 }?.toString(),
-                                contentDescription = "Programme guide",
-                                onClick = { programmeGuideOpen = true },
-                                modifier = Modifier.playerSecondaryFocus(programmeGuideRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
-                                onFocused = { controlsFocused = it }
-                            )
-                        }
                         if (media.catalogType != CatalogType.LIVE_TV) {
 PlayerChromeIconButton(
                             icon = Icons.Default.Subtitles,
@@ -1097,33 +1091,6 @@ PlayerChromeIconButton(
                                 selected = offlineDownloadPresent,
                                 progress = offlineDownloadProgress.takeIf { displayedDownloadInProgress },
                                 indeterminateProgress = displayedDownloadInProgress && offlineDownloadProgress == null,
-                                onFocused = { controlsFocused = it }
-                            )
-                        } else {
-                            if (recordingThisChannel) {
-                                PlayerChromeIconButton(
-                                    icon = if (liveRecording.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                    contentDescription = if (liveRecording.paused) "Resume recording" else "Pause recording",
-                                    onClick = {
-                                        if (liveRecording.paused) LiveTvRecorder.resume(context)
-                                        else LiveTvRecorder.pause(context)
-                                    },
-                                    modifier = Modifier
-                                        .playerSecondaryFocus(recordingPauseRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
-                                    selected = false,
-                                    onFocused = { controlsFocused = it }
-                                )
-                            }
-                            PlayerChromeIconButton(
-                                icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
-                                contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
-                                onClick = {
-                                    if (liveRecording.active) LiveTvRecorder.stop(context)
-                                    else LiveTvRecorder.start(context, media.media.title, media.url)
-                                },
-                                modifier = Modifier
-                                    .playerSecondaryFocus(downloadRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
-                                selected = false,
                                 onFocused = { controlsFocused = it }
                             )
                         }
@@ -1192,6 +1159,57 @@ PlayerChromeIconButton(
                                 .playerSecondaryFocus(moreRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
+                }
+
+                val liveActions: @Composable RowScope.() -> Unit = {
+                    PlayerChromeIconButton(
+                        icon = Icons.Default.EventNote,
+                        badgeText = media.media.liveSchedule.size.takeIf { it > 0 }?.toString(),
+                        contentDescription = "Programme guide",
+                        onClick = { programmeGuideOpen = true },
+                        modifier = Modifier
+                            .focusRequester(programmeGuideRequester)
+                            .playerDpadFocusRoutes(
+                                left = lastPlaybackActionRequester,
+                                right = if (recordingThisChannel) recordingPauseRequester else downloadRequester,
+                                up = if (seekable) progressRequester else backRequester
+                            ),
+                        onFocused = { controlsFocused = it }
+                    )
+                    if (recordingThisChannel) {
+                        PlayerChromeIconButton(
+                            icon = if (liveRecording.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (liveRecording.paused) "Resume recording" else "Pause recording",
+                            onClick = {
+                                if (liveRecording.paused) LiveTvRecorder.resume(context)
+                                else LiveTvRecorder.pause(context)
+                            },
+                            modifier = Modifier
+                                .focusRequester(recordingPauseRequester)
+                                .playerDpadFocusRoutes(
+                                    left = programmeGuideRequester,
+                                    right = downloadRequester,
+                                    up = backRequester
+                                ),
+                            onFocused = { controlsFocused = it }
+                        )
+                    }
+                    PlayerChromeIconButton(
+                        icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
+                        contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
+                        onClick = {
+                            if (liveRecording.active) LiveTvRecorder.stop(context)
+                            else LiveTvRecorder.start(context, media.media.title, media.url)
+                        },
+                        modifier = Modifier
+                            .focusRequester(downloadRequester)
+                            .playerDpadFocusRoutes(
+                                left = if (recordingThisChannel) recordingPauseRequester else programmeGuideRequester,
+                                right = if (extraControlsOpen) secondaryActionRequesters.first() else extraControlsRequester,
+                                up = backRequester
+                            ),
+                        onFocused = { controlsFocused = it }
+                    )
                 }
 
                 Surface(
@@ -1398,6 +1416,14 @@ PlayerChromeIconButton(
                                         onFocused = { controlsFocused = it }
                                     )
                                 }
+                                }
+
+                                if (media.catalogType == CatalogType.LIVE_TV) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        content = liveActions
+                                    )
                                 }
 
                                 Box(

@@ -19,6 +19,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
@@ -91,8 +92,11 @@ internal fun PlayerExtraControls(visible: Boolean, content: @Composable RowScope
     ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(240)) + expandHorizontally(tween(320, easing = FastOutSlowInEasing), expandFrom = Alignment.End),
-        exit = fadeOut(tween(200)) + shrinkHorizontally(tween(280, easing = FastOutSlowInEasing), shrinkTowards = Alignment.End)
+        enter = fadeIn(tween(240)) +
+            expandHorizontally(tween(320, easing = FastOutSlowInEasing), expandFrom = Alignment.End),
+        exit = fadeOut(tween(240)) +
+            shrinkHorizontally(tween(320, easing = FastOutSlowInEasing), shrinkTowards = Alignment.End) +
+            slideOutHorizontally(tween(320, easing = FastOutSlowInEasing)) { it }
     ) {
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()).padding(4.dp).focusProperties { canFocus = visible },
