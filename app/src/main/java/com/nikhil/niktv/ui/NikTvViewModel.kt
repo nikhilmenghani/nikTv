@@ -1086,11 +1086,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     ?.takeIf { it.profileKey == profileKey }
                     ?: return@launch
                 val refreshedAt = System.currentTimeMillis()
+                val cachedItems = currentCache.itemsByCategory[category.id].orEmpty()
+                val cachedPage = currentCache.pagesByCategory[category.id] ?: 1
+                // A background refresh only fetches the provider's first page.
+                // Keep the pages the user already loaded instead of silently
+                // collapsing the category back to page one when its cache ages.
+                val refreshedItems = if (cachedPage > page.page) {
+                    (page.items + cachedItems).distinctBy { it.id }
+                } else {
+                    page.items
+                }
+                val refreshedPage = maxOf(cachedPage, page.page)
+                val refreshedHasMore = if (cachedPage > page.page) {
+                    currentCache.hasMoreByCategory[category.id] ?: page.hasMore
+                } else {
+                    page.hasMore
+                }
                 val updated = currentCache.copy(
                     cachedAtMillis = refreshedAt,
-                    itemsByCategory = currentCache.itemsByCategory + (category.id to page.items),
-                    pagesByCategory = currentCache.pagesByCategory + (category.id to page.page),
-                    hasMoreByCategory = currentCache.hasMoreByCategory + (category.id to page.hasMore),
+                    itemsByCategory = currentCache.itemsByCategory + (category.id to refreshedItems),
+                    pagesByCategory = currentCache.pagesByCategory + (category.id to refreshedPage),
+                    hasMoreByCategory = currentCache.hasMoreByCategory + (category.id to refreshedHasMore),
                     categoryCachedAtMillis = currentCache.categoryCachedAtMillis +
                         (category.id to refreshedAt)
                 )
@@ -1098,9 +1114,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val stillOpen = current.selectedType == category.type &&
                         current.selectedCategory?.id == category.id
                     current.copy(
-                        items = if (stillOpen) page.items else current.items,
-                        catalogPage = if (stillOpen) page.page else current.catalogPage,
-                        catalogHasMore = if (stillOpen) page.hasMore else current.catalogHasMore,
+                        items = if (stillOpen) refreshedItems else current.items,
+                        catalogPage = if (stillOpen) refreshedPage else current.catalogPage,
+                        catalogHasMore = if (stillOpen) refreshedHasMore else current.catalogHasMore,
                         browseCache = if (stillOpen) updated else current.browseCache,
                         browseCachesByType = current.browseCachesByType + (category.type to updated)
                     )
@@ -1271,10 +1287,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             (category.id to (result.hasMore && actuallyAdded))
                     )
 
-                    if (updated != null) {
-                        store.saveBrowseCatalog(updated)
-                    }
-
                     _state.update { current ->
                         val active =
                             current.nowPlaying
@@ -1309,6 +1321,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 },
                             nowPlaying = updatedPlaying
                         )
+                    }
+                    if (updated != null) {
+                        // Saving a large per-type cache can take noticeable time.
+                        // The fetched page is already usable, so persist it without
+                        // holding the Load more progress state open.
+                        viewModelScope.launch {
+                            runCatching { store.saveBrowseCatalog(updated) }
+                                .onFailure {
+                                    Log.w(
+                                        "NikTvCatalogCache",
+                                        "Could not persist page ${result.page} for category ${category.id}",
+                                        it
+                                    )
+                                }
+                        }
                     }
                 }
                 .onFailure { error -> _state.update { it.copy(catalogLoadingMore = false, error = error.message ?: "Could not load more titles") } }

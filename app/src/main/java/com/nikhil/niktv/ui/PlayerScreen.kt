@@ -15,6 +15,7 @@ import android.view.Gravity
 import android.view.ScaleGestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -455,6 +456,8 @@ fun PlayerScreen(
         return
     }
     val coroutineScope = rememberCoroutineScope()
+    val currentOnPlayPrevious by rememberUpdatedState(onPlayPrevious)
+    val currentOnPlayNext by rememberUpdatedState(onPlayNext)
     val activity = remember(context) { context.findActivity() }
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
     var videoOffset by remember(media.progressKey) { mutableStateOf(Offset.Zero) }
@@ -1338,6 +1341,8 @@ fun PlayerScreen(
                     var adjustingLevel = false
                     var gestureConsumed = false
                     var tapCandidate = false
+                    var lastTapAtMillis = 0L
+                    var lastTapOnRight = false
                     var queueGestureOwned = false
                     val tapSlop = 14f * resources.displayMetrics.density
                     fun applyVideoTransform() {
@@ -1592,7 +1597,24 @@ fun PlayerScreen(
                                     queueGestureOwned = false
                                 }
                                 if (tapCandidate && !gestureConsumed && !adjustingLevel && !scaleDetector.isInProgress) {
-                                    controlsVisible = !controlsVisible
+                                    val tappedOnRight = event.x >= playerView.width / 2f
+                                    val doubleTap =
+                                        hasPlaybackQueue &&
+                                            tappedOnRight == lastTapOnRight &&
+                                            event.eventTime - lastTapAtMillis in
+                                                1..ViewConfiguration.getDoubleTapTimeout().toLong()
+                                    if (doubleTap) {
+                                        lastTapAtMillis = 0L
+                                        if (!advancing) {
+                                            advancing = true
+                                            if (tappedOnRight) currentOnPlayNext()
+                                            else currentOnPlayPrevious()
+                                        }
+                                    } else {
+                                        lastTapAtMillis = event.eventTime
+                                        lastTapOnRight = tappedOnRight
+                                        controlsVisible = !controlsVisible
+                                    }
                                     gestureConsumed = true
                                 }
                             }
