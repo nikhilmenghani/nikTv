@@ -133,7 +133,6 @@ internal fun OfflineDownloadsScreen(
     state: NikTvState,
     play: (OfflineMediaDownload) -> Unit,
     remove: (MediaItem, CatalogType) -> Unit,
-    removeAll: () -> Unit,
     close: () -> Unit
 ) {
     val context = LocalContext.current
@@ -143,30 +142,22 @@ internal fun OfflineDownloadsScreen(
     var pendingRecordingRemoval by remember { mutableStateOf<RecordedLiveTvMedia?>(null) }
     var recordings by remember { mutableStateOf<List<RecordedLiveTvMedia>>(emptyList()) }
     val liveRecording by LiveTvRecorder.state.collectAsState()
-    var pendingClear by remember { mutableStateOf<String?>(null) }
     var storageRevision by remember { mutableLongStateOf(0L) }
-    var storage by remember { mutableStateOf<AppStorageSnapshot?>(null) }
-    var clearing by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(state.offlineDownloadRevision, storageRevision) {
-        storage = runCatching { appStorageSnapshot(context, state.offlineDownloads) }.getOrNull()
-    }
     LaunchedEffect(storageRevision, liveRecording.active) {
         recordings = withContext(Dispatchers.IO) { LiveTvRecorder.recordings(context) }
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
         ModernScreenTopBar("Offline downloads", close)
-        OfflineStorageCard(
-            storage = storage,
-            clearing = clearing,
-            onClearDownloads = { pendingClear = "downloads" },
-            onClearArtwork = { pendingClear = "artwork" },
-            onClearSubtitles = { pendingClear = "subtitles" },
-            onClearTemporary = { pendingClear = "temporary" }
-        )
         if (entries.isEmpty() && recordings.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(start = 24.dp, top = 18.dp, end = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Icon(Icons.Default.DownloadDone, null, Modifier.size(54.dp), tint = Color.Gray)
                     Text("No offline media", style = MaterialTheme.typography.titleLarge)
                     Text("Downloaded movies, episodes, and Live TV recordings will appear here.", color = Color.Gray, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
@@ -459,6 +450,37 @@ internal fun OfflineDownloadsScreen(
             }
         )
     }
+}
+
+@Composable
+internal fun OfflineStorageScreen(
+    state: NikTvState,
+    removeAll: () -> Unit,
+    close: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var pendingClear by remember { mutableStateOf<String?>(null) }
+    var storageRevision by remember { mutableLongStateOf(0L) }
+    var storage by remember { mutableStateOf<AppStorageSnapshot?>(null) }
+    var clearing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.offlineDownloadRevision, storageRevision) {
+        storage = runCatching { appStorageSnapshot(context, state.offlineDownloads) }.getOrNull()
+    }
+
+    Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+        ModernScreenTopBar("Storage", close)
+        OfflineStorageCard(
+            storage = storage,
+            clearing = clearing,
+            onClearDownloads = { pendingClear = "downloads" },
+            onClearArtwork = { pendingClear = "artwork" },
+            onClearSubtitles = { pendingClear = "subtitles" },
+            onClearTemporary = { pendingClear = "temporary" }
+        )
+    }
+
     pendingClear?.let { target ->
         val title = when (target) {
             "downloads" -> "Clear offline downloads?"
@@ -626,7 +648,7 @@ private fun StorageUsageRow(
         modifier = modifier
     ) {
       Row(
-          Modifier.padding(start = 10.dp, top = 5.dp, bottom = 5.dp),
+          Modifier.padding(start = 10.dp, top = 5.dp, end = 7.dp, bottom = 5.dp),
           verticalAlignment = Alignment.CenterVertically
       ) {
         Icon(row.icon, null, tint = row.color, modifier = Modifier.size(20.dp))

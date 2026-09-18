@@ -116,6 +116,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
+private enum class LibraryPane { MY_LIST, DOWNLOADS, STORAGE }
+
 @Composable
 internal fun CatalogScreen(
     state: NikTvState,
@@ -202,11 +204,22 @@ internal fun CatalogScreen(
     val wide = configuration.screenWidthDp >= 720
     val mobileUiDesign by rememberMobileUiDesign()
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
+    var libraryPane by rememberSaveable { mutableStateOf(LibraryPane.MY_LIST) }
     val exitFocusRequester = remember { FocusRequester() }
     val modernSectionOpen =
         state.modernUiEnabled &&
             (state.modernTmdbSection != null || state.modernIptvCategory != null)
     val mobileMainPage = state.mobileMainPage()
+
+    fun openDownloadsPane() {
+        libraryPane = LibraryPane.DOWNLOADS
+        openOfflineDownloads()
+    }
+
+    fun openStoragePane() {
+        libraryPane = LibraryPane.STORAGE
+        openOfflineDownloads()
+    }
 
     fun selectMobileMainPage(page: MobileMainPage) {
         when (page) {
@@ -215,8 +228,12 @@ internal fun CatalogScreen(
             MobileMainPage.MOVIES -> selectType(CatalogType.MOVIES)
             MobileMainPage.SERIES -> selectType(CatalogType.SERIES)
             MobileMainPage.LIBRARY -> openFavorites()
-            MobileMainPage.DOWNLOADS -> openOfflineDownloads()
+            MobileMainPage.DOWNLOADS -> openDownloadsPane()
         }
+    }
+
+    LaunchedEffect(state.favoritesOpen) {
+        if (state.favoritesOpen) libraryPane = LibraryPane.MY_LIST
     }
 
     BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
@@ -290,13 +307,20 @@ internal fun CatalogScreen(
                     select = selectTmdbSeriesMatch,
                     close = closeTmdbSeriesMatches
                 )
-                state.offlineDownloadsOpen -> OfflineDownloadsScreen(
-                    state = state,
-                    play = playOfflineDownload,
-                    remove = removeOfflineDownload,
-                    removeAll = removeAllOfflineDownloads,
-                    close = closeOfflineDownloads
-                )
+                state.offlineDownloadsOpen -> if (libraryPane == LibraryPane.STORAGE) {
+                    OfflineStorageScreen(
+                        state = state,
+                        removeAll = removeAllOfflineDownloads,
+                        close = closeOfflineDownloads
+                    )
+                } else {
+                    OfflineDownloadsScreen(
+                        state = state,
+                        play = playOfflineDownload,
+                        remove = removeOfflineDownload,
+                        close = closeOfflineDownloads
+                    )
+                }
                 state.settingsOpen -> ModernSettingsScreen(
                     state = state,
                     closeSettings = closeSettings,
@@ -418,7 +442,18 @@ internal fun CatalogScreen(
                     .width(if (isTv) 196.dp else 176.dp)
                     .fillMaxHeight()
             )
-            MainContent(Modifier.weight(1f).fillMaxHeight())
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                MainContent(Modifier.weight(1f).fillMaxWidth())
+                if (state.favoritesOpen || state.offlineDownloadsOpen) {
+                    MobileLibrarySwitcher(
+                        downloadsSelected = state.offlineDownloadsOpen,
+                        storageSelected = libraryPane == LibraryPane.STORAGE,
+                        openFavorites = openFavorites,
+                        openOfflineDownloads = ::openDownloadsPane,
+                        openStorage = ::openStoragePane
+                    )
+                }
+            }
         }
     } else {
         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -447,8 +482,10 @@ internal fun CatalogScreen(
                 if (showYouTubeNavigation && (state.favoritesOpen || state.offlineDownloadsOpen)) {
                     MobileLibrarySwitcher(
                         downloadsSelected = state.offlineDownloadsOpen,
+                        storageSelected = libraryPane == LibraryPane.STORAGE,
                         openFavorites = openFavorites,
-                        openOfflineDownloads = openOfflineDownloads
+                        openOfflineDownloads = ::openDownloadsPane,
+                        openStorage = ::openStoragePane
                     )
                 }
             }
