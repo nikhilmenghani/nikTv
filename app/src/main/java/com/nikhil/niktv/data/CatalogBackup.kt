@@ -71,15 +71,19 @@ class CatalogBackupManager(context: Context) {
 
     suspend fun uploadAll(): Int = BackupActivityLog.track(app, "IPTV catalog backup", success = {
         if (it == 0) "No changed catalog snapshots to upload." else "Uploaded $it catalog snapshots to GitHub."
-    }) { uploadAllInternal() }
+    }) { uploadInternal(ProfileStore(app).profiles.first()) }
 
-    private suspend fun uploadAllInternal(): Int = withContext(Dispatchers.IO) {
+    suspend fun upload(profile: PortalProfile): Int = BackupActivityLog.track(app, "IPTV catalog backup · ${profile.name}", success = {
+        if (it == 0) "No changed ${profile.name} snapshots to upload." else "Uploaded $it ${profile.name} snapshots to GitHub."
+    }) { uploadInternal(listOf(profile)) }
+
+    private suspend fun uploadInternal(profiles: List<PortalProfile>): Int = withContext(Dispatchers.IO) {
         CatalogOperations.check(app, CatalogOperations.BACKUP)
         check(CatalogPreferences.backupEnabled(app)) { "Catalog backup is disabled on this device" }
         val config = config()
         var uploaded = 0
         val failures = mutableListOf<String>()
-        for (profile in ProfileStore(app).profiles.first()) {
+        for (profile in profiles) {
             val profileId = CatalogScanPreferences.id(profile)
             val scanCompleteBefore = if (CatalogScanPreferences.cursor(app, profileId) == -1)
                 CatalogScanPreferences.completed(app, profileId) else 0L
@@ -182,12 +186,16 @@ class CatalogBackupManager(context: Context) {
 
     suspend fun restoreAll(): Int = BackupActivityLog.track(app, "IPTV catalog restore", success = {
         if (it == 0) "No matching catalog snapshots found for saved profiles." else "Merged $it snapshots. Reopen the profile to reload its catalog."
-    }) { restoreAllInternal() }
+    }) { restoreInternal(ProfileStore(app).profiles.first()) }
 
-    private suspend fun restoreAllInternal(): Int = withContext(Dispatchers.IO) {
+    suspend fun restore(profile: PortalProfile): Int = BackupActivityLog.track(app, "IPTV catalog restore · ${profile.name}", success = {
+        if (it == 0) "No matching ${profile.name} snapshots found." else "Merged $it ${profile.name} snapshots. Reopen the profile to reload its catalog."
+    }) { restoreInternal(listOf(profile)) }
+
+    private suspend fun restoreInternal(profiles: List<PortalProfile>): Int = withContext(Dispatchers.IO) {
         val config = config()
         var imported = 0
-        for (profile in ProfileStore(app).profiles.first()) {
+        for (profile in profiles) {
             for (type in types) {
                 currentCoroutineContext().ensureActive()
                 val id = SearchMetadataDocuments.anonymousProfileId(profile)

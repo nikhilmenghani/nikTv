@@ -10,6 +10,10 @@ import kotlinx.coroutines.flow.conflate
 object CatalogScanPreferences {
     private fun prefs(context: Context) = context.getSharedPreferences("catalog_scans", Context.MODE_PRIVATE)
     fun id(profile: PortalProfile) = SearchMetadataDocuments.anonymousProfileId(profile)
+    fun selectedProfileId(context: Context) = prefs(context).getString("selected_profile", null)
+    fun selectedProfileId(context: Context, id: String) {
+        prefs(context).edit().putString("selected_profile", id).apply()
+    }
     fun hours(context: Context, id: String) = prefs(context).getInt("hours:$id", 0)
     fun hours(context: Context, id: String, hours: Int) {
         require(hours in listOf(0, 6, 12, 24, 168))

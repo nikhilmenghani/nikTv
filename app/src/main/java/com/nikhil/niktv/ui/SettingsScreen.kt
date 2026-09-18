@@ -1651,13 +1651,7 @@ SettingsSwitch(
             )
 
         }
-SettingsSection("Backup and restore") {
-            ResponsiveSettingsOptionRow(
-                icon = Icons.Default.Info,
-                title = "Two separate backups",
-                subtitle = "Profile exports include favorites and watch history. IPTV catalog backups restore media listings without changing your personal data."
-            )
-            HorizontalDivider()
+SettingsSection("Data and sync") {
             var backupActivityOpen by remember { mutableStateOf(false) }
             val backupEvents by remember(context) { com.nikhil.niktv.data.BackupActivityLog.observe(context) }
                 .collectAsState(initial = com.nikhil.niktv.data.BackupActivityLog.read(context))
@@ -1667,6 +1661,20 @@ SettingsSection("Backup and restore") {
             var catalogStatus by remember { mutableStateOf("") }
             var catalogRestoreBusy by remember { mutableStateOf(false) }
             val catalogScope = rememberCoroutineScope()
+            var catalogProfileId by remember(state.profiles) {
+                mutableStateOf(
+                    com.nikhil.niktv.data.CatalogScanPreferences.selectedProfileId(context)
+                        ?.takeIf { saved -> state.profiles.any { com.nikhil.niktv.data.CatalogScanPreferences.id(it) == saved } }
+                        ?: state.savedProfile?.let(com.nikhil.niktv.data.CatalogScanPreferences::id)
+                )
+            }
+            val catalogProfile = state.profiles.firstOrNull {
+                com.nikhil.niktv.data.CatalogScanPreferences.id(it) == catalogProfileId
+            } ?: state.savedProfile ?: state.profiles.firstOrNull()
+            CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
+                catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
+            }
+            HorizontalDivider()
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.Storage,
                 title = "Prefer local catalog",
@@ -1698,31 +1706,30 @@ SettingsSection("Backup and restore") {
                 }
             )
             HorizontalDivider()
-            CatalogProfileSettings(state.profiles, state.savedProfile)
             CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.BACKUP, "GitHub catalog upload", catalogBackupEnabled) {
-                com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true)
+                com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile)
             }
             CatalogRestoreProgress()
             BackupSettingsActionRow(
                 icon = Icons.Default.CloudUpload,
                 title = "Back up IPTV catalog now",
-                subtitle = if (catalogBackupEnabled) "Upload changed catalog snapshots to GitHub." else "Enable catalog backup on this device first.",
+                subtitle = if (catalogBackupEnabled) "Upload changed ${catalogProfile?.name ?: "profile"} snapshots to GitHub." else "Enable catalog backup on this device first.",
                 enabled = catalogBackupEnabled,
                 onClick = {
-                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true)
+                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile)
                     catalogStatus = ""
                 }
             )
             BackupSettingsActionRow(
                 icon = Icons.Default.CloudDownload,
                 title = if (catalogRestoreBusy) "Restoring IPTV catalog…" else "Restore IPTV catalog",
-                subtitle = "Merge matching GitHub snapshots into this device's local catalog.",
-                enabled = !catalogRestoreBusy,
+                subtitle = "Merge ${catalogProfile?.name ?: "the selected profile"} snapshots from any device into this device.",
+                enabled = !catalogRestoreBusy && catalogProfile != null,
                 onClick = {
                     catalogRestoreBusy = true
                     catalogScope.launch {
                         try {
-                            val count = com.nikhil.niktv.data.CatalogBackupManager(context).restoreAll()
+                            val count = com.nikhil.niktv.data.CatalogBackupManager(context).restore(requireNotNull(catalogProfile))
                             catalogStatus = "Merged $count snapshots. Reopen the profile to reload its catalog."
                         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                         catch (error: Exception) { catalogStatus = error.message ?: "Catalog import failed" }
@@ -4932,7 +4939,7 @@ internal fun BackupSettingsActionRow(
         title = title,
         subtitle = subtitle,
         modifier = Modifier
-            .then(if (enabled) Modifier.remoteFocusFrame(RoundedCornerShape(14.dp)) else Modifier)
+            .then(if (enabled) Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)) else Modifier)
             .clickable(enabled = enabled, onClick = onClick),
         titleColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.5f),
         trailingContent = { Icon(Icons.Default.ChevronRight, null) }

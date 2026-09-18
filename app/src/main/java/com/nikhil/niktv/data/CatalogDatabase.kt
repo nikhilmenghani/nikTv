@@ -47,7 +47,7 @@ interface CatalogDao {
     @Query("""SELECT a.* FROM CatalogItemRow a WHERE a.profile = :profile AND a.type = :type AND a.deleted = 0
         AND NOT EXISTS (SELECT 1 FROM CatalogItemRow b WHERE b.profile = a.profile AND b.type = a.type AND b.id = a.id
           AND (b.observedAt > a.observedAt OR (b.observedAt = a.observedAt AND b.deleted = 1)))
-        GROUP BY a.id ORDER BY a.id LIMIT :limit OFFSET :offset""")
+        GROUP BY a.id ORDER BY a.observedAt DESC, a.id DESC LIMIT :limit OFFSET :offset""")
     suspend fun storedPage(profile: String, type: String, limit: Int, offset: Int): List<CatalogItemRow>
 
     @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type ORDER BY position, id")

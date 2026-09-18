@@ -68,6 +68,11 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
     val held = mode != "Ready" || interrupted
     val busy = isScan && scanState in listOf(CatalogScanDisplay.CHECKING, CatalogScanDisplay.QUEUED, CatalogScanDisplay.SCANNING)
     val updated = CatalogOperations.updated(context, operation)
+    val uploadActive = !isScan && mode == "Ready" && message.let {
+        it.startsWith("Backup queued") || it.contains("Uploading part") ||
+            it.contains("Reading Room snapshot") || it.contains("Creating dated restore checkpoint") ||
+            it.startsWith("Waiting for playback")
+    }
     val queuedWork = scanWork?.firstOrNull { it.state == WorkInfo.State.ENQUEUED }
     val queuedExplanation = when {
         queuedWork != null && queuedWork.runAttemptCount > 0 ->
@@ -89,11 +94,11 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
     }
     Surface(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(if (operation.startsWith("scan:")) Icons.Default.Storage else Icons.Default.CloudUpload,
@@ -102,7 +107,7 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
                 if (isScan || held) Text(if (isScan) scanState.label else mode, style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary)
             }
-            if (isScan && scanState == CatalogScanDisplay.SCANNING) {
+            if ((isScan && scanState == CatalogScanDisplay.SCANNING) || uploadActive) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             val parts = summary.split(" · ")
@@ -114,13 +119,13 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (held) {
-                    item { Button(onClick = onResume, enabled = resumeEnabled,
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Resume") } }
+                    item { Button(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Resume") } }
                 } else {
                     if (onStart != null) item { Button(
                         onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
                         enabled = !busy || (scanState == CatalogScanDisplay.QUEUED && onRetry != null),
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) {
+                        shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) {
                         Text(when (scanState) {
                             CatalogScanDisplay.SCANNING -> "Scanning…"
                             CatalogScanDisplay.QUEUED -> "Try now"
@@ -130,15 +135,15 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
                         })
                     } }
                     if (!isScan || busy) item { OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Pause") } }
+                        shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Pause") } }
                 }
                 if (mode != "Stopped" && (!isScan || busy || held)) item { TextButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
-                    modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Stop") } }
+                    shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Stop") } }
                 item { TextButton(onClick = { detail = "events" },
-                    modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Details") } }
+                    shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Details") } }
                 if (failures.isNotEmpty()) item { TextButton(onClick = { detail = "failures" },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("${failures.size} failed") } }
+                    shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("${failures.size} failed") } }
             }
         }
     }
@@ -185,7 +190,7 @@ internal fun CatalogDatabasePanel(profile: PortalProfile) {
             catch (_: Exception) { failed = true }
         }
         val json = remember { Json { ignoreUnknownKeys = true } }
-        AlertDialog(onDismissRequest = { browseType = null }, title = { Text("${type.title} · stored records ${offset + 1}–${offset + (rows?.size ?: 0)}") },
+        AlertDialog(onDismissRequest = { browseType = null }, title = { Text("${type.title} · newest records ${offset + 1}–${offset + (rows?.size ?: 0)}") },
             text = { LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (rows == null) item { Text(if (failed) "Could not read database." else "Reading Room…") }
                 if (rows?.isEmpty() == true) item { Text("No more stored records.") }

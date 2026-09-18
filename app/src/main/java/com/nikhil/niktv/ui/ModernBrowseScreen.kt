@@ -117,6 +117,45 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
+private fun ModernBrowseSectionActions(
+    showTmdb: Boolean,
+    openCategories: () -> Unit,
+    openTmdb: () -> Unit,
+    reset: () -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val actions = buildList {
+        add(Triple("Categories", Icons.Default.Tune, openCategories))
+        if (showTmdb) add(Triple("TMDB", Icons.Default.DashboardCustomize, openTmdb))
+        add(Triple("Reset", Icons.Default.RestartAlt, reset))
+    }
+    val availableWidth = (configuration.screenWidthDp - 32).coerceAtLeast(240)
+    val groupWidth = minOf(availableWidth, actions.size * 136).dp
+    val buttonWidth = (groupWidth.value - ((actions.size - 1) * 10f)) / actions.size
+    val showText = buttonWidth >= 76f
+    val showIconsWithText = buttonWidth >= 122f
+
+    Row(
+        Modifier.width(groupWidth),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        actions.forEach { (label, icon, action) ->
+            NikTvSecondaryActionButton(
+                onClick = action,
+                modifier = Modifier.weight(1f).remoteFocusFrame(RoundedCornerShape(10.dp))
+            ) {
+                if (!showText || showIconsWithText) {
+                    Icon(icon, label, Modifier.size(18.dp))
+                    if (showText) Spacer(Modifier.width(6.dp))
+                }
+                if (showText) Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
 internal fun ModernBrowseScreen(
     state: NikTvState,
     selectType: (CatalogType) -> Unit,
@@ -918,10 +957,10 @@ internal fun ModernBrowseScreen(
                             Icon(Icons.Default.FilterListOff, null, Modifier.size(48.dp), tint = Color.LightGray)
                             Text("No categories enabled for ${state.selectedType.title}", color = Color.White, style = MaterialTheme.typography.titleMedium)
                             Text("Adjust your category filters to include content.", color = Color.LightGray)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                NikTvPrimaryActionButton(onClick = { openCategoryManager(state.selectedType) }) { Text("Manage categories") }
+                            Row(Modifier.widthIn(max = 420.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                NikTvPrimaryActionButton(onClick = { openCategoryManager(state.selectedType) }, modifier = Modifier.weight(1f)) { Text("Categories", maxLines = 1) }
                                 if (dashboardSurface == DashboardSurface.MOVIES || dashboardSurface == DashboardSurface.SERIES) {
-                                    NikTvPrimaryActionButton(onClick = { tmdbSetupOpen = true }) { Text("TMDB sections") }
+                                    NikTvPrimaryActionButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.weight(1f)) { Text("TMDB sections", maxLines = 1) }
                                 }
                             }
                         }
@@ -934,19 +973,12 @@ internal fun ModernBrowseScreen(
                         title = state.selectedType.title,
                         subtitle = "${state.categories.size} dashboard categories",
                         action = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                NikTvTextActionButton(onClick = { openCategoryManager(state.selectedType) }, modifier = Modifier.remoteFocusFrame()) {
-                                    Icon(Icons.Default.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Categories")
-                                }
-                                if (dashboardSurface != DashboardSurface.LIVE_TV) {
-                                    NikTvTextActionButton(onClick = { tmdbSetupOpen = true }, modifier = Modifier.remoteFocusFrame()) {
-                                        Icon(Icons.Default.DashboardCustomize, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("TMDB")
-                                    }
-                                }
-                                NikTvTextActionButton(onClick = { resetConfirmationOpen = true }, modifier = Modifier.remoteFocusFrame()) {
-                                    Icon(Icons.Default.RestartAlt, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Reset to defaults")
-                                }
-                            }
+                            ModernBrowseSectionActions(
+                                showTmdb = dashboardSurface != DashboardSurface.LIVE_TV,
+                                openCategories = { openCategoryManager(state.selectedType) },
+                                openTmdb = { tmdbSetupOpen = true },
+                                reset = { resetConfirmationOpen = true }
+                            )
                         }
                     )
                 }

@@ -20,8 +20,8 @@ internal enum class SettingsDestination(
         "Accounts, portals and session access"
     ),
     CATALOG(
-        "Catalog & backup",
-        "Local database, scan progress, backup and restore"
+        "Data & sync",
+        "Catalog, scan progress, backup and restore"
     ),
     SYSTEM(
         "System",
@@ -45,7 +45,8 @@ internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
         "Profiles",
         "Connection" -> SettingsDestination.PROFILES
 
-        "Backup and restore" -> SettingsDestination.CATALOG
+        "Backup and restore",
+        "Data and sync" -> SettingsDestination.CATALOG
 
         "App updates",
         "Advanced",

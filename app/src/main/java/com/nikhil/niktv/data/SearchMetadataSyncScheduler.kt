@@ -41,14 +41,16 @@ object SearchMetadataSyncScheduler {
     // Catalog writes stay local. Periodic/manual backup owns uploads, never a save callback.
     fun request(context: Context) = Unit
 
-    fun requestNow(context: Context, resume: Boolean = false): UUID? {
+    fun requestNow(context: Context, resume: Boolean = false, profile: PortalProfile? = null): UUID? {
         if (!CatalogPreferences.backupEnabled(context)) return null
         if (resume) CatalogOperations.control(context, CatalogOperations.BACKUP, "Ready")
         if (CatalogOperations.held(context, CatalogOperations.BACKUP)) return null
-        val work = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>().setConstraints(constraints()).build()
+        val workBuilder = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>().setConstraints(constraints())
+        profile?.let { workBuilder.setInputData(workDataOf(PROFILE_ID to CatalogScanPreferences.id(it))) }
+        val work = workBuilder.build()
         WorkManager.getInstance(context).enqueueUniqueWork(MANUAL, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
         CatalogOperations.message(context, CatalogOperations.BACKUP, "Backup queued. Waiting for network/background execution.")
-        BackupActivityLog.record(context, "IPTV catalog backup", "Queued", "Waiting for network and background execution.")
+        BackupActivityLog.record(context, "IPTV catalog backup${profile?.let { " · ${it.name}" }.orEmpty()}", "Queued", "Waiting for network and background execution.")
         return work.id
     }
 
@@ -212,7 +214,7 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             CatalogScanPreferences.status(context, id, "Complete · ${java.util.Date(now)} · Room backup catalog contains channels, movies and series.")
             CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
             BackupActivityLog.record(context, operation, "Completed", "Room backup catalog is ready to inspect or upload; app browsing remains provider/cache based.")
-            if (CatalogPreferences.backupEnabled(context)) SearchMetadataSyncScheduler.requestNow(context)
+            if (CatalogPreferences.backupEnabled(context)) SearchMetadataSyncScheduler.requestNow(context, profile = profile)
             Result.success()
         } catch (held: CatalogOperationHeld) {
             BackupActivityLog.record(context, operation, held.state, "Committed pages retained. Resume from Catalog & backup.")
@@ -237,7 +239,12 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
         try {
             CatalogOperations.check(applicationContext, CatalogOperations.BACKUP)
             setProgress(workDataOf(PROGRESS_MESSAGE to "Backing up IPTV catalog", PROGRESS_FRACTION to 0.1f))
-            CatalogBackupManager(applicationContext).uploadAll()
+            val selectedId = inputData.getString(SearchMetadataSyncScheduler.PROFILE_ID)
+            val selectedProfile = selectedId?.let { id ->
+                ProfileStore(applicationContext).profiles.first().firstOrNull { CatalogScanPreferences.id(it) == id }
+            }
+            if (selectedProfile == null) CatalogBackupManager(applicationContext).uploadAll()
+            else CatalogBackupManager(applicationContext).upload(selectedProfile)
             Result.success()
         } catch (held: CatalogOperationHeld) { Result.success() }
         catch (cancelled: CancellationException) { throw cancelled }

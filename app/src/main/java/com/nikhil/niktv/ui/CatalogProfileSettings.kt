@@ -20,26 +20,45 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-internal fun CatalogProfileSettings(profiles: List<PortalProfile>, active: PortalProfile?) {
+internal fun CatalogProfileSettings(
+    profiles: List<PortalProfile>,
+    active: PortalProfile?,
+    onProfileSelected: (PortalProfile) -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var selectedId by remember(active) { mutableStateOf(active?.let(CatalogScanPreferences::id)) }
+    var selectedId by remember(profiles) {
+        mutableStateOf(
+            CatalogScanPreferences.selectedProfileId(context)
+                ?.takeIf { saved -> profiles.any { CatalogScanPreferences.id(it) == saved } }
+                ?: active?.let(CatalogScanPreferences::id)
+        )
+    }
     val profile = profiles.firstOrNull { CatalogScanPreferences.id(it) == selectedId } ?: active ?: profiles.firstOrNull()
     if (profile == null) return
     val id = CatalogScanPreferences.id(profile)
+    LaunchedEffect(id) {
+        if (CatalogScanPreferences.selectedProfileId(context) == null) {
+            CatalogScanPreferences.selectedProfileId(context, id)
+        }
+    }
     var chooseProfile by remember { mutableStateOf(false) }
     var hours by remember(id) { mutableIntStateOf(CatalogScanPreferences.hours(context, id)) }
     var checkpoints by remember(id) { mutableStateOf<List<CatalogCheckpointFile>?>(null) }
     var busy by remember(id) { mutableStateOf(false) }
     var message by remember(id) { mutableStateOf<String?>(null) }
     var selectedCheckpoint by remember(id) { mutableStateOf<CatalogCheckpointFile?>(null) }
-    BackupSettingsActionRow(Icons.Default.AccountCircle, "Catalog profile: ${profile.name}",
-        "Choose which profile to scan, schedule or restore.", onClick = { chooseProfile = true })
+    BackupSettingsActionRow(Icons.Default.AccountCircle, "Profile · ${profile.name}",
+        "All catalog actions below apply to this profile until you change it.", onClick = { chooseProfile = true })
     if (chooseProfile) AlertDialog(
         onDismissRequest = { chooseProfile = false }, title = { Text("Choose catalog profile") },
         text = { LazyColumn { items(profiles) { entry ->
-            TextButton(onClick = { selectedId = CatalogScanPreferences.id(entry); chooseProfile = false },
-                modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(12.dp))) { Text(entry.name) }
+            TextButton(onClick = {
+                selectedId = CatalogScanPreferences.id(entry)
+                CatalogScanPreferences.selectedProfileId(context, selectedId!!)
+                onProfileSelected(entry)
+                chooseProfile = false
+            }, modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(entry.name) }
         } } }, confirmButton = { TextButton(onClick = { chooseProfile = false }) { Text("Close") } })
     CatalogOperationPanel(CatalogOperations.scan(id), "Catalog scan", onStart = {
         SearchMetadataSyncScheduler.refresh(context, profile)

@@ -166,16 +166,31 @@ internal fun TmdbHomeSectionsDialog(
                     }
                 }
                 HorizontalDivider()
-                Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    NikTvTextActionButton(onClick = { choices = emptySet() }, modifier = Modifier.remoteFocusFrame()) { Text("Clear selections") }
-                    NikTvTextActionButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
-                    NikTvPrimaryActionButton(onClick = { save(available.filter { it in choices }) }, modifier = Modifier.remoteFocusFrame()) {
-                        Text("Apply & Close")
+                BoxWithConstraints(Modifier.fillMaxWidth().padding(16.dp)) {
+                    val showText = maxWidth >= 300.dp
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        NikTvSecondaryActionButton(
+                            onClick = { choices = emptySet() },
+                            modifier = Modifier.weight(1f).remoteFocusFrame(RoundedCornerShape(10.dp))
+                        ) {
+                            if (showText) Text("Clear", maxLines = 1) else Icon(Icons.Default.ClearAll, "Clear selections")
+                        }
+                        NikTvSecondaryActionButton(
+                            onClick = close,
+                            modifier = Modifier.weight(1f).remoteFocusFrame(RoundedCornerShape(10.dp))
+                        ) {
+                            if (showText) Text("Cancel", maxLines = 1) else Icon(Icons.Default.Close, "Cancel")
+                        }
+                        NikTvPrimaryActionButton(
+                            onClick = { save(available.filter { it in choices }) },
+                            modifier = Modifier.weight(1f).remoteFocusFrame(RoundedCornerShape(10.dp))
+                        ) {
+                            if (showText) Text("Apply", maxLines = 1) else Icon(Icons.Default.Check, "Apply")
+                        }
                     }
                 }
             }
