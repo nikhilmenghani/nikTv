@@ -743,12 +743,12 @@ internal fun ModernSettingsScreen(
             LocalSettingsDestination.current
                 ?: selectedSettingsDestination
 
-        if (!compactSettingsHeader) {
-            SettingsDestinationHeader(
-                destination = activeDestination,
-                compact = tabletSettingsLayout
-            )
+        SettingsDestinationHeader(
+            destination = activeDestination,
+            compact = compactSettingsHeader || tabletSettingsLayout
+        )
 
+        if (!compactSettingsHeader) {
             SettingsSummaryRow(
                 activeProfile = profile?.name ?: "No active profile",
                 defaultPlayer = when (state.playbackEngine) {
@@ -779,6 +779,7 @@ internal fun ModernSettingsScreen(
         val keepAwakeRequester = remember { FocusRequester() }
         val orientationRequester = remember { FocusRequester() }
         val playbackEngineRequester = remember { FocusRequester() }
+        val audioFallbackRequester = remember { FocusRequester() }
         val seriesSeasonRequester = remember { FocusRequester() }
         val catalogRefreshRequester = remember { FocusRequester() }
         val initialCatalogItemsRequester = remember { FocusRequester() }
@@ -973,7 +974,7 @@ SettingsSwitch(
                 CompactOrientationSetting(
                     entryRequester = orientationRequester,
                     upRequester = keepAwakeRequester,
-                    downRequester = playbackEngineRequester
+                    downRequester = audioFallbackRequester
                 )
             } else {
                 ListItem(
@@ -1083,12 +1084,35 @@ SettingsSwitch(
 
         }
         SettingsSection("Playback") {
+            val audioFallbackContext = LocalContext.current
+            var audioFallbackEnabled by remember {
+                mutableStateOf(AudioFailurePreferences.enabled(audioFallbackContext))
+            }
+            CompactSettingsOptionRow(
+                icon = Icons.Default.VolumeOff,
+                title = "Continue video if audio fails",
+                subtitle = "This device only · ExoPlayer. Disable failed audio output and keep video playing. Retry audio when earphones connect.",
+                trailingContent = {
+                    SettingsSwitch(
+                        checked = audioFallbackEnabled,
+                        modifier = Modifier.focusRequester(audioFallbackRequester).focusProperties {
+                            up = orientationRequester
+                            down = playbackEngineRequester
+                        },
+                        onCheckedChange = {
+                            audioFallbackEnabled = it
+                            AudioFailurePreferences.setEnabled(audioFallbackContext, it)
+                        }
+                    )
+                }
+            )
+            HorizontalDivider()
             PlaybackEngineSettingsContent(
                 selectedEngine = state.playbackEngine,
                 setPlaybackEngine = setPlaybackEngine,
                 compact = modernSettingsRows,
                 entryRequester = playbackEngineRequester,
-                upRequester = orientationRequester,
+                upRequester = audioFallbackRequester,
                 downRequester = seriesSeasonRequester
             )
             HorizontalDivider()
@@ -4629,162 +4653,32 @@ internal fun SettingsSection(
         return
     }
 
-    val configuration = LocalConfiguration.current
-    val context = LocalContext.current
-    val compact = configuration.screenWidthDp < 600
-    val tablet =
-        !context.isTvLikeDevice(configuration) &&
-            configuration.smallestScreenWidthDp >= 600
-    val touchCard = compact || tablet
     val danger = title == "Data & reset"
-    val accent =
-        if (danger) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.primary
-        }
-
-    /*
-     * MOBILE_SETTINGS_CATEGORY_HEADER_V3 + TABLET_SETTINGS_MODERN_V1
-     *
-     * Phones and touch tablets share one category-card hierarchy. Tablet
-     * typography is slightly tighter, but row geometry and icon/text alignment
-     * remain the same as mobile. Category headers are never focus targets.
-     */
-    if (touchCard) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusGroup(),
-            shape = RoundedCornerShape(if (compact) 18.dp else 16.dp),
-            color =
-                if (danger) {
-                    Color(0xFF1A1012)
-                } else {
-                    Color(0xFF111318)
-                },
-            shadowElevation = if (compact) 1.dp else 2.dp,
-            border = BorderStroke(
-                1.dp,
-                if (danger) {
-                    Color(0xFF59262B)
-                } else {
-                    MaterialTheme.colorScheme.outlineVariant
-                }
-            )
-        ) {
-            Column {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            horizontal = if (compact) 16.dp else 18.dp,
-                            vertical = if (compact) 15.dp else 13.dp
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        Modifier
-                            .width(3.dp)
-                            .height(if (compact) 26.dp else 22.dp)
-                            .background(accent, CircleShape)
-                    )
-                    Text(
-                        title,
-                        modifier = Modifier.weight(1f),
-                        style =
-                            if (compact) {
-                                MaterialTheme.typography.titleLarge
-                            } else {
-                                MaterialTheme.typography.titleMedium
-                            },
-                        fontWeight =
-                            if (compact) {
-                                FontWeight.Bold
-                            } else {
-                                FontWeight.SemiBold
-                            },
-                        letterSpacing = .1.sp,
-                        color =
-                            if (danger) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            }
-                    )
-                }
-
-                HorizontalDivider(
-                    color =
-                        if (danger) {
-                            Color(0xFF4A2226)
-                        } else {
-                            MaterialTheme.colorScheme.outlineVariant
-                        }
-                )
-
-                Column(
-                    modifier = Modifier.padding(vertical = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                    content = content
-                )
-            }
-        }
-        return
-    }
 
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
             .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            Modifier.padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Box(
-                Modifier
-                    .width(4.dp)
-                    .height(20.dp)
-                    .background(accent, CircleShape)
-            )
-            Text(
-                title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = .15.sp,
-                color =
-                    if (danger) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        Color(0xFFF5F5F7)
-                    }
-            )
-        }
-
+        Text(
+            text = title,
+            modifier = Modifier.padding(horizontal = 6.dp),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = if (danger) MaterialTheme.colorScheme.error else Color(0xFFB9BDC6)
+        )
         Surface(
-            Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
-            color =
-                if (danger) {
-                    Color(0xFF1A1012)
-                } else {
-                    Color(0xFF111318)
-                },
-            shadowElevation = 3.dp,
+            color = if (danger) Color(0xFF171012) else Color(0xFF111318),
             border = BorderStroke(
                 1.dp,
-                if (danger) {
-                    Color(0xFF59262B)
-                } else {
-                    Color(0xFF292C33)
-                }
+                if (danger) Color(0xFF542229) else Color(0xFF2B2F37)
             )
         ) {
             Column(
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 content = content
             )
@@ -4829,7 +4723,7 @@ internal fun RowScope.ExpressiveBottomNavigationItem(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
-    inactiveWidth: Dp
+    modifier: Modifier = Modifier
 ) {
     val containerColor by animateColorAsState(
         if (selected) Color(0xFF4A171B) else Color(0xFF191B20),
@@ -4841,9 +4735,7 @@ internal fun RowScope.ExpressiveBottomNavigationItem(
     )
     Surface(
         onClick = onClick,
-        modifier = Modifier
-            .weight(1f)
-            .widthIn(min = inactiveWidth)
+        modifier = modifier
             .semantics {
                 role = Role.Tab
                 this.selected = selected
@@ -4858,15 +4750,20 @@ internal fun RowScope.ExpressiveBottomNavigationItem(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, null, Modifier.size(22.dp))
-            Text(
-                label,
-                Modifier.padding(start = 7.dp),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight =
-                    if (selected) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 1
-            )
+            Icon(icon, if (selected) null else label, Modifier.size(22.dp))
+            AnimatedVisibility(
+                visible = selected,
+                enter = fadeIn() + expandHorizontally(),
+                exit = fadeOut() + shrinkHorizontally()
+            ) {
+                Text(
+                    label,
+                    Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+            }
         }
     }
 }
@@ -4876,26 +4773,31 @@ internal fun SettingsBottomNavigation(
     currentDestination: SettingsDestination,
     selectDestination: (SettingsDestination) -> Unit
 ) {
-    Surface(
-        color = Color(0xFF101216),
-        tonalElevation = 8.dp
-    ) {
-        Row(
+    Surface(color = Color(0xFF101216), tonalElevation = 8.dp) {
+        Box(
             Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 8.dp, vertical = 8.dp)
-                .animateContentSize(),
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                .navigationBarsPadding(),
+            contentAlignment = Alignment.Center
         ) {
-            SettingsDestination.entries.forEach { destination ->
-                ExpressiveBottomNavigationItem(
-                    icon = destination.icon(),
-                    label = destination.title,
-                    selected = destination == currentDestination,
-                    onClick = { selectDestination(destination) },
-                    inactiveWidth = 46.dp
-                )
+            Row(
+                Modifier
+                    .widthIn(max = 448.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .animateContentSize(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SettingsDestination.entries.forEach { destination ->
+                    val selected = destination == currentDestination
+                    ExpressiveBottomNavigationItem(
+                        icon = destination.icon(),
+                        label = destination.title,
+                        selected = selected,
+                        onClick = { selectDestination(destination) },
+                        modifier = if (selected) Modifier.weight(1f) else Modifier.width(56.dp)
+                    )
+                }
             }
         }
     }

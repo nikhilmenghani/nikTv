@@ -5,6 +5,10 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Configuration
 import android.media.AudioManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.Gravity
@@ -692,6 +696,38 @@ fun PlayerScreen(
         }
     }
     val localPlayer = localLease?.player
+    val audioFailureFallbackEnabled = remember(context) { AudioFailurePreferences.enabled(context) }
+    var audioDisabledAfterFailure by remember(localPlayer) { mutableStateOf(false) }
+
+    fun retryAudioOutput() {
+        val activePlayer = localPlayer ?: return
+        if (!audioDisabledAfterFailure || castSessionActive) return
+        audioDisabledAfterFailure = false
+        activePlayer.trackSelectionParameters = activePlayer.trackSelectionParameters
+            .buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).build()
+        if (activePlayer.playerError != null) activePlayer.prepare()
+    }
+
+    // Event driven; no periodic audio probing or work on the video rendering path.
+    DisposableEffect(localPlayer, audioFailureFallbackEnabled) {
+        val knownOutputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            .map { it.id }.toMutableSet()
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+                val newOutput = addedDevices.filter { it.isSink }
+                    .map { knownOutputs.add(it.id) }.any { it }
+                if (newOutput) retryAudioOutput()
+            }
+
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                removedDevices.forEach { knownOutputs.remove(it.id) }
+            }
+        }
+        if (audioFailureFallbackEnabled && localPlayer != null) {
+            audioManager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        }
+        onDispose { audioManager.unregisterAudioDeviceCallback(callback) }
+    }
     LaunchedEffect(localLease) {
         if (localLease != null) {
             pendingLocalResumePosition = null
@@ -835,6 +871,23 @@ fun PlayerScreen(
                 playbackRequested = value
             }
             override fun onPlayerError(error: PlaybackException) {
+                if (player === localPlayer && shouldRecoverWithoutAudio(
+                        audioFailureFallbackEnabled,
+                        audioDisabledAfterFailure,
+                        error.errorCode
+                    )
+                ) {
+                    audioDisabledAfterFailure = true
+                    playbackError = null
+                    startupTimedOut = false
+                    decoderRecoveryInProgress = false
+                    // Reuse the same player, position, video decoder selection and play intent.
+                    player.trackSelectionParameters = player.trackSelectionParameters
+                        .buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
+                    android.util.Log.w("NikTvAudio", "Audio output failed; continuing video only")
+                    player.prepare()
+                    return
+                }
                 val failedDecoder =
                     FailedDecoderRegistry.record(
                         context,
@@ -2245,6 +2298,27 @@ PlayerChromeIconButton(
                     },
                     color = Color.White
                 )
+            }
+        }
+        if (audioDisabledAfterFailure && !castSessionActive && !inPictureInPicture) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xDD181818)
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.VolumeOff, contentDescription = "Audio disabled after output failure",
+                        tint = Color(0xFFFFCC80), modifier = Modifier.size(20.dp))
+                    if (controlsVisible) {
+                        Text("Audio unavailable · video only", color = Color.White,
+                            style = MaterialTheme.typography.labelSmall)
+                        TextButton(onClick = { retryAudioOutput() }) { Text("Retry audio") }
+                    }
+                }
             }
         }
         val failure = playbackError ?: if (startupTimedOut) "The stream did not start within 25 seconds." else null
