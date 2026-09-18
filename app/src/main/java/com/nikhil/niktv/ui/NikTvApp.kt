@@ -824,21 +824,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     }
                 }
             }
-            if (state.profileLoadProgress == null && state.playbackUrls.isEmpty()) {
-                state.profilePreparationMessage?.let { message ->
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .statusBarsPadding()
-                            .padding(top = 76.dp, start = 16.dp, end = 16.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xEE202020)
-                    ) {
-                        Text(message, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.bodySmall, color = Color.White)
-                    }
-                }
-            }
             if (state.loading && state.profileLoadProgress == null) {
                 if (state.session == null) {
                     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .42f)), contentAlignment = Alignment.Center) {

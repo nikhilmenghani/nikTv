@@ -74,7 +74,6 @@ data class NikTvState(
     val feedRefreshMessage: String = "Refreshing feed…",
     val loading: Boolean = false,
     val profileLoadProgress: Float? = null,
-    val profilePreparationMessage: String? = null,
     val profileLoadMessage: String = "Preparing profile…",
     val error: String? = null,
     val reauthenticating: Boolean = false,
@@ -311,7 +310,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connect(profile: PortalProfile) = task {
         profilePreparationJob?.cancel()
-        _state.update { it.copy(profilePreparationMessage = null) }
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
         val session = authenticateProfileForOpening(profile)
@@ -353,38 +351,24 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         profilePreparationJob?.cancel()
         profilePreparationJob = viewModelScope.launch {
             val profileKey = session.profile.cacheKey()
-            fun status(message: String?) {
-                _state.update { current ->
-                    if (current.session?.profile?.cacheKey() == profileKey)
-                        current.copy(profilePreparationMessage = message) else current
-                }
-            }
-            val failed = mutableListOf<String>()
-            suspend fun step(label: String, block: suspend () -> Unit) {
+            suspend fun step(block: suspend () -> Unit) {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                status("$label · You can continue browsing")
                 try {
-                    if (withTimeoutOrNull(15_000L) { block(); true } != true) failed += label
+                    withTimeoutOrNull(15_000L) { block() }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) { failed += label }
+                catch (_: Exception) { /* Optional preparation retries when its destination opens. */ }
             }
-            try {
-                step("Preparing local catalog storage") { store.discardLegacyBrowseCatalogs() }
-                for (type in listOf(CatalogType.MOVIES, CatalogType.SERIES, CatalogType.LIVE_TV)) {
-                    step("Loading ${type.title} categories from local storage or provider") {
-                        if (_state.value.modernUiEnabled) loadTypeMetadataInternal(session, type)
-                        else loadTypeInternal(session, type)
-                    }
+            step { store.discardLegacyBrowseCatalogs() }
+            for (type in listOf(CatalogType.MOVIES, CatalogType.SERIES, CatalogType.LIVE_TV)) {
+                step {
+                    if (_state.value.modernUiEnabled) loadTypeMetadataInternal(session, type)
+                    else loadTypeInternal(session, type)
                 }
-                // These are optional enrichments, never a prerequisite for opening Home.
-                step("Refreshing watched series") { refreshWatchedSeriesIfDue() }
-                loadDashboardDiscovery()
-                step("Updating home artwork") { enrichHomeArtwork(profileKey) }
-                status(if (failed.isEmpty()) null else
-                    "Some background preparation could not finish. Browse a section to retry, or use Refresh IPTV catalog in Settings.")
-            } finally {
-                if (!kotlinx.coroutines.currentCoroutineContext().isActive) status(null)
             }
+            // These are optional enrichments, never a prerequisite for opening Home.
+            step { refreshWatchedSeriesIfDue() }
+            loadDashboardDiscovery()
+            step { enrichHomeArtwork(profileKey) }
         }
     }
 
@@ -5408,7 +5392,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun switchProfile(profile: PortalProfile) = task {
         profilePreparationJob?.cancel()
-        _state.update { it.copy(profilePreparationMessage = null) }
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.04f, "Loading ${profile.name}…")
         store.activate(profile)
