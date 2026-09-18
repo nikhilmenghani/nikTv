@@ -716,13 +716,12 @@ private fun ModernDestinationHub(
                         color = Color.White
                     )
                     Text(
-                        "Choose a collection or provider category to browse.",
+                        "Choose what to browse",
                         color = Color(0xFFA7ABB5),
                         style = MaterialTheme.typography.bodyMedium
                     )
                     ModernHubQuickActions(
                         dashboardSurface = dashboardSurface,
-                        screenTitle = screenTitle,
                         openSearch = openSearch,
                         configureTmdb = configureTmdb,
                         configureIptv = configureIptv,
@@ -1237,7 +1236,6 @@ private fun ModernCustomizeHomeDialog(
 @Composable
 private fun ModernHubQuickActions(
     dashboardSurface: DashboardSurface,
-    screenTitle: String,
     openSearch: () -> Unit,
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
@@ -1247,146 +1245,93 @@ private fun ModernHubQuickActions(
     recentChannelCount: Int,
     isTv: Boolean
 ) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(
-            start = if (isTv) 6.dp else 0.dp,
-            top = 4.dp,
-            end = 8.dp,
-            bottom = 10.dp
-        )
-    ) {
-        item("quick-search") {
-            ModernQuickActionTile(
-                title = if (dashboardSurface == DashboardSurface.HOME) "Search" else "Search $screenTitle",
-                subtitle = "Across NikTV",
-                icon = Icons.Default.Search,
-                accent = ModernBrandAccent,
-                isTv = isTv,
-                onClick = openSearch
-            )
-        }
+    val configuration = LocalConfiguration.current
+    val columns = if (configuration.screenWidthDp >= 720) 3 else 2
+    val actions = buildList {
+        add(ModernQuickAction("search", "Search", Icons.Default.Search, ModernBrandAccent, openSearch))
         if (dashboardSurface == DashboardSurface.LIVE_TV) {
-            item("quick-recent-channels") {
-                var menuOpen by remember { mutableStateOf(false) }
-                Box {
-                    ModernQuickActionTile(
-                        title = "Recently Played",
-                        subtitle = "$recentChannelCount channels · Hold for options",
-                        icon = Icons.Default.History,
-                        accent = ModernBrandViolet,
-                        isTv = isTv,
-                        onClick = openRecentChannels,
-                        onLongClick = { menuOpen = true }
-                    )
-                    DropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { menuOpen = false },
-                        containerColor = Color(0xFF202020),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        NikDropdownMenuItem(
-                            text = { Text("Clear recently played channels") },
-                            leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
-                            onClick = { menuOpen = false; clearRecentChannels() }
-                        )
-                    }
+            add(
+                ModernQuickAction(
+                    "recent",
+                    "Recently played · $recentChannelCount",
+                    Icons.Default.History,
+                    ModernBrandViolet,
+                    openRecentChannels,
+                    clearRecentChannels
+                )
+            )
+        } else {
+            add(ModernQuickAction("tmdb", "TMDB sections", Icons.Default.DashboardCustomize, ModernBrandViolet, configureTmdb))
+        }
+        val catalogType = when (dashboardSurface) {
+            DashboardSurface.LIVE_TV -> CatalogType.LIVE_TV
+            DashboardSurface.MOVIES -> CatalogType.MOVIES
+            DashboardSurface.SERIES -> CatalogType.SERIES
+            DashboardSurface.HOME -> CatalogType.LIVE_TV
+        }
+        val accent = when (catalogType) {
+            CatalogType.LIVE_TV -> Color(0xFFE65D68)
+            CatalogType.MOVIES -> Color(0xFF55B8FF)
+            CatalogType.SERIES -> Color(0xFF9A80FF)
+            CatalogType.RADIO -> ModernBrandAccent
+        }
+        add(ModernQuickAction("iptv", "IPTV categories", Icons.Default.Tune, accent, { configureIptv(catalogType) }))
+        add(ModernQuickAction("reset", "Reset layout", Icons.Default.RestartAlt, Color(0xFFA7ADB8), resetSurface))
+    }
+
+    Column(
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        actions.chunked(columns).forEach { rowActions ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                rowActions.forEach { action ->
+                    ModernQuickActionCell(action, isTv, Modifier.weight(1f))
                 }
+                repeat(columns - rowActions.size) { Spacer(Modifier.weight(1f)) }
             }
         }
-        if (dashboardSurface != DashboardSurface.LIVE_TV) {
-            item("quick-tmdb") {
-                ModernQuickActionTile(
-                    title = "TMDB sections",
-                    subtitle = "Choose Discover rows",
-                    icon = Icons.Default.DashboardCustomize,
-                    accent = ModernBrandViolet,
-                    isTv = isTv,
-                    onClick = configureTmdb
+    }
+}
+
+private data class ModernQuickAction(
+    val key: String,
+    val title: String,
+    val icon: ImageVector,
+    val accent: Color,
+    val onClick: () -> Unit,
+    val onClear: (() -> Unit)? = null
+)
+
+@Composable
+private fun ModernQuickActionCell(action: ModernQuickAction, isTv: Boolean, modifier: Modifier) {
+    var menuOpen by remember(action.key) { mutableStateOf(false) }
+    Box(modifier) {
+        ModernQuickActionTile(
+            title = action.title,
+            icon = action.icon,
+            accent = action.accent,
+            isTv = isTv,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = action.onClick,
+            onLongClick = action.onClear?.let { { menuOpen = true } }
+        )
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = Color(0xFF202020),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            action.onClear?.let { clear ->
+                NikDropdownMenuItem(
+                    text = { Text("Clear recently played channels") },
+                    leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                    onClick = { menuOpen = false; clear() }
                 )
             }
-        }
-
-        when (dashboardSurface) {
-            DashboardSurface.HOME -> {
-                item("quick-live") {
-                    ModernQuickActionTile(
-                        title = "Live TV categories",
-                        subtitle = "Choose channel groups",
-                        icon = Icons.Default.LiveTv,
-                        accent = Color(0xFFE65D68),
-                        isTv = isTv,
-                        onClick = { configureIptv(CatalogType.LIVE_TV) }
-                    )
-                }
-                item("quick-movies") {
-                    ModernQuickActionTile(
-                        title = "Movie categories",
-                        subtitle = "Choose provider rows",
-                        icon = Icons.Default.SmartDisplay,
-                        accent = Color(0xFF55B8FF),
-                        isTv = isTv,
-                        onClick = { configureIptv(CatalogType.MOVIES) }
-                    )
-                }
-                item("quick-series") {
-                    ModernQuickActionTile(
-                        title = "Series categories",
-                        subtitle = "Choose provider rows",
-                        icon = Icons.Default.Tv,
-                        accent = Color(0xFF9A80FF),
-                        isTv = isTv,
-                        onClick = { configureIptv(CatalogType.SERIES) }
-                    )
-                }
-            }
-            DashboardSurface.MOVIES -> {
-                item("quick-iptv") {
-                    ModernQuickActionTile(
-                        title = "IPTV categories",
-                        subtitle = "Choose provider rows",
-                        icon = Icons.Default.Tune,
-                        accent = Color(0xFF55B8FF),
-                        isTv = isTv,
-                        onClick = { configureIptv(CatalogType.MOVIES) }
-                    )
-                }
-            }
-            DashboardSurface.SERIES -> {
-                item("quick-iptv") {
-                    ModernQuickActionTile(
-                        title = "IPTV categories",
-                        subtitle = "Choose provider rows",
-                        icon = Icons.Default.Tune,
-                        accent = Color(0xFF9A80FF),
-                        isTv = isTv,
-                        onClick = { configureIptv(CatalogType.SERIES) }
-                    )
-                }
-            }
-            DashboardSurface.LIVE_TV -> {
-                item("quick-iptv") {
-                    ModernQuickActionTile(
-                        title = "IPTV categories",
-                        subtitle = "Choose channel groups",
-                        icon = Icons.Default.Tune,
-                        accent = Color(0xFFE65D68),
-                        isTv = isTv,
-                        onClick = { configureIptv(CatalogType.LIVE_TV) }
-                    )
-                }
-            }
-        }
-
-        item("quick-reset") {
-            ModernQuickActionTile(
-                title = "Reset",
-                subtitle = "Restore defaults",
-                icon = Icons.Default.RestartAlt,
-                accent = Color(0xFFA7ADB8),
-                isTv = isTv,
-                onClick = resetSurface
-            )
         }
     }
 }
@@ -1394,10 +1339,10 @@ private fun ModernHubQuickActions(
 @Composable
 private fun ModernQuickActionTile(
     title: String,
-    subtitle: String,
     icon: ImageVector,
     accent: Color,
     isTv: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null
 ) {
@@ -1430,22 +1375,16 @@ private fun ModernQuickActionTile(
         }
     ) * visualProgress
     val shape = RoundedCornerShape(if (isTv) 18.dp else 16.dp)
-    val tileWidth = when {
-        isTv -> 240.dp
-        isPhone -> 196.dp
-        else -> 220.dp
-    }
     val tileHeight = when {
-        isTv -> 92.dp
-        isPhone -> 82.dp
-        else -> 88.dp
+        isTv -> 82.dp
+        isPhone -> 72.dp
+        else -> 78.dp
     }
 
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(interactionSource = interactionSource, onClick = onClick, onLongClick = onLongClick)
-            .width(tileWidth)
             .height(tileHeight)
             .zIndex(visualProgress)
             .graphicsLayer {
@@ -1512,32 +1451,16 @@ private fun ModernQuickActionTile(
                     )
                 }
             }
-            Column(
-                Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    title,
-                    style = when {
-                        isTv -> MaterialTheme.typography.bodyMedium
-                        isPhone -> MaterialTheme.typography.bodyMedium
-                        else -> MaterialTheme.typography.titleSmall
-                    },
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    subtitle,
-                    style =
-                        if (isTv) MaterialTheme.typography.labelSmall
-                        else MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFA7ABB5),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = if (isTv || isPhone) MaterialTheme.typography.bodyMedium
+                    else MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
