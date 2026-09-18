@@ -895,38 +895,68 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
+        val profileKey = session.profile.cacheKey()
+        val preferLocal = com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
-        val categoryCache = if (com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication()))
-            store.browseCatalog(category.type, session.profile.cacheKey()).first() else null
+
+        // The per-type disk cache can contain tens of megabytes of catalogue
+        // data. It is already loaded while entering the tab, so do not parse
+        // the whole file again for every category selection.
+        val memoryCache = if (preferLocal) {
+            _state.value.browseCachesByType[category.type]
+                ?.takeIf { it.profileKey == profileKey }
+        } else {
+            null
+        }
+        val categoryCache = memoryCache ?: if (preferLocal) {
+            store.browseCatalog(category.type, profileKey).first()
+        } else {
+            null
+        }
         if (categoryCache != null) _state.update { it.copy(browseCache = categoryCache,
             browseCachesByType = it.browseCachesByType + (category.type to categoryCache)) }
         val cached = categoryCache?.itemsByCategory?.get(category.id)?.takeIf {
             categoryCache.pagesByCategory.containsKey(category.id) &&
                 categoryCache.hasMoreByCategory.containsKey(category.id)
         }
-        val firstPage = if (cached == null) fetchInitialCatalogPage(session, category) else null
-        val items = cached ?: firstPage!!.items
-        if (cached == null) {
-            val existing = _state.value.browseCachesByType[category.type]
-            if (existing != null && existing.type == category.type) {
-                val updated = existing.copy(
-                    cachedAtMillis = System.currentTimeMillis(),
-                    itemsByCategory = existing.itemsByCategory + (category.id to items),
-                    pagesByCategory = existing.pagesByCategory + (category.id to firstPage!!.page),
-                    hasMoreByCategory = existing.hasMoreByCategory + (category.id to firstPage.hasMore)
-                )
-                store.saveBrowseCatalog(updated)
-                _state.update { current -> current.copy(
-                    browseCache = updated,
-                    browseCachesByType = current.browseCachesByType + (category.type to updated)
-                ) }
+
+        if (cached != null) {
+            _state.update { current -> current.copy(
+                items = cached,
+                catalogPage = categoryCache.pagesByCategory[category.id] ?: 1,
+                catalogHasMore = categoryCache.hasMoreByCategory[category.id] ?: false
+            ) }
+            return@task
+        }
+
+        val firstPage = fetchInitialCatalogPage(session, category)
+        val existing = categoryCache
+            ?: _state.value.browseCachesByType[category.type]
+                ?.takeIf { it.profileKey == profileKey && it.type == category.type }
+        val updated = existing?.copy(
+            cachedAtMillis = System.currentTimeMillis(),
+            itemsByCategory = existing.itemsByCategory + (category.id to firstPage.items),
+            pagesByCategory = existing.pagesByCategory + (category.id to firstPage.page),
+            hasMoreByCategory = existing.hasMoreByCategory + (category.id to firstPage.hasMore)
+        )
+
+        // Publish provider results before serializing the enlarged cache. This
+        // keeps a cache write from extending the visible loading state.
+        _state.update { current -> current.copy(
+            items = firstPage.items,
+            catalogPage = firstPage.page,
+            catalogHasMore = firstPage.hasMore,
+            browseCache = updated ?: current.browseCache,
+            browseCachesByType = updated?.let {
+                current.browseCachesByType + (category.type to it)
+            } ?: current.browseCachesByType
+        ) }
+        if (updated != null) {
+            viewModelScope.launch {
+                runCatching { store.saveBrowseCatalog(updated) }
+                    .onFailure { Log.w("NikTvCatalogCache", "Could not persist category ${category.id}", it) }
             }
         }
-        _state.update { it.copy(
-            items = items,
-            catalogPage = firstPage?.page ?: _state.value.browseCachesByType[category.type]?.pagesByCategory?.get(category.id) ?: 1,
-            catalogHasMore = firstPage?.hasMore ?: _state.value.browseCachesByType[category.type]?.hasMoreByCategory?.get(category.id) ?: false
-        ) }
     }
 
     /*
