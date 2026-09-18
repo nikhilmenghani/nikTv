@@ -38,6 +38,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -178,6 +179,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val watchRefreshMutex = Mutex()
     private val favoriteSeriesMetadataMutex = Mutex()
     private val favoriteEpisodeCacheRefreshMutex = Mutex()
+    private val sessionRefreshMutex = Mutex()
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
     private val categoryRefreshJobs = mutableMapOf<String, Job>()
@@ -1056,7 +1058,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         categoryRefreshJobs[key] = viewModelScope.launch {
             if (userRequested) _state.update { it.copy(categoryRefreshing = true, error = null) }
             try {
-                val page = fetchInitialCatalogPage(session, category)
+                val page = withAutomaticSessionRetry(session) { activeSession ->
+                    fetchInitialCatalogPage(activeSession, category)
+                }
                 val profileKey = session.profile.cacheKey()
                 if (_state.value.session?.profile?.cacheKey() != profileKey) return@launch
                 val currentCache = _state.value.browseCachesByType[category.type]
@@ -1205,14 +1209,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(catalogLoadingMore = true) }
             runCatching {
-                portal.catalogPage(
-                    session = session,
-                    category = category,
-                    page = snapshot.catalogPage + 1,
-                    pageSize = snapshot.initialCatalogItems.takeIf {
-                        session.profile.portalType == PortalType.XTREAM
-                    }
-                )
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.catalogPage(
+                        session = activeSession,
+                        category = category,
+                        page = snapshot.catalogPage + 1,
+                        pageSize = snapshot.initialCatalogItems.takeIf {
+                            activeSession.profile.portalType == PortalType.XTREAM
+                        }
+                    )
+                }
             }
                 .onSuccess { result ->
                     /*
@@ -3130,7 +3136,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             val existing = _state.value.browseCachesByType[type] ?: return
             if (existing.itemsByCategory.containsKey(category.id)) continue
-            val items = runCatching { portal.catalog(session, category) }
+            val items = runCatching {
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.catalog(activeSession, category)
+                }
+            }
                 .getOrDefault(emptyList())
                 .filter { it.portalCategoryId == null || it.portalCategoryId == category.id }
                 .take(50)
@@ -3164,7 +3174,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         val additions = if (session.profile.portalType == PortalType.STALKER) {
             val nextPage = (currentItems.size / STALKER_SECTION_PAGE_SIZE) + 1
-            runCatching { portal.catalogPage(session, category, nextPage).items }.getOrDefault(emptyList())
+            runCatching {
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.catalogPage(activeSession, category, nextPage).items
+                }
+            }.getOrDefault(emptyList())
         } else {
             // Xtream sections are streamed and bounded during their initial request.
             emptyList()
@@ -3278,7 +3292,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (_state.value.movieMatchSelection?.id != entry.tmdb.id) return@launch
             val (query, pageNumber) = requests.removeFirst()
             val page = runCatching {
-                portal.search(session, SearchContentType.MOVIES, query, pageNumber, "*")
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.search(activeSession, SearchContentType.MOVIES, query, pageNumber, "*")
+                }
             }.getOrNull() ?: continue
             requestsMade++
             candidates += page.items
@@ -3573,7 +3589,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             runCatching {
-                portal.fullCatalog(session, type, categories)
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.fullCatalog(activeSession, type, categories)
+                }
             }.onSuccess { results ->
                 val cachedAt = System.currentTimeMillis()
                 store.saveSearchCatalog(SearchCatalogCache(profileKey, type, cachedAt, results))
@@ -3798,7 +3816,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 cached
             } else {
                 runCatching {
-                    portal.categories(session, catalogType)
+                    withAutomaticSessionRetry(session) { activeSession ->
+                        portal.categories(activeSession, catalogType)
+                    }
                 }.getOrDefault(emptyList())
             }
 
@@ -4096,7 +4116,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(searchActivityDetail = "${type.title} · page $page",
                         searchActivityProgress = null) }
                     delay(METADATA_SCAN_REQUEST_DELAY_MS)
-                    val result = portal.search(session, type, query, page, category)
+                    val result = withAutomaticSessionRetry(session) { activeSession ->
+                        portal.search(activeSession, type, query, page, category)
+                    }
                     val previous = store.pagedSearches.first().firstOrNull {
                         it.profileKey == profileKey && it.type == type && it.query.equals(query, true) && it.categoryId == category
                     }
@@ -4106,7 +4128,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 categories = { type ->
                     store.browseCatalog(catalogTypeForSearch(type), profileKey).first()?.categories
-                        .orEmpty().ifEmpty { portal.categories(session, catalogTypeForSearch(type)) }.map { it.id }
+                        .orEmpty().ifEmpty {
+                            withAutomaticSessionRetry(session) { activeSession ->
+                                portal.categories(activeSession, catalogTypeForSearch(type))
+                            }
+                        }.map { it.id }
                 },
                 onItems = { items ->
                     if (current()) _state.update { latest -> latest.copy(
@@ -4146,7 +4172,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = session.profile.cacheKey()
 
         runCatching {
-            val direct = portal.search(session, type, query, page, categoryId)
+            val direct = withAutomaticSessionRetry(session) { activeSession ->
+                portal.search(activeSession, type, query, page, categoryId)
+            }
             if (categoryId != "*" || direct.items.isNotEmpty()) {
                 direct
             } else {
@@ -4181,7 +4209,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         batch.map { category ->
                             async {
                                 runCatching {
-                                    portal.search(session, type, query, page, category.id)
+                                    withAutomaticSessionRetry(session) { activeSession ->
+                                        portal.search(activeSession, type, query, page, category.id)
+                                    }
                                 }.getOrNull()
                             }
                         }.awaitAll().filterNotNull()
@@ -4578,7 +4608,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(error = "Connect to the IPTV provider before deleting a download that is currently playing.") }
                     return@launch
                 }
-                onlineUrl = runCatching { portal.playableUrl(session, item, type) }
+                onlineUrl = runCatching {
+                    withAutomaticSessionRetry(session) { activeSession ->
+                        portal.playableUrl(activeSession, item, type)
+                    }
+                }
                     .getOrElse { failure ->
                         _state.update { it.copy(error = failure.message ?: "Could not switch playback to the IPTV stream. The offline download was kept.") }
                         return@launch
@@ -4955,10 +4989,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 .orEmpty()
                 .firstOrNull { it.id == categoryId }
                 ?: runCatching {
-                    portal.categories(session, type).firstOrNull { it.id == categoryId }
+                    withAutomaticSessionRetry(session) { activeSession ->
+                        portal.categories(activeSession, type).firstOrNull { it.id == categoryId }
+                    }
                 }.getOrNull()
             if (category != null) {
-                val loaded = runCatching { portal.catalog(session, category) }.getOrDefault(emptyList())
+                val loaded = runCatching {
+                    withAutomaticSessionRetry(session) { activeSession ->
+                        portal.catalog(activeSession, category)
+                    }
+                }.getOrDefault(emptyList())
                 if (loaded.isNotEmpty()) return (listOf(item) + loaded).distinctBy { it.id }
             }
         }
@@ -4983,13 +5023,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         initialSession: PortalSession,
         operation: suspend (PortalSession) -> T
     ): T {
+        // A background coroutine may have captured the previous token before
+        // another request refreshed it. Prefer the newest session for the same profile.
+        val activeSession = _state.value.session
+            ?.takeIf { it.profile.cacheKey() == initialSession.profile.cacheKey() }
+            ?: initialSession
         return try {
-            operation(initialSession)
+            operation(activeSession)
         } catch (firstError: Throwable) {
             if (firstError is kotlinx.coroutines.CancellationException) throw firstError
             val snapshot = _state.value
             if (!snapshot.automaticReauthentication ||
-                initialSession.profile.portalType != PortalType.STALKER ||
+                activeSession.profile.portalType != PortalType.STALKER ||
                 !firstError.isAuthenticationFailure()
             ) {
                 throw firstError
@@ -4997,7 +5042,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
             _state.update { it.copy(reauthenticating = true) }
             val refreshed = try {
-                refreshSession(initialSession.profile)
+                sessionRefreshMutex.withLock {
+                    _state.value.session
+                        ?.takeIf {
+                            it.profile.cacheKey() == activeSession.profile.cacheKey() &&
+                                it.token != activeSession.token
+                        }
+                        ?: refreshSession(activeSession.profile)
+                }
             } finally {
                 _state.update { it.copy(reauthenticating = false) }
             }
@@ -5462,7 +5514,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = snapshot.session ?: return
         viewModelScope.launch {
             val cached = store.browseCatalog(type, session.profile.cacheKey()).first()?.categories.orEmpty()
-            val categories = if (cached.isNotEmpty()) cached else runCatching { portal.categories(session, type) }.getOrDefault(emptyList())
+            val categories = if (cached.isNotEmpty()) cached else runCatching {
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.categories(activeSession, type)
+                }
+            }.getOrDefault(emptyList())
             if (categories.isNotEmpty()) {
                 _state.update { current ->
                     val updated = current.rawCategoriesByType + (type to categories)
@@ -5906,7 +5962,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         var changed = false
         scoped.forEachIndexed { index, watched ->
             if (now - watched.checkedAtMillis < interval) return@forEachIndexed
-            val latest = runCatching { portal.episodeSeason(session, watched.series, SeriesStartSeason.LAST) }.getOrNull()
+            val latest = runCatching {
+                withAutomaticSessionRetry(session) { activeSession ->
+                    portal.episodeSeason(activeSession, watched.series, SeriesStartSeason.LAST)
+                }
+            }.getOrNull()
                 ?: return@forEachIndexed
             val discovered = latest.episodes.filterNot { it.id in watched.knownEpisodeIds }
             val replacement = watched.copy(
