@@ -66,6 +66,17 @@ object SearchMetadataSyncScheduler {
                 .setInputData(workDataOf(PROFILE_ID to id)).setConstraints(constraints()).build())
     }
 
+    /** Ignore the next scheduled periodic run; only running periodic work is active now. */
+    fun observeScanWork(context: Context, id: String) = kotlinx.coroutines.flow.combine(
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow("$REFRESH-now-$id"),
+        WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow("$REFRESH-$id")
+    ) { manual, periodic ->
+        manual.filterNot { it.state.isFinished } + periodic.filter {
+            it.state == WorkInfo.State.RUNNING ||
+                (!it.state.isFinished && it.runAttemptCount > 0)
+        }
+    }
+
     fun refresh(context: Context, profile: PortalProfile? = null, resume: Boolean = false) {
         if (profile == null) {
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -83,6 +94,34 @@ object SearchMetadataSyncScheduler {
         CatalogScanPreferences.status(context, id, "Scan requested; queued or already running. Existing listings remain searchable.")
         CatalogOperations.message(context, CatalogOperations.scan(id), "Scan queued. Waiting for network/background execution; saved listings remain available.")
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Requested")
+    }
+
+    /** User-requested retry replaces delayed/blocked work, retaining Room's committed cursor. */
+    fun retryQueued(context: Context, profile: PortalProfile) {
+        val app = context.applicationContext
+        val id = CatalogScanPreferences.id(profile)
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                val manager = WorkManager.getInstance(app)
+                val periodic = manager.getWorkInfosForUniqueWork("$REFRESH-$id").get()
+                val manual = manager.getWorkInfosForUniqueWork("$REFRESH-now-$id").get()
+                if ((manual + periodic).any { it.state == WorkInfo.State.RUNNING } ||
+                    CatalogOperations.held(app, CatalogOperations.scan(id))) return@launch
+                // Replace a pending periodic retry too, otherwise it can restart a completed manual scan later.
+                if (periodic.any { !it.state.isFinished && it.runAttemptCount > 0 }) {
+                    manager.cancelUniqueWork("$REFRESH-$id").result.get()
+                    configureProfile(app, profile)
+                }
+                CatalogOperations.message(app, CatalogOperations.scan(id), "Retry requested. Waiting for a connection and Android to start the scan.")
+                manager.enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
+                    OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                        .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to false))
+                        .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                CatalogOperations.message(app, CatalogOperations.scan(id), "Could not reschedule the scan. Saved progress is retained; try again.")
+            }
+        }
     }
 
     fun continueScan(context: Context, id: String) {
@@ -104,6 +143,7 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             ?: return@withLock Result.success()
         val operation = "Catalog scan · ${profile.name}"
         val control = CatalogOperations.scan(id)
+        var notificationJob: Job? = null
         try {
             CatalogOperations.check(context, control)
             if (inputData.getBoolean(SearchMetadataSyncScheduler.RESUME_ONLY, false) &&
@@ -115,6 +155,18 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                 CatalogOperations.message(context, control, "Waiting for playback to finish; saved progress will resume automatically.")
                 CatalogScanPreferences.status(context, id, "Paused during playback; saved scan progress will resume automatically.")
                 return@withLock Result.retry()
+            }
+            setForeground(CatalogScanNotification.foreground(context, id, "Preparing catalog scan. You can leave the app."))
+            notificationJob = CoroutineScope(currentCoroutineContext()).launch {
+                var lastMessage = ""
+                while (isActive) {
+                    val message = CatalogOperations.message(context, control)
+                    if (message != lastMessage) {
+                        setForeground(CatalogScanNotification.foreground(context, id, message))
+                        lastMessage = message
+                    }
+                    delay(2_000L)
+                }
             }
             CatalogScanPreferences.status(context, id, "Connecting to ${profile.name}…")
             CatalogOperations.message(context, control, "Connecting to ${profile.name}…")
@@ -128,7 +180,7 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                 CatalogScanPreferences.cursor(context, id, cursor)
                 BackupActivityLog.record(context, operation, "Started", "Updating channels, movies and series; saved listings stay available.")
             }
-            val deadline = android.os.SystemClock.elapsedRealtime() + 120_000L
+            val deadline = android.os.SystemClock.elapsedRealtime() + 480_000L
             for (index in cursor until types.size) {
                 CatalogOperations.check(context, control)
                 val type = types[index]
@@ -171,6 +223,8 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             if (!CatalogOperations.held(context, control)) CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
             BackupActivityLog.record(context, operation, "Retry scheduled", "Check provider connectivity if this continues.")
             Result.retry()
+        } finally {
+            notificationJob?.cancelAndJoin()
         }
     }
     companion object { private val scanMutex = Mutex() }

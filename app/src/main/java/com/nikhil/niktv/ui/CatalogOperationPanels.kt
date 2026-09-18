@@ -2,6 +2,8 @@ package com.nikhil.niktv.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -20,44 +22,136 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.text.DateFormat
 import java.util.Date
+import androidx.work.WorkInfo
 
 private fun operationTime(value: Long): String = if (value == 0L) "" else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(value))
 
+internal enum class CatalogScanDisplay(val label: String) {
+    CHECKING("Checking status"), IDLE("Ready"), QUEUED("Queued"), SCANNING("Scanning"),
+    PAUSED("Paused"), STOPPED("Stopped"), COMPLETE("Complete"), INTERRUPTED("Interrupted")
+}
+
+internal fun catalogScanDisplay(mode: String, work: List<WorkInfo.State>?, cursor: Int, completed: Long): CatalogScanDisplay = when {
+    mode == "Paused" -> CatalogScanDisplay.PAUSED
+    mode == "Stopped" -> CatalogScanDisplay.STOPPED
+    work == null -> CatalogScanDisplay.CHECKING
+    WorkInfo.State.RUNNING in work -> CatalogScanDisplay.SCANNING
+    work.any { !it.isFinished } -> CatalogScanDisplay.QUEUED
+    cursor >= 0 -> CatalogScanDisplay.INTERRUPTED
+    completed > 0 -> CatalogScanDisplay.COMPLETE
+    else -> CatalogScanDisplay.IDLE
+}
+
 @Composable
-internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabled: Boolean = true, onResume: () -> Unit) {
+internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabled: Boolean = true, onStart: (() -> Unit)? = null, onRetry: (() -> Unit)? = null, onResume: () -> Unit) {
     val context = LocalContext.current
     val revision by remember(operation) { CatalogOperations.observe(context, operation) }.collectAsState(0L)
     val mode = remember(revision, operation) { CatalogOperations.mode(context, operation) }
     val message = remember(revision, operation) { CatalogOperations.message(context, operation) }
     val failures = remember(revision, operation) { CatalogOperations.events(context, operation, true) }
-    val events = remember(revision, operation) { CatalogOperations.events(context, operation) }
+    val backupEvents by remember(context) { BackupActivityLog.observe(context) }.collectAsState(emptyList())
+    val events = remember(revision, operation, backupEvents) {
+        if (operation.startsWith("scan:")) CatalogOperations.events(context, operation)
+        else backupEvents.filter { it.operation.startsWith("IPTV catalog backup") || it.operation.startsWith("Catalog checkpoint ·") }
+            .map { CatalogPageEvent(it.id, it.timestamp, it.operation, it.status, it.detail) }
+    }
     var detail by remember(operation) { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(if (mode == "Ready") message else "$mode · $message", style = MaterialTheme.typography.bodyMedium)
-        Text(operationTime(CatalogOperations.updated(context, operation)), style = MaterialTheme.typography.bodySmall)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Paused") }, enabled = mode == "Ready",
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Pause") } }
-            item { OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Stopped") }, enabled = mode != "Stopped",
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Stop") } }
-            item { OutlinedButton(onClick = onResume, enabled = mode != "Ready" && resumeEnabled,
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Resume") } }
-        }
-        Text("Pause/Stop retain committed work and hold scheduled runs until Resume. An in-flight page or file may finish first.", style = MaterialTheme.typography.bodySmall)
-        if (operation.startsWith("scan:")) {
-            Text("${failures.size} unresolved failed pages. Successful retries clear their failure. Recent activity retains the last 100 page outcomes.", style = MaterialTheme.typography.bodySmall)
+    val isScan = operation.startsWith("scan:")
+    val scanWork by remember(operation) {
+        if (isScan) SearchMetadataSyncScheduler.observeScanWork(context, operation.removePrefix("scan:"))
+        else kotlinx.coroutines.flow.flowOf(emptyList())
+    }.collectAsState(initial = null)
+    val scanId = operation.removePrefix("scan:")
+    val scanState = catalogScanDisplay(mode, scanWork?.map { it.state },
+        CatalogScanPreferences.cursor(context, scanId), CatalogScanPreferences.completed(context, scanId))
+    val interrupted = isScan && scanState == CatalogScanDisplay.INTERRUPTED
+    val held = mode != "Ready" || interrupted
+    val busy = isScan && scanState in listOf(CatalogScanDisplay.CHECKING, CatalogScanDisplay.QUEUED, CatalogScanDisplay.SCANNING)
+    val updated = CatalogOperations.updated(context, operation)
+    val queuedWork = scanWork?.firstOrNull { it.state == WorkInfo.State.ENQUEUED }
+    val queuedExplanation = when {
+        queuedWork != null && queuedWork.runAttemptCount > 0 ->
+            "Waiting to retry after an interrupted or unsuccessful attempt. Saved progress is retained." +
+                if (queuedWork.nextScheduleTimeMillis > System.currentTimeMillis() && queuedWork.nextScheduleTimeMillis < Long.MAX_VALUE)
+                    " Next eligible attempt: ${operationTime(queuedWork.nextScheduleTimeMillis)}." else ""
+        queuedWork != null && queuedWork.nextScheduleTimeMillis > System.currentTimeMillis() && queuedWork.nextScheduleTimeMillis < Long.MAX_VALUE ->
+            "Continuing from saved progress after ${operationTime(queuedWork.nextScheduleTimeMillis)}."
+        scanWork?.any { it.state == WorkInfo.State.BLOCKED } == true ->
+            "Waiting for an earlier scan task. Try now can replace the waiting queue without discarding saved pages."
+        else -> "Waiting for Android to start the scan. An internet connection and available storage are required. Try now requests a fresh start from saved progress."
+    }
+    val summary = when (mode) {
+        "Paused" -> "Progress saved. Resume when you’re ready."
+        "Stopped" -> "Stopped. Saved progress is available to resume."
+        else -> if (isScan && scanState == CatalogScanDisplay.QUEUED) queuedExplanation else if (interrupted) "Scan interrupted. Resume from the last saved page." else if (updated == 0L) {
+            if (operation.startsWith("scan:")) "Ready to scan channels, movies and series." else "No catalog upload yet."
+        } else message
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(if (operation.startsWith("scan:")) Icons.Default.Storage else Icons.Default.CloudUpload,
+                    contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                if (isScan || held) Text(if (isScan) scanState.label else mode, style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+            if (isScan && scanState == CatalogScanDisplay.SCANNING) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            val parts = summary.split(" · ")
+            val showStage = !held && parts.size > 1 && !summary.startsWith("Complete") && !summary.startsWith("Scan already complete")
+            Text(if (showStage) parts.last() else summary, style = MaterialTheme.typography.bodyMedium)
+            if (showStage) Text(parts.dropLast(1).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (updated > 0) Text("Updated ${operationTime(updated)}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { OutlinedButton(onClick = { detail = "failures" }, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Failed pages (${failures.size})") } }
-                item { OutlinedButton(onClick = { detail = "events" }, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Stored pages & activity") } }
+                if (held) {
+                    item { Button(onClick = onResume, enabled = resumeEnabled,
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Resume") } }
+                } else {
+                    if (onStart != null) item { Button(
+                        onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
+                        enabled = !busy || (scanState == CatalogScanDisplay.QUEUED && onRetry != null),
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) {
+                        Text(when (scanState) {
+                            CatalogScanDisplay.SCANNING -> "Scanning…"
+                            CatalogScanDisplay.QUEUED -> "Try now"
+                            CatalogScanDisplay.CHECKING -> "Checking…"
+                            CatalogScanDisplay.COMPLETE -> "Scan again"
+                            else -> "Scan now"
+                        })
+                    } }
+                    if (!isScan || busy) item { OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Pause") } }
+                }
+                if (mode != "Stopped" && (!isScan || busy || held)) item { TextButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
+                    modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Stop") } }
+                item { TextButton(onClick = { detail = "events" },
+                    modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("Details") } }
+                if (failures.isNotEmpty()) item { TextButton(onClick = { detail = "failures" },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.remoteFocusFrame(RoundedCornerShape(12.dp))) { Text("${failures.size} failed") } }
             }
         }
     }
     detail?.let { selected ->
         val rows = if (selected == "failures") failures else events
-        AlertDialog(onDismissRequest = { detail = null }, title = { Text(if (selected == "failures") "Unresolved failed pages" else "Recent page activity") },
+        AlertDialog(onDismissRequest = { detail = null }, title = { Text(if (selected == "failures") "Unresolved failed pages" else "$title details") },
             text = { LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (rows.isEmpty()) item { Text("No entries yet.") }
+                if (selected != "failures") item {
+                    Text("Pause and Stop keep completed pages/files and hold scheduled runs until Resume. An in-flight request may finish first.",
+                        style = MaterialTheme.typography.bodyMedium)
+                    if (operation.startsWith("scan:")) Text("Recent page activity · last 100 outcomes", style = MaterialTheme.typography.titleSmall)
+                }
+                if (rows.isEmpty()) item { Text(if (selected == "failures") "No unresolved failures." else "No activity recorded yet.") }
                 items(rows, key = { "${it.key}:${it.time}" }) { row ->
                     Column(Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(8.dp)).focusable().padding(8.dp)) { Text("${row.outcome} · ${row.location}", style = MaterialTheme.typography.titleSmall)
                         Text(row.detail); Text(operationTime(row.time), style = MaterialTheme.typography.bodySmall); HorizontalDivider() }
@@ -75,8 +169,8 @@ internal fun CatalogDatabasePanel(profile: PortalProfile) {
     var browseType by remember(profileKey) { mutableStateOf<CatalogType?>(null) }
     var offset by remember(profileKey) { mutableIntStateOf(0) }
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Verified Room contents · ${profile.name}", style = MaterialTheme.typography.titleMedium)
-        Text("Counts come from committed database rows, deduplicated by provider ID and excluding removed items. Provider totals are unknown until scanning finishes; no estimated percentage is shown.", style = MaterialTheme.typography.bodySmall)
+        Text("Saved on this device", style = MaterialTheme.typography.titleMedium)
+        Text("Browse the channels, movies and series already available locally.", style = MaterialTheme.typography.bodySmall)
         listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach { type ->
             val count = counts.firstOrNull { it.type == type.name }?.count ?: 0
             BackupSettingsActionRow(Icons.Default.Storage, "${type.title}: $count stored", "Browse stored titles and provider IDs", onClick = { offset = 0; browseType = type })

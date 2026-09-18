@@ -1686,7 +1686,7 @@ SettingsSection("Backup and restore") {
                 enabled = catalogBackupEnabled,
                 onClick = {
                     com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true)
-                    catalogStatus = "Catalog backup queued."
+                    catalogStatus = ""
                 }
             )
             BackupSettingsActionRow(

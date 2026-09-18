@@ -29,8 +29,6 @@ internal fun CatalogProfileSettings(profiles: List<PortalProfile>, active: Porta
     val id = CatalogScanPreferences.id(profile)
     var chooseProfile by remember { mutableStateOf(false) }
     var hours by remember(id) { mutableIntStateOf(CatalogScanPreferences.hours(context, id)) }
-    val status by remember(id) { CatalogScanPreferences.observe(context, id) }
-        .collectAsState(initial = CatalogScanPreferences.status(context, id))
     var checkpoints by remember(id) { mutableStateOf<List<CatalogCheckpointFile>?>(null) }
     var busy by remember(id) { mutableStateOf(false) }
     var message by remember(id) { mutableStateOf<String?>(null) }
@@ -43,10 +41,9 @@ internal fun CatalogProfileSettings(profiles: List<PortalProfile>, active: Porta
             TextButton(onClick = { selectedId = CatalogScanPreferences.id(entry); chooseProfile = false },
                 modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(12.dp))) { Text(entry.name) }
         } } }, confirmButton = { TextButton(onClick = { chooseProfile = false }) { Text("Close") } })
-    BackupSettingsActionRow(Icons.Default.Refresh, "Scan and update this profile",
-        "Update channel, movie and series listings in Room in the background. If paused or stopped, use Resume below. Yields during playback.",
-        onClick = { SearchMetadataSyncScheduler.refresh(context, profile) })
-    CatalogOperationPanel(CatalogOperations.scan(id), "Scan progress · ${profile.name}") {
+    CatalogOperationPanel(CatalogOperations.scan(id), "Catalog scan", onStart = {
+        SearchMetadataSyncScheduler.refresh(context, profile)
+    }, onRetry = { SearchMetadataSyncScheduler.retryQueued(context, profile) }) {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }
     CatalogDatabasePanel(profile)
@@ -62,9 +59,8 @@ internal fun CatalogProfileSettings(profiles: List<PortalProfile>, active: Porta
                 }, label = { Text(label) }, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)))
             }
         }
-        Text("Provider requests run one at a time with a minimum two-second gap. Failures use exponential backoff; scans yield during playback. Episode details are cached when opened.", style = MaterialTheme.typography.bodySmall)
-        Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("When catalog backup is enabled below, completed scans also queue a GitHub backup and dated checkpoint. Episodes are cached when opened.", style = MaterialTheme.typography.bodySmall)
+        Text("Scans continue in the background with a notification. Requests are paced and scans yield during playback. Android may delay work under battery restrictions. Episode details are cached when opened.", style = MaterialTheme.typography.bodySmall)
+        Text("Completed scans create a GitHub checkpoint when catalog backup is enabled.", style = MaterialTheme.typography.bodySmall)
     }
     BackupSettingsActionRow(Icons.Default.CloudDownload, "Restore a catalog checkpoint",
         "Choose a dated GitHub backup for ${profile.name}. Merges Room listings without replacing favorites or history.",

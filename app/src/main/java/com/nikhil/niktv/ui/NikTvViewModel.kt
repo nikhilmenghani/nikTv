@@ -3393,116 +3393,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
     fun scanAndSyncSearchCatalog() {
-        if (searchCatalogScanJob?.isActive == true) return
-        val snapshot = _state.value
-        val session = snapshot.session ?: return
-        val types = if (snapshot.searchType == SearchContentType.ALL) {
-            globalSearchTypes.map(::catalogTypeForSearch)
-        } else listOf(catalogTypeForSearch(snapshot.searchType))
-
-        searchCatalogScanJob = viewModelScope.launch {
-            _state.update {
-                it.copy(
-                    searchCatalogScanning = true,
-                    searchCatalogScanProgress = 0f,
-                    searchCatalogScanMessage = "Preparing background scan…"
-                )
-            }
-            try {
-                var totalItems = 0
-                var totalFailures = 0
-                for ((typeIndex, type) in types.withIndex()) {
-                val result = SearchCatalogScanner(getApplication()).scan(
-                    session = session,
-                    type = type,
-                    requestDelayMillis = METADATA_SCAN_REQUEST_DELAY_MS
-                ) { progress ->
-                    _state.update {
-                        it.copy(
-                            searchCatalogScanProgress = (typeIndex + progress.fraction) / types.size * 0.82f,
-                            searchCatalogScanMessage =
-                                "${type.title} · Category ${progress.categoryPosition}/${progress.categoryCount} · " +
-                                    "${progress.categoryTitle} · page ${progress.page} · " +
-                                    "${progress.discoveredItems} items"
-                        )
-                    }
-                }
-                _state.update {
-                    it.copy(
-                        browseCachesByType = if (it.session?.profile?.cacheKey() == session.profile.cacheKey())
-                            it.browseCachesByType + (type to result.cache) else it.browseCachesByType,
-                        searchCatalogScanProgress = (typeIndex + 1f) / types.size * 0.82f,
-                        searchCatalogScanMessage =
-                            "Provider scan complete · ${result.itemCount} items · saved to local database"
-                    )
-                }
-                totalItems += result.itemCount
-                totalFailures += result.failures
-                }
-                val syncId = SearchMetadataSyncScheduler.requestNow(getApplication())
-                if (syncId != null) {
-                    val workManager = WorkManager.getInstance(getApplication<Application>())
-                    var completed: WorkInfo? = null
-                    while (true) {
-                        completed = withContext(Dispatchers.IO) {
-                            workManager.getWorkInfoById(syncId).get()
-                        }
-                        val info = completed
-                        if (info == null) {
-                            delay(350L)
-                            continue
-                        }
-                            val syncFraction = info.progress.getFloat(
-                                SearchMetadataSyncWorker.PROGRESS_FRACTION,
-                                0f
-                            )
-                            val syncMessage = info.progress.getString(
-                                SearchMetadataSyncWorker.PROGRESS_MESSAGE
-                            )
-                            _state.update {
-                                it.copy(
-                                    searchCatalogScanProgress = 0.84f + syncFraction * 0.16f,
-                                    searchCatalogScanMessage = syncMessage
-                                        ?.let { message -> "Catalog backup · $message" }
-                                    ?: "Catalog backup · waiting for GitHub"
-                                )
-                            }
-                        if (info.state.isFinished) break
-                        delay(350L)
-                    }
-                    if (completed?.state != WorkInfo.State.SUCCEEDED) {
-                        error("Catalog backup will retry in the background")
-                    }
-                }
-                _state.update {
-                    it.copy(
-                        searchCatalogScanning = false,
-                        searchCatalogScanProgress = 1f,
-                        searchCatalogScanMessage = if (totalFailures == 0) {
-                            "Complete · $totalItems items scanned${if (syncId != null) " and synced" else " locally · catalog backup disabled on this device"}"
-                        } else {
-                            "Scanned $totalItems items · $totalFailures categories need retry"
-                        }
-                    )
-                }
-                val current = _state.value
-                if (current.searchOpen && current.searchQuery.isNotBlank() && !current.searchServerLoading &&
-                    current.session?.profile?.cacheKey() == session.profile.cacheKey()) {
-                    scheduleSearchPreview(current.searchQuery, current.searchType, current.searchCategoryId)
-                }
-            } catch (held: com.nikhil.niktv.data.CatalogOperationHeld) {
-                _state.update { it.copy(searchCatalogScanning = false,
-                    searchCatalogScanMessage = "${held.state}. Resume in Settings > Catalog & backup.") }
-            } catch (error: Throwable) {
-                if (error is kotlinx.coroutines.CancellationException) throw error
-                _state.update {
-                    it.copy(
-                        searchCatalogScanning = false,
-                        searchCatalogScanMessage = error.message ?: "Scan could not be completed"
-                    )
-                }
-            }
-        }
+        val profile = _state.value.session?.profile ?: return
+        // The screen only requests work. Closing it or destroying this ViewModel must not cancel the scan.
+        SearchMetadataSyncScheduler.refresh(getApplication(), profile)
+        _state.update { it.copy(
+            searchCatalogScanning = false,
+            searchCatalogScanProgress = 0f,
+            searchCatalogScanMessage = "Profile scan requested in the background. View progress or resume a paused scan in Settings > Catalog & backup."
+        ) }
     }
 
     private fun catalogTypeForSearch(type: SearchContentType): CatalogType = when (type) {
