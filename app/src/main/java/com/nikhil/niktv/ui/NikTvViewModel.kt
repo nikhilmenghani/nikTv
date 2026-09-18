@@ -2845,6 +2845,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         val candidates = resolveInitialTmdbSeriesCandidates(session, entry)
         if (candidates.isEmpty()) {
+            resolveTmdbSeriesMovieFallback(session, entry.tmdb)?.let { movie ->
+                // Wio exposes some series containers in its general VOD/movie
+                // listing. Resolve the matching VOD id through the series-detail
+                // endpoint so seasons and episodes remain available.
+                commitTmdbSeriesSelection(
+                    session = session,
+                    series = entry.tmdb,
+                    resolved = movie,
+                    confirmedByUser = true
+                )
+                return@task
+            }
             error(
                 "\"${entry.tmdb.name}\" was not found in this IPTV profile."
             )
@@ -2881,16 +2893,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             _state.value.modernUiEnabled &&
                 _state.value.modernTmdbSection?.series == true
         val displaySeries = resolved.withPreferredSeriesPresentation(series)
-
-        store.saveTmdbMapping(
-            TmdbIptvMapping(
-                session.profile.cacheKey(),
-                CatalogType.SERIES,
-                series.id,
-                displaySeries,
-                confirmedByUser = confirmedByUser
-            )
-        )
 
         _state.update { current ->
             current.copy(
@@ -2929,6 +2931,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         loadSeriesEpisodes(displaySeries)
+        // Persist only after the provider accepts this id as a series container
+        // and returns its episode structure.
+        store.saveTmdbMapping(
+            TmdbIptvMapping(
+                session.profile.cacheKey(),
+                CatalogType.SERIES,
+                series.id,
+                displaySeries,
+                confirmedByUser = confirmedByUser
+            )
+        )
     }
 
     private fun returnToHomeAfterTrendingSeriesFailure() {
@@ -3170,6 +3183,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             candidates += page.items
         }
         return rankTmdbSeriesMatches(entry.tmdb, candidates.distinctBy { it.id })
+    }
+
+    private suspend fun resolveTmdbSeriesMovieFallback(
+        session: PortalSession,
+        series: TmdbSeries
+    ): MediaItem? {
+        val profileKey = session.profile.cacheKey()
+        val local = (
+            store.searchCatalog(CatalogType.MOVIES, profileKey).first()?.items.orEmpty() +
+                localMovieCandidates(_state.value)
+            ).distinctBy { it.id }
+        rankTmdbSeriesMatches(series, local).firstOrNull()?.let { return it }
+
+        val queries = listOf(series.name, series.originalName)
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        val providerCandidates = mutableListOf<MediaItem>()
+        for (query in queries) {
+            val page = portal.search(
+                session = session,
+                type = SearchContentType.MOVIES,
+                query = query,
+                page = 1,
+                categoryId = "*"
+            )
+            providerCandidates += page.items
+        }
+        return rankTmdbSeriesMatches(series, providerCandidates.distinctBy { it.id })
+            .firstOrNull()
     }
 
     private suspend fun resolveTmdbFromXtreamCatalog(
