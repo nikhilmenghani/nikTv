@@ -598,7 +598,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun loadType(type: CatalogType) {
         if (activateWarmedType(type)) return
         viewModelScope.launch {
-            runCatching { loadTypeInternal(requireNotNull(_state.value.session), type) }
+            val session = requireNotNull(_state.value.session)
+            runCatching {
+                withAutomaticSessionRetry(session) { activeSession ->
+                    loadTypeInternal(activeSession, type)
+                }
+            }
                 .onFailure { error -> _state.update { it.copy(error = error.message ?: "Could not load ${type.title}") } }
         }
     }
@@ -667,7 +672,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             viewModelScope.launch {
-                runCatching { loadTypeMetadataInternal(session, type) }
+                runCatching {
+                    withAutomaticSessionRetry(session) { activeSession ->
+                        loadTypeMetadataInternal(activeSession, type)
+                    }
+                }
                     .onFailure { error ->
                         _state.update {
                             it.copy(
@@ -4963,6 +4972,37 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.save(refreshed)
         _state.update { it.copy(session = refreshed, savedProfile = refreshed.profile) }
         return refreshed
+    }
+
+    /**
+     * Replays a request once with a newly authenticated Stalker session.
+     * Callers pass the active session into the operation so the replay cannot
+     * accidentally reuse the rejected token captured by the first attempt.
+     */
+    private suspend fun <T> withAutomaticSessionRetry(
+        initialSession: PortalSession,
+        operation: suspend (PortalSession) -> T
+    ): T {
+        return try {
+            operation(initialSession)
+        } catch (firstError: Throwable) {
+            if (firstError is kotlinx.coroutines.CancellationException) throw firstError
+            val snapshot = _state.value
+            if (!snapshot.automaticReauthentication ||
+                initialSession.profile.portalType != PortalType.STALKER ||
+                !firstError.isAuthenticationFailure()
+            ) {
+                throw firstError
+            }
+
+            _state.update { it.copy(reauthenticating = true) }
+            val refreshed = try {
+                refreshSession(initialSession.profile)
+            } finally {
+                _state.update { it.copy(reauthenticating = false) }
+            }
+            operation(refreshed)
+        }
     }
 
     fun savePlaybackProgress(key: String, positionMillis: Long, durationMillis: Long) {

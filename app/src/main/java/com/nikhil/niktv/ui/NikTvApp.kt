@@ -877,26 +877,18 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                 }
                             }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                                NikTvSecondaryActionButton(
-                                    onClick = vm::dismissError,
-                                    enabled = !state.reauthenticating,
-                                    modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
-                                    shape = CircleShape
-                                ) { Text("Close") }
-                                if (showDiagnostics) NikTvPrimaryActionButton(
-                                    onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
-                                    modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
-                                    shape = CircleShape
-                                ) {
-                                    Icon(Icons.Default.ContentCopy, null, Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Copy diagnostics")
-                                }
+                            Column(
+                                Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 if (authorizationExpired) NikTvPrimaryActionButton(
                                     onClick = vm::reauthenticate,
                                     enabled = !state.reauthenticating,
-                                    modifier = Modifier.height(44.dp).focusRequester(reauthenticateRequester).remoteFocusFrame(CircleShape),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(44.dp)
+                                        .focusRequester(reauthenticateRequester)
+                                        .remoteFocusFrame(CircleShape),
                                     shape = CircleShape
                                 ) {
                                     if (state.reauthenticating) {
@@ -904,6 +896,26 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                         Spacer(Modifier.width(8.dp))
                                         Text("Authenticating…")
                                     } else Text("Re-authenticate")
+                                }
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                                ) {
+                                    NikTvSecondaryActionButton(
+                                        onClick = vm::dismissError,
+                                        enabled = !state.reauthenticating,
+                                        modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
+                                        shape = CircleShape
+                                    ) { Text("Close") }
+                                    if (showDiagnostics) NikTvPrimaryActionButton(
+                                        onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
+                                        modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
+                                        shape = CircleShape
+                                    ) {
+                                        Icon(Icons.Default.ContentCopy, null, Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Copy diagnostics")
+                                    }
                                 }
                             }
                         }
