@@ -179,6 +179,7 @@ internal fun ModernBrowseScreen(
     openProfileSwitcher: () -> Unit,
     refreshCatalog: () -> Unit,
     openCategoryManager: (CatalogType) -> Unit,
+    removeCategoryFilter: (CatalogType, String) -> Unit,
     loadMoreCategorySection: (Category) -> Unit,
     setTmdbSections: (DashboardSurface, List<TmdbHomeSection>) -> Unit,
     resetScreenConfiguration: (DashboardSurface) -> Unit,
@@ -229,6 +230,7 @@ internal fun ModernBrowseScreen(
             refreshIptv = refreshCatalog,
             configureTmdb = { tmdbSetupOpen = true },
             configureIptv = openCategoryManager,
+            removeIptvCategory = removeCategoryFilter,
             resetSurface = { resetConfirmationOpen = true }
         )
 

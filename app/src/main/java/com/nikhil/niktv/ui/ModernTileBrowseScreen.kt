@@ -226,6 +226,7 @@ internal fun ModernTileBrowseScreen(
     refreshIptv: () -> Unit,
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
+    removeIptvCategory: (CatalogType, String) -> Unit,
     resetSurface: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -300,6 +301,7 @@ internal fun ModernTileBrowseScreen(
                             openSearch = openSearch,
                             configureTmdb = configureTmdb,
                             configureIptv = configureIptv,
+                            removeIptvCategory = removeIptvCategory,
                             resetSurface = resetSurface,
                             isTv = isTv,
                             modifier = Modifier.weight(1f)
@@ -504,6 +506,7 @@ private fun ModernDestinationHub(
     openSearch: () -> Unit,
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
+    removeIptvCategory: (CatalogType, String) -> Unit,
     resetSurface: () -> Unit,
     isTv: Boolean,
     modifier: Modifier = Modifier
@@ -844,6 +847,7 @@ private fun ModernDestinationHub(
                             context, profileKey, CatalogType.LIVE_TV, category.id
                         )
                     },
+                    onRemove = { removeIptvCategory(CatalogType.LIVE_TV, category.id) },
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -872,6 +876,7 @@ private fun ModernDestinationHub(
                             context, profileKey, CatalogType.MOVIES, category.id
                         )
                     },
+                    onRemove = { removeIptvCategory(CatalogType.MOVIES, category.id) },
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -900,6 +905,7 @@ private fun ModernDestinationHub(
                             context, profileKey, CatalogType.SERIES, category.id
                         )
                     },
+                    onRemove = { removeIptvCategory(CatalogType.SERIES, category.id) },
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -1579,6 +1585,7 @@ private fun ModernDestinationTile(
     isTv: Boolean,
     pinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
+    onRemove: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -1666,7 +1673,7 @@ private fun ModernDestinationTile(
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
                     onClick = returningTile.open,
-                    onLongClick = onTogglePin?.let { { pinMenuOpen = true } }
+                    onLongClick = if (onTogglePin != null || onRemove != null) ({ pinMenuOpen = true }) else null
                 ),
             shape = shape,
             color = Color.Transparent,
@@ -1814,21 +1821,27 @@ private fun ModernDestinationTile(
             }
         }
         }
-        onTogglePin?.let { togglePin ->
+        if (onTogglePin != null || onRemove != null) {
             DropdownMenu(
                 expanded = pinMenuOpen,
                 onDismissRequest = { pinMenuOpen = false },
                 containerColor = Color(0xFF202020),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                NikDropdownMenuItem(
-                    text = { Text(if (pinned) "Unpin category" else "Pin category to top") },
-                    leadingIcon = { Icon(Icons.Default.PushPin, null) },
-                    onClick = {
-                        pinMenuOpen = false
-                        togglePin()
-                    }
-                )
+                onTogglePin?.let { togglePin ->
+                    NikDropdownMenuItem(
+                        text = { Text(if (pinned) "Unpin category" else "Pin category to top") },
+                        leadingIcon = { Icon(Icons.Default.PushPin, null) },
+                        onClick = { pinMenuOpen = false; togglePin() }
+                    )
+                }
+                onRemove?.let { remove ->
+                    NikDropdownMenuItem(
+                        text = { Text("Remove from this tab") },
+                        leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                        onClick = { pinMenuOpen = false; remove() }
+                    )
+                }
             }
         }
     }

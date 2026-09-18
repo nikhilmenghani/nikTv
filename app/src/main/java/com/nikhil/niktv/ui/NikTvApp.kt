@@ -770,6 +770,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,removeProfile = vm::removeProfile
                     ,setPreconfiguredProfileEnabled = vm::setPreconfiguredProfileEnabled
                     ,openCategoryManager = vm::openCategoryManager
+                    ,removeCategoryFilter = vm::removeCategoryFilter
                     ,loadMoreCategorySection = vm::loadMoreCategorySection
                     ,setTmdbSections = vm::setTmdbSections
                     ,resetScreenConfiguration = vm::resetScreenConfiguration

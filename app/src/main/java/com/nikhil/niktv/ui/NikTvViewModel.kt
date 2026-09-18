@@ -5707,6 +5707,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         setCategoryFilter(type, updated)
     }
+    fun removeCategoryFilter(type: CatalogType, categoryId: String) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        val raw = _state.value.rawCategoriesByType[type].orEmpty()
+        val key = filterKey(profileKey, type)
+        val currentEnabled = _state.value.categoryFilters[key] ?: raw.take(10).map { it.id }
+        if (categoryId !in currentEnabled) return@launch
+        val updated = currentEnabled - categoryId
+        _state.update { it.copy(categoryFilters = it.categoryFilters + (key to updated)) }
+        store.saveCategoryFilter(profileKey, type, updated)
+    }
     fun selectAllCategories(type: CatalogType) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
         val allCategories = _state.value.rawCategoriesByType[type].orEmpty().map { it.id }
