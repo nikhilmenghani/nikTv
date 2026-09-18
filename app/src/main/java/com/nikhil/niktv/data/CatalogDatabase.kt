@@ -80,7 +80,7 @@ abstract class CatalogDatabase : RoomDatabase() {
     }
 }
 
-/** Compatibility boundary: existing screens consume their models; persistence is indexed Room rows. */
+/** Isolated Room catalog used by scanner, inspection, backup, and restore tools. */
 class CatalogRepository(context: Context, private val db: CatalogDatabase = CatalogDatabase.get(context)) {
     private val app = context.applicationContext
     private val dao = db.catalog()

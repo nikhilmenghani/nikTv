@@ -3733,22 +3733,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
-            val latest = _state.value
-            if (latest.searchOpen && latest.session?.profile?.cacheKey() == profileKey &&
-                latest.searchQuery.trim() == normalizedQuery && latest.searchType == type && latest.searchCategoryId == categoryId &&
-                shouldSearchProvider(local.isEmpty())) {
-                // Publish local results first, then let the cancellable provider job supplement them.
-                search()
-            }
+            // Provider lookup remains an explicit action. Preview only reads loaded media and device caches.
         }
-    }
-
-    private fun shouldSearchProvider(emptyResults: Boolean): Boolean {
-        val profile = _state.value.session?.profile ?: return false
-        val id = com.nikhil.niktv.data.CatalogScanPreferences.id(profile)
-        return com.nikhil.niktv.data.needsProviderSearch(emptyResults,
-            com.nikhil.niktv.data.CatalogScanPreferences.completed(getApplication(), id),
-            com.nikhil.niktv.data.CatalogScanPreferences.cursor(getApplication(), id))
     }
 
     fun search(forceServer: Boolean = false) {
@@ -3764,7 +3750,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 searchLocalLoading = true,
                 searchActivityTitle = "Searching this device",
-                searchActivityDetail = "Checking loaded media, device cache and the shared index",
+                searchActivityDetail = "Checking loaded media and saved provider results",
                 searchActivityProgress = null
             )
         }
@@ -3816,7 +3802,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            if (!forceServer && !shouldSearchProvider(available.isEmpty())) return@launch
+            if (!forceServer) return@launch
 
             if (snapshot.searchType == SearchContentType.ALL) {
                 fetchGlobalSearch(query, profileKey, available)
@@ -4505,8 +4491,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         var item = if (offlineUrl != null) requestedItem else if (forceFreshUrl || !com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
             portal.refreshPlaybackItem(session, requestedItem, type, series)
         } else {
-            com.nikhil.niktv.data.CatalogRepository(getApplication()).media(session.profile.cacheKey(), type, requestedItem.id)
-                ?: requestedItem.takeIf { !it.command.isNullOrBlank() }
+            requestedItem.takeIf { !it.command.isNullOrBlank() }
                 ?: portal.refreshPlaybackItem(session, requestedItem, type, series)
         }
         // Xtream URLs are cheaply built from current credentials. Stalker links are session-bound.

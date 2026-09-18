@@ -209,9 +209,9 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             val now = System.currentTimeMillis()
             CatalogScanPreferences.completed(context, id, now)
             CatalogScanPreferences.cursor(context, id, -1)
-            CatalogScanPreferences.status(context, id, "Complete · ${java.util.Date(now)} · channels, movies and series indexed.")
+            CatalogScanPreferences.status(context, id, "Complete · ${java.util.Date(now)} · Room backup catalog contains channels, movies and series.")
             CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
-            BackupActivityLog.record(context, operation, "Completed", "Local catalog is ready for search.")
+            BackupActivityLog.record(context, operation, "Completed", "Room backup catalog is ready to inspect or upload; app browsing remains provider/cache based.")
             if (CatalogPreferences.backupEnabled(context)) SearchMetadataSyncScheduler.requestNow(context)
             Result.success()
         } catch (held: CatalogOperationHeld) {

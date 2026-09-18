@@ -49,6 +49,16 @@ internal data class CatalogCheckpoint(
     val snapshots: List<CatalogSnapshot>
 )
 
+@Serializable
+internal data class CatalogSnapshotManifest(
+    val version: Int = 1,
+    val profileId: String,
+    val type: CatalogType,
+    val generatedAt: Long,
+    val fingerprint: String,
+    val parts: List<String>
+)
+
 data class CatalogCheckpointFile(val path: String, val timestamp: Long, val device: String)
 
 /** Optionally encrypted logical database snapshots, one writer per file; imports merge instead of replacing Room. */
@@ -68,6 +78,7 @@ class CatalogBackupManager(context: Context) {
         check(CatalogPreferences.backupEnabled(app)) { "Catalog backup is disabled on this device" }
         val config = config()
         var uploaded = 0
+        val failures = mutableListOf<String>()
         for (profile in ProfileStore(app).profiles.first()) {
             val profileId = CatalogScanPreferences.id(profile)
             val scanCompleteBefore = if (CatalogScanPreferences.cursor(app, profileId) == -1)
@@ -85,35 +96,89 @@ class CatalogBackupManager(context: Context) {
                 val snapshot = repository.snapshot(profile, type)
                 snapshots += snapshot
                 if (snapshot.items.isEmpty() && snapshot.episodes.isEmpty()) continue
-                val bytes = ByteArrayOutputStream().also { output ->
-                    GZIPOutputStream(output).use { it.write(json.encodeToString(snapshot).toByteArray()) }
-                }.toByteArray()
-                val path = "catalog-v1/${snapshot.profileId}/${type.name.lowercase()}/${CatalogPreferences.deviceId(app)}.niktv"
-                // Changing the backup password must rewrite even unchanged catalog data.
-                val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
-                    .joinToString("") { "%02x".format(it) }
-                val fingerprintKey = "${config.username}/${config.repository}/$path/${crypto.catalogKeyRevision()}/${if (config.passphrase.isBlank()) "plain-v1" else "encrypted-v1"}"
-                if (CatalogPreferences.fingerprint(app, fingerprintKey) == fingerprint) continue
-                CatalogOperations.check(app, CatalogOperations.BACKUP)
-                CatalogOperations.message(app, CatalogOperations.BACKUP, "${profile.name} · ${type.title} · Compressing/uploading ${snapshot.items.count { !it.deleted }} records")
-                val encrypted = encodePayload(Base64.encodeToString(bytes, Base64.NO_WRAP), config.passphrase)
-                put(config, path, encrypted)
-                CatalogPreferences.fingerprint(app, fingerprintKey, fingerprint)
-                uploaded++
-                BackupActivityLog.record(app, "IPTV catalog backup · ${profile.name}", "File saved", "${type.title} snapshot uploaded and checkpointed locally.")
+                try {
+                    if (uploadSnapshot(config, profile, snapshot)) uploaded++
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    val label = "${profile.name} · ${type.title}"
+                    failures += "$label: ${error.message ?: error.javaClass.simpleName}"
+                    BackupActivityLog.record(app, "IPTV catalog backup · ${profile.name}", "Failed", "${type.title}: ${error.message ?: "Upload failed"}")
+                }
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
             }
-            if (snapshots.any { it.items.isNotEmpty() || it.episodes.isNotEmpty() }) {
+            val checkpointRecords = snapshots.sumOf { it.items.size + it.episodes.size }
+            if (checkpointRecords in 1..MAX_CHECKPOINT_RECORDS) {
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
                 CatalogOperations.message(app, CatalogOperations.BACKUP, "${profile.name} · Creating dated restore checkpoint")
-                uploadCheckpoint(config, profile, snapshots, scanCompleteBefore)
+                runCatching { uploadCheckpoint(config, profile, snapshots, scanCompleteBefore) }
+                    .onFailure { error ->
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        BackupActivityLog.record(app, "Catalog checkpoint · ${profile.name}", "Skipped", error.message ?: "Checkpoint was too large; profile/type backups are complete.")
+                    }
+            } else if (checkpointRecords > MAX_CHECKPOINT_RECORDS) {
+                BackupActivityLog.record(app, "Catalog checkpoint · ${profile.name}", "Skipped",
+                    "The complete catalog is stored in partitioned profile/type backups. A single dated checkpoint would be too large.")
             }
         }
         CatalogOperations.check(app, CatalogOperations.BACKUP)
+        if (failures.isNotEmpty()) {
+            CatalogPreferences.status(app, "Catalog backup partially completed · ${java.util.Date()} · ${failures.size} failed")
+            error("${failures.size} catalog backup(s) failed after the remaining profiles and media types were attempted. ${failures.joinToString("; ")}")
+        }
         CatalogPreferences.status(app, "Backed up $uploaded catalog snapshots · ${java.util.Date()}")
         CatalogOperations.message(app, CatalogOperations.BACKUP, "Complete · $uploaded changed snapshots uploaded. Unchanged completed files were skipped.")
         uploaded
     }
+
+    private suspend fun uploadSnapshot(config: GitHubBackupConfig, profile: PortalProfile, snapshot: CatalogSnapshot): Boolean {
+        val bytes = compressed(snapshot)
+        val fingerprint = sha256(bytes)
+        val device = CatalogPreferences.deviceId(app)
+        val folder = "catalog-v2/${snapshot.profileId}/${snapshot.type.name.lowercase()}/$device"
+        val manifestPath = "$folder/manifest.niktv"
+        val fingerprintKey = "${config.username}/${config.repository}/$manifestPath/${crypto.catalogKeyRevision()}/${if (config.passphrase.isBlank()) "plain-v1" else "encrypted-v1"}"
+        if (CatalogPreferences.fingerprint(app, fingerprintKey) == fingerprint) return false
+
+        val parts = splitSnapshot(snapshot)
+        val partPaths = parts.indices.map { "$folder/part-${it.toString().padStart(5, '0')}.niktv" }
+        parts.forEachIndexed { index, part ->
+            CatalogOperations.check(app, CatalogOperations.BACKUP)
+            CatalogOperations.message(app, CatalogOperations.BACKUP,
+                "${profile.name} · ${snapshot.type.title} · Uploading part ${index + 1}/${parts.size} (${snapshot.items.count { !it.deleted }} records total)")
+            put(config, partPaths[index], encodeSnapshot(part, config.passphrase))
+        }
+        val manifest = CatalogSnapshotManifest(profileId = snapshot.profileId, type = snapshot.type,
+            generatedAt = System.currentTimeMillis(), fingerprint = fingerprint, parts = partPaths)
+        put(config, manifestPath, encodePayload(Base64.encodeToString(compressed(manifest), Base64.NO_WRAP), config.passphrase))
+        CatalogPreferences.fingerprint(app, fingerprintKey, fingerprint)
+        BackupActivityLog.record(app, "IPTV catalog backup · ${profile.name}", "Completed",
+            "${snapshot.type.title}: ${snapshot.items.count { !it.deleted }} records saved in ${parts.size} part(s).")
+        return true
+    }
+
+    private fun splitSnapshot(snapshot: CatalogSnapshot): List<CatalogSnapshot> {
+        val itemParts = snapshot.items.chunked(RECORDS_PER_PART)
+        val episodeParts = snapshot.episodes.chunked(EPISODES_PER_PART)
+        val count = maxOf(1, itemParts.size, episodeParts.size)
+        return (0 until count).map { index ->
+            snapshot.copy(
+                items = itemParts.getOrElse(index) { emptyList() },
+                buckets = if (index == 0) snapshot.buckets else emptyList(),
+                episodes = episodeParts.getOrElse(index) { emptyList() }
+            )
+        }
+    }
+
+    private fun encodeSnapshot(snapshot: CatalogSnapshot, passphrase: String): String =
+        encodePayload(Base64.encodeToString(compressed(snapshot), Base64.NO_WRAP), passphrase)
+
+    private inline fun <reified T> compressed(value: T): ByteArray = ByteArrayOutputStream().also { output ->
+        GZIPOutputStream(output).use { it.write(json.encodeToString(value).toByteArray()) }
+    }.toByteArray()
+
+    private fun sha256(bytes: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(bytes).joinToString("") { "%02x".format(it) }
 
     suspend fun restoreAll(): Int = BackupActivityLog.track(app, "IPTV catalog restore", success = {
         if (it == 0) "No matching catalog snapshots found for saved profiles." else "Merged $it snapshots. Reopen the profile to reload its catalog."
@@ -126,6 +191,11 @@ class CatalogBackupManager(context: Context) {
             for (type in types) {
                 currentCoroutineContext().ensureActive()
                 val id = SearchMetadataDocuments.anonymousProfileId(profile)
+                val chunked = restoreChunked(config, profile, type, id)
+                if (chunked > 0) {
+                    imported += chunked
+                    continue
+                }
                 val folder = "catalog-v1/$id/${type.name.lowercase()}"
                 CatalogOperations.message(app, "restore", "${profile.name} · ${type.title} · Finding GitHub snapshots")
                 val listing = get(config, folder) ?: continue
@@ -149,6 +219,37 @@ class CatalogBackupManager(context: Context) {
         CatalogPreferences.status(app, "Merged $imported catalog snapshots · ${java.util.Date()}")
         CatalogOperations.message(app, "restore", "Complete · $imported snapshots merged into Room.")
         imported
+    }
+
+    private suspend fun restoreChunked(config: GitHubBackupConfig, profile: PortalProfile, type: CatalogType, id: String): Int {
+        val folder = "catalog-v2/$id/${type.name.lowercase()}"
+        CatalogOperations.message(app, "restore", "${profile.name} · ${type.title} · Finding partitioned GitHub snapshots")
+        val listing = get(config, folder) ?: return 0
+        val devices = JSONArray(listing)
+        var restored = 0
+        for (i in 0 until devices.length()) {
+            val deviceFolder = devices.getJSONObject(i).optString("path")
+            if (!deviceFolder.startsWith("$folder/") || !deviceFolder.substringAfterLast('/').matches(Regex("[a-f0-9-]+"))) continue
+            val manifestPath = "$deviceFolder/manifest.niktv"
+            val content = get(config, manifestPath, raw = true) ?: continue
+            val manifest = json.decodeFromString<CatalogSnapshotManifest>(decodeCompressed(content, config.passphrase))
+            require(manifest.version == 1 && manifest.profileId == id && manifest.type == type)
+            manifest.parts.forEachIndexed { index, path ->
+                require(path.startsWith("$deviceFolder/part-") && path.endsWith(".niktv"))
+                CatalogOperations.message(app, "restore", "${profile.name} · ${type.title} · Merging part ${index + 1}/${manifest.parts.size}")
+                val partContent = requireNotNull(get(config, path, raw = true)) { "Catalog backup part is missing." }
+                val snapshot = json.decodeFromString<CatalogSnapshot>(decodeCompressed(partContent, config.passphrase))
+                require(snapshot.type == type && snapshot.profileId == id && snapshot.schemaVersion == 1)
+                repository.mergeSnapshot(profile, snapshot)
+            }
+            restored++
+        }
+        return restored
+    }
+
+    private fun decodeCompressed(content: String, passphrase: String): String {
+        val compressed = Base64.decode(decodePayload(content, passphrase), Base64.NO_WRAP)
+        return GZIPInputStream(compressed.inputStream()).use { bounded(it, MAX_EXPANDED) }
     }
 
     private suspend fun uploadCheckpoint(config: GitHubBackupConfig, profile: PortalProfile, snapshots: List<CatalogSnapshot>, scanCompleteBefore: Long) {
@@ -279,6 +380,9 @@ class CatalogBackupManager(context: Context) {
     }
     companion object {
         private val types = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+        private const val RECORDS_PER_PART = 2_000
+        private const val EPISODES_PER_PART = 500
+        private const val MAX_CHECKPOINT_RECORDS = 10_000
         private const val MAX_DOWNLOAD = 20 * 1024 * 1024
         private const val MAX_EXPANDED = 80 * 1024 * 1024
     }

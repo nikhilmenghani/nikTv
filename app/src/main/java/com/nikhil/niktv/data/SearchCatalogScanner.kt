@@ -13,7 +13,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.flow.first
 
 data class SearchCatalogScanProgress(
     val categoryTitle: String,
@@ -44,7 +43,7 @@ class SearchCatalogScanner internal constructor(
         { session, category, page -> portal.catalogPage(session, category, page, includeEpg = false) },
         { delay(it) })
     private val appContext = context.applicationContext
-    private val store = ProfileStore(appContext)
+    private val repository = CatalogRepository(appContext)
 
     suspend fun scan(
         session: PortalSession,
@@ -71,7 +70,7 @@ class SearchCatalogScanner internal constructor(
         }
         CatalogOperations.check(appContext, operation)
         stage("${type.title} · Reading saved Room checkpoint")
-        val persisted = store.browseCatalog(type, profileKey).first()
+        val persisted = repository.browse(profileKey, type)
         pace(requestDelayMillis.coerceAtLeast(2_000L))
         CatalogOperations.check(appContext, operation)
         stage("${type.title} · Fetching category list")
@@ -164,7 +163,7 @@ class SearchCatalogScanner internal constructor(
                     // Persist each completed page so process death can resume instead of restarting a category.
                     stage("$location${knownTotalPages?.let { " of $it" }.orEmpty()} · Writing ${result.items.size} records to Room")
                     try {
-                        store.saveBrowseCatalog(cache, scheduleMetadataSync = false)
+                        repository.saveBrowse(cache)
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (error: Exception) {
                         CatalogOperations.page(appContext, operation, CatalogPageEvent(reportKey, location = location,
@@ -184,7 +183,7 @@ class SearchCatalogScanner internal constructor(
                 if (keepLoading) failures += 1
             }
 
-            store.saveBrowseCatalog(cache, scheduleMetadataSync = false)
+            repository.saveBrowse(cache)
             onProgress(
                 SearchCatalogScanProgress(
                     category.title,
@@ -201,17 +200,15 @@ class SearchCatalogScanner internal constructor(
         CatalogOperations.check(appContext, operation)
         stage("${type.title} · Finalizing local search index")
         val allItems = cache.itemsByCategory.values.flatten().distinctBy { it.id }
-        store.saveSearchCatalog(
+        repository.saveSearch(
             SearchCatalogCache(
                 profileKey = profileKey,
                 type = type,
                 cachedAtMillis = System.currentTimeMillis(),
                 items = allItems,
                 completedCategoryIds = cache.hasMoreByCategory.filterValues { !it }.keys
-            ),
-            scheduleMetadataSync = false
+            )
         )
-        val repository = CatalogRepository(appContext)
         completed.forEach { (category, seen) ->
             repository.reconcileCategory(profileKey, type, category, seen, System.currentTimeMillis())
         }
