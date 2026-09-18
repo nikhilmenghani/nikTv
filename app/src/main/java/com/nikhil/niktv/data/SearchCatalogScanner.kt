@@ -68,12 +68,30 @@ class SearchCatalogScanner internal constructor(
         fun stage(message: String) {
             if (!CatalogOperations.held(appContext, operation)) CatalogOperations.message(appContext, operation, message)
         }
+        fun structured(
+            phase: String,
+            category: Category? = null,
+            categoryPosition: Int = 0,
+            categoryCount: Int = 0,
+            page: Int = 0,
+            totalPages: Int? = null,
+            recordsInPage: Int = 0,
+            recordsInCategory: Int = 0,
+            totalRecords: Int = 0
+        ) = CatalogOperations.progress(appContext, operation, CatalogOperationProgress(
+            phase = phase, mediaType = type.title, category = category?.title.orEmpty(),
+            categoryPosition = categoryPosition, categoryCount = categoryCount,
+            page = page, totalPages = totalPages ?: 0, recordsInPage = recordsInPage,
+            recordsInCategory = recordsInCategory, totalRecords = totalRecords
+        ))
         CatalogOperations.check(appContext, operation)
         stage("${type.title} · Reading saved Room checkpoint")
+        structured("Reading saved database")
         val persisted = repository.browse(profileKey, type)
         pace(requestDelayMillis.coerceAtLeast(2_000L))
         CatalogOperations.check(appContext, operation)
         stage("${type.title} · Fetching category list")
+        structured("Loading categories")
         val availableCategories = fetchCategories(session, type)
             .filter { it.id.isNotBlank() }
             .distinctBy { it.id }
@@ -123,6 +141,9 @@ class SearchCatalogScanner internal constructor(
                             cache.itemsByCategory.values.sumOf { it.size }
                         )
                     )
+                    structured("Requesting provider", category, categoryIndex + 1, categories.size, page,
+                        knownTotalPages, recordsInCategory = items.size,
+                        totalRecords = cache.itemsByCategory.values.sumOf { it.size })
                     pace(requestDelayMillis.coerceAtLeast(2_000L))
                     CatalogOperations.check(appContext, operation)
                     val location = "${type.title} · ${category.title} · page $page"
@@ -162,6 +183,9 @@ class SearchCatalogScanner internal constructor(
                     pagesRead += 1
                     // Persist each completed page so process death can resume instead of restarting a category.
                     stage("$location${knownTotalPages?.let { " of $it" }.orEmpty()} · Writing ${result.items.size} records to Room")
+                    structured("Saving to local database", category, categoryIndex + 1, categories.size, page,
+                        knownTotalPages, result.items.size, items.size,
+                        cache.itemsByCategory.values.sumOf { it.size })
                     try {
                         repository.saveBrowse(cache)
                     } catch (cancelled: CancellationException) { throw cancelled }
@@ -176,6 +200,9 @@ class SearchCatalogScanner internal constructor(
                         " · ${(page * 100 / total.coerceAtLeast(page)).coerceIn(0, 100)}%"
                     }.orEmpty()
                     stage("$location${knownTotalPages?.let { " of $it" }.orEmpty()}$pageProgress · Saved to Room · ${items.size} records in category")
+                    structured("Saved", category, categoryIndex + 1, categories.size, page,
+                        knownTotalPages, result.items.size, items.size,
+                        cache.itemsByCategory.values.sumOf { it.size })
                     CatalogOperations.check(appContext, operation)
                     keepLoading = result.hasMore && newlySeen > 0
                     page += 1
@@ -199,6 +226,7 @@ class SearchCatalogScanner internal constructor(
 
         CatalogOperations.check(appContext, operation)
         stage("${type.title} · Finalizing local search index")
+        structured("Finalizing search index", totalRecords = cache.itemsByCategory.values.sumOf { it.size })
         val allItems = cache.itemsByCategory.values.flatten().distinctBy { it.id }
         repository.saveSearch(
             SearchCatalogCache(

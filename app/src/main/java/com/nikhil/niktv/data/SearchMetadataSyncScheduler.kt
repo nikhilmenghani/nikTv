@@ -16,6 +16,7 @@ import java.util.UUID
 object SearchMetadataSyncScheduler {
     private const val BACKUP = "niktv-catalog-backup-v1"
     private const val MANUAL = "niktv-catalog-backup-now-v1"
+    private const val RESTORE = "niktv-catalog-restore-now-v1"
     private const val REFRESH = "niktv-catalog-refresh-v1"
 
     fun initialize(context: Context) {
@@ -50,7 +51,21 @@ object SearchMetadataSyncScheduler {
         val work = workBuilder.build()
         WorkManager.getInstance(context).enqueueUniqueWork(MANUAL, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
         CatalogOperations.message(context, CatalogOperations.BACKUP, "Backup queued. Waiting for network/background execution.")
+        CatalogOperations.progress(context, CatalogOperations.BACKUP, CatalogOperationProgress("Queued"))
         BackupActivityLog.record(context, "IPTV catalog backup${profile?.let { " · ${it.name}" }.orEmpty()}", "Queued", "Waiting for network and background execution.")
+        return work.id
+    }
+
+    fun requestRestore(context: Context, profile: PortalProfile, resume: Boolean = false): UUID? {
+        if (resume) CatalogOperations.control(context, CatalogOperations.RESTORE, "Ready")
+        if (CatalogOperations.held(context, CatalogOperations.RESTORE)) return null
+        val work = OneTimeWorkRequestBuilder<CatalogRestoreWorker>()
+            .setInputData(workDataOf(PROFILE_ID to CatalogScanPreferences.id(profile)))
+            .setConstraints(constraints()).build()
+        WorkManager.getInstance(context).enqueueUniqueWork(RESTORE, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
+        CatalogOperations.message(context, CatalogOperations.RESTORE, "Restore queued. Waiting for network/background execution.")
+        CatalogOperations.progress(context, CatalogOperations.RESTORE, CatalogOperationProgress("Queued", category = profile.name))
+        BackupActivityLog.record(context, "IPTV catalog restore · ${profile.name}", "Queued", "The latest snapshots from all devices will be merged.")
         return work.id
     }
 
@@ -236,9 +251,17 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
 class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = backupMutex.withLock {
         if (!CatalogPreferences.backupEnabled(applicationContext)) return@withLock Result.success()
+        var notificationJob: Job? = null
         try {
             CatalogOperations.check(applicationContext, CatalogOperations.BACKUP)
             setProgress(workDataOf(PROGRESS_MESSAGE to "Backing up IPTV catalog", PROGRESS_FRACTION to 0.1f))
+            setForeground(CatalogScanNotification.transferForeground(applicationContext, CatalogOperations.BACKUP, "Uploading catalog"))
+            notificationJob = CoroutineScope(currentCoroutineContext()).launch {
+                while (isActive) {
+                    setForeground(CatalogScanNotification.transferForeground(applicationContext, CatalogOperations.BACKUP, "Uploading catalog"))
+                    delay(2_000L)
+                }
+            }
             val selectedId = inputData.getString(SearchMetadataSyncScheduler.PROFILE_ID)
             val selectedProfile = selectedId?.let { id ->
                 ProfileStore(applicationContext).profiles.first().firstOrNull { CatalogScanPreferences.id(it) == id }
@@ -257,6 +280,8 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
             if (!CatalogOperations.held(applicationContext, CatalogOperations.BACKUP))
                 CatalogOperations.message(applicationContext, CatalogOperations.BACKUP, "Backup failed; saved files retained. Retry scheduled. See activity for details.")
             Result.retry()
+        } finally {
+            notificationJob?.cancelAndJoin()
         }
     }
     companion object {
@@ -264,4 +289,36 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
         const val PROGRESS_MESSAGE = "sync_message"
         const val PROGRESS_FRACTION = "sync_fraction"
     }
+}
+
+class CatalogRestoreWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result = restoreMutex.withLock {
+        val id = inputData.getString(SearchMetadataSyncScheduler.PROFILE_ID) ?: return@withLock Result.failure()
+        val profile = ProfileStore(applicationContext).profiles.first()
+            .firstOrNull { CatalogScanPreferences.id(it) == id } ?: return@withLock Result.failure()
+        var notificationJob: Job? = null
+        try {
+            CatalogOperations.check(applicationContext, CatalogOperations.RESTORE)
+            setForeground(CatalogScanNotification.transferForeground(applicationContext, CatalogOperations.RESTORE, "Restoring catalog"))
+            notificationJob = CoroutineScope(currentCoroutineContext()).launch {
+                while (isActive) {
+                    setForeground(CatalogScanNotification.transferForeground(applicationContext, CatalogOperations.RESTORE, "Restoring catalog"))
+                    delay(2_000L)
+                }
+            }
+            CatalogBackupManager(applicationContext).restore(profile)
+            Result.success()
+        } catch (_: CatalogOperationHeld) {
+            Result.success()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            CatalogOperations.message(applicationContext, CatalogOperations.RESTORE,
+                "Restore failed; completed merges are retained. ${error.message.orEmpty()}")
+            Result.retry()
+        } finally {
+            notificationJob?.cancelAndJoin()
+        }
+    }
+    companion object { private val restoreMutex = Mutex() }
 }

@@ -83,12 +83,12 @@ class CatalogBackupManager(context: Context) {
         val config = config()
         var uploaded = 0
         val failures = mutableListOf<String>()
-        for (profile in profiles) {
+        for ((profileIndex, profile) in profiles.withIndex()) {
             val profileId = CatalogScanPreferences.id(profile)
             val scanCompleteBefore = if (CatalogScanPreferences.cursor(app, profileId) == -1)
                 CatalogScanPreferences.completed(app, profileId) else 0L
             val snapshots = mutableListOf<CatalogSnapshot>()
-            for (type in types) {
+            for ((typeIndex, type) in types.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
                 while (CatalogPlaybackActivity.playing) {
@@ -97,6 +97,11 @@ class CatalogBackupManager(context: Context) {
                     kotlinx.coroutines.delay(1_000L)
                 }
                 CatalogOperations.message(app, CatalogOperations.BACKUP, "${profile.name} · ${type.title} · Reading Room snapshot")
+                CatalogOperations.progress(app, CatalogOperations.BACKUP, CatalogOperationProgress(
+                    phase = "Preparing snapshot", mediaType = type.title, category = profile.name,
+                    categoryPosition = profileIndex + 1, categoryCount = profiles.size,
+                    part = typeIndex, totalParts = types.size
+                ))
                 val snapshot = repository.snapshot(profile, type)
                 snapshots += snapshot
                 if (snapshot.items.isEmpty() && snapshot.episodes.isEmpty()) continue
@@ -132,6 +137,9 @@ class CatalogBackupManager(context: Context) {
         }
         CatalogPreferences.status(app, "Backed up $uploaded catalog snapshots · ${java.util.Date()}")
         CatalogOperations.message(app, CatalogOperations.BACKUP, "Complete · $uploaded changed snapshots uploaded. Unchanged completed files were skipped.")
+        CatalogOperations.progress(app, CatalogOperations.BACKUP, CatalogOperationProgress(
+            phase = "Complete", totalRecords = uploaded, part = 1, totalParts = 1
+        ))
         uploaded
     }
 
@@ -150,6 +158,11 @@ class CatalogBackupManager(context: Context) {
             CatalogOperations.check(app, CatalogOperations.BACKUP)
             CatalogOperations.message(app, CatalogOperations.BACKUP,
                 "${profile.name} · ${snapshot.type.title} · Uploading part ${index + 1}/${parts.size} (${snapshot.items.count { !it.deleted }} records total)")
+            CatalogOperations.progress(app, CatalogOperations.BACKUP, CatalogOperationProgress(
+                phase = "Uploading", mediaType = snapshot.type.title, category = profile.name,
+                part = index + 1, totalParts = parts.size,
+                totalRecords = snapshot.items.count { !it.deleted } + snapshot.episodes.size
+            ))
             put(config, partPaths[index], encodeSnapshot(part, config.passphrase))
         }
         val manifest = CatalogSnapshotManifest(profileId = snapshot.profileId, type = snapshot.type,
@@ -195,8 +208,8 @@ class CatalogBackupManager(context: Context) {
     private suspend fun restoreInternal(profiles: List<PortalProfile>): Int = withContext(Dispatchers.IO) {
         val config = config()
         var imported = 0
-        for (profile in profiles) {
-            for (type in types) {
+        for ((profileIndex, profile) in profiles.withIndex()) {
+            for ((typeIndex, type) in types.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 val id = SearchMetadataDocuments.anonymousProfileId(profile)
                 val chunked = restoreChunked(config, profile, type, id)
@@ -206,6 +219,10 @@ class CatalogBackupManager(context: Context) {
                 }
                 val folder = "catalog-v1/$id/${type.name.lowercase()}"
                 CatalogOperations.message(app, "restore", "${profile.name} · ${type.title} · Finding GitHub snapshots")
+                CatalogOperations.progress(app, CatalogOperations.RESTORE, CatalogOperationProgress(
+                    phase = "Finding snapshots", mediaType = type.title, category = profile.name,
+                    categoryPosition = profileIndex + 1, categoryCount = profiles.size
+                ))
                 val listing = get(config, folder) ?: continue
                 val files = JSONArray(listing)
                 for (i in 0 until files.length()) {
@@ -213,6 +230,10 @@ class CatalogBackupManager(context: Context) {
                     val path = file.optString("path")
                     require(path.startsWith("$folder/") && path.substringAfterLast('/').matches(Regex("[a-f0-9-]+\\.niktv")))
                     CatalogOperations.message(app, "restore", "${profile.name} · ${type.title} · Downloading file ${i + 1}/${files.length()}")
+                    CatalogOperations.progress(app, CatalogOperations.RESTORE, CatalogOperationProgress(
+                        phase = "Downloading", mediaType = type.title, category = profile.name,
+                        part = i + 1, totalParts = files.length()
+                    ))
                     val encrypted = get(config, path, raw = true) ?: continue
                     val compressed = Base64.decode(decodePayload(encrypted, config.passphrase), Base64.NO_WRAP)
                     val decoded = GZIPInputStream(compressed.inputStream()).use { bounded(it, MAX_EXPANDED) }
@@ -226,6 +247,9 @@ class CatalogBackupManager(context: Context) {
         }
         CatalogPreferences.status(app, "Merged $imported catalog snapshots · ${java.util.Date()}")
         CatalogOperations.message(app, "restore", "Complete · $imported snapshots merged into Room.")
+        CatalogOperations.progress(app, CatalogOperations.RESTORE, CatalogOperationProgress(
+            phase = "Complete", totalRecords = imported, part = 1, totalParts = 1
+        ))
         imported
     }
 
@@ -245,6 +269,10 @@ class CatalogBackupManager(context: Context) {
             manifest.parts.forEachIndexed { index, path ->
                 require(path.startsWith("$deviceFolder/part-") && path.endsWith(".niktv"))
                 CatalogOperations.message(app, "restore", "${profile.name} · ${type.title} · Merging part ${index + 1}/${manifest.parts.size}")
+                CatalogOperations.progress(app, CatalogOperations.RESTORE, CatalogOperationProgress(
+                    phase = "Merging into local database", mediaType = type.title, category = profile.name,
+                    part = index + 1, totalParts = manifest.parts.size
+                ))
                 val partContent = requireNotNull(get(config, path, raw = true)) { "Catalog backup part is missing." }
                 val snapshot = json.decodeFromString<CatalogSnapshot>(decodeCompressed(partContent, config.passphrase))
                 require(snapshot.type == type && snapshot.profileId == id && snapshot.schemaVersion == 1)

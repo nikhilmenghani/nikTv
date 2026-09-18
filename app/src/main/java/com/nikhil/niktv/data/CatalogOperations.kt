@@ -17,9 +17,34 @@ internal data class CatalogPageEvent(
     val location: String, val outcome: String, val detail: String
 )
 
+@Serializable
+internal data class CatalogOperationProgress(
+    val phase: String,
+    val mediaType: String = "",
+    val category: String = "",
+    val categoryPosition: Int = 0,
+    val categoryCount: Int = 0,
+    val page: Int = 0,
+    val totalPages: Int = 0,
+    val recordsInPage: Int = 0,
+    val recordsInCategory: Int = 0,
+    val totalRecords: Int = 0,
+    val part: Int = 0,
+    val totalParts: Int = 0
+) {
+    val fraction: Float?
+        get() = when {
+            totalParts > 0 -> part.toFloat() / totalParts
+            totalPages > 0 -> page.toFloat() / totalPages
+            categoryCount > 0 -> categoryPosition.toFloat() / categoryCount
+            else -> null
+        }?.coerceIn(0f, 1f)
+}
+
 /** Durable device-only controls. A stop never discards a committed page or file. */
 internal object CatalogOperations {
     const val BACKUP = "backup"
+    const val RESTORE = "restore"
     private fun prefs(context: Context) = context.getSharedPreferences("catalog_operations", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
     fun scan(id: String) = "scan:$id"
@@ -40,6 +65,17 @@ internal object CatalogOperations {
         prefs(context).edit().putString("message:$key", value).putLong("time:$key", System.currentTimeMillis()).apply()
     }
     fun updated(context: Context, key: String) = prefs(context).getLong("time:$key", 0)
+    fun progress(context: Context, key: String): CatalogOperationProgress? =
+        prefs(context).getString("progress:$key", null)?.let {
+            runCatching { json.decodeFromString<CatalogOperationProgress>(it) }.getOrNull()
+        }
+    fun progress(context: Context, key: String, value: CatalogOperationProgress?) {
+        prefs(context).edit().apply {
+            if (value == null) remove("progress:$key")
+            else putString("progress:$key", json.encodeToString(value))
+            putLong("time:$key", System.currentTimeMillis())
+        }.apply()
+    }
     fun pageTotal(context: Context, key: String, category: String) =
         prefs(context).getInt("total:$key:$category", 0).takeIf { it > 0 }
     fun pageTotal(context: Context, key: String, category: String, total: Int?) {

@@ -1660,6 +1660,8 @@ SettingsSection("Data and sync") {
             var preferLocalCatalog by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.preferLocal(context)) }
             var catalogStatus by remember { mutableStateOf("") }
             var catalogRestoreBusy by remember { mutableStateOf(false) }
+            var confirmCatalogBackup by remember { mutableStateOf(false) }
+            var confirmCatalogRestore by remember { mutableStateOf(false) }
             val catalogScope = rememberCoroutineScope()
             var catalogProfileId by remember(state.profiles) {
                 mutableStateOf(
@@ -1671,6 +1673,30 @@ SettingsSection("Data and sync") {
             val catalogProfile = state.profiles.firstOrNull {
                 com.nikhil.niktv.data.CatalogScanPreferences.id(it) == catalogProfileId
             } ?: state.savedProfile ?: state.profiles.firstOrNull()
+            if (confirmCatalogBackup && catalogProfile != null) {
+                ProjectCardConfirmationDialog(
+                    title = "Upload ${catalogProfile.name} catalog?",
+                    message = "This uploads the local Room catalog for ${catalogProfile.name} to GitHub in device-specific parts. The current snapshot for this device is updated; snapshots from other devices are kept. Restores merge records instead of replacing personal data. A dated checkpoint is also created when the catalog is small enough. The upload continues in the background and can be paused or resumed.",
+                    confirmLabel = "Upload catalog",
+                    close = { confirmCatalogBackup = false },
+                    confirm = {
+                        confirmCatalogBackup = false
+                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile)
+                    }
+                )
+            }
+            if (confirmCatalogRestore && catalogProfile != null) {
+                ProjectCardConfirmationDialog(
+                    title = "Restore ${catalogProfile.name} catalog?",
+                    message = "This downloads the latest device snapshots for ${catalogProfile.name} and merges them into this device's Room database. Existing newer records, favorites and watch history are retained. The restore can use snapshots created by another device and continues in the background with visible progress.",
+                    confirmLabel = "Restore and merge",
+                    close = { confirmCatalogRestore = false },
+                    confirm = {
+                        confirmCatalogRestore = false
+                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, catalogProfile, resume = true)
+                    }
+                )
+            }
             CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
                 catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
             }
@@ -1709,14 +1735,16 @@ SettingsSection("Data and sync") {
             CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.BACKUP, "GitHub catalog upload", catalogBackupEnabled) {
                 com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile)
             }
-            CatalogRestoreProgress()
+            CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.RESTORE, "GitHub catalog restore") {
+                catalogProfile?.let { com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, it, resume = true) }
+            }
             BackupSettingsActionRow(
                 icon = Icons.Default.CloudUpload,
                 title = "Back up IPTV catalog now",
                 subtitle = if (catalogBackupEnabled) "Upload changed ${catalogProfile?.name ?: "profile"} snapshots to GitHub." else "Enable catalog backup on this device first.",
                 enabled = catalogBackupEnabled,
                 onClick = {
-                    com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile)
+                    confirmCatalogBackup = true
                     catalogStatus = ""
                 }
             )
@@ -1726,15 +1754,7 @@ SettingsSection("Data and sync") {
                 subtitle = "Merge ${catalogProfile?.name ?: "the selected profile"} snapshots from any device into this device.",
                 enabled = !catalogRestoreBusy && catalogProfile != null,
                 onClick = {
-                    catalogRestoreBusy = true
-                    catalogScope.launch {
-                        try {
-                            val count = com.nikhil.niktv.data.CatalogBackupManager(context).restore(requireNotNull(catalogProfile))
-                            catalogStatus = "Merged $count snapshots. Reopen the profile to reload its catalog."
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                        catch (error: Exception) { catalogStatus = error.message ?: "Catalog import failed" }
-                        finally { catalogRestoreBusy = false }
-                    }
+                    confirmCatalogRestore = true
                 }
             )
             if (catalogStatus.isNotBlank()) Text(catalogStatus, modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp),

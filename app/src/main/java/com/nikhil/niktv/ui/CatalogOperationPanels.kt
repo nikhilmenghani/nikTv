@@ -31,6 +31,35 @@ internal enum class CatalogScanDisplay(val label: String) {
     PAUSED("Paused"), STOPPED("Stopped"), COMPLETE("Complete"), INTERRUPTED("Interrupted")
 }
 
+@Composable
+private fun CatalogProgressDetails(progress: CatalogOperationProgress) {
+    val fields = buildList {
+        if (progress.mediaType.isNotBlank()) add("Media" to progress.mediaType)
+        add("Stage" to progress.phase)
+        if (progress.category.isNotBlank()) add("Category" to progress.category)
+        if (progress.categoryCount > 0) add("Categories" to "${progress.categoryPosition} of ${progress.categoryCount}")
+        if (progress.page > 0) add("Page" to if (progress.totalPages > 0) "${progress.page} of ${progress.totalPages}" else progress.page.toString())
+        if (progress.recordsInPage > 0) add("Current page" to "${progress.recordsInPage} records")
+        if (progress.recordsInCategory > 0) add("In category" to "${progress.recordsInCategory} records")
+        if (progress.totalRecords > 0) add("Stored total" to progress.totalRecords.toString())
+        if (progress.totalParts > 0) add("Transfer" to "${progress.part} of ${progress.totalParts}")
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        fields.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                row.forEach { (label, value) ->
+                    Column(Modifier.weight(1f)) {
+                        Text(label, style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                    }
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
 internal fun catalogScanDisplay(mode: String, work: List<WorkInfo.State>?, cursor: Int, completed: Long): CatalogScanDisplay = when {
     mode == "Paused" -> CatalogScanDisplay.PAUSED
     mode == "Stopped" -> CatalogScanDisplay.STOPPED
@@ -48,6 +77,7 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
     val revision by remember(operation) { CatalogOperations.observe(context, operation) }.collectAsState(0L)
     val mode = remember(revision, operation) { CatalogOperations.mode(context, operation) }
     val message = remember(revision, operation) { CatalogOperations.message(context, operation) }
+    val progress = remember(revision, operation) { CatalogOperations.progress(context, operation) }
     val failures = remember(revision, operation) { CatalogOperations.events(context, operation, true) }
     val backupEvents by remember(context) { BackupActivityLog.observe(context) }.collectAsState(emptyList())
     val events = remember(revision, operation, backupEvents) {
@@ -68,11 +98,11 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
     val held = mode != "Ready" || interrupted
     val busy = isScan && scanState in listOf(CatalogScanDisplay.CHECKING, CatalogScanDisplay.QUEUED, CatalogScanDisplay.SCANNING)
     val updated = CatalogOperations.updated(context, operation)
-    val uploadActive = !isScan && mode == "Ready" && message.let {
+    val uploadActive = !isScan && mode == "Ready" && (progress?.phase != null && progress.phase != "Complete" || message.let {
         it.startsWith("Backup queued") || it.contains("Uploading part") ||
             it.contains("Reading Room snapshot") || it.contains("Creating dated restore checkpoint") ||
             it.startsWith("Waiting for playback")
-    }
+    })
     val queuedWork = scanWork?.firstOrNull { it.state == WorkInfo.State.ENQUEUED }
     val queuedExplanation = when {
         queuedWork != null && queuedWork.runAttemptCount > 0 ->
@@ -89,7 +119,11 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
         "Paused" -> "Progress saved. Resume when you’re ready."
         "Stopped" -> "Stopped. Saved progress is available to resume."
         else -> if (isScan && scanState == CatalogScanDisplay.QUEUED) queuedExplanation else if (interrupted) "Scan interrupted. Resume from the last saved page." else if (updated == 0L) {
-            if (operation.startsWith("scan:")) "Ready to scan channels, movies and series." else "No catalog upload yet."
+            when {
+                operation.startsWith("scan:") -> "Ready to scan channels, movies and series."
+                operation == CatalogOperations.RESTORE -> "No catalog restore is running."
+                else -> "No catalog upload yet."
+            }
         } else message
     }
     Surface(
@@ -108,13 +142,18 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
                     color = MaterialTheme.colorScheme.primary)
             }
             if ((isScan && scanState == CatalogScanDisplay.SCANNING) || uploadActive) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                val fraction = progress?.fraction
+                if (fraction == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                else LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
             }
             val parts = summary.split(" · ")
             val showStage = !held && parts.size > 1 && !summary.startsWith("Complete") && !summary.startsWith("Scan already complete")
-            Text(if (showStage) parts.last() else summary, style = MaterialTheme.typography.bodyMedium)
-            if (showStage) Text(parts.dropLast(1).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (progress != null && progress.phase != "Complete") CatalogProgressDetails(progress)
+            else {
+                Text(if (showStage) parts.last() else summary, style = MaterialTheme.typography.bodyMedium)
+                if (showStage) Text(parts.dropLast(1).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (updated > 0) Text("Updated ${operationTime(updated)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
