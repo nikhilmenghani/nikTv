@@ -484,17 +484,30 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun MediaItem.favoriteTmdbSeriesId(): Int? =
+        externalTmdbId
+            ?: id.removePrefix("tmdb-series:")
+                .takeIf { it != id }
+                ?.toIntOrNull()
+
+    private fun MediaItem.withFavoriteSeriesPresentation(favorite: MediaItem): MediaItem = copy(
+        title = favorite.title.ifBlank { title },
+        logo = favorite.logo ?: logo,
+        description = favorite.description ?: description
+    )
+
     private suspend fun enrichFavoriteSeriesPresentation(profileKey: String) {
         if (_state.value.session?.profile?.cacheKey() != profileKey) return
         if (!favoriteSeriesMetadataMutex.tryLock()) return
 
         try {
-            val mappingsByMediaId = store.tmdbMappings.first()
+            val seriesMappings = store.tmdbMappings.first()
                 .filter { mapping ->
                     mapping.profileKey == profileKey &&
                         mapping.type == CatalogType.SERIES
                 }
-                .associateBy { it.media.id }
+            val mappingsByMediaId = seriesMappings.associateBy { it.media.id }
+            val mappingsByTmdbId = seriesMappings.associateBy { it.tmdbId }
 
             val targets = _state.value.favorites
                 .filter { it.kind == FavoriteKind.SERIES }
@@ -506,7 +519,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val replacements = coroutineScope {
                     chunk.map { favorite ->
                         async {
-                            val mappedTmdbId = mappingsByMediaId[favorite.media.id]?.tmdbId
+                            val mapping = mappingsByMediaId[favorite.media.id]
+                                ?: favorite.media.favoriteTmdbSeriesId()?.let(mappingsByTmdbId::get)
+                            val mappedTmdbId = mapping?.tmdbId
                             val lookupMedia = mappedTmdbId
                                 ?.let { favorite.media.copy(externalTmdbId = it) }
                                 ?: favorite.media
@@ -523,8 +538,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             } else {
                                 null
                             }
-                            val updatedMedia =
-                                favorite.media.withPreferredSeriesPresentation(metadata)
+                            // A TMDB row can be favorited before its provider match
+                            // finishes resolving. Replace that synthetic identity with
+                            // the saved Wio/Xtream item while keeping its presentation.
+                            val updatedMedia = (mapping?.media ?: favorite.media)
+                                .withPreferredSeriesPresentation(metadata)
+                                .withFavoriteSeriesPresentation(favorite.media)
                             favorite.key to favorite.copy(media = updatedMedia)
                         }
                     }.awaitAll()
@@ -5871,8 +5890,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
-                _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = favorite.media, seriesOpenedFromFavorites = true, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null) }
-                loadSeriesEpisodes(favorite.media)
+                val profileKey = session.profile.cacheKey()
+                val tmdbId = favorite.media.favoriteTmdbSeriesId()
+                val mapping = store.tmdbMappings.first().firstOrNull { saved ->
+                    saved.profileKey == profileKey &&
+                        saved.type == CatalogType.SERIES &&
+                        (saved.media.id == favorite.media.id ||
+                            (tmdbId != null && saved.tmdbId == tmdbId))
+                }
+                val providerSeries = (mapping?.media ?: favorite.media)
+                    .withFavoriteSeriesPresentation(favorite.media)
+                _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = providerSeries, seriesOpenedFromFavorites = true, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null) }
+                loadSeriesEpisodes(providerSeries)
             }
         }
     }
