@@ -511,6 +511,12 @@ private fun ModernDestinationHub(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
+    val screenTitle = when (dashboardSurface) {
+        DashboardSurface.HOME -> "Home"
+        DashboardSurface.MOVIES -> "Movies"
+        DashboardSurface.SERIES -> "Series"
+        DashboardSurface.LIVE_TV -> "Live TV"
+    }
     var recentChannelsOpen by rememberSaveable(profileKey, dashboardSurface) { mutableStateOf(false) }
     var confirmClearChannels by remember(profileKey) { mutableStateOf(false) }
     if (confirmClearChannels) {
@@ -545,6 +551,20 @@ private fun ModernDestinationHub(
     if (customizeHomeOpen && dashboardSurface == DashboardSurface.HOME) {
         ModernCustomizeHomeDialog(
             dismiss = { customizeHomeOpen = false },
+            configureTmdb = configureTmdb,
+            configureIptv = configureIptv,
+            resetSurface = resetSurface
+        )
+    }
+    if (customizeHomeOpen && dashboardSurface != DashboardSurface.HOME) {
+        ModernBrowseOptionsDialog(
+            dashboardSurface = dashboardSurface,
+            screenTitle = screenTitle,
+            recentChannelCount = recentChannels.size,
+            dismiss = { customizeHomeOpen = false },
+            openSearch = openSearch,
+            openRecentChannels = { recentChannelsOpen = true },
+            clearRecentChannels = { confirmClearChannels = true },
             configureTmdb = configureTmdb,
             configureIptv = configureIptv,
             resetSurface = resetSurface
@@ -642,13 +662,6 @@ private fun ModernDestinationHub(
         emptyList()
     }
 
-    val screenTitle = when (dashboardSurface) {
-        DashboardSurface.HOME -> "Home"
-        DashboardSurface.MOVIES -> "Movies"
-        DashboardSurface.SERIES -> "Series"
-        DashboardSurface.LIVE_TV -> "Live TV"
-    }
-
     LazyVerticalGrid(
         columns = GridCells.Fixed(destinationColumns),
         modifier = modifier.fillMaxWidth(),
@@ -709,27 +722,31 @@ private fun ModernDestinationHub(
                     Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        screenTitle,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White
-                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            screenTitle,
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Black,
+                            color = Color.White,
+                            modifier = Modifier.weight(1f)
+                        )
+                        NikTvSecondaryActionButton(
+                            onClick = { customizeHomeOpen = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.DashboardCustomize, null, Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Browse options")
+                        }
+                    }
                     Text(
                         "Choose what to browse",
                         color = Color(0xFFA7ABB5),
                         style = MaterialTheme.typography.bodyMedium
-                    )
-                    ModernHubQuickActions(
-                        dashboardSurface = dashboardSurface,
-                        openSearch = openSearch,
-                        configureTmdb = configureTmdb,
-                        configureIptv = configureIptv,
-                        resetSurface = resetSurface,
-                        openRecentChannels = { recentChannelsOpen = true },
-                        clearRecentChannels = { confirmClearChannels = true },
-                        recentChannelCount = recentChannels.size,
-                        isTv = isTv
                     )
                 }
             }
@@ -1225,6 +1242,94 @@ private fun ModernCustomizeHomeDialog(
             NikTvTextActionButton(
                 onClick = dismiss
             ) { Text("Done") }
+        }
+    )
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        firstAction.requestFocus()
+    }
+}
+
+@Composable
+private fun ModernBrowseOptionsDialog(
+    dashboardSurface: DashboardSurface,
+    screenTitle: String,
+    recentChannelCount: Int,
+    dismiss: () -> Unit,
+    openSearch: () -> Unit,
+    openRecentChannels: () -> Unit,
+    clearRecentChannels: () -> Unit,
+    configureTmdb: () -> Unit,
+    configureIptv: (CatalogType) -> Unit,
+    resetSurface: () -> Unit
+) {
+    val firstAction = remember { FocusRequester() }
+    val configuration = LocalConfiguration.current
+    val compactLandscape = configuration.smallestScreenWidthDp < 600 &&
+        configuration.screenWidthDp > configuration.screenHeightDp
+    val bodyMaxHeight =
+        (configuration.screenHeightDp * if (compactLandscape) .55f else .68f).dp
+    val catalogType = when (dashboardSurface) {
+        DashboardSurface.LIVE_TV -> CatalogType.LIVE_TV
+        DashboardSurface.MOVIES -> CatalogType.MOVIES
+        DashboardSurface.SERIES -> CatalogType.SERIES
+        DashboardSurface.HOME -> CatalogType.LIVE_TV
+    }
+    val actions = buildList<Pair<String, () -> Unit>> {
+        add("Search" to openSearch)
+        if (dashboardSurface == DashboardSurface.LIVE_TV) {
+            add("Recently played · $recentChannelCount" to openRecentChannels)
+        } else {
+            add("TMDB sections" to configureTmdb)
+        }
+        add("IPTV categories" to { configureIptv(catalogType) })
+        if (dashboardSurface == DashboardSurface.LIVE_TV && recentChannelCount > 0) {
+            add("Clear recently played channels" to clearRecentChannels)
+        }
+        add("Restore $screenTitle defaults" to resetSurface)
+    }
+
+    AlertDialog(
+        onDismissRequest = dismiss,
+        shape = RoundedCornerShape(24.dp),
+        containerColor = Color(0xF21A1A1A),
+        title = {
+            val dialogView = LocalView.current
+            SideEffect {
+                (dialogView.parent as? DialogWindowProvider)?.window?.setGravity(Gravity.END)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("$screenTitle options", color = Color.White)
+                Text(
+                    "Search, browse collections, or configure provider categories.",
+                    color = Color.White.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        },
+        text = {
+            Column(
+                Modifier.widthIn(max = 520.dp)
+                    .heightIn(max = bodyMaxHeight)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                actions.forEachIndexed { index, (label, action) ->
+                    if (index == actions.lastIndex || label.startsWith("Clear recently")) {
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.14f))
+                    }
+                    NikTvSecondaryActionButton(
+                        onClick = { dismiss(); action() },
+                        modifier = Modifier.fillMaxWidth()
+                            .then(if (index == 0) Modifier.focusRequester(firstAction) else Modifier)
+                    ) {
+                        Text(label, Modifier.weight(1f))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            NikTvTextActionButton(onClick = dismiss) { Text("Done") }
         }
     )
     LaunchedEffect(Unit) {
