@@ -5453,7 +5453,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(nowPlaying = null, error = null, reauthenticating = true) }
+            /*
+             * Keep PlayerScreen mounted while a rejected provider link is
+             * refreshed. Clearing nowPlaying here returned the user to the
+             * catalog for several seconds, so a successful automatic retry
+             * looked like an ignored channel tap. playInternal replaces the
+             * failed media URL when reauthentication completes, which already
+             * recreates the player through its media.url key.
+             */
+            _state.update { it.copy(error = null, reauthenticating = true) }
             runCatching {
                 val profile = requireNotNull(_state.value.savedProfile)
                 if (profile.portalType == PortalType.STALKER) {
