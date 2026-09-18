@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.data.*
@@ -172,23 +173,30 @@ internal fun CatalogOperationPanel(
             }
             if (updated > 0) Text("Updated ${operationTime(updated)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val compactActions = LocalConfiguration.current.screenWidthDp < 600
+            val actionModifier = if (compactActions) Modifier.fillMaxWidth() else Modifier
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                maxItemsInEachRow = if (compactActions) 1 else 3
+            ) {
                 if (held) {
-                    item { Button(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Resume local") } }
-                    onRestoredResume?.let { restored -> item {
+                    Button(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
+                        modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Resume local") }
+                    onRestoredResume?.let { restored ->
                         OutlinedButton(onClick = restored, shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
-                    } }
-                    onFullScan?.let { fullScan -> item {
+                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
+                    }
+                    onFullScan?.let { fullScan ->
                         OutlinedButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
-                    } }
+                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
+                    }
                 } else {
-                    if (onStart != null) item { Button(
+                    if (onStart != null) Button(
                         onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
                         enabled = !busy || (scanState == CatalogScanDisplay.QUEUED && onRetry != null),
-                        shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) {
+                        shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) {
                         Text(when (scanState) {
                             CatalogScanDisplay.SCANNING -> "Scanning…"
                             CatalogScanDisplay.QUEUED -> "Try now"
@@ -196,25 +204,25 @@ internal fun CatalogOperationPanel(
                             CatalogScanDisplay.COMPLETE -> "Resume scan"
                             else -> "Resume scan"
                         })
-                    } }
-                    onRestoredResume?.let { restored -> item {
+                    }
+                    onRestoredResume?.let { restored ->
                         OutlinedButton(onClick = restored, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
-                    } }
-                    onFullScan?.let { fullScan -> item {
+                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
+                    }
+                    onFullScan?.let { fullScan ->
                         OutlinedButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
-                    } }
-                    if (!isScan || busy) item { OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
-                        shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Pause") } }
+                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
+                    }
+                    if (!isScan || busy) OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
+                        shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Pause") }
                 }
-                if (mode != "Stopped" && (!isScan || busy || held)) item { TextButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
-                    shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Stop") } }
-                item { TextButton(onClick = { detail = "events" },
-                    shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Details") } }
-                if (failures.isNotEmpty()) item { TextButton(onClick = { detail = "failures" },
+                if (mode != "Stopped" && (!isScan || busy || held)) TextButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Stop") }
+                TextButton(onClick = { detail = "events" },
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Details") }
+                if (failures.isNotEmpty()) TextButton(onClick = { detail = "failures" },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("${failures.size} failed") } }
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("${failures.size} failed") }
             }
         }
     }

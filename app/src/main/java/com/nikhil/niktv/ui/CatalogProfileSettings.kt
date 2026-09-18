@@ -16,7 +16,9 @@ import com.nikhil.niktv.data.*
 import com.nikhil.niktv.model.PortalProfile
 import com.nikhil.niktv.model.CatalogType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -39,9 +41,22 @@ internal fun CatalogProfileSettings(
     if (profile == null) return
     val id = CatalogScanPreferences.id(profile)
     val restoreRevision by remember { CatalogOperations.observe(context, CatalogOperations.RESTORE) }.collectAsState(0L)
-    val restoredCursor = remember(id, restoreRevision) { CatalogScanPreferences.restoredCursor(context, id) }
     val restoredAt = remember(id, restoreRevision) { CatalogScanPreferences.restoredAt(context, id) }
+    var restoredCursor by remember(id, restoreRevision) {
+        mutableIntStateOf(CatalogScanPreferences.restoredCursor(context, id))
+    }
     val restoredType = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).getOrNull(restoredCursor)
+    LaunchedEffect(id, restoreRevision, restoredAt) {
+        if (restoredAt > 0L) {
+            val corrected = withContext(Dispatchers.IO) {
+                CatalogRepository(context).resumeScanIndex(profile)
+            }
+            if (corrected != restoredCursor) {
+                CatalogScanPreferences.restoredCursor(context, id, corrected)
+                restoredCursor = corrected
+            }
+        }
+    }
     LaunchedEffect(id) {
         if (CatalogScanPreferences.selectedProfileId(context) == null) {
             CatalogScanPreferences.selectedProfileId(context, id)

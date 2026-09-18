@@ -180,8 +180,9 @@ class CatalogRepositoryTest {
 
     @Test fun restoredPageCursorBeatsNewerLocalResetAndResumesMovies() = runBlocking {
         repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.LIVE_TV, 100,
-            listOf(Category("live", "Live", CatalogType.LIVE_TV)), mapOf("live" to listOf(movie("1"))),
-            mapOf("live" to 20), mapOf("live" to false)))
+            listOf(Category("*", "All", CatalogType.LIVE_TV), Category("news", "News", CatalogType.LIVE_TV)),
+            mapOf("*" to listOf(movie("1"))), mapOf("*" to 20, "news" to 0),
+            mapOf("*" to false, "news" to true)))
         repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.MOVIES, 100,
             listOf(Category("movies", "Movies", CatalogType.MOVIES)), mapOf("movies" to listOf(movie("2"))),
             mapOf("movies" to 750), mapOf("movies" to true)))

@@ -246,7 +246,14 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         return types.indexOfFirst { type ->
             migrate(key, type)
             val providerBuckets = dao.buckets(key, type.name).filterNot { it.bucket == SEARCH }
-            providerBuckets.isEmpty() || providerBuckets.any { it.page <= 0 || it.hasMore }
+            // The scanner uses the provider's aggregate "*" bucket whenever it
+            // exists. Category rows are also stored for browsing and may remain
+            // at page zero forever; they must not pull a restored resume cursor
+            // back to Live TV after the aggregate Live TV scan completed.
+            val scannedBuckets = providerBuckets.firstOrNull { it.bucket == "*" }
+                ?.let(::listOf)
+                ?: providerBuckets
+            scannedBuckets.isEmpty() || scannedBuckets.any { it.page <= 0 || it.hasMore }
         }
     }
 
