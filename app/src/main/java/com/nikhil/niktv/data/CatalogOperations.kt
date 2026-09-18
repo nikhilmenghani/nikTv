@@ -40,6 +40,12 @@ internal object CatalogOperations {
         prefs(context).edit().putString("message:$key", value).putLong("time:$key", System.currentTimeMillis()).apply()
     }
     fun updated(context: Context, key: String) = prefs(context).getLong("time:$key", 0)
+    fun pageTotal(context: Context, key: String, category: String) =
+        prefs(context).getInt("total:$key:$category", 0).takeIf { it > 0 }
+    fun pageTotal(context: Context, key: String, category: String, total: Int?) {
+        if (total == null || total <= 0) return
+        prefs(context).edit().putInt("total:$key:$category", total).apply()
+    }
     fun observe(context: Context, key: String) = callbackFlow {
         val p = prefs(context)
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, changed ->

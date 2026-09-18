@@ -96,6 +96,7 @@ class SearchCatalogScanner internal constructor(
             val knownHasMore = cache.hasMoreByCategory[category.id]
             var page = cache.pagesByCategory[category.id] ?: 0
             var items = knownItems
+            var knownTotalPages = CatalogOperations.pageTotal(appContext, operation, category.id)
 
             if (knownHasMore != false || refreshCompleted) {
                 val refreshFromStart = knownHasMore == false
@@ -127,7 +128,7 @@ class SearchCatalogScanner internal constructor(
                     CatalogOperations.check(appContext, operation)
                     val location = "${type.title} · ${category.title} · page $page"
                     val reportKey = "${type.name}:${category.id}:$page"
-                    stage("$location · Requesting provider · category ${categoryIndex + 1}/${categories.size}")
+                    stage("$location${knownTotalPages?.let { " of $it" }.orEmpty()} · Requesting provider · category ${categoryIndex + 1}/${categories.size}")
                     val pageResult = runCatching {
                         fetchPage(session, category, page)
                     }
@@ -139,6 +140,8 @@ class SearchCatalogScanner internal constructor(
                         return SearchCatalogScanResult(cache, cache.itemsByCategory.values.sumOf { it.size }, failures)
                     }
                     val result = pageResult.getOrThrow()
+                    knownTotalPages = result.totalPages ?: knownTotalPages
+                    CatalogOperations.pageTotal(appContext, operation, category.id, result.totalPages)
                     val newlySeen = result.items.count { seenThisScan.add(it.id) }
                     if (result.hasMore && newlySeen == 0) {
                         CatalogOperations.page(appContext, operation, CatalogPageEvent(reportKey, location = location,
@@ -159,7 +162,7 @@ class SearchCatalogScanner internal constructor(
                     if (!result.hasMore && startedAtFirstPage) completed[category.id] = seenThisScan.toSet()
                     pagesRead += 1
                     // Persist each completed page so process death can resume instead of restarting a category.
-                    stage("$location · Writing ${result.items.size} records to Room")
+                    stage("$location${knownTotalPages?.let { " of $it" }.orEmpty()} · Writing ${result.items.size} records to Room")
                     try {
                         store.saveBrowseCatalog(cache, scheduleMetadataSync = false)
                     } catch (cancelled: CancellationException) { throw cancelled }
@@ -170,7 +173,10 @@ class SearchCatalogScanner internal constructor(
                     }
                     CatalogOperations.page(appContext, operation, CatalogPageEvent(reportKey, location = location,
                         outcome = "Stored", detail = "${result.items.size} records committed. ${items.size} unique records in this category; ${if (result.hasMore) "more pages pending" else "last page"}."))
-                    stage("$location · Saved to Room · ${items.size} records in category")
+                    val pageProgress = knownTotalPages?.let { total ->
+                        " · ${(page * 100 / total.coerceAtLeast(page)).coerceIn(0, 100)}%"
+                    }.orEmpty()
+                    stage("$location${knownTotalPages?.let { " of $it" }.orEmpty()}$pageProgress · Saved to Room · ${items.size} records in category")
                     CatalogOperations.check(appContext, operation)
                     keepLoading = result.hasMore && newlySeen > 0
                     page += 1

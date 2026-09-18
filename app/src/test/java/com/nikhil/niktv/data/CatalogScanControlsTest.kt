@@ -77,6 +77,16 @@ class CatalogScanControlsTest {
         assertEquals(1, CatalogRepository(context).browse(session.profile.cacheKey(), CatalogType.MOVIES)!!.pagesByCategory["1"])
     }
 
+    @Test fun providerPageTotalIsRetainedAcrossWorkerBatches() = runBlocking {
+        val session = session()
+        val operation = CatalogOperations.scan(CatalogScanPreferences.id(session.profile))
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            PortalCatalogPage(listOf(item("$page")), page, hasMore = false, totalPages = 673, totalItems = 9_422)
+        }, {})
+        scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false)
+        assertEquals(673, CatalogOperations.pageTotal(context, operation, category.id))
+    }
+
     @Test fun pausedBackupDoesNotConnectAndLogsPauseInsteadOfFailure() = runBlocking {
         CatalogPreferences.setBackupEnabled(context, true)
         CatalogOperations.control(context, CatalogOperations.BACKUP, "Paused")

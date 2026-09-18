@@ -97,7 +97,10 @@ data class PortalSearchPage(
 data class PortalCatalogPage(
     val items: List<MediaItem>,
     val page: Int,
-    val hasMore: Boolean
+    val hasMore: Boolean,
+    /** Exact provider-reported page count, or one derived from totalItems/pageSize. */
+    val totalPages: Int? = null,
+    val totalItems: Int? = null
 )
 
 @Serializable
