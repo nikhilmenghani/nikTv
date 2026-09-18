@@ -311,7 +311,7 @@ internal fun ModernTileBrowseScreen(
     }
 }
 
-private fun Context.isModernTileTv(configuration: Configuration): Boolean =
+internal fun Context.isModernTileTv(configuration: Configuration): Boolean =
     packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
         configuration.uiMode and Configuration.UI_MODE_TYPE_MASK ==
             Configuration.UI_MODE_TYPE_TELEVISION ||
@@ -2924,7 +2924,7 @@ private fun ModernIptvCollection(
     }
 }
 
-private fun modernPosterColumns(
+internal fun modernPosterColumns(
     configuration: Configuration,
     isTv: Boolean
 ): Int = when {

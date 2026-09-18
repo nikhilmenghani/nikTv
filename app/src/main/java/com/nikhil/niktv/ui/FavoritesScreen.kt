@@ -125,15 +125,21 @@ internal fun ModernFavoritesScreen(
     openSettings: () -> Unit,
     closeFavorites: () -> Unit
 ) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isTv = context.isModernTileTv(configuration)
+    val posterColumns = modernPosterColumns(configuration, isTv)
     val groups = FavoriteKind.entries.mapNotNull { kind ->
         state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
     }
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(180.dp),
+        // Match the dashboard's Continue Watching geometry. The old adaptive
+        // 180dp rule collapsed compact phones to one nearly full-width poster.
+        columns = GridCells.Fixed(posterColumns),
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
             ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings)
