@@ -1455,17 +1455,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return false
         }
 
-        viewModelScope.launch {
-            _state.update { current ->
-                if (current.nowPlaying == null) {
-                    current
-                } else {
-                    current.copy(
-                        playbackQueueScope = scope,
-                        playbackQueueLoadingMore = true
-                    )
-                }
+        _state.update { current ->
+            if (current.nowPlaying == null) {
+                current
+            } else {
+                current.copy(
+                    playbackQueueScope = scope,
+                    playbackQueueLoadingMore = true
+                )
             }
+        }
+
+        viewModelScope.launch {
 
             if (
                 playing.catalogType == CatalogType.SERIES &&
@@ -4797,6 +4798,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val latestPlaybackRequest = LatestPlaybackRequest()
     private var pendingNavigationId: String? = null
     private var channelScheduleJob: Job? = null
+    private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private suspend fun playInternal(
         item: MediaItem,
@@ -5260,7 +5262,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNextEpisode() {
-        val playing = _state.value.nowPlaying ?: return
+        val snapshot = _state.value
+        val playing = snapshot.nowPlaying ?: return
         val queue = playbackNavigationQueue(playing)
 
         val index =
@@ -5269,6 +5272,30 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
         if (index < 0) return
+
+        if (
+            playing.catalogType == CatalogType.LIVE_TV &&
+            index == queue.lastIndex &&
+            snapshot.playbackQueueHasMore
+        ) {
+            val previousSize = queue.size
+            val loadStarted = snapshot.playbackQueueLoadingMore || loadMorePlaybackQueue()
+            if (loadStarted && autoAdvanceAfterQueueLoadJob?.isActive != true) {
+                autoAdvanceAfterQueueLoadJob = viewModelScope.launch {
+                    _state.first { !it.playbackQueueLoadingMore }
+                    val updatedPlaying = _state.value.nowPlaying ?: return@launch
+                    val updatedQueue = playbackNavigationQueue(updatedPlaying)
+                    if (
+                        updatedPlaying.catalogType == CatalogType.LIVE_TV &&
+                        updatedQueue.size > previousSize &&
+                        updatedQueue.indexOfFirst { it.id == updatedPlaying.media.id } < updatedQueue.lastIndex
+                    ) {
+                        playNextEpisode()
+                    }
+                }
+            }
+            return
+        }
 
         val next =
             queue.getOrNull(index + 1)
@@ -5387,6 +5414,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         latestPlaybackRequest.cancel()
         pendingNavigationId = null
         channelScheduleJob?.cancel()
+        autoAdvanceAfterQueueLoadJob?.cancel()
         val snapshot = _state.value
         val session = snapshot.session
 

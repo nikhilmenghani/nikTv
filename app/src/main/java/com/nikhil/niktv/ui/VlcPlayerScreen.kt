@@ -6,6 +6,7 @@ import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -194,6 +195,34 @@ internal fun VlcPlayerScreen(
     }
     val hasPlaybackQueue =
         playerQueueItems.size > 1 || queueHasMore || queueLoadingMore
+    val currentHasPlaybackQueue by rememberUpdatedState(hasPlaybackQueue)
+    val currentPlayPrevious by rememberUpdatedState(onPlayPrevious)
+    val currentPlayNext by rememberUpdatedState(onPlayNext)
+    val currentAdvancePrevious by rememberUpdatedState<() -> Unit> {
+        if (!advancing) {
+            advancing = true
+            onPlayPrevious()
+        }
+    }
+    val currentAdvanceNext by rememberUpdatedState<() -> Unit> {
+        if (!advancing) {
+            advancing = true
+            onPlayNext()
+        }
+    }
+    var queueExpansionStarted by remember(media.progressKey) { mutableStateOf(false) }
+    LaunchedEffect(queueLoadingMore) {
+        if (queueLoadingMore) {
+            queueExpansionStarted = true
+        } else if (queueExpansionStarted) {
+            // A provider can advertise another page and then return no items.
+            // Release the input guard when that attempt finishes so Previous and
+            // a subsequent retry remain available even though media did not change.
+            delay(250L)
+            advancing = false
+            queueExpansionStarted = false
+        }
+    }
     LaunchedEffect(modeFeedback) {
         if (modeFeedback != null) {
             delay(1_800L)
@@ -244,6 +273,7 @@ internal fun VlcPlayerScreen(
     }
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     val player = remember(libVlc) { MediaPlayer(libVlc) }
+    val surfacePlayer = remember { arrayOfNulls<MediaPlayer>(1) }
     fun refreshSubtitleTracks() {
         subtitleTracks = player.spuTracks.orEmpty()
             .filter { it.id >= 0 }
@@ -669,24 +699,24 @@ internal fun VlcPlayerScreen(
             )
     ) {
         PlayerVideoLayer {
-        // VLC_PLAYER_SURFACE_PER_MEDIA_V2
-        //
-        // AndroidView normally survives recomposition. Previous/Next replaces
-        // the LibVLC MediaPlayer, so retaining the old VLCVideoLayout leaves it
-        // attached to the released player: the new channel's audio advances
-        // while the visible video frame remains frozen. Recreate and attach the
-        // surface for every playback identity, matching the Media3 lifecycle.
-        key(media.progressKey, media.url) {
+        // Keep one SurfaceView alive across queue changes. Destroying it before
+        // VLC's decoder has fully stopped causes a large abandoned-BufferQueue
+        // burst during rapid channel switching.
             AndroidView(
                 factory = { ctx ->
                     VLCVideoLayout(ctx).also { layout ->
                     var gestureStartY = 0f
+                    var gestureStartX = 0f
                     var gestureStartValue = 0f
                     var brightnessGesture = false
                     var levelGestureEligible = false
                     var adjustingLevel = false
                     var queueGestureOwned = false
                     var queueSwipeTriggered = false
+                    var tapCandidate = false
+                    var lastTapAtMillis = 0L
+                    var lastTapOnRight = false
+                    val tapSlop = 14f * layout.resources.displayMetrics.density
                     videoView = layout
                     // Native VLC focus is only the embedded Showcase
                     // D-pad bridge. Standalone/fullscreen focus stays in Compose.
@@ -729,6 +759,7 @@ internal fun VlcPlayerScreen(
                                     return@setOnTouchListener false
                                 }
                                 dpadInteraction++
+                                gestureStartX = event.x
                                 gestureStartY = event.y
                                 // Outer quarters adjust brightness/volume; the
                                 // middle half consistently reveals the queue.
@@ -739,9 +770,10 @@ internal fun VlcPlayerScreen(
                                 brightnessGesture = brightnessBand
                                 adjustingLevel = false
                                 queueSwipeTriggered = false
+                                tapCandidate = true
                                 queueGestureOwned =
                                     focusMode &&
-                                        hasPlaybackQueue &&
+                                        currentHasPlaybackQueue &&
                                         !pictureEditorVisible &&
                                         if (compactMobileControls) {
                                             event.x >= layout.width * 0.25f &&
@@ -765,6 +797,12 @@ internal fun VlcPlayerScreen(
                             }
                             MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1) {
                                 val deltaY = gestureStartY - event.y
+                                if (
+                                    kotlin.math.abs(event.x - gestureStartX) > tapSlop ||
+                                    kotlin.math.abs(event.y - gestureStartY) > tapSlop
+                                ) {
+                                    tapCandidate = false
+                                }
                                 if (queueGestureOwned) {
                                     val progress =
                                         (deltaY / (layout.height * 0.32f))
@@ -806,11 +844,27 @@ internal fun VlcPlayerScreen(
                                     }
                                     queueGestureOwned = false
                                 }
-                                if (!adjustingLevel && !queueSwipeTriggered) {
-                                    controlsVisible = !controlsVisible
+                                if (!adjustingLevel && !queueSwipeTriggered && tapCandidate) {
+                                    val tappedOnRight = event.x >= layout.width / 2f
+                                    val doubleTap =
+                                        currentHasPlaybackQueue &&
+                                            tappedOnRight == lastTapOnRight &&
+                                            event.eventTime - lastTapAtMillis in
+                                                1..ViewConfiguration.getDoubleTapTimeout().toLong()
+                                    if (doubleTap) {
+                                        lastTapAtMillis = 0L
+                                        if (tappedOnRight) currentAdvanceNext()
+                                        else currentAdvancePrevious()
+                                    } else {
+                                        lastTapAtMillis = event.eventTime
+                                        lastTapOnRight = tappedOnRight
+                                        controlsVisible = !controlsVisible
+                                    }
                                 }
                                 queueSwipeTriggered = false
+                                tapCandidate = false
                             }
+                            MotionEvent.ACTION_CANCEL -> tapCandidate = false
                         }
                         true
                     }
@@ -843,9 +897,9 @@ internal fun VlcPlayerScreen(
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
                                 if (
                                     media.catalogType == CatalogType.LIVE_TV &&
-                                    hasPlaybackQueue
+                                    currentHasPlaybackQueue
                                 ) {
-                                    onPlayPrevious()
+                                    currentPlayPrevious()
                                 } else {
                                     if (seekable) player.time = (player.time - 10_000L).coerceAtLeast(0L)
                                     showControls()
@@ -855,9 +909,9 @@ internal fun VlcPlayerScreen(
                             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                                 if (
                                     media.catalogType == CatalogType.LIVE_TV &&
-                                    hasPlaybackQueue
+                                    currentHasPlaybackQueue
                                 ) {
-                                    onPlayNext()
+                                    currentPlayNext()
                                 } else {
                                     if (seekable) player.time = (player.time + 10_000L).coerceAtMost(duration)
                                     showControls()
@@ -876,9 +930,19 @@ internal fun VlcPlayerScreen(
                     // LibVLC only creates its separate subtitle surface when
                     // using SurfaceView. TextureView silently drops SPU text.
                     player.attachViews(layout, null, true, false)
+                    surfacePlayer[0] = player
                     }
                 },
                 update = { layout ->
+                    val previouslyAttached = surfacePlayer[0]
+                    if (previouslyAttached !== player) {
+                        runCatching { previouslyAttached?.setEventListener(null) }
+                        runCatching { previouslyAttached?.stop() }
+                        runCatching { previouslyAttached?.detachViews() }
+                        runCatching { player.detachViews() }
+                        player.attachViews(layout, null, true, false)
+                        surfacePlayer[0] = player
+                    }
                     // Apply after attachment and on every size-mode change. Fill preserves
                     // aspect ratio; Zoom adds visible magnification even for 16:9 streams.
                     player.setVideoScale(
@@ -893,6 +957,20 @@ internal fun VlcPlayerScreen(
                     layout.scaleY = zoom
                     player.updateVideoSurfaces()
                 },
+                onRelease = { layout ->
+                    // Stop native video output while the surface is still valid so
+                    // leaving playback cannot enqueue frames into an abandoned
+                    // BufferQueue. The coroutine cleanup remains the owner of
+                    // releasing MediaPlayer and LibVLC resources.
+                    layout.setOnTouchListener(null)
+                    layout.setOnKeyListener(null)
+                    val attached = surfacePlayer[0]
+                    runCatching { attached?.setEventListener(null) }
+                    runCatching { attached?.stop() }
+                    runCatching { attached?.detachViews() }
+                    surfacePlayer[0] = null
+                    if (videoView === layout) videoView = null
+                },
                 modifier = Modifier.fillMaxSize().then(
                     if (!focusMode && !embeddedMode) Modifier.padding(
                         top = if (compactMobileControls) 58.dp else 76.dp,
@@ -900,7 +978,6 @@ internal fun VlcPlayerScreen(
                     ) else Modifier
                 )
             )
-        }
         DownloadedSubtitleOverlay(
             file = externalSubtitleFile,
             positionMs = position,
