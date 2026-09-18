@@ -665,7 +665,9 @@ private fun StorageUsageRow(
             onClick = row.onClear,
             enabled = enabled,
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-            modifier = Modifier.heightIn(min = 38.dp).remoteFocusFrame(RoundedCornerShape(10.dp))
+            // NikTvTextActionButton already supplies the shared D-pad focus
+            // border. Adding remoteFocusFrame here drew a second pink outline.
+            modifier = Modifier.heightIn(min = 38.dp)
         ) {
             Icon(Icons.Default.DeleteOutline, null, Modifier.size(17.dp))
             Spacer(Modifier.width(4.dp))
