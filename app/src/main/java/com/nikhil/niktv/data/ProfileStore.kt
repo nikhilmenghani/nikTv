@@ -13,6 +13,7 @@ import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.RecentItem
 import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.model.BrowseCatalogCache
+import com.nikhil.niktv.model.BrowseCatalogMetadataCache
 import com.nikhil.niktv.model.PlaybackUrl
 import com.nikhil.niktv.model.RecentSearch
 import com.nikhil.niktv.model.SearchResultCache
@@ -215,9 +216,23 @@ class ProfileStore(private val context: Context) {
     fun browseCatalog(type: CatalogType, profileKey: String? = null): Flow<BrowseCatalogCache?> = kotlinx.coroutines.flow.flow {
         emit(profileKey?.let { CatalogDiskCache.read<BrowseCatalogCache>(context, "browse:$it:${type.name}") })
     }
+    fun browseCatalogMetadata(type: CatalogType, profileKey: String? = null): Flow<BrowseCatalogMetadataCache?> = kotlinx.coroutines.flow.flow {
+        emit(profileKey?.let { CatalogDiskCache.read<BrowseCatalogMetadataCache>(context, "browse-metadata:$it:${type.name}") })
+    }
+    suspend fun saveBrowseCatalogMetadata(cache: BrowseCatalogMetadataCache) {
+        CatalogDiskCache.write(context, "browse-metadata:${cache.profileKey}:${cache.type.name}", cache)
+    }
     suspend fun saveBrowseCatalog(cache: BrowseCatalogCache, scheduleMetadataSync: Boolean = true) {
         discardLegacyBrowseCatalogs()
         CatalogDiskCache.write(context, "browse:${cache.profileKey}:${cache.type.name}", cache)
+        saveBrowseCatalogMetadata(
+            BrowseCatalogMetadataCache(
+                profileKey = cache.profileKey,
+                type = cache.type,
+                cachedAtMillis = cache.cachedAtMillis,
+                categories = cache.categories
+            )
+        )
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
 

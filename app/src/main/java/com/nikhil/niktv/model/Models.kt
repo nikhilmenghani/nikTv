@@ -175,6 +175,14 @@ data class BrowseCatalogCache(
 )
 
 @Serializable
+data class BrowseCatalogMetadataCache(
+    val profileKey: String,
+    val type: CatalogType,
+    val cachedAtMillis: Long,
+    val categories: List<Category>
+)
+
+@Serializable
 enum class FavoriteKind { CHANNEL, MOVIE, SERIES, EPISODE }
 
 @Serializable

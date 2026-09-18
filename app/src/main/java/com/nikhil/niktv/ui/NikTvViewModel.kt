@@ -370,6 +370,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     else loadTypeInternal(session, type)
                 }
             }
+            if (_state.value.modernUiEnabled) {
+                // Category tiles are ready at this point. Hydrate the much
+                // larger media maps afterward so profile navigation never
+                // waits for full catalogue deserialization.
+                launch {
+                    for (type in listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) {
+                        step { hydrateTypeCacheFromDisk(session, type) }
+                    }
+                }
+            }
             // These are optional enrichments, never a prerequisite for opening Home.
             step { refreshWatchedSeriesIfDue() }
             loadDashboardDiscovery()
@@ -731,19 +741,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         forceRefresh: Boolean = false
     ) {
         val profileKey = session.profile.cacheKey()
-        val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         var cachedBrowse = if (!forceRefresh && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
             _state.value.browseCachesByType[type]
                 ?.takeIf { it.profileKey == profileKey }
         } else null
 
         if (!forceRefresh && cachedBrowse == null && com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) {
-            cachedBrowse = store.browseCatalog(type, profileKey).first()
+            cachedBrowse = store.browseCatalogMetadata(type, profileKey).first()
                 ?.takeIf { it.categories.isNotEmpty() }
+                ?.let { metadata ->
+                    BrowseCatalogCache(
+                        profileKey = metadata.profileKey,
+                        type = metadata.type,
+                        cachedAtMillis = metadata.cachedAtMillis,
+                        categories = metadata.categories,
+                        itemsByCategory = emptyMap()
+                    )
+                }
         }
 
-        val allCategories = cachedBrowse?.categories
-            ?.takeIf { it.isNotEmpty() }
+        val fetchedCategories = cachedBrowse == null
+        val allCategories = cachedBrowse?.categories?.takeIf { it.isNotEmpty() }
             ?: portal.categories(session, type)
 
         val filteredCategories = filterCategories(
@@ -766,10 +784,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 itemsByCategory = emptyMap()
             )
 
-        if (allCategories.isNotEmpty() && cache != cachedBrowse) {
-            store.saveBrowseCatalog(cache)
-        }
-
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         _state.update { current ->
             if (current.session?.profile?.cacheKey() != profileKey) return@update current
@@ -785,6 +799,50 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 browseCache = if (active) cache else current.browseCache,
                 browseCachesByType =
                     current.browseCachesByType + (type to cache)
+            )
+        }
+        if (fetchedCategories && allCategories.isNotEmpty()) {
+            viewModelScope.launch {
+                runCatching {
+                    store.saveBrowseCatalogMetadata(
+                        BrowseCatalogMetadataCache(
+                            profileKey = profileKey,
+                            type = type,
+                            cachedAtMillis = cache.cachedAtMillis,
+                            categories = allCategories
+                        )
+                    )
+                }.onFailure {
+                    Log.w("NikTvCatalogCache", "Could not persist $type category metadata", it)
+                }
+            }
+        }
+    }
+
+    private suspend fun hydrateTypeCacheFromDisk(session: PortalSession, type: CatalogType) {
+        if (!com.nikhil.niktv.data.CatalogPreferences.preferLocal(getApplication())) return
+        val profileKey = session.profile.cacheKey()
+        val disk = store.browseCatalog(type, profileKey).first() ?: return
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profileKey) return@update current
+            val memory = current.browseCachesByType[type]
+                ?.takeIf { it.profileKey == profileKey }
+            val merged = if (memory == null) {
+                disk
+            } else {
+                disk.copy(
+                    categories = memory.categories.ifEmpty { disk.categories },
+                    cachedAtMillis = maxOf(disk.cachedAtMillis, memory.cachedAtMillis),
+                    itemsByCategory = disk.itemsByCategory + memory.itemsByCategory,
+                    pagesByCategory = disk.pagesByCategory + memory.pagesByCategory,
+                    hasMoreByCategory = disk.hasMoreByCategory + memory.hasMoreByCategory,
+                    categoryCachedAtMillis = disk.categoryCachedAtMillis + memory.categoryCachedAtMillis
+                )
+            }
+            current.copy(
+                browseCache = if (current.selectedType == type) merged else current.browseCache,
+                browseCachesByType = current.browseCachesByType + (type to merged)
             )
         }
     }
