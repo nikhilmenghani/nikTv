@@ -623,55 +623,44 @@ internal fun YouTubeStyleBottomBar(
         color = Color(0xFF101216),
         tonalElevation = 8.dp
     ) {
-        Row(
-            Modifier
+        Box(
+            modifier = Modifier
                 .fillMaxWidth()
-                .height(72.dp)
-                .padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .height(72.dp),
+            contentAlignment = Alignment.Center
         ) {
-            MobileMainPage.entries
-                .filterNot { it == MobileMainPage.DOWNLOADS }
-                .forEach { page ->
-                    val selected =
-                        currentPage == page ||
-                            (
-                                page == MobileMainPage.LIBRARY &&
-                                    currentPage == MobileMainPage.DOWNLOADS
-                            )
+            Row(
+                Modifier
+                    .widthIn(max = 520.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                    .animateContentSize(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MobileMainPage.entries
+                    .filterNot { it == MobileMainPage.DOWNLOADS }
+                    .forEach { page ->
+                        val selected =
+                            currentPage == page ||
+                                (
+                                    page == MobileMainPage.LIBRARY &&
+                                        currentPage == MobileMainPage.DOWNLOADS
+                                )
 
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            if (!(page == MobileMainPage.LIBRARY && currentPage == MobileMainPage.DOWNLOADS)) {
-                                selectPage(page)
-                            }
-                        },
-                        icon = {
-                            Icon(
-                                page.icon,
-                                contentDescription = page.title,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        },
-                        label = {
-                            Text(
-                                page.title,
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1
-                            )
-                        },
-                        alwaysShowLabel = true,
-                        modifier = Modifier.weight(1f),
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color.White,
-                            selectedTextColor = Color.White,
-                            indicatorColor = Color(0xFF5A171C),
-                            unselectedIconColor = Color(0xFFAEB0B6),
-                            unselectedTextColor = Color(0xFFAEB0B6)
+                        ExpressiveBottomNavigationItem(
+                            icon = page.icon,
+                            label = page.title,
+                            selected = selected,
+                            onClick = {
+                                if (!(page == MobileMainPage.LIBRARY && currentPage == MobileMainPage.DOWNLOADS)) {
+                                    selectPage(page)
+                                }
+                            },
+                            modifier = if (selected) Modifier.weight(1f) else Modifier.width(50.dp)
                         )
-                    )
-                }
+                    }
+            }
         }
     }
 }
