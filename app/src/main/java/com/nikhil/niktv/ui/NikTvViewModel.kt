@@ -361,7 +361,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 catch (_: Exception) { /* Optional preparation retries when its destination opens. */ }
             }
             step { store.discardLegacyBrowseCatalogs() }
-            for (type in listOf(CatalogType.MOVIES, CatalogType.SERIES, CatalogType.LIVE_TV)) {
+            // Live TV is the most latency-sensitive destination and is commonly
+            // opened immediately after profile selection. Warm its lightweight
+            // category metadata before the larger VOD catalogues.
+            for (type in listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) {
                 step {
                     if (_state.value.modernUiEnabled) loadTypeMetadataInternal(session, type)
                     else loadTypeInternal(session, type)
@@ -608,7 +611,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (_state.value.modernUiEnabled &&
-            type in setOf(CatalogType.MOVIES, CatalogType.SERIES)
+            type in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
         ) {
             val snapshot = _state.value
             val session = snapshot.session ?: return
