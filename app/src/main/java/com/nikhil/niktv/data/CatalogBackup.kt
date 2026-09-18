@@ -71,13 +71,18 @@ class CatalogBackupManager(context: Context) {
 
     suspend fun uploadAll(): Int = BackupActivityLog.track(app, "IPTV catalog backup", success = {
         if (it == 0) "No changed catalog snapshots to upload." else "Uploaded $it catalog snapshots to GitHub."
-    }) { uploadInternal(ProfileStore(app).profiles.first()) }
+    }) { uploadInternal(ProfileStore(app).profiles.first(), types) }
 
     suspend fun upload(profile: PortalProfile): Int = BackupActivityLog.track(app, "IPTV catalog backup · ${profile.name}", success = {
         if (it == 0) "No changed ${profile.name} snapshots to upload." else "Uploaded $it ${profile.name} snapshots to GitHub."
-    }) { uploadInternal(listOf(profile)) }
+    }) { uploadInternal(listOf(profile), types) }
 
-    private suspend fun uploadInternal(profiles: List<PortalProfile>): Int = withContext(Dispatchers.IO) {
+    suspend fun upload(profile: PortalProfile, type: CatalogType): Int =
+        BackupActivityLog.track(app, "IPTV catalog backup · ${profile.name} · ${type.title}", success = {
+            if (it == 0) "No changed ${type.title} snapshot to upload." else "Uploaded ${profile.name} ${type.title} to GitHub."
+        }) { uploadInternal(listOf(profile), listOf(type)) }
+
+    private suspend fun uploadInternal(profiles: List<PortalProfile>, mediaTypes: List<CatalogType>): Int = withContext(Dispatchers.IO) {
         CatalogOperations.check(app, CatalogOperations.BACKUP)
         check(CatalogPreferences.backupEnabled(app)) { "Catalog backup is disabled on this device" }
         val config = config()
@@ -88,7 +93,7 @@ class CatalogBackupManager(context: Context) {
             val scanCompleteBefore = if (CatalogScanPreferences.cursor(app, profileId) == -1)
                 CatalogScanPreferences.completed(app, profileId) else 0L
             val snapshots = mutableListOf<CatalogSnapshot>()
-            for ((typeIndex, type) in types.withIndex()) {
+            for ((typeIndex, type) in mediaTypes.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
                 while (CatalogPlaybackActivity.playing) {
@@ -100,7 +105,7 @@ class CatalogBackupManager(context: Context) {
                 CatalogOperations.progress(app, CatalogOperations.BACKUP, CatalogOperationProgress(
                     phase = "Preparing snapshot", mediaType = type.title, category = profile.name,
                     categoryPosition = profileIndex + 1, categoryCount = profiles.size,
-                    part = typeIndex, totalParts = types.size
+                    part = typeIndex, totalParts = mediaTypes.size
                 ))
                 val snapshot = repository.snapshot(profile, type)
                 snapshots += snapshot
@@ -117,7 +122,7 @@ class CatalogBackupManager(context: Context) {
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
             }
             val checkpointRecords = snapshots.sumOf { it.items.size + it.episodes.size }
-            if (checkpointRecords in 1..MAX_CHECKPOINT_RECORDS) {
+            if (mediaTypes == types && checkpointRecords in 1..MAX_CHECKPOINT_RECORDS) {
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
                 CatalogOperations.message(app, CatalogOperations.BACKUP, "${profile.name} · Creating dated restore checkpoint")
                 runCatching { uploadCheckpoint(config, profile, snapshots, scanCompleteBefore) }
@@ -125,7 +130,7 @@ class CatalogBackupManager(context: Context) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         BackupActivityLog.record(app, "Catalog checkpoint · ${profile.name}", "Skipped", error.message ?: "Checkpoint was too large; profile/type backups are complete.")
                     }
-            } else if (checkpointRecords > MAX_CHECKPOINT_RECORDS) {
+            } else if (mediaTypes == types && checkpointRecords > MAX_CHECKPOINT_RECORDS) {
                 BackupActivityLog.record(app, "Catalog checkpoint · ${profile.name}", "Skipped",
                     "The complete catalog is stored in partitioned profile/type backups. A single dated checkpoint would be too large.")
             }
@@ -199,17 +204,22 @@ class CatalogBackupManager(context: Context) {
 
     suspend fun restoreAll(): Int = BackupActivityLog.track(app, "IPTV catalog restore", success = {
         if (it == 0) "No matching catalog snapshots found for saved profiles." else "Merged $it snapshots. Reopen the profile to reload its catalog."
-    }) { restoreInternal(ProfileStore(app).profiles.first()) }
+    }) { restoreInternal(ProfileStore(app).profiles.first(), types) }
 
     suspend fun restore(profile: PortalProfile): Int = BackupActivityLog.track(app, "IPTV catalog restore · ${profile.name}", success = {
         if (it == 0) "No matching ${profile.name} snapshots found." else "Merged $it ${profile.name} snapshots. Reopen the profile to reload its catalog."
-    }) { restoreInternal(listOf(profile)) }
+    }) { restoreInternal(listOf(profile), types) }
 
-    private suspend fun restoreInternal(profiles: List<PortalProfile>): Int = withContext(Dispatchers.IO) {
+    suspend fun restore(profile: PortalProfile, type: CatalogType): Int =
+        BackupActivityLog.track(app, "IPTV catalog restore · ${profile.name} · ${type.title}", success = {
+            if (it == 0) "No matching ${type.title} snapshot found." else "Merged ${profile.name} ${type.title}."
+        }) { restoreInternal(listOf(profile), listOf(type)) }
+
+    private suspend fun restoreInternal(profiles: List<PortalProfile>, mediaTypes: List<CatalogType>): Int = withContext(Dispatchers.IO) {
         val config = config()
         var imported = 0
         for ((profileIndex, profile) in profiles.withIndex()) {
-            for ((typeIndex, type) in types.withIndex()) {
+            for ((typeIndex, type) in mediaTypes.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 val id = SearchMetadataDocuments.anonymousProfileId(profile)
                 val chunked = restoreChunked(config, profile, type, id)
@@ -246,7 +256,7 @@ class CatalogBackupManager(context: Context) {
             }
             val id = CatalogScanPreferences.id(profile)
             val resumeIndex = repository.resumeScanIndex(profile)
-            CatalogScanPreferences.cursor(app, id, resumeIndex)
+            CatalogScanPreferences.restoredCursor(app, id, resumeIndex)
             CatalogScanPreferences.status(app, id, if (resumeIndex >= 0)
                 "Restored catalog · Resume will continue with ${types[resumeIndex].title} from its last saved page."
             else "Restored catalog · All media types in the snapshot are complete.")
@@ -344,7 +354,7 @@ class CatalogBackupManager(context: Context) {
                 repository.mergeCheckpoint(profile, checkpoint)
                 CatalogOperations.message(app, "restore", "Complete · ${profile.name} checkpoint merged.")
                 CatalogScanPreferences.completed(app, id, maxOf(CatalogScanPreferences.completed(app, id), checkpoint.scanCompletedAt))
-                CatalogScanPreferences.cursor(app, id, repository.resumeScanIndex(profile))
+                CatalogScanPreferences.restoredCursor(app, id, repository.resumeScanIndex(profile))
                 CatalogScanPreferences.status(app, id, "Restored checkpoint · ${java.util.Date(checkpoint.createdAt)}" +
                     if (checkpoint.scanCompletedAt > 0) " · full catalog scan included." else " · partial catalog; scan to complete coverage.")
                 checkpoint.snapshots.size

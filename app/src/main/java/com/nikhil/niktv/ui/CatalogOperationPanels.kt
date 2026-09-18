@@ -32,18 +32,24 @@ internal enum class CatalogScanDisplay(val label: String) {
 }
 
 @Composable
-private fun CatalogProgressDetails(progress: CatalogOperationProgress) {
-    val fields = buildList {
-        if (progress.mediaType.isNotBlank()) add("Media" to progress.mediaType)
-        add("Stage" to progress.phase)
-        if (progress.category.isNotBlank()) add("Category" to progress.category)
-        if (progress.categoryCount > 0) add("Categories" to "${progress.categoryPosition} of ${progress.categoryCount}")
-        if (progress.page > 0) add("Page" to if (progress.totalPages > 0) "${progress.page} of ${progress.totalPages}" else progress.page.toString())
-        if (progress.recordsInPage > 0) add("Current page" to "${progress.recordsInPage} records")
-        if (progress.recordsInCategory > 0) add("In category" to "${progress.recordsInCategory} records")
-        if (progress.totalRecords > 0) add("Stored total" to progress.totalRecords.toString())
-        if (progress.totalParts > 0) add("Transfer" to "${progress.part} of ${progress.totalParts}")
-    }
+private fun CatalogProgressDetails(progress: CatalogOperationProgress, isScan: Boolean) {
+    fun value(text: String) = text.ifBlank { "N/A" }
+    val fields = if (isScan) listOf(
+        "Media" to value(progress.mediaType),
+        "Stage" to value(progress.phase),
+        "Category" to value(progress.category),
+        "Categories" to if (progress.categoryCount > 0) "${progress.categoryPosition} of ${progress.categoryCount}" else "N/A",
+        "Page" to if (progress.page > 0) if (progress.totalPages > 0) "${progress.page} of ${progress.totalPages}" else progress.page.toString() else "N/A",
+        "Current page" to if (progress.recordsInPage > 0) "${progress.recordsInPage} records" else "N/A",
+        "In category" to if (progress.recordsInCategory > 0) "${progress.recordsInCategory} records" else "N/A",
+        "Stored total" to if (progress.totalRecords > 0) progress.totalRecords.toString() else "N/A"
+    ) else listOf(
+        "Profile" to value(progress.category),
+        "Media" to value(progress.mediaType),
+        "Stage" to value(progress.phase),
+        "Transfer" to if (progress.totalParts > 0) "${progress.part} of ${progress.totalParts}" else "N/A",
+        "Records" to if (progress.totalRecords > 0) progress.totalRecords.toString() else "N/A"
+    )
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         fields.chunked(2).forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -79,6 +85,8 @@ internal fun CatalogOperationPanel(
     onStart: (() -> Unit)? = null,
     onRetry: (() -> Unit)? = null,
     onFullScan: (() -> Unit)? = null,
+    onRestoredResume: (() -> Unit)? = null,
+    restoredResumeLabel: String = "Resume restored",
     onResume: () -> Unit
 ) {
     val context = LocalContext.current
@@ -156,7 +164,7 @@ internal fun CatalogOperationPanel(
             }
             val parts = summary.split(" · ")
             val showStage = !held && parts.size > 1 && !summary.startsWith("Complete") && !summary.startsWith("Scan already complete")
-            if (progress != null && progress.phase != "Complete") CatalogProgressDetails(progress)
+            if (progress != null && progress.phase != "Complete") CatalogProgressDetails(progress, isScan)
             else {
                 Text(if (showStage) parts.last() else summary, style = MaterialTheme.typography.bodyMedium)
                 if (showStage) Text(parts.dropLast(1).joinToString(" · "),
@@ -167,7 +175,11 @@ internal fun CatalogOperationPanel(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (held) {
                     item { Button(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Resume") } }
+                        modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Resume local") } }
+                    onRestoredResume?.let { restored -> item {
+                        OutlinedButton(onClick = restored, shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
+                    } }
                     onFullScan?.let { fullScan -> item {
                         OutlinedButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
@@ -184,6 +196,10 @@ internal fun CatalogOperationPanel(
                             CatalogScanDisplay.COMPLETE -> "Resume scan"
                             else -> "Resume scan"
                         })
+                    } }
+                    onRestoredResume?.let { restored -> item {
+                        OutlinedButton(onClick = restored, enabled = !busy, shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
                     } }
                     onFullScan?.let { fullScan -> item {
                         OutlinedButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),

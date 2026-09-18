@@ -1662,6 +1662,7 @@ SettingsSection("Data and sync") {
             var catalogRestoreBusy by remember { mutableStateOf(false) }
             var confirmCatalogBackup by remember { mutableStateOf(false) }
             var confirmCatalogRestore by remember { mutableStateOf(false) }
+            var catalogTransferType by remember { mutableStateOf<CatalogType?>(null) }
             val catalogScope = rememberCoroutineScope()
             var catalogProfileId by remember(state.profiles) {
                 mutableStateOf(
@@ -1674,26 +1675,28 @@ SettingsSection("Data and sync") {
                 com.nikhil.niktv.data.CatalogScanPreferences.id(it) == catalogProfileId
             } ?: state.savedProfile ?: state.profiles.firstOrNull()
             if (confirmCatalogBackup && catalogProfile != null) {
+                val scopeLabel = catalogTransferType?.title ?: "full catalog"
                 ProjectCardConfirmationDialog(
-                    title = "Upload ${catalogProfile.name} catalog?",
-                    message = "This uploads the local Room catalog for ${catalogProfile.name} to GitHub in device-specific parts. The current snapshot for this device is updated; snapshots from other devices are kept. Restores merge records instead of replacing personal data. A dated checkpoint is also created when the catalog is small enough. The upload continues in the background and can be paused or resumed.",
+                    title = "Upload ${catalogProfile.name} $scopeLabel?",
+                    message = "This uploads the local ${catalogTransferType?.title ?: "Live TV, Movies and Series"} Room data for ${catalogProfile.name} to GitHub in device-specific parts. The current snapshot for this device is updated; snapshots from other devices are kept. Restores merge records instead of replacing personal data. Dated checkpoints are created only by a full-catalog upload when the catalog is small enough. The upload continues in the background and can be paused or resumed.",
                     confirmLabel = "Upload catalog",
                     close = { confirmCatalogBackup = false },
                     confirm = {
                         confirmCatalogBackup = false
-                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile)
+                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile, type = catalogTransferType)
                     }
                 )
             }
             if (confirmCatalogRestore && catalogProfile != null) {
+                val scopeLabel = catalogTransferType?.title ?: "full catalog"
                 ProjectCardConfirmationDialog(
-                    title = "Restore ${catalogProfile.name} catalog?",
-                    message = "This downloads the latest device snapshots for ${catalogProfile.name} and merges them into this device's Room database. Existing newer records, favorites and watch history are retained. The restore can use snapshots created by another device and continues in the background with visible progress.",
+                    title = "Restore ${catalogProfile.name} $scopeLabel?",
+                    message = "This downloads the latest ${catalogTransferType?.title ?: "Live TV, Movies and Series"} device snapshots for ${catalogProfile.name} and merges them into this device's Room database. Existing newer records, favorites and watch history are retained. A separate restored resume point is saved so you can choose Resume restored instead of continuing this device's local cursor.",
                     confirmLabel = "Restore and merge",
                     close = { confirmCatalogRestore = false },
                     confirm = {
                         confirmCatalogRestore = false
-                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, catalogProfile, resume = true)
+                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, catalogProfile, resume = true, type = catalogTransferType)
                     }
                 )
             }
@@ -1732,15 +1735,27 @@ SettingsSection("Data and sync") {
                 }
             )
             HorizontalDivider()
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Backup and restore scope", style = MaterialTheme.typography.titleSmall)
+                Text("Choose the whole catalog or operate on one media type.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf<CatalogType?>(null, CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) { type ->
+                        val label = type?.title ?: "Full catalog"
+                        FilterChip(selected = catalogTransferType == type, onClick = { catalogTransferType = type },
+                            label = { Text(label) }, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)))
+                    }
+                }
+            }
             CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.BACKUP, "GitHub catalog upload", catalogBackupEnabled) {
-                com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile)
+                com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile, type = catalogTransferType)
             }
             CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.RESTORE, "GitHub catalog restore") {
-                catalogProfile?.let { com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, it, resume = true) }
+                catalogProfile?.let { com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, it, resume = true, type = catalogTransferType) }
             }
             BackupSettingsActionRow(
                 icon = Icons.Default.CloudUpload,
-                title = "Back up IPTV catalog now",
+                title = "Back up ${catalogTransferType?.title ?: "full IPTV catalog"} now",
                 subtitle = if (catalogBackupEnabled) "Upload changed ${catalogProfile?.name ?: "profile"} snapshots to GitHub." else "Enable catalog backup on this device first.",
                 enabled = catalogBackupEnabled,
                 onClick = {
@@ -1750,7 +1765,7 @@ SettingsSection("Data and sync") {
             )
             BackupSettingsActionRow(
                 icon = Icons.Default.CloudDownload,
-                title = if (catalogRestoreBusy) "Restoring IPTV catalog…" else "Restore IPTV catalog",
+                title = if (catalogRestoreBusy) "Restoring IPTV catalog…" else "Restore ${catalogTransferType?.title ?: "full IPTV catalog"}",
                 subtitle = "Merge ${catalogProfile?.name ?: "the selected profile"} snapshots from any device into this device.",
                 enabled = !catalogRestoreBusy && catalogProfile != null,
                 onClick = {

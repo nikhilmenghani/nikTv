@@ -21,6 +21,12 @@ object CatalogScanPreferences {
     }
     fun cursor(context: Context, id: String) = prefs(context).getInt("cursor:$id", -1)
     fun cursor(context: Context, id: String, cursor: Int) { prefs(context).edit().putInt("cursor:$id", cursor).commit() }
+    fun restoredCursor(context: Context, id: String) = prefs(context).getInt("restored_cursor:$id", -1)
+    fun restoredCursor(context: Context, id: String, cursor: Int) {
+        prefs(context).edit().putInt("restored_cursor:$id", cursor)
+            .putLong("restored_at:$id", System.currentTimeMillis()).commit()
+    }
+    fun restoredAt(context: Context, id: String) = prefs(context).getLong("restored_at:$id", 0L)
     fun completed(context: Context, id: String) = prefs(context).getLong("completed:$id", 0L)
     fun completed(context: Context, id: String, time: Long) { prefs(context).edit().putLong("completed:$id", time).commit() }
     fun status(context: Context, id: String) = prefs(context).getString("status:$id", "Not scanned on this device.").orEmpty()

@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.data.*
 import com.nikhil.niktv.model.PortalProfile
+import com.nikhil.niktv.model.CatalogType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -37,6 +38,10 @@ internal fun CatalogProfileSettings(
     val profile = profiles.firstOrNull { CatalogScanPreferences.id(it) == selectedId } ?: active ?: profiles.firstOrNull()
     if (profile == null) return
     val id = CatalogScanPreferences.id(profile)
+    val restoreRevision by remember { CatalogOperations.observe(context, CatalogOperations.RESTORE) }.collectAsState(0L)
+    val restoredCursor = remember(id, restoreRevision) { CatalogScanPreferences.restoredCursor(context, id) }
+    val restoredAt = remember(id, restoreRevision) { CatalogScanPreferences.restoredAt(context, id) }
+    val restoredType = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).getOrNull(restoredCursor)
     LaunchedEffect(id) {
         if (CatalogScanPreferences.selectedProfileId(context) == null) {
             CatalogScanPreferences.selectedProfileId(context, id)
@@ -74,7 +79,11 @@ internal fun CatalogProfileSettings(
     CatalogOperationPanel(CatalogOperations.scan(id), "Catalog scan", onStart = {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }, onRetry = { SearchMetadataSyncScheduler.retryQueued(context, profile) },
-        onFullScan = { confirmFullScan = true }) {
+        onFullScan = { confirmFullScan = true },
+        onRestoredResume = if (restoredAt > 0L && restoredType != null) ({
+            SearchMetadataSyncScheduler.resumeRestored(context, profile)
+        }) else null,
+        restoredResumeLabel = restoredType?.let { "Resume restored ${it.title}" } ?: "Resume restored") {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }
     CatalogDatabasePanel(profile)

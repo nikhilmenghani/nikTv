@@ -42,12 +42,15 @@ object SearchMetadataSyncScheduler {
     // Catalog writes stay local. Periodic/manual backup owns uploads, never a save callback.
     fun request(context: Context) = Unit
 
-    fun requestNow(context: Context, resume: Boolean = false, profile: PortalProfile? = null): UUID? {
+    fun requestNow(context: Context, resume: Boolean = false, profile: PortalProfile? = null, type: CatalogType? = null): UUID? {
         if (!CatalogPreferences.backupEnabled(context)) return null
         if (resume) CatalogOperations.control(context, CatalogOperations.BACKUP, "Ready")
         if (CatalogOperations.held(context, CatalogOperations.BACKUP)) return null
         val workBuilder = OneTimeWorkRequestBuilder<SearchMetadataSyncWorker>().setConstraints(constraints())
-        profile?.let { workBuilder.setInputData(workDataOf(PROFILE_ID to CatalogScanPreferences.id(it))) }
+        val input = mutableMapOf<String, Any>()
+        profile?.let { input[PROFILE_ID] = CatalogScanPreferences.id(it) }
+        type?.let { input[MEDIA_TYPE] = it.name }
+        if (input.isNotEmpty()) workBuilder.setInputData(Data.Builder().putAll(input).build())
         val work = workBuilder.build()
         WorkManager.getInstance(context).enqueueUniqueWork(MANUAL, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
         CatalogOperations.message(context, CatalogOperations.BACKUP, "Backup queued. Waiting for network/background execution.")
@@ -56,12 +59,13 @@ object SearchMetadataSyncScheduler {
         return work.id
     }
 
-    fun requestRestore(context: Context, profile: PortalProfile, resume: Boolean = false): UUID? {
+    fun requestRestore(context: Context, profile: PortalProfile, resume: Boolean = false, type: CatalogType? = null): UUID? {
         if (resume) CatalogOperations.control(context, CatalogOperations.RESTORE, "Ready")
         if (CatalogOperations.held(context, CatalogOperations.RESTORE)) return null
+        val restoreInput = Data.Builder().putString(PROFILE_ID, CatalogScanPreferences.id(profile))
+            .apply { type?.let { putString(MEDIA_TYPE, it.name) } }.build()
         val work = OneTimeWorkRequestBuilder<CatalogRestoreWorker>()
-            .setInputData(workDataOf(PROFILE_ID to CatalogScanPreferences.id(profile)))
-            .setConstraints(constraints()).build()
+            .setInputData(restoreInput).setConstraints(constraints()).build()
         WorkManager.getInstance(context).enqueueUniqueWork(RESTORE, ExistingWorkPolicy.APPEND_OR_REPLACE, work)
         CatalogOperations.message(context, CatalogOperations.RESTORE, "Restore queued. Waiting for network/background execution.")
         CatalogOperations.progress(context, CatalogOperations.RESTORE, CatalogOperationProgress("Queued", category = profile.name))
@@ -70,6 +74,7 @@ object SearchMetadataSyncScheduler {
     }
 
     const val PROFILE_ID = "profile_id"
+    const val MEDIA_TYPE = "media_type"
     const val RESUME_ONLY = "resume_only"
     const val FULL_SCAN = "full_scan"
     fun configureProfile(context: Context, profile: PortalProfile) {
@@ -126,6 +131,26 @@ object SearchMetadataSyncScheduler {
         CatalogOperations.message(context, CatalogOperations.scan(id),
             "Full scan queued. Live TV, Movies and Series will be refreshed from the beginning.")
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Full scan requested")
+    }
+
+    fun resumeRestored(context: Context, profile: PortalProfile) {
+        val id = CatalogScanPreferences.id(profile)
+        val restoredCursor = CatalogScanPreferences.restoredCursor(context, id)
+        if (CatalogScanPreferences.restoredAt(context, id) == 0L || restoredCursor < 0) {
+            CatalogOperations.message(context, CatalogOperations.scan(id),
+                "No incomplete restored scan is available. Restore a catalog snapshot first or choose Full scan.")
+            return
+        }
+        CatalogScanPreferences.cursor(context, id, restoredCursor)
+        CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to true))
+                .setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        CatalogOperations.message(context, CatalogOperations.scan(id),
+            "Restored resume selected. Continuing from the backed-up ${listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)[restoredCursor].title} page cursor.")
+        BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Restored resume requested")
     }
 
     /** User-requested retry replaces delayed/blocked work, retaining Room's committed cursor. */
@@ -296,8 +321,12 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
             val selectedProfile = selectedId?.let { id ->
                 ProfileStore(applicationContext).profiles.first().firstOrNull { CatalogScanPreferences.id(it) == id }
             }
-            if (selectedProfile == null) CatalogBackupManager(applicationContext).uploadAll()
-            else CatalogBackupManager(applicationContext).upload(selectedProfile)
+            val selectedType = inputData.getString(SearchMetadataSyncScheduler.MEDIA_TYPE)?.let(CatalogType::valueOf)
+            when {
+                selectedProfile == null -> CatalogBackupManager(applicationContext).uploadAll()
+                selectedType != null -> CatalogBackupManager(applicationContext).upload(selectedProfile, selectedType)
+                else -> CatalogBackupManager(applicationContext).upload(selectedProfile)
+            }
             Result.success()
         } catch (held: CatalogOperationHeld) { Result.success() }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -336,7 +365,9 @@ class CatalogRestoreWorker(context: Context, params: WorkerParameters) : Corouti
                     delay(2_000L)
                 }
             }
-            CatalogBackupManager(applicationContext).restore(profile)
+            val type = inputData.getString(SearchMetadataSyncScheduler.MEDIA_TYPE)?.let(CatalogType::valueOf)
+            if (type == null) CatalogBackupManager(applicationContext).restore(profile)
+            else CatalogBackupManager(applicationContext).restore(profile, type)
             Result.success()
         } catch (_: CatalogOperationHeld) {
             Result.success()
