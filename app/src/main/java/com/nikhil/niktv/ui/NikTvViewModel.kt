@@ -3337,10 +3337,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return rankTmdbSeriesMatches(entry.tmdb, catalog)
         }
 
-        val queries = listOf(entry.tmdb.name, entry.tmdb.originalName)
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .distinct()
+        val queries = tmdbSeriesProviderQueries(entry.tmdb)
 
         val candidates = localSeriesCandidates(_state.value).toMutableList()
         for (query in queries) {
@@ -3352,8 +3349,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categoryId = "*"
             )
             candidates += page.items
+            rankTmdbSeriesMatches(entry.tmdb, candidates.distinctBy { it.id })
+                .takeIf { it.isNotEmpty() }
+                ?.let { return it }
         }
-        return rankTmdbSeriesMatches(entry.tmdb, candidates.distinctBy { it.id })
+
+        for (category in prioritizedProviderCategories(session, CatalogType.SERIES)) {
+            for (query in queries.asReversed()) {
+                val page = portal.search(
+                    session = session,
+                    type = SearchContentType.SERIES,
+                    query = query,
+                    page = 1,
+                    categoryId = category.id
+                )
+                candidates += page.items
+                rankTmdbSeriesMatches(entry.tmdb, candidates.distinctBy { it.id })
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { return it }
+            }
+        }
+        return emptyList()
     }
 
     private suspend fun resolveTmdbSeriesMovieFallback(
@@ -3367,10 +3383,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             ).distinctBy { it.id }
         rankTmdbSeriesMatches(series, local).firstOrNull()?.let { return it }
 
-        val queries = listOf(series.name, series.originalName)
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .distinct()
+        val queries = tmdbSeriesProviderQueries(series)
         val providerCandidates = mutableListOf<MediaItem>()
         for (query in queries) {
             val page = portal.search(
@@ -3381,9 +3394,73 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categoryId = "*"
             )
             providerCandidates += page.items
+            rankTmdbSeriesMatches(series, providerCandidates.distinctBy { it.id })
+                .firstOrNull()
+                ?.let { return it }
         }
-        return rankTmdbSeriesMatches(series, providerCandidates.distinctBy { it.id })
-            .firstOrNull()
+
+        // Several Stalker portals return an empty wildcard VOD search even
+        // though the item is present in a concrete category. Reuse local
+        // category metadata when possible and put likely web-series buckets
+        // first so the fallback normally completes with one additional call.
+        for (category in prioritizedProviderCategories(session, CatalogType.MOVIES)) {
+            for (query in queries.asReversed()) {
+                val page = portal.search(
+                    session = session,
+                    type = SearchContentType.MOVIES,
+                    query = query,
+                    page = 1,
+                    categoryId = category.id
+                )
+                providerCandidates += page.items
+                rankTmdbSeriesMatches(series, providerCandidates.distinctBy { it.id })
+                    .firstOrNull()
+                    ?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun tmdbSeriesProviderQueries(series: TmdbSeries): List<String> {
+        val titles = listOf(series.name, series.originalName)
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .flatMap { title ->
+                listOf(
+                    title,
+                    title.replace(Regex("['’]s\\b", RegexOption.IGNORE_CASE), ""),
+                    title.replace(Regex("['’]"), "")
+                )
+            }
+            .map { it.replace(Regex("\\s+"), " ").trim() }
+            .distinct()
+        val distinctiveWord = series.name
+            .split(Regex("[^\\p{L}\\p{N}]+"))
+            .lastOrNull { it.length >= 5 }
+        return (titles + listOfNotNull(distinctiveWord)).distinct()
+    }
+
+    private suspend fun prioritizedProviderCategories(
+        session: PortalSession,
+        type: CatalogType
+    ): List<Category> {
+        val profileKey = session.profile.cacheKey()
+        val local = (
+            _state.value.rawCategoriesByType[type].orEmpty() +
+                _state.value.browseCachesByType[type]?.categories.orEmpty() +
+                store.browseCatalog(type, profileKey).first()?.categories.orEmpty()
+            )
+            .filter { it.id != "*" }
+            .distinctBy { it.id }
+        return local.ifEmpty {
+            portal.categories(session, type).filter { it.id != "*" }
+        }.sortedByDescending { category ->
+            val title = category.title.lowercase()
+            (if ("web" in title && "series" in title) 100 else 0) +
+                (if ("series" in title) 50 else 0) +
+                (if ("hindi" in title) 25 else 0) +
+                (if ("india" in title) 10 else 0)
+        }
     }
 
     private suspend fun resolveTmdbFromXtreamCatalog(
