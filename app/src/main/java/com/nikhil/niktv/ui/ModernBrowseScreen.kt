@@ -694,6 +694,7 @@ internal fun ModernBrowseScreen(
                         item {
                             AssistChip(
                                 onClick = refreshCatalog,
+                                enabled = !state.categoryRefreshing,
                                 modifier = Modifier
                                     .remoteFocusFrame(CircleShape)
                                     .focusProperties {
@@ -701,7 +702,7 @@ internal fun ModernBrowseScreen(
                                             down = layoutToggleRequester
                                         }
                                     },
-                                label = { Text("Refresh") },
+                                label = { Text(if (state.categoryRefreshing) "Refreshing…" else "Refresh") },
                                 leadingIcon = {
                                     Icon(
                                         Icons.Default.Refresh,

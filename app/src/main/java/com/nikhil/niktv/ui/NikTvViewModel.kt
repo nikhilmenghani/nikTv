@@ -151,6 +151,7 @@ data class NikTvState(
     ,val catalogPage: Int = 1
     ,val catalogHasMore: Boolean = false
     ,val catalogLoadingMore: Boolean = false
+    ,val categoryRefreshing: Boolean = false
     ,val episodePage: Int = 1
     ,val episodeHasMore: Boolean = false
     ,val episodeLoadingMore: Boolean = false
@@ -179,6 +180,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val favoriteEpisodeCacheRefreshMutex = Mutex()
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
+    private val categoryRefreshJobs = mutableMapOf<String, Job>()
     private var profilePreparationJob: Job? = null
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
@@ -831,15 +833,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         val pageUpdates = selected?.let { category -> loadedPage?.let { mapOf(category.id to it.page) } }.orEmpty()
         val hasMoreUpdates = selected?.let { category -> loadedPage?.let { mapOf(category.id to it.hasMore) } }.orEmpty()
+        val categoryTimeUpdates = selected?.let { category ->
+            loadedPage?.let { mapOf(category.id to System.currentTimeMillis()) }
+        }.orEmpty()
         val cache = cachedBrowse?.copy(
             cachedAtMillis = if (loadedPage != null) System.currentTimeMillis() else cachedBrowse.cachedAtMillis,
             categories = allCategories,
             itemsByCategory = if (selected != null) cachedItems + (selected.id to items) else cachedItems,
             pagesByCategory = cachedBrowse.pagesByCategory + pageUpdates,
-            hasMoreByCategory = cachedBrowse.hasMoreByCategory + hasMoreUpdates
+            hasMoreByCategory = cachedBrowse.hasMoreByCategory + hasMoreUpdates,
+            categoryCachedAtMillis = cachedBrowse.categoryCachedAtMillis + categoryTimeUpdates
         ) ?: BrowseCatalogCache(
             profileKey, type, System.currentTimeMillis(), allCategories,
-            selected?.let { mapOf(it.id to items) }.orEmpty(), pageUpdates, hasMoreUpdates
+            selected?.let { mapOf(it.id to items) }.orEmpty(), pageUpdates, hasMoreUpdates,
+            categoryTimeUpdates
         )
 
         if (allCategories.isNotEmpty() &&
@@ -926,6 +933,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 catalogPage = categoryCache.pagesByCategory[category.id] ?: 1,
                 catalogHasMore = categoryCache.hasMoreByCategory[category.id] ?: false
             ) }
+            val cachedAt = categoryCache.categoryCachedAtMillis[category.id] ?: 0L
+            val maxAge = _state.value.cacheIntervalMinutes * 60_000L
+            if (System.currentTimeMillis() - cachedAt >= maxAge) {
+                refreshCategoryInBackground(session, category)
+            }
             return@task
         }
 
@@ -937,7 +949,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             cachedAtMillis = System.currentTimeMillis(),
             itemsByCategory = existing.itemsByCategory + (category.id to firstPage.items),
             pagesByCategory = existing.pagesByCategory + (category.id to firstPage.page),
-            hasMoreByCategory = existing.hasMoreByCategory + (category.id to firstPage.hasMore)
+            hasMoreByCategory = existing.hasMoreByCategory + (category.id to firstPage.hasMore),
+            categoryCachedAtMillis = existing.categoryCachedAtMillis +
+                (category.id to System.currentTimeMillis())
         )
 
         // Publish provider results before serializing the enlarged cache. This
@@ -955,6 +969,61 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 runCatching { store.saveBrowseCatalog(updated) }
                     .onFailure { Log.w("NikTvCatalogCache", "Could not persist category ${category.id}", it) }
+            }
+        }
+    }
+
+    private fun categoryRefreshKey(session: PortalSession, category: Category) =
+        "${session.profile.cacheKey()}|${category.type.name}|${category.id}"
+
+    private fun refreshCategoryInBackground(
+        session: PortalSession,
+        category: Category,
+        userRequested: Boolean = false
+    ) {
+        val key = categoryRefreshKey(session, category)
+        if (categoryRefreshJobs[key]?.isActive == true) return
+        categoryRefreshJobs[key] = viewModelScope.launch {
+            if (userRequested) _state.update { it.copy(categoryRefreshing = true, error = null) }
+            try {
+                val page = fetchInitialCatalogPage(session, category)
+                val profileKey = session.profile.cacheKey()
+                if (_state.value.session?.profile?.cacheKey() != profileKey) return@launch
+                val currentCache = _state.value.browseCachesByType[category.type]
+                    ?.takeIf { it.profileKey == profileKey }
+                    ?: return@launch
+                val refreshedAt = System.currentTimeMillis()
+                val updated = currentCache.copy(
+                    cachedAtMillis = refreshedAt,
+                    itemsByCategory = currentCache.itemsByCategory + (category.id to page.items),
+                    pagesByCategory = currentCache.pagesByCategory + (category.id to page.page),
+                    hasMoreByCategory = currentCache.hasMoreByCategory + (category.id to page.hasMore),
+                    categoryCachedAtMillis = currentCache.categoryCachedAtMillis +
+                        (category.id to refreshedAt)
+                )
+                _state.update { current ->
+                    val stillOpen = current.selectedType == category.type &&
+                        current.selectedCategory?.id == category.id
+                    current.copy(
+                        items = if (stillOpen) page.items else current.items,
+                        catalogPage = if (stillOpen) page.page else current.catalogPage,
+                        catalogHasMore = if (stillOpen) page.hasMore else current.catalogHasMore,
+                        browseCache = if (stillOpen) updated else current.browseCache,
+                        browseCachesByType = current.browseCachesByType + (category.type to updated)
+                    )
+                }
+                store.saveBrowseCatalog(updated)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (userRequested) {
+                    _state.update { it.copy(error = error.message ?: "Could not refresh this category") }
+                } else {
+                    Log.w("NikTvCatalogCache", "Background refresh failed for category ${category.id}", error)
+                }
+            } finally {
+                categoryRefreshJobs.remove(key)
+                if (userRequested) _state.update { it.copy(categoryRefreshing = false) }
             }
         }
     }
@@ -1151,17 +1220,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refreshCatalog() = task {
+    fun refreshCatalog() {
         val snapshot = _state.value
         val series = snapshot.selectedSeries
-        val session = requireNotNull(snapshot.session)
         if (series != null) {
-            _state.update { it.copy(items = emptyList()) }
-            loadSeriesEpisodes(series, snapshot.selectedSeriesSeason, forceRefresh = true)
-        } else {
-            loadTypeInternal(session, snapshot.selectedType, forceRefresh = true,
-                preferredCategoryId = snapshot.selectedCategory?.id)
+            task {
+                _state.update { it.copy(items = emptyList()) }
+                loadSeriesEpisodes(series, snapshot.selectedSeriesSeason, forceRefresh = true)
+            }
+            return
         }
+        val session = snapshot.session ?: return
+        val category = snapshot.selectedCategory ?: return
+        refreshCategoryInBackground(session, category, userRequested = true)
     }
 
     fun setCacheIntervalMinutes(minutes: Int) = viewModelScope.launch {

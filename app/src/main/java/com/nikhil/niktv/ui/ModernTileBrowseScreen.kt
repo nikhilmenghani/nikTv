@@ -2762,8 +2762,8 @@ private fun ModernIptvCollection(
                         FilterChip(
                             selected = false,
                             onClick = refresh,
-                            enabled = !state.loading && !state.catalogLoadingMore,
-                            label = { Text("Refresh") },
+                            enabled = !state.loading && !state.catalogLoadingMore && !state.categoryRefreshing,
+                            label = { Text(if (state.categoryRefreshing) "Refreshing…" else "Refresh") },
                             leadingIcon = { Icon(Icons.Default.RestartAlt, null, Modifier.size(17.dp)) }
                         )
                         if (isLiveTv) {

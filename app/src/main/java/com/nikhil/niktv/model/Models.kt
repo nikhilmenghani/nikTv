@@ -170,7 +170,8 @@ data class BrowseCatalogCache(
     val categories: List<Category>,
     val itemsByCategory: Map<String, List<MediaItem>>,
     val pagesByCategory: Map<String, Int> = emptyMap(),
-    val hasMoreByCategory: Map<String, Boolean> = emptyMap()
+    val hasMoreByCategory: Map<String, Boolean> = emptyMap(),
+    val categoryCachedAtMillis: Map<String, Long> = emptyMap()
 )
 
 @Serializable
