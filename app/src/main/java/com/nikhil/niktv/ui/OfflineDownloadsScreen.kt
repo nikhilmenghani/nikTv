@@ -511,13 +511,20 @@ private fun OfflineStorageCard(
     onClearSubtitles: () -> Unit,
     onClearTemporary: () -> Unit
 ) {
+    val configuration = LocalConfiguration.current
+    val context = LocalContext.current
+    val useTwoColumns = configuration.screenWidthDp >= 600 ||
+        context.isTvLikeDevice(configuration)
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFF151820),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
     ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(10.dp))
@@ -527,52 +534,121 @@ private fun OfflineStorageCard(
             }
             storage?.let { snapshot ->
                 val usedBytes = (snapshot.totalBytes - snapshot.availableBytes).coerceAtLeast(0L)
+                val nikTvBytes = snapshot.offlineDownloadBytes + snapshot.artworkCacheBytes +
+                    snapshot.subtitleCacheBytes + snapshot.temporaryCacheBytes
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "${formatDownloadBytes(snapshot.availableBytes)} available",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Text(
+                            "of ${formatDownloadBytes(snapshot.totalBytes)} on this device",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            formatDownloadBytes(nikTvBytes),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text("used by NikTV", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                }
                 LinearProgressIndicator(
                     progress = { if (snapshot.totalBytes > 0L) usedBytes.toFloat() / snapshot.totalBytes else 0f },
                     modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(99.dp))
                 )
                 Text(
-                    "${formatDownloadBytes(snapshot.availableBytes)} available of ${formatDownloadBytes(snapshot.totalBytes)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.LightGray
+                    "Manage storage",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    modifier = Modifier.padding(top = 2.dp)
                 )
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    StorageUsageRow("Offline downloads", snapshot.offlineDownloadBytes, !clearing && snapshot.offlineDownloadBytes > 0L, onClearDownloads)
-                    StorageUsageRow("Artwork cache", snapshot.artworkCacheBytes, !clearing && snapshot.artworkCacheBytes > 0L, onClearArtwork)
-                    StorageUsageRow("Downloaded subtitles", snapshot.subtitleCacheBytes, !clearing && snapshot.subtitleCacheBytes > 0L, onClearSubtitles)
-                    StorageUsageRow("Other temporary cache", snapshot.temporaryCacheBytes, !clearing && snapshot.temporaryCacheBytes > 0L, onClearTemporary)
+                val rows = listOf(
+                    StorageRowModel("Offline downloads", snapshot.offlineDownloadBytes, Icons.Default.DownloadDone, MaterialTheme.colorScheme.primary, onClearDownloads),
+                    StorageRowModel("Artwork cache", snapshot.artworkCacheBytes, Icons.Default.Image, Color(0xFF60A5FA), onClearArtwork),
+                    StorageRowModel("Downloaded subtitles", snapshot.subtitleCacheBytes, Icons.Default.Subtitles, Color(0xFFA78BFA), onClearSubtitles),
+                    StorageRowModel("Temporary cache", snapshot.temporaryCacheBytes, Icons.Default.CleaningServices, Color(0xFFF59E0B), onClearTemporary)
+                )
+                if (useTwoColumns) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rows.chunked(2).forEach { pair ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                pair.forEach { row ->
+                                    StorageUsageRow(row, clearing, Modifier.weight(1f))
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        rows.forEach { row ->
+                            StorageUsageRow(row, clearing, Modifier.fillMaxWidth())
+                        }
+                    }
                 }
             }
         }
     }
 }
 
+private data class StorageRowModel(
+    val label: String,
+    val bytes: Long,
+    val icon: ImageVector,
+    val color: Color,
+    val onClear: () -> Unit
+)
+
 @Composable
 private fun StorageUsageRow(
-    label: String,
-    bytes: Long,
-    enabled: Boolean,
-    onClear: () -> Unit
+    row: StorageRowModel,
+    clearing: Boolean,
+    modifier: Modifier = Modifier
 ) {
+    val enabled = !clearing && row.bytes > 0L
     Surface(
-        color = Color.White.copy(alpha = 0.035f),
+        color = Color.White.copy(alpha = 0.045f),
         shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.width(230.dp)
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+        modifier = modifier
     ) {
-      Row(Modifier.padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1)
-            Text(formatDownloadBytes(bytes), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+      Row(
+          Modifier.padding(start = 10.dp, top = 5.dp, bottom = 5.dp),
+          verticalAlignment = Alignment.CenterVertically
+      ) {
+        Icon(row.icon, null, tint = row.color, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(9.dp))
+        Column(Modifier.weight(1f)) {
+            Text(row.label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                if (row.bytes > 0L) formatDownloadBytes(row.bytes) else "Empty",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.Gray
+            )
         }
         NikTvTextActionButton(
-            onClick = onClear,
+            onClick = row.onClear,
             enabled = enabled,
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-            modifier = Modifier.heightIn(min = 34.dp).remoteFocusFrame(RoundedCornerShape(10.dp))
-        ) { Text("Clear") }
+            modifier = Modifier.heightIn(min = 38.dp).remoteFocusFrame(RoundedCornerShape(10.dp))
+        ) {
+            Icon(Icons.Default.DeleteOutline, null, Modifier.size(17.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Clear")
+        }
       }
     }
 }
