@@ -244,6 +244,12 @@ class CatalogBackupManager(context: Context) {
                     imported++
                 }
             }
+            val id = CatalogScanPreferences.id(profile)
+            val resumeIndex = repository.resumeScanIndex(profile)
+            CatalogScanPreferences.cursor(app, id, resumeIndex)
+            CatalogScanPreferences.status(app, id, if (resumeIndex >= 0)
+                "Restored catalog · Resume will continue with ${types[resumeIndex].title} from its last saved page."
+            else "Restored catalog · All media types in the snapshot are complete.")
         }
         CatalogPreferences.status(app, "Merged $imported catalog snapshots · ${java.util.Date()}")
         CatalogOperations.message(app, "restore", "Complete · $imported snapshots merged into Room.")
@@ -338,6 +344,7 @@ class CatalogBackupManager(context: Context) {
                 repository.mergeCheckpoint(profile, checkpoint)
                 CatalogOperations.message(app, "restore", "Complete · ${profile.name} checkpoint merged.")
                 CatalogScanPreferences.completed(app, id, maxOf(CatalogScanPreferences.completed(app, id), checkpoint.scanCompletedAt))
+                CatalogScanPreferences.cursor(app, id, repository.resumeScanIndex(profile))
                 CatalogScanPreferences.status(app, id, "Restored checkpoint · ${java.util.Date(checkpoint.createdAt)}" +
                     if (checkpoint.scanCompletedAt > 0) " · full catalog scan included." else " · partial catalog; scan to complete coverage.")
                 checkpoint.snapshots.size

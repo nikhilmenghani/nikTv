@@ -178,6 +178,23 @@ class CatalogRepositoryTest {
         assertEquals("10", repository.search(profile.cacheKey(), type)!!.items.single().id)
     }
 
+    @Test fun restoredPageCursorBeatsNewerLocalResetAndResumesMovies() = runBlocking {
+        repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.LIVE_TV, 100,
+            listOf(Category("live", "Live", CatalogType.LIVE_TV)), mapOf("live" to listOf(movie("1"))),
+            mapOf("live" to 20), mapOf("live" to false)))
+        repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.MOVIES, 100,
+            listOf(Category("movies", "Movies", CatalogType.MOVIES)), mapOf("movies" to listOf(movie("2"))),
+            mapOf("movies" to 750), mapOf("movies" to true)))
+        val restoredMovies = repository.snapshot(profile, CatalogType.MOVIES)
+
+        repository.restartScan(profile, CatalogType.MOVIES)
+        assertEquals(0, repository.browse(profile.cacheKey(), CatalogType.MOVIES)!!.pagesByCategory["movies"])
+        repository.mergeSnapshot(profile, restoredMovies)
+
+        assertEquals(750, repository.browse(profile.cacheKey(), CatalogType.MOVIES)!!.pagesByCategory["movies"])
+        assertEquals(1, repository.resumeScanIndex(profile))
+    }
+
     @Test fun tmdbSeriesMatchingFindsPersistedTitleWithoutVisibleBrowseItems() = runBlocking {
         val item = movie("463114").copy(title = "India's Got Latent (Hindi)")
         repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.SERIES, 100,

@@ -239,6 +239,17 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         }
     }
 
+    /** Returns the first media type whose restored page cursors are incomplete. */
+    suspend fun resumeScanIndex(profile: PortalProfile): Int {
+        val key = profile.cacheKey()
+        val types = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+        return types.indexOfFirst { type ->
+            migrate(key, type)
+            val providerBuckets = dao.buckets(key, type.name).filterNot { it.bucket == SEARCH }
+            providerBuckets.isEmpty() || providerBuckets.any { it.page <= 0 || it.hasMore }
+        }
+    }
+
     suspend fun clear() = db.withTransaction { dao.clearItems(); dao.clearBuckets(); dao.clearEpisodes() }
     companion object { private const val SEARCH = "@search" }
 }
@@ -258,7 +269,16 @@ internal fun mergeCatalogSnapshots(local: CatalogSnapshot, remote: CatalogSnapsh
     return local.copy(
         items = merge(local.items, remote.items, { it.bucket to it.id }, { it.observedAt }, { "${it.deleted}:${it.payload}" })
             .sortedWith(compareBy({ it.bucket }, { it.position }, { it.id })),
-        buckets = merge(local.buckets, remote.buckets, { it.bucket }, { it.observedAt }, { it.toString() }).sortedBy { it.bucket },
+        // Page cursors are cumulative scan progress. A newer device-local reset at page 0
+        // must not erase a farther cursor restored from another device.
+        buckets = (local.buckets + remote.buckets).groupBy { it.bucket }.values.map { versions ->
+            versions.maxWith(
+                compareBy<CatalogBucketRow> { if (it.hasMore) 0 else 1 }
+                    .thenBy { it.page }
+                    .thenBy { it.observedAt }
+                    .thenBy { it.toString() }
+            )
+        }.sortedBy { it.bucket },
         episodes = (local.episodes + remote.episodes).groupBy { it.series to it.season }.values.map { versions ->
             val sorted = versions.sortedWith(compareByDescending<CatalogEpisodeRow> { it.observedAt }.thenByDescending { it.payload })
             val caches = sorted.map { codec.decodeFromString<EpisodeSeasonCache>(it.payload) }

@@ -48,6 +48,7 @@ internal fun CatalogProfileSettings(
     var busy by remember(id) { mutableStateOf(false) }
     var message by remember(id) { mutableStateOf<String?>(null) }
     var selectedCheckpoint by remember(id) { mutableStateOf<CatalogCheckpointFile?>(null) }
+    var confirmFullScan by remember(id) { mutableStateOf(false) }
     BackupSettingsActionRow(Icons.Default.AccountCircle, "Profile · ${profile.name}",
         "All catalog actions below apply to this profile until you change it.", onClick = { chooseProfile = true })
     if (chooseProfile) AlertDialog(
@@ -60,9 +61,20 @@ internal fun CatalogProfileSettings(
                 chooseProfile = false
             }, modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(entry.name) }
         } } }, confirmButton = { TextButton(onClick = { chooseProfile = false }) { Text("Close") } })
+    if (confirmFullScan) ProjectCardConfirmationDialog(
+        title = "Start a full ${profile.name} scan?",
+        message = "A full scan starts again with Live TV and refreshes every provider page for Live TV, Movies and Series. Existing records remain available while it runs, but it does not continue the restored Movies cursor. Use Resume scan when you want to continue from the last backed-up page.",
+        confirmLabel = "Start full scan",
+        close = { confirmFullScan = false },
+        confirm = {
+            confirmFullScan = false
+            SearchMetadataSyncScheduler.fullScan(context, profile)
+        }
+    )
     CatalogOperationPanel(CatalogOperations.scan(id), "Catalog scan", onStart = {
-        SearchMetadataSyncScheduler.refresh(context, profile)
-    }, onRetry = { SearchMetadataSyncScheduler.retryQueued(context, profile) }) {
+        SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
+    }, onRetry = { SearchMetadataSyncScheduler.retryQueued(context, profile) },
+        onFullScan = { confirmFullScan = true }) {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }
     CatalogDatabasePanel(profile)

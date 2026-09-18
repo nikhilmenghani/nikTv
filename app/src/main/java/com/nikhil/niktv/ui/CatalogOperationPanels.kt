@@ -72,7 +72,15 @@ internal fun catalogScanDisplay(mode: String, work: List<WorkInfo.State>?, curso
 }
 
 @Composable
-internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabled: Boolean = true, onStart: (() -> Unit)? = null, onRetry: (() -> Unit)? = null, onResume: () -> Unit) {
+internal fun CatalogOperationPanel(
+    operation: String,
+    title: String,
+    resumeEnabled: Boolean = true,
+    onStart: (() -> Unit)? = null,
+    onRetry: (() -> Unit)? = null,
+    onFullScan: (() -> Unit)? = null,
+    onResume: () -> Unit
+) {
     val context = LocalContext.current
     val revision by remember(operation) { CatalogOperations.observe(context, operation) }.collectAsState(0L)
     val mode = remember(revision, operation) { CatalogOperations.mode(context, operation) }
@@ -160,6 +168,10 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
                 if (held) {
                     item { Button(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Resume") } }
+                    onFullScan?.let { fullScan -> item {
+                        OutlinedButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
+                    } }
                 } else {
                     if (onStart != null) item { Button(
                         onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
@@ -169,9 +181,13 @@ internal fun CatalogOperationPanel(operation: String, title: String, resumeEnabl
                             CatalogScanDisplay.SCANNING -> "Scanning…"
                             CatalogScanDisplay.QUEUED -> "Try now"
                             CatalogScanDisplay.CHECKING -> "Checking…"
-                            CatalogScanDisplay.COMPLETE -> "Scan again"
-                            else -> "Scan now"
+                            CatalogScanDisplay.COMPLETE -> "Resume scan"
+                            else -> "Resume scan"
                         })
+                    } }
+                    onFullScan?.let { fullScan -> item {
+                        OutlinedButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
                     } }
                     if (!isScan || busy) item { OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
                         shape = RoundedCornerShape(8.dp), modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Pause") } }

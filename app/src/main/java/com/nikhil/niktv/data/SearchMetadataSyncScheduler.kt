@@ -71,6 +71,7 @@ object SearchMetadataSyncScheduler {
 
     const val PROFILE_ID = "profile_id"
     const val RESUME_ONLY = "resume_only"
+    const val FULL_SCAN = "full_scan"
     fun configureProfile(context: Context, profile: PortalProfile) {
         val id = CatalogScanPreferences.id(profile)
         val hours = CatalogScanPreferences.hours(context, id)
@@ -111,6 +112,20 @@ object SearchMetadataSyncScheduler {
         CatalogScanPreferences.status(context, id, "Scan requested; queued or already running. Existing listings remain searchable.")
         CatalogOperations.message(context, CatalogOperations.scan(id), "Scan queued. Waiting for network/background execution; saved listings remain available.")
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Requested")
+    }
+
+    fun fullScan(context: Context, profile: PortalProfile) {
+        val id = CatalogScanPreferences.id(profile)
+        CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                .setInputData(workDataOf(PROFILE_ID to id, FULL_SCAN to true))
+                .setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        CatalogScanPreferences.status(context, id, "Full scan requested. Existing records stay available while every provider page is refreshed.")
+        CatalogOperations.message(context, CatalogOperations.scan(id),
+            "Full scan queued. Live TV, Movies and Series will be refreshed from the beginning.")
+        BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Full scan requested")
     }
 
     /** User-requested retry replaces delayed/blocked work, retaining Room's committed cursor. */
@@ -163,11 +178,8 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
         var notificationJob: Job? = null
         try {
             CatalogOperations.check(context, control)
-            if (inputData.getBoolean(SearchMetadataSyncScheduler.RESUME_ONLY, false) &&
-                CatalogScanPreferences.cursor(context, id) == -1 && CatalogScanPreferences.completed(context, id) > 0) {
-                CatalogOperations.message(context, control, "Scan already complete. Use Scan and update to start a new refresh.")
-                return@withLock Result.success()
-            }
+            val resumeOnly = inputData.getBoolean(SearchMetadataSyncScheduler.RESUME_ONLY, false)
+            val fullScan = inputData.getBoolean(SearchMetadataSyncScheduler.FULL_SCAN, false)
             if (CatalogPlaybackActivity.playing) {
                 CatalogOperations.message(context, control, "Waiting for playback to finish; saved progress will resume automatically.")
                 CatalogScanPreferences.status(context, id, "Paused during playback; saved scan progress will resume automatically.")
@@ -191,11 +203,29 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             CatalogOperations.check(context, control)
             val types = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
             var cursor = CatalogScanPreferences.cursor(context, id)
-            if (cursor < 0) {
+            if (fullScan) {
                 types.forEach { CatalogRepository(context).restartScan(profile, it) }
                 cursor = 0
                 CatalogScanPreferences.cursor(context, id, cursor)
                 BackupActivityLog.record(context, operation, "Started", "Updating channels, movies and series; saved listings stay available.")
+            } else if (resumeOnly && cursor < 0) {
+                cursor = CatalogRepository(context).resumeScanIndex(profile)
+                if (cursor < 0) {
+                    CatalogOperations.message(context, control,
+                        "The restored scan is already complete. Choose Full scan to refresh every provider page.")
+                    return@withLock Result.success()
+                }
+                CatalogScanPreferences.cursor(context, id, cursor)
+                CatalogOperations.message(context, control,
+                    "Resuming ${types[cursor].title} from the last saved provider page.")
+                BackupActivityLog.record(context, operation, "Resumed",
+                    "Continuing ${types[cursor].title} from restored Room page cursors.")
+            } else if (cursor < 0) {
+                types.forEach { CatalogRepository(context).restartScan(profile, it) }
+                cursor = 0
+                CatalogScanPreferences.cursor(context, id, cursor)
+                BackupActivityLog.record(context, operation, "Started",
+                    "Scheduled refresh started from Live TV; saved listings stay available.")
             }
             val deadline = android.os.SystemClock.elapsedRealtime() + 480_000L
             for (index in cursor until types.size) {
