@@ -102,10 +102,14 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-dev"
             manifestPlaceholders["appLabel"] = "NikTV Dev"
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_debug"
+            manifestPlaceholders["appBanner"] = "@drawable/tv_banner_debug"
             if (providers.environmentVariable("DEV_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")
         }
         getByName("release") {
             manifestPlaceholders["appLabel"] = "NikTV"
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
+            manifestPlaceholders["appBanner"] = "@drawable/tv_banner"
             if (providers.environmentVariable("RELEASE_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")
         }
     }
