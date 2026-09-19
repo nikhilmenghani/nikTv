@@ -2232,6 +2232,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = _state.value.session ?: return
         val loaded = loadInitialEpisodeBatch(session, series, requestedSeason)
         val raw = loaded.episodes.distinctBy { it.id }
+        if (raw.isEmpty() && previous?.rawIptvEpisodes().orEmpty().isNotEmpty()) {
+            // A transient or incomplete provider response must not erase a
+            // previously playable season from the device cache.
+            publishEpisodeCache(previous!!)
+            return
+        }
         val retained = previous?.episodes.orEmpty().associateBy { it.id }
         val base = EpisodeSeasonCache(
             profileKey = session.profile.cacheKey(),
@@ -2347,8 +2353,60 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun loadSeriesEpisodes(series: MediaItem, requestedSeason: Int? = null, forceRefresh: Boolean = false) {
+    private suspend fun resolveSeriesContainer(
+        session: PortalSession,
+        series: MediaItem
+    ): MediaItem {
+        if (
+            session.profile.portalType != PortalType.STALKER ||
+            !series.command.isNullOrBlank()
+        ) return series
+
+        val profileKey = session.profile.cacheKey()
+        val localCandidates = buildList {
+            addAll(store.searchCatalog(CatalogType.SERIES, profileKey).first()?.items.orEmpty())
+            addAll(localSeriesCandidates(_state.value))
+            addAll(
+                _state.value.recentlyPlayed
+                    .filter { it.kind == FavoriteKind.SERIES }
+                    .map { it.media }
+            )
+        }
+        localCandidates.firstOrNull {
+            it.id == series.id && !it.command.isNullOrBlank()
+        }?.let { return it.withFavoriteSeriesPresentation(series) }
+
+        // TMDB-backed favorites can retain the provider id but lose the Stalker
+        // command when their display metadata is refreshed. Resolve that command
+        // only on this cache miss; ordinary episode opens remain cache-only.
+        val query = series.title.cleanedIptvSeriesTitle()
+        val providerItems = runCatching {
+            portal.search(
+                session = session,
+                type = SearchContentType.SERIES,
+                query = query,
+                page = 1,
+                categoryId = "*"
+            ).items
+        }.onFailure {
+            Log.w("NikTvSeries", "Could not restore provider identity for ${series.id}", it)
+        }.getOrDefault(emptyList())
+        val resolved = providerItems.firstOrNull {
+            it.id == series.id && !it.command.isNullOrBlank()
+        } ?: return series
+
+        store.mergeSearchMetadata(
+            SearchCatalogCache(profileKey, CatalogType.SERIES, System.currentTimeMillis(), providerItems)
+        )
+        return resolved.withFavoriteSeriesPresentation(series)
+    }
+
+    private suspend fun loadSeriesEpisodes(requestedSeries: MediaItem, requestedSeason: Int? = null, forceRefresh: Boolean = false) {
         val session = requireNotNull(_state.value.session)
+        val series = resolveSeriesContainer(session, requestedSeries)
+        if (series != requestedSeries && _state.value.selectedSeries?.id == requestedSeries.id) {
+            _state.update { it.copy(selectedSeries = series) }
+        }
         val profileKey = session.profile.cacheKey()
         val maxAge = _state.value.cacheIntervalMinutes * 60_000L
         // An explicit selection applies while navigating seasons. On a fresh series open,
