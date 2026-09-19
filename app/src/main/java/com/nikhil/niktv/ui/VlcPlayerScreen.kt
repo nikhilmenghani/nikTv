@@ -326,6 +326,26 @@ internal fun VlcPlayerScreen(
         }
     }
 
+    // The VLC AndroidView is deliberately retained while moving through a queue.
+    // Its native listeners are installed only once, so route every state access
+    // through updated holders instead of capturing the first episode's state.
+    val currentControlsVisible by rememberUpdatedState(controlsVisible)
+    val currentShowControls by rememberUpdatedState<() -> Unit> { showControls() }
+    val currentSetControlsVisible by rememberUpdatedState<(Boolean) -> Unit> { controlsVisible = it }
+    val currentSetControlsFocused by rememberUpdatedState<(Boolean) -> Unit> { controlsFocused = it }
+    val currentRegisterInteraction by rememberUpdatedState<() -> Unit> { dpadInteraction++ }
+    val currentQueueRevealProgress by rememberUpdatedState(queueRevealProgress)
+    val currentSetQueueVisible by rememberUpdatedState<(Boolean) -> Unit> { queueVisible = it }
+    val currentSetQueueRevealProgress by rememberUpdatedState<(Float) -> Unit> { queueRevealProgress = it }
+    val currentSetQueueRevealDragging by rememberUpdatedState<(Boolean) -> Unit> { queueRevealDragging = it }
+    val currentSetGestureFeedback by rememberUpdatedState<(Pair<Boolean, Float>?) -> Unit> { gestureFeedback = it }
+    val currentPlaybackRequested by rememberUpdatedState(playbackRequested)
+    val currentSetPlaybackRequested by rememberUpdatedState<(Boolean) -> Unit> { playbackRequested = it }
+    val currentPlayer by rememberUpdatedState(player)
+    val currentSeekable by rememberUpdatedState(seekable)
+    val currentDuration by rememberUpdatedState(duration)
+    val currentCatalogType by rememberUpdatedState(media.catalogType)
+
     LaunchedEffect(fullscreenOverride) { fullscreenOverride?.let { focusMode = it } }
     DisposableEffect(activity, focusMode) {
         val window = activity?.window
@@ -714,6 +734,7 @@ internal fun VlcPlayerScreen(
                     var queueGestureOwned = false
                     var queueSwipeTriggered = false
                     var tapCandidate = false
+                    var controlsWereVisibleOnDown = false
                     var lastTapAtMillis = 0L
                     var lastTapOnRight = false
                     val tapSlop = 14f * layout.resources.displayMetrics.density
@@ -727,7 +748,7 @@ internal fun VlcPlayerScreen(
                             if (suppressNextEmbeddedPlayerFocusHandoff) {
                                 suppressNextEmbeddedPlayerFocusHandoff = false
                             } else {
-                                controlsVisible = true
+                                currentSetControlsVisible(true)
 
                                 /*
                                  * Bridge deliberate D-pad entry from the
@@ -740,7 +761,7 @@ internal fun VlcPlayerScreen(
                                     embeddedPlayerFocusHandoffArmed &&
                                     !layout.isInTouchMode
                                 ) {
-                                    showControls()
+                                    currentShowControls()
                                 }
                             }
                         }
@@ -758,7 +779,15 @@ internal fun VlcPlayerScreen(
                                     // transient status/navigation-bar reveal gesture.
                                     return@setOnTouchListener false
                                 }
-                                dpadInteraction++
+                                currentRegisterInteraction()
+                                controlsWereVisibleOnDown = currentControlsVisible
+                                if (!controlsWereVisibleOnDown) {
+                                    // Some high-density Samsung touch stacks report
+                                    // enough pointer drift to reject ACTION_UP as a tap.
+                                    // Reveal immediately, then let ACTION_UP decide
+                                    // whether an already-visible overlay should hide.
+                                    currentSetControlsVisible(true)
+                                }
                                 gestureStartX = event.x
                                 gestureStartY = event.y
                                 // Outer quarters adjust brightness/volume; the
@@ -808,11 +837,11 @@ internal fun VlcPlayerScreen(
                                         (deltaY / (layout.height * 0.32f))
                                             .coerceIn(0f, 1f)
                                     if (progress > 0f) {
-                                        queueVisible = true
-                                        queueRevealDragging = true
-                                        queueRevealProgress = progress
-                                        controlsVisible = false
-                                        controlsFocused = false
+                                        currentSetQueueVisible(true)
+                                        currentSetQueueRevealDragging(true)
+                                        currentSetQueueRevealProgress(progress)
+                                        currentSetControlsVisible(false)
+                                        currentSetControlsFocused(false)
                                         queueSwipeTriggered = true
                                     }
                                 } else if (
@@ -820,6 +849,8 @@ internal fun VlcPlayerScreen(
                                     (adjustingLevel || kotlin.math.abs(deltaY) > 24f * layout.resources.displayMetrics.density)
                                 ) {
                                     adjustingLevel = true
+                                    currentSetControlsVisible(false)
+                                    currentSetControlsFocused(false)
                                     val level = (gestureStartValue + deltaY / layout.height.coerceAtLeast(1)).coerceIn(0f, 1f)
                                     if (brightnessGesture) {
                                         activity?.window?.attributes = activity?.window?.attributes?.apply {
@@ -829,18 +860,18 @@ internal fun VlcPlayerScreen(
                                         val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
                                         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (level * max).toInt(), 0)
                                     }
-                                    gestureFeedback = brightnessGesture to level
+                                    currentSetGestureFeedback(brightnessGesture to level)
                                 }
                             }
                             MotionEvent.ACTION_UP -> {
                                 if (queueGestureOwned) {
-                                    queueRevealDragging = false
-                                    if (queueRevealProgress >= 0.18f) {
-                                        queueRevealProgress = 1f
-                                        queueVisible = true
+                                    currentSetQueueRevealDragging(false)
+                                    if (currentQueueRevealProgress >= 0.18f) {
+                                        currentSetQueueRevealProgress(1f)
+                                        currentSetQueueVisible(true)
                                     } else {
-                                        queueRevealProgress = 0f
-                                        queueVisible = false
+                                        currentSetQueueRevealProgress(0f)
+                                        currentSetQueueVisible(false)
                                     }
                                     queueGestureOwned = false
                                 }
@@ -858,7 +889,7 @@ internal fun VlcPlayerScreen(
                                     } else {
                                         lastTapAtMillis = event.eventTime
                                         lastTapOnRight = tappedOnRight
-                                        controlsVisible = !controlsVisible
+                                        currentSetControlsVisible(!controlsWereVisibleOnDown)
                                     }
                                 }
                                 queueSwipeTriggered = false
@@ -878,48 +909,52 @@ internal fun VlcPlayerScreen(
                             ) &&
                             event.repeatCount > 0
                         ) return@setOnKeyListener true
-                        if (keyCode != KeyEvent.KEYCODE_BACK) dpadInteraction++
+                        if (keyCode != KeyEvent.KEYCODE_BACK) currentRegisterInteraction()
                         when (keyCode) {
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_DPAD_LEFT,
-                            KeyEvent.KEYCODE_DPAD_RIGHT -> { showControls(); true }
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> { currentShowControls(); true }
                             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                                playbackRequested = !playbackRequested; if (playbackRequested) player.play() else player.pause(); showControls(); true
+                                val requested = !currentPlaybackRequested
+                                currentSetPlaybackRequested(requested)
+                                if (requested) currentPlayer.play() else currentPlayer.pause()
+                                currentShowControls()
+                                true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                                playbackRequested = true
-                                player.play(); showControls(); true
+                                currentSetPlaybackRequested(true)
+                                currentPlayer.play(); currentShowControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                                playbackRequested = false
-                                player.pause(); showControls(); true
+                                currentSetPlaybackRequested(false)
+                                currentPlayer.pause(); currentShowControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
                                 if (
-                                    media.catalogType == CatalogType.LIVE_TV &&
+                                    currentCatalogType == CatalogType.LIVE_TV &&
                                     currentHasPlaybackQueue
                                 ) {
                                     currentPlayPrevious()
                                 } else {
-                                    if (seekable) player.time = (player.time - 10_000L).coerceAtLeast(0L)
-                                    showControls()
+                                    if (currentSeekable) currentPlayer.time = (currentPlayer.time - 10_000L).coerceAtLeast(0L)
+                                    currentShowControls()
                                 }
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                                 if (
-                                    media.catalogType == CatalogType.LIVE_TV &&
+                                    currentCatalogType == CatalogType.LIVE_TV &&
                                     currentHasPlaybackQueue
                                 ) {
                                     currentPlayNext()
                                 } else {
-                                    if (seekable) player.time = (player.time + 10_000L).coerceAtMost(duration)
-                                    showControls()
+                                    if (currentSeekable) currentPlayer.time = (currentPlayer.time + 10_000L).coerceAtMost(currentDuration)
+                                    currentShowControls()
                                 }
                                 true
                             }
                             KeyEvent.KEYCODE_BACK -> false
-                            else -> { showControls(); true }
+                            else -> { currentShowControls(); true }
                         }
                     }
                     // Fullscreen transitions can recreate this AndroidView while
