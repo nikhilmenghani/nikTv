@@ -202,6 +202,7 @@ internal fun ModernFavoriteCard(
             onClick = open,
             isFavorite = true,
             onFavorite = { removalConfirmationOpen = true },
+            sourceLabel = favorite.source.takeIf { it == FavoriteSource.TMDB }?.name,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
         )
     } else ModernPosterCard(

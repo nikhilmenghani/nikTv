@@ -186,13 +186,17 @@ data class BrowseCatalogMetadataCache(
 enum class FavoriteKind { CHANNEL, MOVIE, SERIES, EPISODE }
 
 @Serializable
+enum class FavoriteSource { IPTV, TMDB }
+
+@Serializable
 data class FavoriteItem(
     val kind: FavoriteKind,
     val media: MediaItem,
     val series: MediaItem? = null,
     val addedAtMillis: Long = System.currentTimeMillis(),
     val profileKey: String = "",
-    val categoryTitle: String? = null
+    val categoryTitle: String? = null,
+    val source: FavoriteSource = FavoriteSource.IPTV
 ) {
     val key: String get() = "$profileKey:${kind.name}:${media.id}"
 }

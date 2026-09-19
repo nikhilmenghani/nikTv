@@ -766,13 +766,17 @@ internal fun ModernEpisodeCard(
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(12.dp),
-        color = if (focused) Color(0xFF321417) else if (isCurrentResume) Color(0xFF1B2232) else Color(0xFF121620),
-        border = when {
-            focused -> BorderStroke(3.dp, Color(0xFFFF2633))
-            isCurrentResume -> BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
-            else -> null
+        color = when {
+            focused -> Color(0xFF272B33)
+            isCurrentResume -> Color(0xFF1B1E24)
+            else -> Color(0xFF14171D)
         },
-        shadowElevation = if (focused) 14.dp else 0.dp,
+        border = when {
+            focused -> BorderStroke(2.dp, Color(0xFFF1F3F5))
+            isCurrentResume -> BorderStroke(1.dp, Color(0xFF6E3036))
+            else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
+        },
+        shadowElevation = if (focused) 8.dp else 0.dp,
         modifier = modifier
             .focusRequester(episodeFocusRequester)
             .focusProperties { right = downloadFocusRequester }
@@ -853,18 +857,25 @@ internal fun ModernEpisodeCard(
                     val airDate = episode.displayAirDate()
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (badge != null) {
-                            Text(
-                                text = badge,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF292D35),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
+                            ) {
+                                Text(
+                                    text = badge,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF2B8BD)
+                                )
+                            }
                         }
                         if (airDate != null) {
                             Text(
                                 text = airDate,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.Gray
+                                color = Color(0xFFA8ADB7)
                             )
                         }
                     }
@@ -878,14 +889,15 @@ internal fun ModernEpisodeCard(
                     } else if (isCurrentResume && !mobileLayout) {
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primary
+                            color = Color(0xFF3A2226),
+                            border = BorderStroke(1.dp, Color(0xFF8E4149))
                         ) {
                             Text(
                                 text = "LAST WATCHED",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.Black,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                color = Color(0xFFFFE7E9),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                             )
                         }
                     }
@@ -901,13 +913,14 @@ internal fun ModernEpisodeCard(
                 if (isCurrentResume && mobileLayout) {
                     Surface(
                         shape = RoundedCornerShape(5.dp),
-                        color = MaterialTheme.colorScheme.primary
+                        color = Color(0xFF3A2226),
+                        border = BorderStroke(1.dp, Color(0xFF8E4149))
                     ) {
                         Text(
                             text = "LAST WATCHED",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = Color.Black,
+                            color = Color(0xFFFFE7E9),
                             maxLines = 1,
                             modifier = Modifier.padding(
                                 horizontal = 6.dp,

@@ -544,7 +544,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             val updatedMedia = (mapping?.media ?: favorite.media)
                                 .withPreferredSeriesPresentation(metadata)
                                 .withFavoriteSeriesPresentation(favorite.media)
-                            favorite.key to favorite.copy(media = updatedMedia)
+                            val source = when {
+                                favorite.source == FavoriteSource.TMDB -> FavoriteSource.TMDB
+                                favorite.media.id.startsWith("tmdb-") -> FavoriteSource.TMDB
+                                // Older TMDB favorites were enriched before source
+                                // provenance was persisted. This is the legacy Wio
+                                // shape: a mapped provider id with no provider command
+                                // and no IPTV category attached to the favorite.
+                                favorite.profileKey.contains("|STALKER|") &&
+                                    favorite.categoryTitle == null &&
+                                    favorite.media.command.isNullOrBlank() &&
+                                    mapping != null -> FavoriteSource.TMDB
+                                else -> FavoriteSource.IPTV
+                            }
+                            favorite.key to favorite.copy(media = updatedMedia, source = source)
                         }
                     }.awaitAll()
                 }.toMap()
@@ -6089,6 +6102,34 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 loadSeriesEpisodes(providerSeries)
             }
         }
+    }
+
+    fun openSeriesFromHome(series: MediaItem) = task {
+        val session = requireNotNull(_state.value.session)
+        val profileKey = session.profile.cacheKey()
+        val tmdbId = series.favoriteTmdbSeriesId()
+        val mapping = store.tmdbMappings.first().firstOrNull { saved ->
+            saved.profileKey == profileKey &&
+                saved.type == CatalogType.SERIES &&
+                (saved.media.id == series.id ||
+                    (tmdbId != null && saved.tmdbId == tmdbId))
+        }
+        val providerSeries = (mapping?.media ?: series)
+            .withFavoriteSeriesPresentation(series)
+        _state.update {
+            it.copy(
+                homeOpen = false,
+                favoritesOpen = false,
+                selectedType = CatalogType.SERIES,
+                selectedSeries = providerSeries,
+                seriesOpenedFromHome = true,
+                seriesOpenedFromFavorites = false,
+                items = emptyList(),
+                availableSeriesSeasons = emptyList(),
+                selectedSeriesSeason = null
+            )
+        }
+        loadSeriesEpisodes(providerSeries)
     }
 
     /** Returns a playable season queue immediately from cache, fetching it only on a cache miss. */

@@ -470,13 +470,13 @@ internal fun ModernRailButton(icon: ImageVector, label: String, selected: Boolea
             .semantics { role = Role.Tab; this.selected = selected },
         shape = shape,
         color = when {
-            focusHighlight -> Color(0xFF3A0A0D)
-            selected -> Color(0xFF241012)
+            focusHighlight -> Color(0xFF272B33)
+            selected -> Color(0xFF181B20)
             else -> Color.Transparent
         },
         border = when {
-            focusHighlight -> BorderStroke(3.dp, Color(0xFFFF3340))
-            selected -> BorderStroke(1.dp, Color(0xFFE50914))
+            focusHighlight -> BorderStroke(2.dp, Color(0xFFF1F3F5))
+            selected -> BorderStroke(1.dp, Color(0xFF3B4048))
             else -> null
         }
     ) {
@@ -485,7 +485,16 @@ internal fun ModernRailButton(icon: ImageVector, label: String, selected: Boolea
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
         ) {
-            Icon(icon, label, Modifier.size(24.dp), tint = if (focusHighlight || selected) Color.White else Color.Gray)
+            Icon(
+                icon,
+                label,
+                Modifier.size(24.dp),
+                tint = when {
+                    focusHighlight -> Color.White
+                    selected -> Color(0xFFF05A63)
+                    else -> Color.Gray
+                }
+            )
             if (expanded) {
                 Spacer(Modifier.width(14.dp))
                 Text(

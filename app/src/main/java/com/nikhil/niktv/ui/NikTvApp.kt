@@ -720,6 +720,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     closeFavorites = vm::closeFavorites,
                     openHome = vm::openHome,
                     openRecent = vm::openRecent,
+                    openSeriesFromHome = vm::openSeriesFromHome,
                     removeRecent = vm::removeRecent,
                     dismissWatchedEpisode = vm::dismissWatchedEpisode,
                     clearRecent = vm::clearRecent,

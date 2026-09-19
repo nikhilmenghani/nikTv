@@ -137,6 +137,7 @@ import com.nikhil.niktv.model.Category
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.FavoriteItem
+import com.nikhil.niktv.model.FavoriteSource
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.OfflineMediaDownload
 import com.nikhil.niktv.model.PlaybackProgress
@@ -211,6 +212,7 @@ internal fun ModernTileBrowseScreen(
     openProfileSwitcher: () -> Unit,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    openSeries: (MediaItem) -> Unit,
     clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
@@ -292,6 +294,7 @@ internal fun ModernTileBrowseScreen(
                             dashboardSurface = dashboardSurface,
                             openRecent = openRecent,
                             removeRecent = removeRecent,
+                            openSeries = openSeries,
                             clearRecentChannels = clearRecentChannels,
                             openWatchedEpisode = openWatchedEpisode,
                             dismissWatchedEpisode = dismissWatchedEpisode,
@@ -497,6 +500,7 @@ private fun ModernDestinationHub(
     dashboardSurface: DashboardSurface,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    openSeries: (MediaItem) -> Unit,
     clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
@@ -771,6 +775,7 @@ private fun ModernDestinationHub(
                         returnFocusId = state.playbackReturnFocusId,
                         open = openRecent,
                         clear = removeRecent,
+                        openSeries = openSeries,
                         toggleFavorite = toggleFavorite
                     )
                 }
@@ -789,6 +794,7 @@ private fun ModernDestinationHub(
                         favorites = state.favorites,
                         open = openWatchedEpisode,
                         clear = dismissWatchedEpisode,
+                        openSeries = openSeries,
                         toggleFavorite = toggleFavorite
                     )
                 }
@@ -1080,6 +1086,7 @@ private fun ModernNewEpisodesRow(
     favorites: List<FavoriteItem>,
     open: (WatchedSeries, MediaItem) -> Unit,
     clear: (WatchedSeries, MediaItem) -> Unit,
+    openSeries: (MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -1127,6 +1134,7 @@ private fun ModernNewEpisodesRow(
                 onClick = { open(watched, episode) },
                 isFavorite = favorites.any { it.key == favorite.key },
                 onFavorite = { toggleFavorite(favorite) },
+                onOpenSeries = { openSeries(watched.series) },
                 onClear = { clear(watched, episode) }
             )
         }
@@ -1872,6 +1880,7 @@ private fun ModernContinueRow(
     returnFocusId: String?,
     open: (RecentItem) -> Unit,
     clear: (RecentItem) -> Unit,
+    openSeries: (MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
     val listState = rememberLazyListState()
@@ -1932,6 +1941,11 @@ private fun ModernContinueRow(
                     )
                 },
                 onClear = { clear(recent) },
+                onOpenSeries = if (recent.kind == FavoriteKind.SERIES) {
+                    { openSeries(recent.media) }
+                } else {
+                    null
+                },
                 progress = playbackProgress.firstOrNull { saved ->
                     val episode = recent.lastPlayed
                     if (recent.kind == FavoriteKind.SERIES && episode != null) {
@@ -1961,7 +1975,9 @@ internal fun ModernCompactMediaCard(
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     onClear: (() -> Unit)? = null,
+    onOpenSeries: (() -> Unit)? = null,
     progress: PlaybackProgress? = null,
+    sourceLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -2009,7 +2025,7 @@ internal fun ModernCompactMediaCard(
         )
     val shape = RoundedCornerShape(14.dp)
     val borderColor = lerp(
-        Color(0xFF30343B),
+        if (sourceLabel == null) Color(0xFF30343B) else Color(0xFF4D7C91),
         when {
             isTv -> Color(0xFFF2F3F5)
             focused -> Color(0xFFBFC3CA)
@@ -2105,6 +2121,25 @@ internal fun ModernCompactMediaCard(
                         )
                 )
 
+                sourceLabel?.let { label ->
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(10.dp),
+                        shape = RoundedCornerShape(7.dp),
+                        color = Color(0xFF28556A),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
+                    ) {
+                        Text(
+                            text = label,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -2183,6 +2218,7 @@ internal fun ModernCompactMediaCard(
             isFavorite = isFavorite,
             dismiss = { menuOpen = false },
             toggleFavorite = onFavorite,
+            openSeries = onOpenSeries,
             clear = onClear
         )
     }
@@ -2197,6 +2233,7 @@ private fun ModernTileActionsMenu(
     isFavorite: Boolean,
     dismiss: () -> Unit,
     toggleFavorite: () -> Unit,
+    openSeries: (() -> Unit)? = null,
     clear: (() -> Unit)?,
     isPinned: Boolean = false,
     togglePin: (() -> Unit)? = null
@@ -2208,6 +2245,16 @@ private fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        openSeries?.let { openAction ->
+            NikDropdownMenuItem(
+                text = { Text("Open series") },
+                leadingIcon = { Icon(Icons.Default.Tv, null) },
+                onClick = {
+                    dismiss()
+                    openAction()
+                }
+            )
+        }
         NikDropdownMenuItem(
             text = {
                 Text(if (isFavorite) "Remove from My List" else "Add to My List")
@@ -2516,7 +2563,7 @@ private fun ModernTmdbCollection(
                         it.kind == FavoriteKind.SERIES && it.media.id == media.id
                     },
                     onFavorite = {
-                        toggleFavorite(FavoriteItem(FavoriteKind.SERIES, media))
+                        toggleFavorite(FavoriteItem(FavoriteKind.SERIES, media, source = FavoriteSource.TMDB))
                     },
                     isTv = isTv
                 )
@@ -2587,7 +2634,7 @@ private fun ModernTmdbCollection(
                         it.kind == FavoriteKind.MOVIE && it.media.id == media.id
                     },
                     onFavorite = {
-                        toggleFavorite(FavoriteItem(FavoriteKind.MOVIE, media))
+                        toggleFavorite(FavoriteItem(FavoriteKind.MOVIE, media, source = FavoriteSource.TMDB))
                     },
                     isTv = isTv
                 )
