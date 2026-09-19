@@ -684,8 +684,10 @@ internal fun VlcPlayerScreen(
             delay(500L)
         }
     }
-    LaunchedEffect(remainingSeconds, autoPlayCancelled) {
-        if (remainingSeconds != null && !autoPlayCancelled) {
+    val showAutoPlayPrompt =
+        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled
+    LaunchedEffect(showAutoPlayPrompt) {
+        if (showAutoPlayPrompt) {
             delay(120L)
             runCatching { playNextNowRequester.requestFocus() }
         }
@@ -1725,7 +1727,7 @@ PlayerChromeIconButton(
         }
         modeFeedback?.let { PlayerModeFeedback(it) }
         val countdown = remainingSeconds
-        if (countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
+        if (countdown != null && showAutoPlayPrompt) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter)
                     .zIndex(20f)
@@ -1741,10 +1743,12 @@ PlayerChromeIconButton(
                         Text("Up next in ${countdown}s", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         Text(media.nextEpisode.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     }
-                    NikTvTextActionButton(onClick = { autoPlayCancelled = true; videoView?.requestFocus() }) { Text("Cancel") }
+                    NikTvTextActionButton(
+                        onClick = { autoPlayCancelled = true; videoView?.requestFocus() }
+                    ) { Text("Cancel") }
                     NikTvPrimaryActionButton(
                         onClick = { if (!advancing) { advancing = true; onPlayNext() } },
-                        modifier = Modifier.focusRequester(playNextNowRequester).playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
+                        modifier = Modifier.focusRequester(playNextNowRequester)
                     ) { Text("Play now") }
                 }
             }

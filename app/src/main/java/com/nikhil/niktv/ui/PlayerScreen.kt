@@ -1054,8 +1054,10 @@ fun PlayerScreen(
             delay(500)
         }
     }
-    LaunchedEffect(remainingSeconds, autoPlayCancelled) {
-        if (remainingSeconds != null && !autoPlayCancelled) {
+    val showAutoPlayPrompt =
+        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled
+    LaunchedEffect(showAutoPlayPrompt) {
+        if (showAutoPlayPrompt) {
             delay(120L)
             runCatching { playNextFocusRequester.requestFocus() }
         }
@@ -2444,7 +2446,7 @@ PlayerChromeIconButton(
         }
         val countdown = remainingSeconds
         modeFeedback?.let { PlayerModeFeedback(it) }
-        if (countdown != null && media.nextEpisode != null && !autoPlayCancelled) {
+        if (countdown != null && showAutoPlayPrompt) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter)
                     .zIndex(20f)
@@ -2463,10 +2465,10 @@ PlayerChromeIconButton(
                     NikTvTextActionButton(onClick = {
                         autoPlayCancelled = true
                         playerViewRef?.requestFocus()
-                    }, modifier = Modifier.playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }) { Text("Cancel") }
+                    }) { Text("Cancel") }
                     NikTvPrimaryActionButton(
                         onClick = { if (!advancing) { advancing = true; onPlayNext() } },
-                        modifier = Modifier.focusRequester(playNextFocusRequester).playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
+                        modifier = Modifier.focusRequester(playNextFocusRequester)
                     ) { Text("Play now") }
                 }
             }
