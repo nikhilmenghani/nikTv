@@ -473,7 +473,7 @@ internal fun ModernSeriesDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(end = 12.dp)
                         ) {
-                            items(availableSeasons) { season ->
+                            items(availableSeasons.sortedDescending()) { season ->
                                 val selected = season == selectedSeason
                                 FilterChip(
                                     selected = selected,

@@ -2230,7 +2230,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         backgroundTmdb: Boolean = false
     ) {
         val session = _state.value.session ?: return
-        val loaded = portal.episodeSeason(session, series, _state.value.seriesStartSeason, requestedSeason)
+        val loaded = loadInitialEpisodeBatch(session, series, requestedSeason)
         val raw = loaded.episodes.distinctBy { it.id }
         val retained = previous?.episodes.orEmpty().associateBy { it.id }
         val base = EpisodeSeasonCache(
@@ -2253,6 +2253,49 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             enrichEpisodeCacheFromTmdb(series, base, forceTmdb)
         }
+    }
+
+    private suspend fun loadInitialEpisodeBatch(
+        session: PortalSession,
+        series: MediaItem,
+        requestedSeason: Int?
+    ): EpisodeSeasonResult {
+        var loaded = portal.episodeSeason(
+            session,
+            series,
+            _state.value.seriesStartSeason,
+            requestedSeason
+        )
+        var combined = loaded.episodes.distinctBy { it.id }
+
+        while (loaded.hasMore && combined.size < INITIAL_EPISODE_BATCH_LIMIT) {
+            val seasonId = combined.firstNotNullOfOrNull { it.portalSeasonId }
+                ?: break
+            val next = portal.episodeSeason(
+                session,
+                series,
+                _state.value.seriesStartSeason,
+                loaded.selectedSeason ?: requestedSeason,
+                loaded.page + 1,
+                seasonId
+            )
+            val expanded = (combined + next.episodes).distinctBy { it.id }
+            val addedEpisodes = expanded.size > combined.size
+            combined = expanded
+            loaded = EpisodeSeasonResult(
+                episodes = combined,
+                availableSeasons =
+                    (loaded.availableSeasons + next.availableSeasons)
+                        .distinct()
+                        .sorted(),
+                selectedSeason = next.selectedSeason ?: loaded.selectedSeason,
+                page = next.page,
+                hasMore = next.hasMore && addedEpisodes
+            )
+            if (!addedEpisodes) break
+        }
+
+        return loaded.copy(episodes = combined)
     }
 
     private suspend fun refreshFavoriteEpisodeCachesIfDue(profileKey: String) {
@@ -2320,8 +2363,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             publishEpisodeCache(cached)
             cached.season?.let { store.rememberSeriesSeason(profileKey, series.id, it) }
             val now = System.currentTimeMillis()
+            val cacheAge = now - cached.cachedAtMillis
+            val incompleteSeasonIndexNeedsRefresh =
+                cached.availableSeasons.size <= 1 &&
+                    cacheAge >= minOf(maxAge, SEASON_DISCOVERY_RECHECK_MILLIS)
+            val initialEpisodeBatchNeedsFill =
+                cached.hasMore &&
+                    cached.rawIptvEpisodes().size < INITIAL_EPISODE_BATCH_LIMIT
             viewModelScope.launch {
-                if (cached.iptvEpisodes.isEmpty() || now - cached.cachedAtMillis >= maxAge) {
+                if (
+                    cached.iptvEpisodes.isEmpty() ||
+                    cacheAge >= maxAge ||
+                    incompleteSeasonIndexNeedsRefresh ||
+                    initialEpisodeBatchNeedsFill
+                ) {
                     refreshEpisodeCache(series, desired ?: cached.season, cached, forceTmdb = now - cached.tmdbCachedAtMillis >= maxAge)
                 } else {
                     enrichEpisodeCacheFromTmdb(series, cached, force = false)
@@ -6309,6 +6364,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_PLAYBACK_URLS = 500
         private const val MODERN_TMDB_PAGE_SIZE = 20
         private const val EPISODE_METADATA_VERSION = 4
+        private const val SEASON_DISCOVERY_RECHECK_MILLIS = 5 * 60_000L
         private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)
