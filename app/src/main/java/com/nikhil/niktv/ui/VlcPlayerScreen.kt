@@ -739,6 +739,7 @@ internal fun VlcPlayerScreen(
                     var controlsWereVisibleOnDown = false
                     var lastTapAtMillis = 0L
                     var lastTapOnRight = false
+                    var pendingSingleTap: Runnable? = null
                     val tapSlop = 14f * layout.resources.displayMetrics.density
                     videoView = layout
                     // Native VLC focus is only the embedded Showcase
@@ -783,11 +784,12 @@ internal fun VlcPlayerScreen(
                                 }
                                 currentRegisterInteraction()
                                 controlsWereVisibleOnDown = currentControlsVisible
-                                if (!controlsWereVisibleOnDown) {
+                                if (!controlsWereVisibleOnDown && !currentHasPlaybackQueue) {
                                     // Some high-density Samsung touch stacks report
                                     // enough pointer drift to reject ACTION_UP as a tap.
-                                    // Reveal immediately, then let ACTION_UP decide
-                                    // whether an already-visible overlay should hide.
+                                    // Keep immediate reveal for streams without a
+                                    // queue. Queued playback waits for the double-tap
+                                    // window so the overlay cannot steal tap two.
                                     currentSetControlsVisible(true)
                                 }
                                 gestureStartX = event.x
@@ -886,12 +888,28 @@ internal fun VlcPlayerScreen(
                                                 1..ViewConfiguration.getDoubleTapTimeout().toLong()
                                     if (doubleTap) {
                                         lastTapAtMillis = 0L
+                                        pendingSingleTap?.let(layout::removeCallbacks)
+                                        pendingSingleTap = null
                                         if (tappedOnRight) currentAdvanceNext()
                                         else currentAdvancePrevious()
                                     } else {
                                         lastTapAtMillis = event.eventTime
                                         lastTapOnRight = tappedOnRight
-                                        currentSetControlsVisible(!controlsWereVisibleOnDown)
+                                        if (currentHasPlaybackQueue) {
+                                            pendingSingleTap?.let(layout::removeCallbacks)
+                                            val targetVisible = !controlsWereVisibleOnDown
+                                            val action = Runnable {
+                                                currentSetControlsVisible(targetVisible)
+                                                pendingSingleTap = null
+                                            }
+                                            pendingSingleTap = action
+                                            layout.postDelayed(
+                                                action,
+                                                ViewConfiguration.getDoubleTapTimeout().toLong()
+                                            )
+                                        } else {
+                                            currentSetControlsVisible(!controlsWereVisibleOnDown)
+                                        }
                                     }
                                 }
                                 queueSwipeTriggered = false

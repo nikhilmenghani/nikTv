@@ -1345,6 +1345,7 @@ fun PlayerScreen(
                     var tapCandidate = false
                     var lastTapAtMillis = 0L
                     var lastTapOnRight = false
+                    var pendingSingleTap: Runnable? = null
                     var queueGestureOwned = false
                     val tapSlop = 14f * resources.displayMetrics.density
                     fun applyVideoTransform() {
@@ -1606,6 +1607,8 @@ fun PlayerScreen(
                                             event.eventTime - lastTapAtMillis in
                                                 1..ViewConfiguration.getDoubleTapTimeout().toLong()
                                     if (doubleTap) {
+                                        pendingSingleTap?.let(playerView::removeCallbacks)
+                                        pendingSingleTap = null
                                         lastTapAtMillis = 0L
                                         if (!advancing) {
                                             advancing = true
@@ -1615,7 +1618,21 @@ fun PlayerScreen(
                                     } else {
                                         lastTapAtMillis = event.eventTime
                                         lastTapOnRight = tappedOnRight
-                                        controlsVisible = !controlsVisible
+                                        val targetVisibility = !controlsVisible
+                                        if (hasPlaybackQueue) {
+                                            pendingSingleTap?.let(playerView::removeCallbacks)
+                                            val singleTapAction = Runnable {
+                                                controlsVisible = targetVisibility
+                                                pendingSingleTap = null
+                                            }
+                                            pendingSingleTap = singleTapAction
+                                            playerView.postDelayed(
+                                                singleTapAction,
+                                                ViewConfiguration.getDoubleTapTimeout().toLong(),
+                                            )
+                                        } else {
+                                            controlsVisible = targetVisibility
+                                        }
                                     }
                                     gestureConsumed = true
                                 }
