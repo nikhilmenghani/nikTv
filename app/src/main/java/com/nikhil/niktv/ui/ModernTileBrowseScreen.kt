@@ -111,6 +111,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -120,6 +121,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -1997,7 +1999,8 @@ internal fun ModernCompactMediaCard(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isModernTileTv(configuration)
-    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
+        LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val isTablet = !isTv && configuration.screenWidthDp >= 600
     val collectionPosterColumns = modernPosterColumns(configuration, isTv)
     val collectionPosterHorizontalPaddingDp = if (isTv) 24f else 18f
@@ -2023,8 +2026,8 @@ internal fun ModernCompactMediaCard(
     )
     val visualProgress =
         if (remoteNavigationActive) focusProgress else pressProgress
-    val tvFocusScale by animateFloatAsState(
-        targetValue = if (isTv && focused) 1.06f else 1f,
+    val remoteFocusScale by animateFloatAsState(
+        targetValue = if (remoteNavigationActive && focused) 1.06f else 1f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioNoBouncy,
             stiffness = Spring.StiffnessMediumLow
@@ -2034,7 +2037,7 @@ internal fun ModernCompactMediaCard(
     // Reserve the focused card's maximum footprint in the row. The animated
     // surface can grow without changing focus bounds, pushing the next Home
     // section, or expanding beyond the leading edge of the LazyRow.
-    val focusEnvelopeScale = if (isTv) 1.06f else 1f
+    val focusEnvelopeScale = if (remoteNavigationActive) 1.06f else 1f
     val active =
         if (remoteNavigationActive) focused else pressed
     val artworkScale =
@@ -2108,15 +2111,14 @@ internal fun ModernCompactMediaCard(
                 .width(collectionPosterWidth)
                 .aspectRatio(2f / 3f)
                 .graphicsLayer {
-                    scaleX = tvFocusScale
-                    scaleY = tvFocusScale
+                    scaleX = remoteFocusScale
+                    scaleY = remoteFocusScale
                 },
             shape = shape,
             color = Color(0xFF202020),
             border = BorderStroke(
                 when {
-                    isTv && focused -> 3.dp
-                    !isTv && focused -> 2.dp
+                    remoteNavigationActive && focused -> if (isTv) 3.dp else 2.dp
                     else -> 1.dp
                 },
                 borderColor
@@ -3518,6 +3520,8 @@ private fun ModernCollectionPoster(
     )
     val configuration = LocalConfiguration.current
     val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
+        LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
@@ -3526,20 +3530,19 @@ private fun ModernCollectionPoster(
         label = "modernPosterProfileFocus"
     )
     val pressProgress by animateFloatAsState(
-        targetValue = if (!isTv && pressed) 1f else 0f,
+        targetValue = if (!remoteNavigationActive && pressed) 1f else 0f,
         animationSpec = tween(durationMillis = 110),
         label = "modernPosterTouchPress"
     )
     val visualProgress =
-        if (isTv) focusProgress
-        else maxOf(focusProgress, pressProgress)
-    val tvFocusScale by animateFloatAsState(
-        targetValue = if (isTv && focused) 1.06f else 1f,
+        if (remoteNavigationActive) focusProgress else pressProgress
+    val remoteFocusScale by animateFloatAsState(
+        targetValue = if (remoteNavigationActive && focused) 1.06f else 1f,
         animationSpec = tween(durationMillis = 170),
-        label = "modernCollectionTvFocusScale"
+        label = "modernCollectionRemoteFocusScale"
     )
-    val focusEnvelopeScale = if (isTv) 1.06f else 1f
-    val active = focused || pressed
+    val focusEnvelopeScale = if (remoteNavigationActive) 1.06f else 1f
+    val active = if (remoteNavigationActive) focused else pressed
     val scale =
         1f + (
             when {
@@ -3552,7 +3555,7 @@ private fun ModernCollectionPoster(
     val borderColor = lerp(
         Color(0xFF30343B),
         when {
-            isTv -> Color(0xFFF2F3F5)
+            remoteNavigationActive -> Color(0xFFF2F3F5)
             focused -> Color(0xFFBFC3CA)
             else -> Color(0xFF555A63)
         },
@@ -3582,8 +3585,8 @@ private fun ModernCollectionPoster(
             modifier = Modifier
                 .fillMaxWidth(1f / focusEnvelopeScale)
                 .graphicsLayer {
-                    scaleX = tvFocusScale
-                    scaleY = tvFocusScale
+                    scaleX = remoteFocusScale
+                    scaleY = remoteFocusScale
                 }
                 .touchTileShadow(isTv = isTv,
                     elevation =
@@ -3619,8 +3622,7 @@ private fun ModernCollectionPoster(
             color = Color(0xFF202020),
             border = BorderStroke(
                 when {
-                    isTv && focused -> 3.dp
-                    !isTv && focused -> 2.dp
+                    remoteNavigationActive && focused -> if (isTv) 3.dp else 2.dp
                     else -> 1.dp
                 },
                 borderColor
@@ -3644,42 +3646,56 @@ private fun ModernCollectionPoster(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                if (isTv) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0f to Color.Transparent,
-                                    0.58f to Color.Transparent,
-                                    1f to Color.Black.copy(alpha = 0.94f)
-                                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.58f to Color.Transparent,
+                                1f to Color.Black.copy(alpha = 0.94f)
                             )
+                        )
+                )
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .padding(start = 9.dp, end = 9.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        item.title,
+                        color = Color.White,
+                        style = when {
+                            isTv -> modernTvTileTitleStyle(shadowed = true)
+                            isTablet -> MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 14.sp
+                            )
+                            else -> MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 11.sp,
+                                lineHeight = 13.sp
+                            )
+                        },
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .fillMaxWidth()
-                            .padding(start = 9.dp, end = 9.dp, bottom = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
+                    if (subtitle.isNotBlank()) {
                         Text(
-                            item.title,
-                            color = Color.White,
-                            style = modernTvTileTitleStyle(shadowed = true),
-                            fontWeight = if (focused) FontWeight.Bold else FontWeight.SemiBold,
-                            maxLines = 2,
+                            subtitle,
+                            color = Color.White.copy(alpha = 0.76f),
+                            style = when {
+                                isTv -> modernTvTileSubtitleStyle(shadowed = true)
+                                else -> MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = if (isTablet) 10.sp else 9.sp,
+                                    lineHeight = if (isTablet) 12.sp else 11.sp
+                                )
+                            },
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (subtitle.isNotBlank()) {
-                            Text(
-                                subtitle,
-                                color = Color.White.copy(alpha = 0.76f),
-                                style = modernTvTileSubtitleStyle(shadowed = true),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
                 }
 
@@ -3734,7 +3750,7 @@ private fun ModernCollectionPoster(
                     }
                 }
 
-                if (isTv && focused) {
+                if (remoteNavigationActive && focused) {
                     Box(
                         Modifier
                             .align(Alignment.BottomStart)
@@ -3747,43 +3763,6 @@ private fun ModernCollectionPoster(
         }
         }
 
-        if (!isTv) Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(
-                Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    item.title,
-                    color =
-                        if (active) Color.White
-                        else Color(0xFFD4D7DC),
-                    fontWeight =
-                        if (focused) FontWeight.SemiBold
-                        else FontWeight.Medium,
-                    style = if (isTv) {
-                        modernTvTileTitleStyle()
-                    } else {
-                        MaterialTheme.typography.bodyMedium
-                    },
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (subtitle.isNotBlank()) {
-                    Text(
-                        subtitle,
-                        color =
-                            if (active) Color(0xFFBFC3CA)
-                            else Color(0xFF858B94),
-                        style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.labelSmall,
-                        maxLines = if (isTv) 1 else 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
         onFavorite?.let { favoriteAction ->
             ModernTileActionsMenu(
                 expanded = menuOpen,
