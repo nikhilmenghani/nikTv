@@ -11,6 +11,8 @@ import android.content.res.Configuration
 import android.view.Gravity
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -1135,7 +1137,8 @@ private fun ModernNewEpisodesRow(
                 isFavorite = favorites.any { it.key == favorite.key },
                 onFavorite = { toggleFavorite(favorite) },
                 onOpenSeries = { openSeries(watched.series) },
-                onClear = { clear(watched, episode) }
+                onClear = { clear(watched, episode) },
+                homeCardScale = 0.82f
             )
         }
     }
@@ -1957,6 +1960,7 @@ private fun ModernContinueRow(
                         saved.key.contains(recent.media.id)
                     }
                 },
+                homeCardScale = 0.82f,
                 modifier = Modifier.focusRequester(
                     requesters.getOrPut(focusId) { FocusRequester() }
                 )
@@ -1978,6 +1982,7 @@ internal fun ModernCompactMediaCard(
     onOpenSeries: (() -> Unit)? = null,
     progress: PlaybackProgress? = null,
     sourceLabel: String? = null,
+    homeCardScale: Float = 1f,
     modifier: Modifier = Modifier
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -1992,13 +1997,13 @@ internal fun ModernCompactMediaCard(
     val collectionPosterColumns = modernPosterColumns(configuration, isTv)
     val collectionPosterHorizontalPaddingDp = if (isTv) 24f else 18f
     val collectionPosterHorizontalSpacingDp = if (isTv) 20f else 12f
-    val collectionPosterWidth = (
+    val collectionPosterWidth = ((
         (
             configuration.screenWidthDp.toFloat() -
                 (collectionPosterHorizontalPaddingDp * 2f) -
                 (collectionPosterHorizontalSpacingDp * (collectionPosterColumns - 1).toFloat())
         ) / collectionPosterColumns.toFloat()
-    ).coerceAtLeast(1f).dp
+    ) * if (isTv) homeCardScale else 1f).coerceAtLeast(1f).dp
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val focusProgress by animateFloatAsState(
@@ -2013,6 +2018,18 @@ internal fun ModernCompactMediaCard(
     )
     val visualProgress =
         if (remoteNavigationActive) focusProgress else pressProgress
+    val tvFocusScale by animateFloatAsState(
+        targetValue = if (isTv && focused) 1.06f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "modernCompactTvFocusScale"
+    )
+    // Reserve the focused card's maximum footprint in the row. The animated
+    // surface can grow without changing focus bounds, pushing the next Home
+    // section, or expanding beyond the leading edge of the LazyRow.
+    val focusEnvelopeScale = if (isTv) 1.06f else 1f
     val active =
         if (remoteNavigationActive) focused else pressed
     val artworkScale =
@@ -2050,8 +2067,9 @@ internal fun ModernCompactMediaCard(
      */
     Box(
         modifier = modifier.then(returningTile.modifier)
-            .width(collectionPosterWidth)
-            .zIndex(visualProgress)
+            .width(collectionPosterWidth * focusEnvelopeScale)
+            .aspectRatio(2f / 3f)
+            .zIndex(if (focused) 2f else visualProgress)
             .touchTileShadow(isTv = isTv,
                 elevation =
                     (
@@ -2081,8 +2099,13 @@ internal fun ModernCompactMediaCard(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f),
+                .align(Alignment.Center)
+                .width(collectionPosterWidth)
+                .aspectRatio(2f / 3f)
+                .graphicsLayer {
+                    scaleX = tvFocusScale
+                    scaleY = tvFocusScale
+                },
             shape = shape,
             color = Color(0xFF202020),
             border = BorderStroke(
@@ -2125,14 +2148,17 @@ internal fun ModernCompactMediaCard(
                     Surface(
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .padding(10.dp),
+                            .padding((10f * if (isTv) homeCardScale else 1f).dp),
                         shape = RoundedCornerShape(7.dp),
                         color = Color(0xFF28556A),
                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
                     ) {
                         Text(
                             text = label,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(
+                                horizontal = (8f * if (isTv) homeCardScale else 1f).dp,
+                                vertical = (4f * if (isTv) homeCardScale else 1f).dp
+                            ),
                             color = Color.White,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold
@@ -2145,16 +2171,24 @@ internal fun ModernCompactMediaCard(
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
                         .padding(
-                            start = 9.dp,
-                            end = 9.dp,
-                            bottom = if (watchedFraction > 0f) 11.dp else 8.dp
+                            start = (9f * if (isTv) homeCardScale else 1f).dp,
+                            end = (9f * if (isTv) homeCardScale else 1f).dp,
+                            bottom = (
+                                (if (watchedFraction > 0f) 11f else 8f) *
+                                    if (isTv) homeCardScale else 1f
+                            ).dp
                         ),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(
+                        (2f * if (isTv) homeCardScale else 1f).dp
+                    )
                 ) {
                     Text(
                         item.title,
                         style = when {
-                            isTv -> modernTvTileTitleStyle(shadowed = true)
+                            isTv -> modernTvTileTitleStyle(shadowed = true).copy(
+                                fontSize = (12f * homeCardScale).sp,
+                                lineHeight = (14f * homeCardScale).sp
+                            )
                             isTablet -> MaterialTheme.typography.labelLarge.copy(
                                 fontSize = 12.sp,
                                 lineHeight = 14.sp
@@ -2176,7 +2210,10 @@ internal fun ModernCompactMediaCard(
                             subtitle,
                             color = Color.White.copy(alpha = 0.76f),
                             style = when {
-                                isTv -> modernTvTileSubtitleStyle(shadowed = true)
+                                isTv -> modernTvTileSubtitleStyle(shadowed = true).copy(
+                                    fontSize = (10f * homeCardScale).sp,
+                                    lineHeight = (12f * homeCardScale).sp
+                                )
                                 isTablet -> MaterialTheme.typography.labelSmall.copy(
                                     fontSize = 10.sp,
                                     lineHeight = 12.sp
@@ -2197,7 +2234,7 @@ internal fun ModernCompactMediaCard(
                         Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .height(if (isTv) 5.dp else 4.dp)
+                            .height(if (isTv) (5f * homeCardScale).dp else 4.dp)
                             .background(
                                 Color.White.copy(alpha = 0.16f),
                                 RoundedCornerShape(50)
