@@ -2480,13 +2480,11 @@ private fun ModernTmdbCollection(
     }
     LaunchedEffect(section, focusedTmdbDetails?.first?.id) {
         val media = focusedTmdbDetails?.first ?: return@LaunchedEffect
-        if (isTv) {
-            delay(450L)
-            enrichFocusedMetadata(
-                media,
-                if (section.series) CatalogType.SERIES else CatalogType.MOVIES
-            )
-        }
+        delay(450L)
+        enrichFocusedMetadata(
+            media,
+            if (section.series) CatalogType.SERIES else CatalogType.MOVIES
+        )
     }
 
     // The destination's saveable scope retains the viewport across playback
@@ -2662,6 +2660,11 @@ private fun ModernTmdbCollection(
                     onFavorite = {
                         toggleFavorite(FavoriteItem(FavoriteKind.SERIES, media, source = FavoriteSource.TMDB))
                     },
+                    onRequestDescriptionMetadata = {
+                        focusScope.launch {
+                            enrichFocusedMetadata(media, CatalogType.SERIES)
+                        }
+                    },
                     isTv = isTv
                 )
             }
@@ -2725,6 +2728,11 @@ private fun ModernTmdbCollection(
                     },
                     onFavorite = {
                         toggleFavorite(FavoriteItem(FavoriteKind.MOVIE, media, source = FavoriteSource.TMDB))
+                    },
+                    onRequestDescriptionMetadata = {
+                        focusScope.launch {
+                            enrichFocusedMetadata(media, CatalogType.MOVIES)
+                        }
                     },
                     isTv = isTv
                 )
@@ -2836,7 +2844,7 @@ private fun ModernIptvCollection(
     val focusedMedia = displayedItems.getOrNull(focusedPosterIndex)
     LaunchedEffect(category.id, category.type, focusedMedia?.id) {
         val media = focusedMedia ?: return@LaunchedEffect
-        if (isTv && category.type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
+        if (category.type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
             // D-pad users often cross several cards quickly. Only enrich the
             // title they settle on, and cancellation follows focus changes.
             delay(450L)
@@ -3059,6 +3067,11 @@ private fun ModernIptvCollection(
                 },
                 isFavorite = favorite,
                 onFavorite = favoriteAction,
+                onRequestDescriptionMetadata = {
+                    focusScope.launch {
+                        enrichFocusedMetadata(media, category.type)
+                    }
+                },
                 isTv = isTv
             )
         }
@@ -3499,6 +3512,7 @@ private fun ModernCollectionPoster(
     offlineRevision: Long = 0L,
     isFavorite: Boolean = false,
     onFavorite: (() -> Unit)? = null,
+    onRequestDescriptionMetadata: (() -> Unit)? = null,
     compactLandscape: Boolean = false,
     isTv: Boolean
 ) {
@@ -3613,7 +3627,10 @@ private fun ModernCollectionPoster(
                     interactionSource = interactionSource,
                     onClick = returningTile.open,
                     onLongClick = if (onFavorite != null) {
-                        { menuOpen = true }
+                        {
+                            onRequestDescriptionMetadata?.invoke()
+                            menuOpen = true
+                        }
                     } else {
                         null
                     }
