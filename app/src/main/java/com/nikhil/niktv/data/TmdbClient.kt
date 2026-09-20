@@ -159,7 +159,12 @@ class TmdbClient {
         if (!configured) return@withContext emptyList()
 
         val cached = trendingMovieCache
-        if (!forceRefresh && cached != null && !cached.expired()) {
+        if (
+            !forceRefresh &&
+            cached != null &&
+            !cached.expired() &&
+            cached.items.size >= limit.coerceAtLeast(1)
+        ) {
             return@withContext cached.items.take(limit.coerceAtLeast(1))
         }
 
@@ -178,7 +183,12 @@ class TmdbClient {
         if (!configured) return@withContext emptyList()
 
         val cached = trendingSeriesCache
-        if (!forceRefresh && cached != null && !cached.expired()) {
+        if (
+            !forceRefresh &&
+            cached != null &&
+            !cached.expired() &&
+            cached.items.size >= limit.coerceAtLeast(1)
+        ) {
             return@withContext cached.items.take(limit.coerceAtLeast(1))
         }
 
@@ -197,7 +207,12 @@ class TmdbClient {
         if (!configured) return@withContext emptyList()
 
         val cached = thrillerMovieCache
-        if (!forceRefresh && cached != null && !cached.expired()) {
+        if (
+            !forceRefresh &&
+            cached != null &&
+            !cached.expired() &&
+            cached.items.size >= limit.coerceAtLeast(1)
+        ) {
             return@withContext cached.items.take(limit.coerceAtLeast(1))
         }
 
