@@ -195,6 +195,7 @@ internal fun CatalogScreen(
     openModernIptvCategory: (Category) -> Unit,
     closeModernSection: () -> Unit,
     loadMoreModernTmdbSection: () -> Unit,
+    enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
     openOfflineDownloads: () -> Unit,
     closeOfflineDownloads: () -> Unit,
     playOfflineDownload: (OfflineMediaDownload) -> Unit
@@ -417,7 +418,8 @@ internal fun CatalogScreen(
                     openModernTmdbSection = openModernTmdbSection,
                     openModernIptvCategory = openModernIptvCategory,
                     closeModernSection = closeModernSection,
-                    loadMoreModernTmdbSection = loadMoreModernTmdbSection
+                    loadMoreModernTmdbSection = loadMoreModernTmdbSection,
+                    enrichFocusedCatalogMetadata = enrichFocusedCatalogMetadata
                 )
                 }
             }

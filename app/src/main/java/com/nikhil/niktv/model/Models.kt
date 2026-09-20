@@ -127,6 +127,8 @@ data class MediaItem(
     val externalTmdbId: Int? = null,
     /** Episode air date in ISO-8601 form when supplied by IPTV or TMDB. */
     val episodeAirDate: String? = null,
+    /** TMDB principal cast, populated lazily for focused movie and series titles. */
+    val cast: List<String> = emptyList(),
     /** Search-only routing identity; never persisted in favourites or provider caches. */
     @kotlinx.serialization.Transient val searchResultType: SearchContentType? = null
 )

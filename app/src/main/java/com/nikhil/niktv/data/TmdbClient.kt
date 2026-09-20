@@ -30,7 +30,8 @@ data class TmdbMovie(
     val posterUrl: String?,
     val backdropUrl: String?,
     val releaseDate: String?,
-    val voteAverage: Double?
+    val voteAverage: Double?,
+    val cast: List<String> = emptyList()
 ) {
     val releaseYear: Int?
         get() = releaseDate?.take(4)?.toIntOrNull()
@@ -40,7 +41,8 @@ data class TmdbMovie(
         title = title,
         logo = posterUrl ?: backdropUrl,
         command = null,
-        description = overview
+        description = overview,
+        cast = cast
     )
 }
 
@@ -52,7 +54,8 @@ data class TmdbSeries(
     val posterUrl: String?,
     val backdropUrl: String?,
     val firstAirDate: String?,
-    val voteAverage: Double?
+    val voteAverage: Double?,
+    val cast: List<String> = emptyList()
 ) {
     val firstAirYear: Int?
         get() = firstAirDate?.take(4)?.toIntOrNull()
@@ -62,7 +65,8 @@ data class TmdbSeries(
         title = name,
         logo = posterUrl ?: backdropUrl,
         command = null,
-        description = overview
+        description = overview,
+        cast = cast
     )
 }
 
@@ -283,6 +287,48 @@ class TmdbClient {
         null
     }
 
+    suspend fun confidentlyMatchMovie(item: MediaItem): TmdbMovie? = withContext(Dispatchers.IO) {
+        if (!configured) return@withContext null
+        item.externalTmdbId?.let { id ->
+            val root = execute("/3/movie/$id", emptyMap())
+            return@withContext root.toTmdbMovie()
+        }
+        val queries = listOf(
+            item.title.substringAfter(':').substringBefore(" - ").trim(),
+            item.title.substringBefore(" - ").trim(),
+            item.title.trim()
+        ).filter { it.isNotBlank() }.distinct()
+        for (query in queries) {
+            val wanted = query.tmdbLookupTitle()
+            fetchMovies("/3/search/movie", 8, mapOf("query" to wanted)).firstOrNull { candidate ->
+                candidate.title.tmdbLookupTitle() == wanted ||
+                    candidate.originalTitle.tmdbLookupTitle() == wanted
+            }?.let { return@withContext it }
+        }
+        null
+    }
+
+    suspend fun castFor(type: com.nikhil.niktv.model.CatalogType, tmdbId: Int): List<String> =
+        withContext(Dispatchers.IO) {
+            if (!configured || type !in setOf(
+                    com.nikhil.niktv.model.CatalogType.MOVIES,
+                    com.nikhil.niktv.model.CatalogType.SERIES
+                )
+            ) return@withContext emptyList()
+            val path = if (type == com.nikhil.niktv.model.CatalogType.MOVIES) {
+                "/3/movie/$tmdbId/credits"
+            } else {
+                "/3/tv/$tmdbId/credits"
+            }
+            execute(path, emptyMap())["cast"]?.jsonArray.orEmpty()
+                .mapNotNull { entry ->
+                    entry.jsonObject["name"]?.jsonPrimitive?.contentOrNull
+                        ?.trim()?.takeIf(String::isNotBlank)
+                }
+                .distinct()
+                .take(6)
+        }
+
     suspend fun seasonEpisodes(seriesId: Int, seasonNumber: Int): List<TmdbEpisode> = withContext(Dispatchers.IO) {
         if (!configured) return@withContext emptyList()
         val root = execute("/3/tv/$seriesId/season/$seasonNumber", emptyMap())
@@ -335,6 +381,23 @@ class TmdbClient {
             this["overview"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
             poster?.let { "$IMAGE_BASE_URL$it" }, backdrop?.let { "$BACKDROP_BASE_URL$it" },
             this["first_air_date"]?.jsonPrimitive?.contentOrNull,
+            this["vote_average"]?.jsonPrimitive?.doubleOrNull
+        )
+    }
+
+    private fun kotlinx.serialization.json.JsonObject.toTmdbMovie(): TmdbMovie? {
+        val id = this["id"]?.jsonPrimitive?.intOrNull ?: return null
+        val title = this["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (title.isBlank()) return null
+        val originalTitle = this["original_title"]?.jsonPrimitive?.contentOrNull
+            ?.trim().orEmpty().ifBlank { title }
+        val poster = this["poster_path"]?.jsonPrimitive?.contentOrNull
+        val backdrop = this["backdrop_path"]?.jsonPrimitive?.contentOrNull
+        return TmdbMovie(
+            id, title, originalTitle,
+            this["overview"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
+            poster?.let { "$IMAGE_BASE_URL$it" }, backdrop?.let { "$BACKDROP_BASE_URL$it" },
+            this["release_date"]?.jsonPrimitive?.contentOrNull,
             this["vote_average"]?.jsonPrimitive?.doubleOrNull
         )
     }
@@ -640,7 +703,7 @@ private fun String.tmdbLookupTitle(): String =
         .replace(Regex("\\p{M}+"), "")
         .replace(Regex("\\b(?:19|20)\\d{2}\\b"), " ")
         .replace(Regex("\\([^)]*(?:english|hindi|tamil|telugu|season|complete)[^)]*\\)"), " ")
-        .replace(Regex("\\b(?:4k|uhd|hdr|2160p|1080p|720p|english|multi|dubbed)\\b"), " ")
+        .replace(Regex("\\b(?:4k|uhd|hdr|2160p|1080p|720p|english|multi|dubbed|cam|hdcam|hdts|telesync|dvdscr)\\b"), " ")
         .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
         .trim()
         .replace(Regex("\\s+"), " ")

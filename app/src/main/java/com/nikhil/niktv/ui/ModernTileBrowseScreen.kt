@@ -18,6 +18,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -58,6 +59,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.HeartBroken
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
@@ -228,6 +230,7 @@ internal fun ModernTileBrowseScreen(
     loadMoreTmdb: () -> Unit,
     loadMoreIptv: () -> Unit,
     refreshIptv: () -> Unit,
+    enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
     removeIptvCategory: (CatalogType, String) -> Unit,
@@ -258,6 +261,7 @@ internal fun ModernTileBrowseScreen(
                         openSeries = openTmdbSeries,
                         toggleFavorite = toggleFavorite,
                         loadMore = loadMoreTmdb,
+                        enrichFocusedMetadata = enrichFocusedCatalogMetadata,
                         isTv = isTv
                     )
                 }
@@ -271,6 +275,7 @@ internal fun ModernTileBrowseScreen(
                         toggleFavorite = toggleFavorite,
                         loadMore = loadMoreIptv,
                         refresh = refreshIptv,
+                        enrichFocusedMetadata = enrichFocusedCatalogMetadata,
                         isTv = isTv
                     )
                 }
@@ -2271,6 +2276,7 @@ private fun ModernTileActionsMenu(
     dismiss: () -> Unit,
     toggleFavorite: () -> Unit,
     openSeries: (() -> Unit)? = null,
+    viewDescription: (() -> Unit)? = null,
     clear: (() -> Unit)?,
     isPinned: Boolean = false,
     togglePin: (() -> Unit)? = null
@@ -2282,6 +2288,16 @@ private fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        viewDescription?.let { descriptionAction ->
+            NikDropdownMenuItem(
+                text = { Text("View description") },
+                leadingIcon = { Icon(Icons.Default.Info, null) },
+                onClick = {
+                    dismiss()
+                    descriptionAction()
+                }
+            )
+        }
         openSeries?.let { openAction ->
             NikDropdownMenuItem(
                 text = { Text("Open series") },
@@ -2415,10 +2431,11 @@ private fun ModernTmdbCollection(
     openSeries: (TrendingSeries) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     loadMore: () -> Unit,
+    enrichFocusedMetadata: suspend (MediaItem, CatalogType) -> Unit,
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
-    val columns = modernPosterColumns(configuration, isTv)
+    val columns = modernCollectionPosterColumns(configuration, isTv)
     val fullSpan:
         androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() ->
             GridItemSpan = {
@@ -2437,6 +2454,37 @@ private fun ModernTmdbCollection(
     val count = focusIds.size
     var focusedPosterIndex by remember(section) {
         mutableIntStateOf(-1)
+    }
+    val focusedTmdbDetails: Pair<MediaItem, String>? = if (section.series) {
+        state.modernTmdbSeries.getOrNull(focusedPosterIndex)?.let { entry ->
+            entry.tmdb.asMediaItem() to buildList {
+                entry.tmdb.firstAirYear?.let { add(it.toString()) }
+                entry.tmdb.voteAverage?.takeIf { it > 0.0 }?.let {
+                    add("★ ${String.format(java.util.Locale.US, "%.1f", it)}")
+                }
+                add("Series")
+            }.joinToString(" · ")
+        }
+    } else {
+        state.modernTmdbMovies.getOrNull(focusedPosterIndex)?.let { entry ->
+            entry.tmdb.asMediaItem() to buildList {
+                entry.tmdb.releaseYear?.let { add(it.toString()) }
+                entry.tmdb.voteAverage?.takeIf { it > 0.0 }?.let {
+                    add("★ ${String.format(java.util.Locale.US, "%.1f", it)}")
+                }
+                add("Movie")
+            }.joinToString(" · ")
+        }
+    }
+    LaunchedEffect(section, focusedTmdbDetails?.first?.id) {
+        val media = focusedTmdbDetails?.first ?: return@LaunchedEffect
+        if (isTv) {
+            delay(450L)
+            enrichFocusedMetadata(
+                media,
+                if (section.series) CatalogType.SERIES else CatalogType.MOVIES
+            )
+        }
     }
 
     // The destination's saveable scope retains the viewport across playback
@@ -2458,14 +2506,29 @@ private fun ModernTmdbCollection(
                     FocusRequester()
                 }
             focusScope.launch {
-                // Header is lazy-grid item zero; posters begin at item one.
-                val targetGridIndex = targetIndex + 1
-                val alreadyVisible =
-                    gridState.layoutInfo.visibleItemsInfo.any {
-                        it.index == targetGridIndex
+                val targetGridIndex = targetIndex
+                val targetInfo = gridState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.index == targetGridIndex }
+                val fullyVisible = targetInfo != null &&
+                    targetInfo.offset.y >= gridState.layoutInfo.viewportStartOffset &&
+                    targetInfo.offset.y + targetInfo.size.height <= gridState.layoutInfo.viewportEndOffset
+                if (!fullyVisible) {
+                    // Reveal only the clipped part of an already composed
+                    // row. This avoids snapping the destination to the top.
+                    if (targetInfo != null) {
+                        val viewportStart = gridState.layoutInfo.viewportStartOffset
+                        val viewportEnd = gridState.layoutInfo.viewportEndOffset
+                        val itemStart = targetInfo.offset.y
+                        val itemEnd = itemStart + targetInfo.size.height
+                        val delta = when {
+                            itemStart < viewportStart -> itemStart - viewportStart
+                            itemEnd > viewportEnd -> itemEnd - viewportEnd
+                            else -> 0
+                        }
+                        if (delta != 0) gridState.scrollBy(delta.toFloat())
+                    } else {
+                        gridState.scrollToItem(targetGridIndex)
                     }
-                if (!alreadyVisible) {
-                    gridState.scrollToItem(targetGridIndex)
                     withTimeoutOrNull(1_000L) {
                         snapshotFlow {
                             gridState.layoutInfo.visibleItemsInfo.any {
@@ -2477,7 +2540,7 @@ private fun ModernTmdbCollection(
                 withFrameNanos { }
                 // visibleItemsInfo updates before the focus target's modifier
                 // is fully attached on some Fire TV/Compose combinations.
-                delay(120L)
+                delay(40L)
                 repeat(3) { attempt ->
                     if (runCatching {
                             targetRequester.requestFocus()
@@ -2497,14 +2560,30 @@ private fun ModernTmdbCollection(
         focusedIndex = { focusedPosterIndex },
         moveFocus = moveFocusToIndex
     )
-
-
+    Column(Modifier.fillMaxSize()) {
+        ModernCollectionHeader(
+            title = section.title,
+            subtitle =
+                "TMDB · " +
+                    if (section.series) {
+                        "Series · $count loaded"
+                    } else {
+                        "Movies · $count loaded"
+                    },
+            close = close,
+            modifier = Modifier.padding(
+                start = if (isTv) 24.dp else 18.dp,
+                end = if (isTv) 24.dp else 18.dp,
+                top = 16.dp
+            )
+        )
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = gridState,
         modifier = Modifier
-            .fillMaxSize()
+            .weight(1f)
+            .fillMaxWidth()
             .modernGridVerticalFocus(
                 enabled = focusedPosterIndex >= 0,
                 index = focusedPosterIndex,
@@ -2525,20 +2604,6 @@ private fun ModernTmdbCollection(
             if (isTv) 20.dp else 12.dp
         )
     ) {
-        item("collection-header", span = fullSpan) {
-            ModernCollectionHeader(
-                title = section.title,
-                subtitle =
-                    "TMDB · " +
-                        if (section.series) {
-                            "Series · $count loaded"
-                        } else {
-                            "Movies · $count loaded"
-                        },
-                close = close
-            )
-        }
-
         if (section.series) {
             gridItemsIndexed(
                 items = state.modernTmdbSeries,
@@ -2567,13 +2632,6 @@ private fun ModernTmdbCollection(
                             itemFocusRequesters.getOrPut(media.id) {
                                 FocusRequester()
                             }
-                        )
-                        .modernGridVerticalFocus(
-                            enabled = true,
-                            index = index,
-                            columns = columns,
-                            itemCount = count,
-                            moveFocus = moveFocusToIndex
                         ),
                     subtitle = buildList {
                         entry.tmdb.firstAirYear?.let {
@@ -2638,13 +2696,6 @@ private fun ModernTmdbCollection(
                             itemFocusRequesters.getOrPut(media.id) {
                                 FocusRequester()
                             }
-                        )
-                        .modernGridVerticalFocus(
-                            enabled = true,
-                            index = index,
-                            columns = columns,
-                            itemCount = count,
-                            moveFocus = moveFocusToIndex
                         ),
                     subtitle = buildList {
                         entry.tmdb.releaseYear?.let {
@@ -2726,6 +2777,7 @@ private fun ModernTmdbCollection(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -2737,6 +2789,7 @@ private fun ModernIptvCollection(
     toggleFavorite: (FavoriteItem) -> Unit,
     loadMore: () -> Unit,
     refresh: () -> Unit,
+    enrichFocusedMetadata: suspend (MediaItem, CatalogType) -> Unit,
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
@@ -2761,7 +2814,7 @@ private fun ModernIptvCollection(
         isLiveTv && isTv -> 2
         isLiveTv && themedLiveTiles && configuration.screenWidthDp >= 800 -> 3
         isLiveTv && themedLiveTiles -> 2
-        else -> modernPosterColumns(configuration, isTv)
+        else -> modernCollectionPosterColumns(configuration, isTv)
     }
     val fullSpan:
         androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() ->
@@ -2777,6 +2830,16 @@ private fun ModernIptvCollection(
     val focusIds = displayedItems.map { it.id }
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
+    }
+    val focusedMedia = displayedItems.getOrNull(focusedPosterIndex)
+    LaunchedEffect(category.id, category.type, focusedMedia?.id) {
+        val media = focusedMedia ?: return@LaunchedEffect
+        if (isTv && category.type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
+            // D-pad users often cross several cards quickly. Only enrich the
+            // title they settle on, and cancellation follows focus changes.
+            delay(450L)
+            enrichFocusedMetadata(media, category.type)
+        }
     }
     val viewportKey = "$profileKey:${category.type.name}:${category.id}"
     val restoredViewport = remember(viewportKey) {
@@ -2808,14 +2871,27 @@ private fun ModernIptvCollection(
                     FocusRequester()
                 }
             focusScope.launch {
-                // Header is lazy-grid item zero; posters begin at item one.
-                val targetGridIndex = targetIndex + 1
-                val alreadyVisible =
-                    gridState.layoutInfo.visibleItemsInfo.any {
-                        it.index == targetGridIndex
+                val targetGridIndex = targetIndex
+                val targetInfo = gridState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.index == targetGridIndex }
+                val fullyVisible = targetInfo != null &&
+                    targetInfo.offset.y >= gridState.layoutInfo.viewportStartOffset &&
+                    targetInfo.offset.y + targetInfo.size.height <= gridState.layoutInfo.viewportEndOffset
+                if (!fullyVisible) {
+                    if (targetInfo != null) {
+                        val viewportStart = gridState.layoutInfo.viewportStartOffset
+                        val viewportEnd = gridState.layoutInfo.viewportEndOffset
+                        val itemStart = targetInfo.offset.y
+                        val itemEnd = itemStart + targetInfo.size.height
+                        val delta = when {
+                            itemStart < viewportStart -> itemStart - viewportStart
+                            itemEnd > viewportEnd -> itemEnd - viewportEnd
+                            else -> 0
+                        }
+                        if (delta != 0) gridState.scrollBy(delta.toFloat())
+                    } else {
+                        gridState.scrollToItem(targetGridIndex)
                     }
-                if (!alreadyVisible) {
-                    gridState.scrollToItem(targetGridIndex)
                     withTimeoutOrNull(1_000L) {
                         snapshotFlow {
                             gridState.layoutInfo.visibleItemsInfo.any {
@@ -2825,7 +2901,7 @@ private fun ModernIptvCollection(
                     }
                 }
                 withFrameNanos { }
-                delay(120L)
+                delay(40L)
                 repeat(3) { attempt ->
                     if (runCatching {
                             targetRequester.requestFocus()
@@ -2851,11 +2927,54 @@ private fun ModernIptvCollection(
         itemFocusRequesters, loadMore
     )
 
+    Column(Modifier.fillMaxSize()) {
+        ModernCollectionHeader(
+            title = category.title,
+            subtitle = "IPTV · ${category.type.title} · ${state.items.size} loaded",
+            close = close,
+            action = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = false,
+                        onClick = refresh,
+                        enabled = !state.loading && !state.catalogLoadingMore && !state.categoryRefreshing,
+                        label = { Text(if (state.categoryRefreshing) "Refreshing…" else "Refresh") },
+                        leadingIcon = { Icon(Icons.Default.RestartAlt, null, Modifier.size(17.dp)) }
+                    )
+                    if (isLiveTv) {
+                        FilterChip(
+                            selected = themedLiveTiles,
+                            onClick = {
+                                themedLiveTiles = true
+                                liveTilePreferences.edit().putBoolean("themed", true).apply()
+                            },
+                            label = { Text("Theme") },
+                            leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(17.dp)) }
+                        )
+                        FilterChip(
+                            selected = !themedLiveTiles,
+                            onClick = {
+                                themedLiveTiles = false
+                                liveTilePreferences.edit().putBoolean("themed", false).apply()
+                            },
+                            label = { Text("Thumbnails") }
+                        )
+                    }
+                }
+            },
+            modifier = Modifier.padding(
+                start = if (isTv) 24.dp else 18.dp,
+                end = if (isTv) 24.dp else 18.dp,
+                top = 16.dp
+            )
+        )
+
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
         state = gridState,
         modifier = Modifier
-            .fillMaxSize()
+            .weight(1f)
+            .fillMaxWidth()
             .modernGridVerticalFocus(
                 enabled = focusedPosterIndex >= 0,
                 index = focusedPosterIndex,
@@ -2876,51 +2995,6 @@ private fun ModernIptvCollection(
             if (isTv) 20.dp else 12.dp
         )
     ) {
-        item("collection-header", span = fullSpan) {
-            ModernCollectionHeader(
-                title = category.title,
-                subtitle =
-                    "IPTV · ${category.type.title} · ${state.items.size} loaded",
-                close = close,
-                action = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = false,
-                            onClick = refresh,
-                            enabled = !state.loading && !state.catalogLoadingMore && !state.categoryRefreshing,
-                            label = { Text(if (state.categoryRefreshing) "Refreshing…" else "Refresh") },
-                            leadingIcon = { Icon(Icons.Default.RestartAlt, null, Modifier.size(17.dp)) }
-                        )
-                        if (isLiveTv) {
-                            FilterChip(
-                                selected = themedLiveTiles,
-                                onClick = {
-                                    themedLiveTiles = true
-                                    liveTilePreferences.edit()
-                                        .putBoolean("themed", true)
-                                        .apply()
-                                },
-                                label = { Text("Theme") },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Tune, null, Modifier.size(17.dp))
-                                }
-                            )
-                            FilterChip(
-                                selected = !themedLiveTiles,
-                                onClick = {
-                                    themedLiveTiles = false
-                                    liveTilePreferences.edit()
-                                        .putBoolean("themed", false)
-                                        .apply()
-                                },
-                                label = { Text("Thumbnails") }
-                            )
-                        }
-                    }
-                }
-            )
-        }
-
         gridItemsIndexed(
             items = displayedItems,
             key = { _, media ->
@@ -2940,13 +3014,7 @@ private fun ModernIptvCollection(
                         FocusRequester()
                     }
                 )
-                .modernGridVerticalFocus(
-                    enabled = true,
-                    index = index,
-                    columns = columns,
-                    itemCount = focusIds.size,
-                    moveFocus = moveFocusToIndex
-                )
+
             val favorite = state.favorites.any {
                 it.kind == kind && it.media.id == media.id
             }
@@ -3019,6 +3087,7 @@ private fun ModernIptvCollection(
             }
         }
     }
+    }
 }
 
 internal fun modernPosterColumns(
@@ -3034,15 +3103,27 @@ internal fun modernPosterColumns(
     else -> 2
 }
 
+private fun modernCollectionPosterColumns(
+    configuration: Configuration,
+    isTv: Boolean
+): Int = when {
+    !isTv -> modernPosterColumns(configuration, false)
+    configuration.screenWidthDp >= 1400 -> 7
+    configuration.screenWidthDp >= 1100 -> 6
+    configuration.screenWidthDp >= 760 -> 5
+    else -> 4
+}
+
 @Composable
 private fun ModernCollectionHeader(
     title: String,
     subtitle: String,
     close: () -> Unit,
-    action: (@Composable () -> Unit)? = null
+    action: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
             .padding(bottom = 6.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -3072,6 +3153,100 @@ private fun ModernCollectionHeader(
         }
         action?.invoke()
     }
+}
+
+@Composable
+private fun FullDescriptionDialog(
+    title: String,
+    description: String,
+    cast: List<String> = emptyList(),
+    dismiss: () -> Unit
+) {
+    val scrollState = rememberScrollState()
+    val scrollFocusRequester = remember { FocusRequester() }
+    val closeFocusRequester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(title) {
+        withFrameNanos { }
+        runCatching { closeFocusRequester.requestFocus() }
+    }
+
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (cast.isNotEmpty()) {
+                    Text(
+                        "Cast · ${cast.take(6).joinToString(", ")}",
+                        color = Color(0xFFADB3BF),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(scrollState)
+                    .focusRequester(scrollFocusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        val step = 150
+                        when (event.key) {
+                            Key.DirectionDown -> {
+                                if (scrollState.value >= scrollState.maxValue) false
+                                else {
+                                    scope.launch {
+                                        scrollState.animateScrollTo(
+                                            (scrollState.value + step).coerceAtMost(scrollState.maxValue)
+                                        )
+                                    }
+                                    true
+                                }
+                            }
+                            Key.DirectionUp -> {
+                                if (scrollState.value <= 0) false
+                                else {
+                                    scope.launch {
+                                        scrollState.animateScrollTo(
+                                            (scrollState.value - step).coerceAtLeast(0)
+                                        )
+                                    }
+                                    true
+                                }
+                            }
+                            else -> false
+                        }
+                    }
+            ) {
+                Text(
+                    description,
+                    color = Color(0xFFD5D7DC),
+                    style = MaterialTheme.typography.bodyLarge,
+                    lineHeight = 24.sp
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = dismiss,
+                modifier = Modifier
+                    .focusRequester(closeFocusRequester)
+                    .remoteFocusFrame(RoundedCornerShape(8.dp))
+            ) {
+                Text("Close")
+            }
+        },
+        containerColor = Color(0xFF17191F),
+        titleContentColor = Color.White,
+        textContentColor = Color(0xFFD5D7DC)
+    )
 }
 
 @Composable
@@ -3329,6 +3504,7 @@ private fun ModernCollectionPoster(
 
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var descriptionDialogOpen by remember(item.id) { mutableStateOf(false) }
     val context = LocalContext.current
     val offlineInfo = remember(offlineDownload, offlineRevision) {
         offlineDownload?.let {
@@ -3357,6 +3533,12 @@ private fun ModernCollectionPoster(
     val visualProgress =
         if (isTv) focusProgress
         else maxOf(focusProgress, pressProgress)
+    val tvFocusScale by animateFloatAsState(
+        targetValue = if (isTv && focused) 1.06f else 1f,
+        animationSpec = tween(durationMillis = 170),
+        label = "modernCollectionTvFocusScale"
+    )
+    val focusEnvelopeScale = if (isTv) 1.06f else 1f
     val active = focused || pressed
     val scale =
         1f + (
@@ -3380,7 +3562,7 @@ private fun ModernCollectionPoster(
     Column(
         modifier.then(returningTile.modifier)
             .fillMaxWidth()
-            .zIndex(visualProgress),
+            .zIndex(if (focused) 2f else visualProgress),
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         /*
@@ -3390,9 +3572,19 @@ private fun ModernCollectionPoster(
          * second explicit focus node here can consume the first remote
          * activation before the click callback is dispatched.
          */
-        Surface(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .aspectRatio(if (compactLandscape) 4f / 3f else 2f / 3f),
+            contentAlignment = Alignment.Center
+        ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(1f / focusEnvelopeScale)
+                .graphicsLayer {
+                    scaleX = tvFocusScale
+                    scaleY = tvFocusScale
+                }
                 .touchTileShadow(isTv = isTv,
                     elevation =
                         (
@@ -3436,8 +3628,7 @@ private fun ModernCollectionPoster(
         ) {
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(if (compactLandscape) 4f / 3f else 2f / 3f)
+                    .fillMaxSize()
                     // Animate only the visual artwork. The Surface above owns
                     // focus and must keep fixed bounds so lazy-grid scrolling
                     // does not chase every animation frame.
@@ -3452,6 +3643,45 @@ private fun ModernCollectionPoster(
                     context = context,
                     modifier = Modifier.fillMaxSize()
                 )
+
+                if (isTv) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    0.58f to Color.Transparent,
+                                    1f to Color.Black.copy(alpha = 0.94f)
+                                )
+                            )
+                    )
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .padding(start = 9.dp, end = 9.dp, bottom = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            item.title,
+                            color = Color.White,
+                            style = modernTvTileTitleStyle(shadowed = true),
+                            fontWeight = if (focused) FontWeight.Bold else FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (subtitle.isNotBlank()) {
+                            Text(
+                                subtitle,
+                                color = Color.White.copy(alpha = 0.76f),
+                                style = modernTvTileSubtitleStyle(shadowed = true),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
 
                 if (downloadActive) {
                     val percent = offlineInfo?.percent?.coerceIn(0f, 100f)
@@ -3515,8 +3745,9 @@ private fun ModernCollectionPoster(
                 }
             }
         }
+        }
 
-        Row(
+        if (!isTv) Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top
         ) {
@@ -3559,8 +3790,21 @@ private fun ModernCollectionPoster(
                 isFavorite = isFavorite,
                 dismiss = { menuOpen = false },
                 toggleFavorite = favoriteAction,
+                viewDescription = item.description?.takeIf(String::isNotBlank)?.let {
+                    { descriptionDialogOpen = true }
+                },
                 clear = null
             )
+        }
+        item.description?.takeIf(String::isNotBlank)?.let { description ->
+            if (descriptionDialogOpen) {
+                FullDescriptionDialog(
+                    title = item.title,
+                    description = description,
+                    cast = item.cast,
+                    dismiss = { descriptionDialogOpen = false }
+                )
+            }
         }
     }
 }

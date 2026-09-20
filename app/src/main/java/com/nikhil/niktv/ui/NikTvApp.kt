@@ -779,6 +779,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,openModernIptvCategory = vm::openModernIptvCategory
                     ,closeModernSection = vm::closeModernSection
                     ,loadMoreModernTmdbSection = vm::loadMoreModernTmdbSection
+                    ,enrichFocusedCatalogMetadata = vm::enrichFocusedCatalogMetadata
                     ,openOfflineDownloads = vm::openOfflineDownloads
                     ,closeOfflineDownloads = vm::closeOfflineDownloads
                     ,playOfflineDownload = vm::playOfflineDownload

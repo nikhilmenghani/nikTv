@@ -3397,6 +3397,79 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         prefetchArtwork(getApplication(), enrichedItems.values.flatten(), limit = 10)
     }
 
+    /** Enriches one deliberately focused IPTV title without scanning the surrounding catalog. */
+    suspend fun enrichFocusedCatalogMetadata(item: MediaItem, type: CatalogType) {
+        if (type !in setOf(CatalogType.MOVIES, CatalogType.SERIES) || !tmdb.configured) return
+        val tmdbItemId = item.id.substringAfter(':', "").toIntOrNull()
+        if (item.id.startsWith("tmdb-") && tmdbItemId != null) {
+            if (item.cast.isNotEmpty()) return
+            val cast = runCatching { tmdb.castFor(type, tmdbItemId) }.getOrDefault(emptyList())
+            if (cast.isEmpty()) return
+            _state.update { current ->
+                if (type == CatalogType.MOVIES) {
+                    current.copy(
+                        modernTmdbMovies = current.modernTmdbMovies.map { entry ->
+                            if (entry.tmdb.id == tmdbItemId) entry.copy(tmdb = entry.tmdb.copy(cast = cast))
+                            else entry
+                        }
+                    )
+                } else {
+                    current.copy(
+                        modernTmdbSeries = current.modernTmdbSeries.map { entry ->
+                            if (entry.tmdb.id == tmdbItemId) entry.copy(tmdb = entry.tmdb.copy(cast = cast))
+                            else entry
+                        }
+                    )
+                }
+            }
+            return
+        }
+        if (!item.description.isNullOrBlank() && item.externalTmdbId != null && item.cast.isNotEmpty()) return
+
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        val profileKey = session.profile.cacheKey()
+        val category = snapshot.modernIptvCategory?.takeIf { it.type == type } ?: return
+        val metadata = runCatching {
+            when (type) {
+                CatalogType.MOVIES -> tmdb.confidentlyMatchMovie(item)?.asMediaItem()
+                CatalogType.SERIES -> tmdb.confidentlyMatchSeries(item)?.asMediaItem()
+                else -> null
+            }
+        }.getOrNull() ?: return
+        val matchedTmdbId = metadata.id.substringAfter(':').toIntOrNull()
+        val cast = matchedTmdbId?.let { id ->
+            runCatching { tmdb.castFor(type, id) }.getOrDefault(emptyList())
+        }.orEmpty()
+
+        val enriched = item.copy(
+            logo = item.logo ?: metadata.logo,
+            description = metadata.description ?: item.description,
+            externalTmdbId = matchedTmdbId ?: item.externalTmdbId,
+            cast = cast.ifEmpty { item.cast }
+        )
+        if (enriched == item) return
+
+        val currentCache = _state.value.browseCachesByType[type] ?: return
+        val categoryItems = currentCache.itemsByCategory[category.id].orEmpty()
+        if (categoryItems.none { it.id == item.id }) return
+        val updatedItems = categoryItems.map { existing ->
+            if (existing.id == item.id) enriched else existing
+        }
+        val updatedCache = currentCache.copy(
+            itemsByCategory = currentCache.itemsByCategory + (category.id to updatedItems)
+        )
+        store.saveBrowseCatalog(updatedCache)
+        _state.update { current ->
+            if (current.session?.profile?.cacheKey() != profileKey) current
+            else current.copy(
+                items = if (current.modernIptvCategory?.id == category.id) updatedItems else current.items,
+                browseCache = if (current.browseCache?.type == type) updatedCache else current.browseCache,
+                browseCachesByType = current.browseCachesByType + (type to updatedCache)
+            )
+        }
+    }
+
     private suspend fun resolveInitialTmdbMovieCandidates(
         session: PortalSession,
         entry: TrendingMovie
