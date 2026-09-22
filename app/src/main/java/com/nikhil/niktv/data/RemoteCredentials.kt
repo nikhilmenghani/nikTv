@@ -43,25 +43,31 @@ object RemoteCredentials {
 
     fun initialize(context: Context) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        values = decodeValues(decrypt(prefs.getString("cached_values", null)))
+        values = parseKnownValues(decrypt(prefs.getString("cached_values", null)))
         lastUpdatedAt = prefs.getLong("updated_at", 0L)
     }
 
     fun get(name: String): String = values[name].orEmpty().trim()
 
     fun configured(context: Context): Boolean =
-        token(context).isNotBlank() && repository(context).isNotBlank() && filePath(context).isNotBlank()
+        token(context).isNotBlank() && owner(context).isNotBlank() &&
+            repository(context).isNotBlank() && filePath(context).isNotBlank()
+
+    fun owner(context: Context): String =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString("owner", "nikhilmenghani").orEmpty()
 
     fun repository(context: Context): String =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString("repository", "nikgapps/myenv").orEmpty()
+            .getString("repository", "").orEmpty().substringAfterLast('/')
 
     fun filePath(context: Context): String =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString("file_path", "niktv.properties").orEmpty()
+            .getString("file_path", "").orEmpty()
 
-    fun saveConnection(context: Context, token: String, repository: String, path: String) {
-        require(REPOSITORY_PATTERN.matches(repository.trim())) { "Enter the GitHub repository as owner/name." }
+    fun saveConnection(context: Context, token: String, owner: String, repository: String, path: String) {
+        require(REPOSITORY_PATTERN.matches(owner.trim())) { "Enter a valid GitHub owner." }
+        require(REPOSITORY_PATTERN.matches(repository.trim())) { "Enter the repository name only." }
         require(path.isNotBlank()) { "Enter the configuration file path." }
         require(path.split('/').none { it.isBlank() || it == "." || it == ".." }) { "Enter a valid file path." }
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -69,6 +75,7 @@ object RemoteCredentials {
         require(effectiveToken.isNotBlank()) { "Enter a GitHub token or configure one in GitHub backup settings." }
         prefs.edit()
             .putString("token", encrypt(effectiveToken))
+            .putString("owner", owner.trim())
             .putString("repository", repository.trim())
             .putString("file_path", path.trim().trimStart('/'))
             .putLong("updated_at", 0L)
@@ -86,10 +93,11 @@ object RemoteCredentials {
         }
         prefs.edit().putLong("attempted_at", System.currentTimeMillis()).apply()
         val token = token(app)
+        val owner = owner(app)
         val repo = repository(app)
-        require(REPOSITORY_PATTERN.matches(repo)) { "Invalid GitHub repository." }
+        require(REPOSITORY_PATTERN.matches(owner) && REPOSITORY_PATTERN.matches(repo)) { "Invalid GitHub repository." }
         val encodedPath = filePath(app).split('/').joinToString("/") { encode(it) }
-        val url = "https://api.github.com/repos/$repo/contents/$encodedPath"
+        val url = "https://api.github.com/repos/$owner/$repo/contents/$encodedPath"
         val request = Request.Builder().url(url)
             .header("Authorization", "Bearer $token")
             .header("Accept", "application/vnd.github.raw+json")
@@ -101,11 +109,11 @@ object RemoteCredentials {
                 response.body?.string() ?: throw IOException("GitHub returned an empty file.")
             }
         }
-        val parsed = decodeValues(fetched)
-        require(parsed.keys.any { it in KNOWN_KEYS }) { "The file does not contain NikTV credential keys." }
+        val parsed = parseKnownValues(fetched)
+        require(parsed.isNotEmpty()) { "The file does not contain NikTV credential keys." }
         val now = System.currentTimeMillis()
         prefs.edit()
-            .putString("cached_values", encrypt(fetched))
+            .putString("cached_values", encrypt(JSONObject(parsed).toString()))
             .putLong("updated_at", now)
             .apply()
         values = parsed
@@ -124,6 +132,9 @@ object RemoteCredentials {
     private fun token(context: Context): String = decrypt(
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("token", null)
     ).ifBlank { GitHubBackupManager(context).deviceToken() }
+
+    internal fun parseKnownValues(raw: String): Map<String, String> =
+        decodeValues(raw).filterKeys { it in KNOWN_KEYS }
 
     private fun decodeValues(raw: String): Map<String, String> {
         if (raw.isBlank()) return emptyMap()
@@ -179,7 +190,7 @@ object RemoteCredentials {
         "NIKTV_TMDB_READ_ACCESS_TOKEN", "OPEN_SUBTITLES_KEY", "G_TOKEN",
     )
     private val KEY_PATTERN = Regex("[A-Za-z_][A-Za-z0-9_]*")
-    private val REPOSITORY_PATTERN = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+    private val REPOSITORY_PATTERN = Regex("[A-Za-z0-9_.-]+")
 }
 
 class RemoteCredentialsWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {

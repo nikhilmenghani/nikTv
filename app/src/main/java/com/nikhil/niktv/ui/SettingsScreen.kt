@@ -223,7 +223,7 @@ private fun TvSafeSettingsTextField(
                 } else {
                     VisualTransformation.None
                 },
-            readOnly = !editing,
+            readOnly = isTv && !editing,
             singleLine = singleLine,
             shape = fieldShape,
             textStyle = MaterialTheme.typography.bodyLarge,
@@ -232,7 +232,7 @@ private fun TvSafeSettingsTextField(
                 .padding(start = contentInset)
                 .heightIn(min = if (isTv) 60.dp else 56.dp)
                 .then(
-                    if (!editing) {
+                    if (isTv && !editing) {
                         Modifier.pointerInput(fieldRequester) {
                             detectTapGestures(
                                 onTap = {
@@ -4851,6 +4851,7 @@ internal fun SettingsBottomNavigation(
 internal fun TmdbCredentialSettingsSection() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var owner by remember { mutableStateOf(RemoteCredentials.owner(context)) }
     var repository by remember { mutableStateOf(RemoteCredentials.repository(context)) }
     var filePath by remember { mutableStateOf(RemoteCredentials.filePath(context)) }
     var tokenInput by remember { mutableStateOf("") }
@@ -4862,25 +4863,33 @@ internal fun TmdbCredentialSettingsSection() {
     SettingsSection("Private configuration") {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                "Connect to a private GitHub repository. The token and fetched values " +
+                "Read a private GitHub repository. The token and NikTV values " +
                     "are encrypted on this device. Cached values are used immediately and refreshed every 24 hours.",
                 style = MaterialTheme.typography.bodyMedium
+            )
+            TvSafeSettingsTextField(
+                value = owner,
+                onValueChange = { owner = it },
+                icon = Icons.Default.Person,
+                title = "GitHub owner",
+                subtitle = "Account that owns the private repository",
+                placeholder = "nikhilmenghani"
             )
             TvSafeSettingsTextField(
                 value = repository,
                 onValueChange = { repository = it },
                 icon = Icons.Default.Folder,
                 title = "Private GitHub repository",
-                subtitle = "Owner and repository name",
-                placeholder = "nikgapps/myenv"
+                subtitle = "Enter the repository name",
+                placeholder = "myenv"
             )
             TvSafeSettingsTextField(
                 value = filePath,
                 onValueChange = { filePath = it },
                 icon = Icons.Default.Description,
                 title = "Configuration file",
-                subtitle = "Path to a .properties or JSON file",
-                placeholder = "niktv.properties"
+                subtitle = "Enter the file name in the repository (for example .env)",
+                placeholder = ".env"
             )
             TvSafeSettingsTextField(
                 value = tokenInput,
@@ -4896,7 +4905,7 @@ internal fun TmdbCredentialSettingsSection() {
                     message = null
                     scope.launch {
                         try {
-                            RemoteCredentials.saveConnection(context, tokenInput, repository, filePath)
+                            RemoteCredentials.saveConnection(context, tokenInput, owner, repository, filePath)
                             tokenInput = ""
                             RemoteCredentials.refresh(context, force = true)
                             message = "Configuration synced successfully"
@@ -4907,7 +4916,7 @@ internal fun TmdbCredentialSettingsSection() {
                         }
                     }
                 },
-                enabled = !syncing && repository.isNotBlank() && filePath.isNotBlank() &&
+                enabled = !syncing && owner.isNotBlank() && repository.isNotBlank() && filePath.isNotBlank() &&
                     (tokenInput.isNotBlank() || RemoteCredentials.configured(context) ||
                         com.nikhil.niktv.data.GitHubBackupManager(context).deviceToken().isNotBlank())
             ) { Text(if (syncing) "Syncing…" else "Save and sync") }

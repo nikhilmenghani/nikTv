@@ -1,6 +1,6 @@
 # Private NikTV configuration
 
-NikTV no longer inserts profile credentials or service tokens into an APK. On each device, open **Settings → Private configuration**, enter a private GitHub repository as `owner/name` (for example `nikgapps/myenv`) and the path of a UTF-8 file in it. Enter a GitHub token with **Contents: read** access to that repository, or leave the token field blank to reuse a token already entered in GitHub backup settings. Tap **Save and sync**. The token and fetched file are encrypted locally with an Android Keystore key. The cached values load immediately at startup; WorkManager and app startup refresh them at most once every 24 hours. **Save and sync** forces an immediate refresh.
+NikTV no longer inserts profile credentials or service tokens into an APK. On each device, open **Settings → Private configuration**. The GitHub owner defaults to `nikhilmenghani`; enter the repository name (for example `myenv`) and configuration file name (for example `.env`). Enter a GitHub token with **Contents: read** access to that repository, or leave the token field blank to reuse a token already entered in GitHub backup settings. Tap **Save and sync**. The token and only NikTV's recognized keys are encrypted locally with an Android Keystore key. The cached values load immediately at startup; WorkManager and app startup refresh them at most once every 24 hours. **Save and sync** forces an immediate refresh.
 
 The file may be JSON with top-level string values, or `.properties`/`.env` lines in `KEY=value` form. Supported keys are:
 
