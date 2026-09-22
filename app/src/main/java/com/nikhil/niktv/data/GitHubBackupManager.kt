@@ -8,7 +8,7 @@ package com.nikhil.niktv.data
 // - blank password -> plain NikTV JSON uploaded as-is.
 // - 12+ character password -> AES-256-GCM encrypted .niktv backup.
 // - GitHub PAT and backup password are protected locally with Android Keystore.
-// - build-time BuildConfig.G_TOKEN is the default PAT when no device override exists.
+// - the cached private configuration can provide a default PAT when no device override exists.
 
 import android.content.Context
 import android.os.Build
@@ -120,7 +120,7 @@ class GitHubBackupManager(context: Context) {
                     .ifBlank { DEFAULT_REPOSITORY },
             token =
                 loadSecret(KEY_TOKEN_CIPHERTEXT, KEY_TOKEN_IV)
-                    .ifBlank { BuildConfig.G_TOKEN.trim() },
+                    .ifBlank { RemoteCredentials.get("G_TOKEN") },
             passphrase = storedPassphrase,
             rememberPassphrase = storedPassphrase.isNotBlank(),
             backupMode = mode,
@@ -150,7 +150,7 @@ class GitHubBackupManager(context: Context) {
             .apply()
 
         val configuredToken = config.token.trim()
-        val buildToken = BuildConfig.G_TOKEN.trim()
+        val buildToken = RemoteCredentials.get("G_TOKEN")
         if (
             configuredToken.isBlank() ||
             configuredToken == buildToken
@@ -696,9 +696,9 @@ class GitHubBackupManager(context: Context) {
 
         val effectiveToken =
             config.token.trim()
-                .ifBlank { BuildConfig.G_TOKEN.trim() }
+                .ifBlank { RemoteCredentials.get("G_TOKEN") }
         require(effectiveToken.isNotBlank()) {
-            "GitHub token is required. Configure G_TOKEN at build time or enter a token in Settings."
+            "GitHub token is required. Sync private credentials or enter a token in Settings."
         }
 
         return names.copy(

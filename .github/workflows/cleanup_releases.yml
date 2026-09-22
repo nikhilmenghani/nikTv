@@ -1,0 +1,119 @@
+name: Clean up all releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Preview the cleanup or permanently delete every release and attached asset
+        required: true
+        type: choice
+        default: preview
+        options:
+          - preview
+          - delete
+      confirmation:
+        description: For delete, enter DELETE ALL NIKTV RELEASES exactly
+        required: false
+        type: string
+      delete_release_tags:
+        description: Also delete the Git tag associated with each release
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: niktv-release-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: ${{ inputs.operation == 'delete' && 'Delete all releases' || 'Preview release cleanup' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate confirmation
+        if: inputs.operation == 'delete'
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          if [[ "$CONFIRMATION" != "DELETE ALL NIKTV RELEASES" ]]; then
+            echo "Deletion was not authorized. Enter the exact confirmation phrase."
+            exit 1
+          fi
+
+      - name: Preview releases and attached assets
+        if: inputs.operation == 'preview'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          page=1
+          total_releases=0
+          total_assets=0
+
+          while true; do
+            releases="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100&page=${page}")"
+            count="$(jq 'length' <<< "$releases")"
+            [[ "$count" -eq 0 ]] && break
+
+            jq -r '.[] |
+              "- " +
+              (if .draft then "draft" elif .prerelease then "prerelease" else "stable" end) +
+              " | " + .tag_name +
+              " | " + (.name // "(unnamed)") +
+              " | assets: " + ((.assets | length) | tostring)' <<< "$releases"
+
+            total_releases=$((total_releases + count))
+            total_assets=$((total_assets + $(jq '[.[].assets | length] | add // 0' <<< "$releases")))
+            page=$((page + 1))
+          done
+
+          echo "Releases that would be deleted: $total_releases"
+          echo "Attached assets that would be deleted: $total_assets"
+          if [[ "${{ inputs.delete_release_tags }}" == "true" ]]; then
+            echo "The associated release tags would also be deleted."
+          fi
+
+      - name: Delete every release and attached asset
+        if: inputs.operation == 'delete'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELETE_TAGS: ${{ inputs.delete_release_tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deleted_releases=0
+          deleted_assets=0
+          deleted_tags=0
+
+          # Always request page one: deleting releases continuously moves later
+          # releases onto the first page and avoids pagination gaps.
+          while true; do
+            releases="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100&page=1")"
+            count="$(jq 'length' <<< "$releases")"
+            [[ "$count" -eq 0 ]] && break
+
+            while IFS=$'\t' read -r release_id tag_name asset_count; do
+              echo "Deleting release for tag: $tag_name ($asset_count attached assets)"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+              deleted_releases=$((deleted_releases + 1))
+              deleted_assets=$((deleted_assets + asset_count))
+
+              if [[ "$DELETE_TAGS" == "true" && -n "$tag_name" ]]; then
+                encoded_tag="$(jq -rn --arg tag "$tag_name" '$tag | @uri')"
+                if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${encoded_tag}" 2>/dev/null; then
+                  deleted_tags=$((deleted_tags + 1))
+                else
+                  echo "Tag was already absent or could not be removed: $tag_name"
+                fi
+              fi
+            done < <(jq -r '.[] | [.id, .tag_name, (.assets | length)] | @tsv' <<< "$releases")
+          done
+
+          echo "Deleted releases: $deleted_releases"
+          echo "Deleted attached assets: $deleted_assets"
+          echo "Deleted release tags: $deleted_tags"

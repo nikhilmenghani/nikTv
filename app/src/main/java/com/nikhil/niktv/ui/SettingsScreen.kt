@@ -112,6 +112,7 @@ import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
 import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
+import com.nikhil.niktv.data.RemoteCredentials
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -315,22 +316,23 @@ internal fun ModernSettingsScreen(
         mutableStateOf(AppBrightnessPreferences.followsSystem(context))
     }
     val generatedIdentity = remember(context) { cast4kLegacyDeviceIdentity(context) }
-    val preconfiguredProfiles = remember(generatedIdentity) {
+    val remoteValues = RemoteCredentials.values
+    val preconfiguredProfiles = remember(generatedIdentity, remoteValues) {
         listOf(
             PortalProfile(
-                BuildConfig.DEFAULT_PROFILE_NAME.withoutConfigurationQuotes().ifBlank { "WIO" },
-                BuildConfig.DEFAULT_PORTAL_URL.withoutConfigurationQuotes(),
-                BuildConfig.DEFAULT_MAC_ADDRESS.withoutConfigurationQuotes().ifBlank { generatedIdentity.macAddress },
-                BuildConfig.DEFAULT_SERIAL_NUMBER.withoutConfigurationQuotes().ifBlank { generatedIdentity.serialNumber },
+                RemoteCredentials.get("NIKTV_DEFAULT_PROFILE_NAME").ifBlank { "WIO" },
+                RemoteCredentials.get("NIKTV_DEFAULT_PORTAL_URL"),
+                RemoteCredentials.get("NIKTV_DEFAULT_MAC_ADDRESS").ifBlank { generatedIdentity.macAddress },
+                RemoteCredentials.get("NIKTV_DEFAULT_SERIAL_NUMBER").ifBlank { generatedIdentity.serialNumber },
                 PortalType.STALKER
             ),
             PortalProfile(
-                BuildConfig.XTREAM_PROFILE_NAME.withoutConfigurationQuotes().ifBlank { "Xtream" },
-                BuildConfig.XTREAM_PORTAL_URL.withoutConfigurationQuotes(),
+                RemoteCredentials.get("NIKTV_XTREAM_PROFILE_NAME").ifBlank { "Xtream" },
+                RemoteCredentials.get("NIKTV_XTREAM_PORTAL_URL"),
                 macAddress = "",
                 portalType = PortalType.XTREAM,
-                username = BuildConfig.XTREAM_USERNAME.withoutConfigurationQuotes(),
-                password = BuildConfig.XTREAM_PASSWORD.withoutConfigurationQuotes()
+                username = RemoteCredentials.get("NIKTV_XTREAM_USERNAME"),
+                password = RemoteCredentials.get("NIKTV_XTREAM_PASSWORD")
             )
         )
     }
@@ -1956,7 +1958,7 @@ SettingsSection("Data and sync") {
                         icon = Icons.Default.Key,
                         title = "Personal access token (PAT)",
                         subtitle =
-                            "Uses the build-time G_TOKEN when blank. " +
+                            "Uses the cached private G_TOKEN when blank. " +
                                 "A changed token is stored encrypted on this device.",
                         placeholder = "Personal access token",
                         password = true,
@@ -2133,7 +2135,7 @@ SettingsSection("Data and sync") {
                                 githubBackupConfig.repository.isNotBlank() &&
                                 (
                                     githubBackupConfig.token.isNotBlank() ||
-                                        BuildConfig.G_TOKEN.isNotBlank()
+                                        RemoteCredentials.get("G_TOKEN").isNotBlank()
                                     ) &&
                                 (
                                     githubBackupConfig.passphrase.isBlank() ||
@@ -4847,59 +4849,65 @@ internal fun SettingsBottomNavigation(
 
 @Composable
 internal fun TmdbCredentialSettingsSection() {
-    var revealCredentials by rememberSaveable {
-        mutableStateOf(false)
-    }
-    val apiKey = BuildConfig.TMDB_API_KEY.trim()
-    val readAccessToken = BuildConfig.TMDB_READ_ACCESS_TOKEN.trim()
-    val openSubtitlesKey = BuildConfig.OPEN_SUBTITLES_KEY.trim()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var filePath by remember { mutableStateOf(RemoteCredentials.filePath(context)) }
+    var tokenInput by remember { mutableStateOf("") }
+    var syncing by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val values = RemoteCredentials.values
+    val updatedAt = RemoteCredentials.lastUpdatedAt
 
-    SettingsSection("Advanced") {
-        ResponsiveSettingsOptionRow(
-            icon =
-                if (revealCredentials) {
-                    Icons.Default.VisibilityOff
-                } else {
-                    Icons.Default.Visibility
+    SettingsSection("Private configuration") {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "Connect to gitlab.com/nikgapps/myenv. The read-only token and fetched values " +
+                    "are encrypted on this device. Cached values are used immediately and refreshed every 24 hours.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            TvSafeSettingsTextField(
+                value = filePath,
+                onValueChange = { filePath = it },
+                icon = Icons.Default.Description,
+                title = "File in myenv",
+                subtitle = "Path to a .properties or JSON file",
+                placeholder = "niktv.properties"
+            )
+            TvSafeSettingsTextField(
+                value = tokenInput,
+                onValueChange = { tokenInput = it },
+                icon = Icons.Default.Key,
+                title = "GitLab read token",
+                subtitle = if (RemoteCredentials.configured(context)) "Configured · leave blank to keep current token" else "Enter once on this device",
+                password = true
+            )
+            NikTvSecondaryActionButton(
+                onClick = {
+                    syncing = true
+                    message = null
+                    scope.launch {
+                        try {
+                            RemoteCredentials.saveConnection(context, tokenInput, filePath)
+                            tokenInput = ""
+                            RemoteCredentials.refresh(context, force = true)
+                            message = "Configuration synced successfully"
+                        } catch (failure: Exception) {
+                            message = failure.message ?: "Could not sync configuration"
+                        } finally {
+                            syncing = false
+                        }
+                    }
                 },
-            title = "Reveal embedded credentials",
-            subtitle =
-                "Credentials are hidden by default because anyone viewing this screen can copy them.",
-            trailingContent = {
-SettingsSwitch(
-                    checked = revealCredentials,
-                    onCheckedChange = { revealCredentials = it },
-                    modifier = Modifier
-                )
-            }
-        )
-        HorizontalDivider()
-        SelectionContainer {
-            Column {
-                SettingsValueRow(
-                    Icons.Default.Key,
-                    "TMDB API key",
-                    apiKey.credentialDiagnosticValue(
-                        revealCredentials
-                    )
-                )
-                HorizontalDivider()
-                SettingsValueRow(
-                    Icons.Default.VpnKey,
-                    "TMDB read access token",
-                    readAccessToken.credentialDiagnosticValue(
-                        revealCredentials
-                    )
-                )
-                HorizontalDivider()
-                SettingsValueRow(
-                    Icons.Default.Subtitles,
-                    "OpenSubtitles API key",
-                    openSubtitlesKey.credentialDiagnosticValue(
-                        revealCredentials
-                    )
-                )
-            }
+                enabled = !syncing && filePath.isNotBlank() && (tokenInput.isNotBlank() || RemoteCredentials.configured(context))
+            ) { Text(if (syncing) "Syncing…" else "Save and sync") }
+            message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            Text(
+                if (updatedAt > 0L) "Last sync: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(updatedAt))}"
+                else "Last sync: never",
+                style = MaterialTheme.typography.bodySmall
+            )
+            SettingsValueRow(Icons.Default.Key, "TMDB", if (values["NIKTV_TMDB_API_KEY"].isNullOrBlank() && values["NIKTV_TMDB_READ_ACCESS_TOKEN"].isNullOrBlank()) "Not configured" else "Available")
+            SettingsValueRow(Icons.Default.Subtitles, "OpenSubtitles", if (values["OPEN_SUBTITLES_KEY"].isNullOrBlank()) "Not configured" else "Available")
         }
     }
 }

@@ -1,7 +1,6 @@
 package com.nikhil.niktv.data
 
 import android.content.Context
-import com.nikhil.niktv.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -48,7 +47,7 @@ data class SubtitleSearchRequest(
 )
 
 object OpenSubtitlesClient {
-    val configured: Boolean get() = BuildConfig.OPEN_SUBTITLES_KEY.trim().isNotEmpty()
+    val configured: Boolean get() = RemoteCredentials.get("OPEN_SUBTITLES_KEY").isNotEmpty()
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val http = OkHttpClient.Builder()
@@ -58,7 +57,7 @@ object OpenSubtitlesClient {
         .build()
 
     suspend fun search(search: SubtitleSearchRequest): List<OnlineSubtitle> = withContext(Dispatchers.IO) {
-        require(configured) { "OpenSubtitles API key is not embedded in this build." }
+        require(configured) { "Connect GitLab credentials in Settings to use OpenSubtitles." }
         require(search.query.isNotBlank()) { "Enter a movie or series title." }
         val url = "https://api.opensubtitles.com/api/v1/subtitles".toHttpUrl().newBuilder()
             .addQueryParameter("query", search.query.trim())
@@ -91,7 +90,7 @@ object OpenSubtitlesClient {
     }
 
     suspend fun download(context: Context, subtitle: OnlineSubtitle): File = withContext(Dispatchers.IO) {
-        require(configured) { "OpenSubtitles API key is not embedded in this build." }
+        require(configured) { "Connect GitLab credentials in Settings to use OpenSubtitles." }
         val payload = buildJsonObject { put("file_id", subtitle.fileId) }.toString()
         val request = apiRequest("https://api.opensubtitles.com/api/v1/download")
             .post(payload.toRequestBody("application/json".toMediaType()))
@@ -116,7 +115,7 @@ object OpenSubtitlesClient {
 
     private fun apiRequest(url: String) = Request.Builder()
         .url(url)
-        .header("Api-Key", BuildConfig.OPEN_SUBTITLES_KEY.trim())
+        .header("Api-Key", RemoteCredentials.get("OPEN_SUBTITLES_KEY"))
         .header("User-Agent", "NikTV v1")
         .header("Accept", "application/json")
 

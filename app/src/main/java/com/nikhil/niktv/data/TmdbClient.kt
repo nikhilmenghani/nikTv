@@ -1,6 +1,5 @@
 package com.nikhil.niktv.data
 
-import com.nikhil.niktv.BuildConfig
 import com.nikhil.niktv.model.MediaItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -101,15 +100,11 @@ class TmdbClient {
         .callTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val readAccessToken =
-        BuildConfig.TMDB_READ_ACCESS_TOKEN
-            .trim()
-            .withoutConfigurationQuotes()
+    private val readAccessToken: String
+        get() = RemoteCredentials.get("NIKTV_TMDB_READ_ACCESS_TOKEN")
 
-    private val apiKey =
-        BuildConfig.TMDB_API_KEY
-            .trim()
-            .withoutConfigurationQuotes()
+    private val apiKey: String
+        get() = RemoteCredentials.get("NIKTV_TMDB_API_KEY")
 
     @Volatile
     private var trendingMovieCache: CachedMovies? = null

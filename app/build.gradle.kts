@@ -12,33 +12,6 @@ fun String.asBuildConfigString(): String {
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
-val defaultProfileName = providers.gradleProperty("NIKTV_DEFAULT_PROFILE_NAME")
-    .orElse(providers.environmentVariable("NIKTV_DEFAULT_PROFILE_NAME")).orElse("")
-val defaultPortalUrl = providers.gradleProperty("NIKTV_DEFAULT_PORTAL_URL")
-    .orElse(providers.environmentVariable("NIKTV_DEFAULT_PORTAL_URL")).orElse("")
-val defaultMacAddress = providers.gradleProperty("NIKTV_DEFAULT_MAC_ADDRESS")
-    .orElse(providers.environmentVariable("NIKTV_DEFAULT_MAC_ADDRESS")).orElse("")
-val defaultSerialNumber = providers.gradleProperty("NIKTV_DEFAULT_SERIAL_NUMBER")
-    .orElse(providers.environmentVariable("NIKTV_DEFAULT_SERIAL_NUMBER")).orElse("")
-val xtreamProfileName = providers.gradleProperty("NIKTV_XTREAM_PROFILE_NAME")
-    .orElse(providers.environmentVariable("NIKTV_XTREAM_PROFILE_NAME")).orElse("")
-val xtreamPortalUrl = providers.gradleProperty("NIKTV_XTREAM_PORTAL_URL")
-    .orElse(providers.environmentVariable("NIKTV_XTREAM_PORTAL_URL")).orElse("")
-val xtreamUsername = providers.gradleProperty("NIKTV_XTREAM_USERNAME")
-    .orElse(providers.environmentVariable("NIKTV_XTREAM_USERNAME")).orElse("")
-val xtreamPassword = providers.gradleProperty("NIKTV_XTREAM_PASSWORD")
-    .orElse(providers.environmentVariable("NIKTV_XTREAM_PASSWORD")).orElse("")
-val tmdbApiKey = providers.gradleProperty("NIKTV_TMDB_API_KEY")
-    .orElse(providers.environmentVariable("NIKTV_TMDB_API_KEY")).orElse("")
-val tmdbReadAccessToken = providers.gradleProperty("NIKTV_TMDB_READ_ACCESS_TOKEN")
-    .orElse(providers.environmentVariable("NIKTV_TMDB_READ_ACCESS_TOKEN")).orElse("")
-val openSubtitlesKey = providers.gradleProperty("OPEN_SUBTITLES_KEY")
-    .orElse(providers.gradleProperty("OPENSUBTITLES"))
-    .orElse(providers.environmentVariable("OPEN_SUBTITLES_KEY"))
-    .orElse(providers.environmentVariable("OPENSUBTITLES"))
-    .orElse("")
-val githubToken = providers.gradleProperty("G_TOKEN")
-    .orElse(providers.environmentVariable("G_TOKEN")).orElse("")
 val fireTvApk = providers.gradleProperty("fireTvApk")
     .map(String::toBoolean).orElse(false)
 
@@ -58,18 +31,6 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
-        buildConfigField("String", "DEFAULT_PROFILE_NAME", defaultProfileName.get().asBuildConfigString())
-        buildConfigField("String", "DEFAULT_PORTAL_URL", defaultPortalUrl.get().asBuildConfigString())
-        buildConfigField("String", "DEFAULT_MAC_ADDRESS", defaultMacAddress.get().asBuildConfigString())
-        buildConfigField("String", "DEFAULT_SERIAL_NUMBER", defaultSerialNumber.get().asBuildConfigString())
-        buildConfigField("String", "XTREAM_PROFILE_NAME", xtreamProfileName.get().asBuildConfigString())
-        buildConfigField("String", "XTREAM_PORTAL_URL", xtreamPortalUrl.get().asBuildConfigString())
-        buildConfigField("String", "XTREAM_USERNAME", xtreamUsername.get().asBuildConfigString())
-        buildConfigField("String", "XTREAM_PASSWORD", xtreamPassword.get().asBuildConfigString())
-        buildConfigField("String", "TMDB_API_KEY", tmdbApiKey.get().asBuildConfigString())
-        buildConfigField("String", "TMDB_READ_ACCESS_TOKEN", tmdbReadAccessToken.get().asBuildConfigString())
-        buildConfigField("String", "OPEN_SUBTITLES_KEY", openSubtitlesKey.get().asBuildConfigString())
-        buildConfigField("String", "G_TOKEN", githubToken.get().asBuildConfigString())
         if (fireTvApk.get()) {
             ndk { abiFilters += setOf("armeabi-v7a", "arm64-v8a") }
         }
