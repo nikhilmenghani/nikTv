@@ -13,7 +13,15 @@ internal object MpegTsRecordingTrimmer {
             if (packet[0] != SYNC_BYTE) return null
             packetPts(packet)?.let { pts ->
                 val origin = firstPts ?: pts.also { firstPts = it }
-                val elapsedMillis = (((pts - origin) and TIMESTAMP_MASK) * 1_000L) / 90_000L
+                val delta = (pts - origin) and TIMESTAMP_MASK
+                // Audio and video PTS can arrive slightly out of order. Their
+                // negative delta looks like a 26-hour wrap when treated as an
+                // unsigned 33-bit timestamp, which would truncate the file.
+                if (delta > TIMESTAMP_HALF_RANGE) {
+                    offset += PACKET_SIZE
+                    continue
+                }
+                val elapsedMillis = (delta * 1_000L) / 90_000L
                 if (elapsedMillis > durationMillis + FRAME_TOLERANCE_MILLIS) return offset
             }
             offset += PACKET_SIZE
@@ -53,4 +61,5 @@ internal object MpegTsRecordingTrimmer {
     private const val SYNC_BYTE: Byte = 0x47
     private const val FRAME_TOLERANCE_MILLIS = 80L
     private const val TIMESTAMP_MASK = (1L shl 33) - 1L
+    private const val TIMESTAMP_HALF_RANGE = 1L shl 32
 }

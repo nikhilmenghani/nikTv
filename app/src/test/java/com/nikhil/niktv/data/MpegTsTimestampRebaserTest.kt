@@ -30,6 +30,19 @@ class MpegTsTimestampRebaserTest {
         assertEquals(188L * 3L, cutoff)
     }
 
+    @Test
+    fun slightlyEarlierAudioTimestampDoesNotTruncateTheRecording() {
+        val stream = packetWithPts(9_000_000L) +
+            packetWithPts(8_998_200L) + // 20 ms behind the first packet
+            packetWithPts(9_090_000L) +
+            packetWithPts(9_180_000L) +
+            packetWithPts(9_270_000L)
+
+        val cutoff = MpegTsRecordingTrimmer.cutoffBytes(ByteArrayInputStream(stream), 2_100L)
+
+        assertEquals(188L * 4L, cutoff)
+    }
+
     private fun packetWithPts(pts: Long): ByteArray = ByteArray(188) { 0xff.toByte() }.apply {
         this[0] = 0x47
         this[1] = 0x40 // payload-unit start
