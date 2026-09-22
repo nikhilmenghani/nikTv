@@ -59,11 +59,11 @@ object RemoteCredentials {
 
     fun repository(context: Context): String =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString("repository", "").orEmpty().substringAfterLast('/')
+            .getString("repository", "myenv").orEmpty().substringAfterLast('/')
 
     fun filePath(context: Context): String =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString("file_path", "").orEmpty()
+            .getString("file_path", ".env").orEmpty()
 
     fun saveConnection(context: Context, token: String, owner: String, repository: String, path: String) {
         require(REPOSITORY_PATTERN.matches(owner.trim())) { "Enter a valid GitHub owner." }

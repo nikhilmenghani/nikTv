@@ -1421,6 +1421,9 @@ SettingsSwitch(
                 val enabled = state.profiles.any {
                     it.cacheKey() == builtIn.cacheKey()
                 }
+                val available = builtIn.portalUrl.isNotBlank() &&
+                    (builtIn.portalType == PortalType.STALKER ||
+                        (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
                 ResponsiveSettingsOptionRow(
                     icon =
                         if (builtIn.portalType == PortalType.STALKER) {
@@ -1430,7 +1433,9 @@ SettingsSwitch(
                         },
                     title = builtIn.name,
                     subtitle =
-                        if (enabled) {
+                        if (!available) {
+                            "Sync private configuration to enable"
+                        } else if (enabled) {
                             "Available on the profile screen"
                         } else {
                             "Hidden from the profile screen"
@@ -1444,18 +1449,7 @@ SettingsSwitch(
                                     it
                                 )
                             },
-                            enabled =
-                                builtIn.portalUrl.isNotBlank() &&
-                                    (
-                                        builtIn.portalType ==
-                                            PortalType.STALKER ||
-                                            (
-                                                builtIn.username
-                                                    .isNotBlank() &&
-                                                    builtIn.password
-                                                        .isNotBlank()
-                                                )
-                                        ),
+                            enabled = available,
                             modifier = Modifier
                         )
                     }
@@ -4908,7 +4902,7 @@ internal fun TmdbCredentialSettingsSection() {
                             RemoteCredentials.saveConnection(context, tokenInput, owner, repository, filePath)
                             tokenInput = ""
                             RemoteCredentials.refresh(context, force = true)
-                            message = "Configuration synced successfully"
+                            message = "Configuration synced. Open Profiles in Settings to enable the preconfigured profiles."
                         } catch (failure: Exception) {
                             message = failure.message ?: "Could not sync configuration"
                         } finally {
@@ -4916,14 +4910,16 @@ internal fun TmdbCredentialSettingsSection() {
                         }
                     }
                 },
-                enabled = !syncing && owner.isNotBlank() && repository.isNotBlank() && filePath.isNotBlank() &&
-                    (tokenInput.isNotBlank() || RemoteCredentials.configured(context) ||
-                        com.nikhil.niktv.data.GitHubBackupManager(context).deviceToken().isNotBlank())
+                enabled = !syncing
             ) { Text(if (syncing) "Syncing…" else "Save and sync") }
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             Text(
                 if (updatedAt > 0L) "Last sync: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(updatedAt))}"
                 else "Last sync: never",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                "After syncing, open Profiles in Settings and turn on the preconfigured profiles you want to use.",
                 style = MaterialTheme.typography.bodySmall
             )
             SettingsValueRow(Icons.Default.Key, "TMDB", if (values["NIKTV_TMDB_API_KEY"].isNullOrBlank() && values["NIKTV_TMDB_READ_ACCESS_TOKEN"].isNullOrBlank()) "Not configured" else "Available")
