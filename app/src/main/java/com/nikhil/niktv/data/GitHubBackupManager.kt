@@ -92,6 +92,9 @@ class GitHubBackupManager(context: Context) {
         .writeTimeout(45, TimeUnit.SECONDS)
         .build()
 
+    /** Locally entered backup token only; excludes remote-config fallback. */
+    fun deviceToken(): String = loadSecret(KEY_TOKEN_CIPHERTEXT, KEY_TOKEN_IV)
+
     fun loadConfig(): GitHubBackupConfig {
         val storedPassphrase =
             loadSecret(KEY_PASSPHRASE_CIPHERTEXT, KEY_PASSPHRASE_IV)

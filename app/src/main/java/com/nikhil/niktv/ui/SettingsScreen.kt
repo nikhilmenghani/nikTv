@@ -4851,6 +4851,7 @@ internal fun SettingsBottomNavigation(
 internal fun TmdbCredentialSettingsSection() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var repository by remember { mutableStateOf(RemoteCredentials.repository(context)) }
     var filePath by remember { mutableStateOf(RemoteCredentials.filePath(context)) }
     var tokenInput by remember { mutableStateOf("") }
     var syncing by remember { mutableStateOf(false) }
@@ -4861,15 +4862,23 @@ internal fun TmdbCredentialSettingsSection() {
     SettingsSection("Private configuration") {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                "Connect to gitlab.com/nikgapps/myenv. The read-only token and fetched values " +
+                "Connect to a private GitHub repository. The token and fetched values " +
                     "are encrypted on this device. Cached values are used immediately and refreshed every 24 hours.",
                 style = MaterialTheme.typography.bodyMedium
+            )
+            TvSafeSettingsTextField(
+                value = repository,
+                onValueChange = { repository = it },
+                icon = Icons.Default.Folder,
+                title = "Private GitHub repository",
+                subtitle = "Owner and repository name",
+                placeholder = "nikgapps/myenv"
             )
             TvSafeSettingsTextField(
                 value = filePath,
                 onValueChange = { filePath = it },
                 icon = Icons.Default.Description,
-                title = "File in myenv",
+                title = "Configuration file",
                 subtitle = "Path to a .properties or JSON file",
                 placeholder = "niktv.properties"
             )
@@ -4877,8 +4886,8 @@ internal fun TmdbCredentialSettingsSection() {
                 value = tokenInput,
                 onValueChange = { tokenInput = it },
                 icon = Icons.Default.Key,
-                title = "GitLab read token",
-                subtitle = if (RemoteCredentials.configured(context)) "Configured · leave blank to keep current token" else "Enter once on this device",
+                title = "GitHub read token",
+                subtitle = if (RemoteCredentials.configured(context)) "Configured · leave blank to keep current token" else "Enter once, or use the token saved for GitHub backups",
                 password = true
             )
             NikTvSecondaryActionButton(
@@ -4887,7 +4896,7 @@ internal fun TmdbCredentialSettingsSection() {
                     message = null
                     scope.launch {
                         try {
-                            RemoteCredentials.saveConnection(context, tokenInput, filePath)
+                            RemoteCredentials.saveConnection(context, tokenInput, repository, filePath)
                             tokenInput = ""
                             RemoteCredentials.refresh(context, force = true)
                             message = "Configuration synced successfully"
@@ -4898,7 +4907,9 @@ internal fun TmdbCredentialSettingsSection() {
                         }
                     }
                 },
-                enabled = !syncing && filePath.isNotBlank() && (tokenInput.isNotBlank() || RemoteCredentials.configured(context))
+                enabled = !syncing && repository.isNotBlank() && filePath.isNotBlank() &&
+                    (tokenInput.isNotBlank() || RemoteCredentials.configured(context) ||
+                        com.nikhil.niktv.data.GitHubBackupManager(context).deviceToken().isNotBlank())
             ) { Text(if (syncing) "Syncing…" else "Save and sync") }
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             Text(

@@ -28,11 +28,10 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Device-owned GitLab credentials. Nothing in this store is generated into the APK. */
+/** Device-owned GitHub credentials. Nothing in this store is generated into the APK. */
 object RemoteCredentials {
-    private const val PROJECT = "nikgapps/myenv"
-    private const val PREFS = "remote_credentials"
-    private const val KEY_ALIAS = "niktv_remote_credentials_v1"
+    private const val PREFS = "github_remote_credentials"
+    private const val KEY_ALIAS = "niktv_github_remote_credentials_v1"
     private const val REFRESH_MILLIS = 24 * 60 * 60 * 1000L
     private val mutex = Mutex()
     private val http = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
@@ -51,19 +50,26 @@ object RemoteCredentials {
     fun get(name: String): String = values[name].orEmpty().trim()
 
     fun configured(context: Context): Boolean =
-        token(context).isNotBlank() && filePath(context).isNotBlank()
+        token(context).isNotBlank() && repository(context).isNotBlank() && filePath(context).isNotBlank()
+
+    fun repository(context: Context): String =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString("repository", "nikgapps/myenv").orEmpty()
 
     fun filePath(context: Context): String =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString("file_path", "niktv.properties").orEmpty()
 
-    fun saveConnection(context: Context, token: String, path: String) {
-        require(path.isNotBlank()) { "Enter the file path in myenv." }
+    fun saveConnection(context: Context, token: String, repository: String, path: String) {
+        require(REPOSITORY_PATTERN.matches(repository.trim())) { "Enter the GitHub repository as owner/name." }
+        require(path.isNotBlank()) { "Enter the configuration file path." }
+        require(path.split('/').none { it.isBlank() || it == "." || it == ".." }) { "Enter a valid file path." }
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val effectiveToken = token.trim().ifBlank { token(context) }
-        require(effectiveToken.isNotBlank()) { "Enter a GitLab token." }
+        require(effectiveToken.isNotBlank()) { "Enter a GitHub token or configure one in GitHub backup settings." }
         prefs.edit()
             .putString("token", encrypt(effectiveToken))
+            .putString("repository", repository.trim())
             .putString("file_path", path.trim().trimStart('/'))
             .putLong("updated_at", 0L)
             .putLong("attempted_at", 0L)
@@ -80,17 +86,19 @@ object RemoteCredentials {
         }
         prefs.edit().putLong("attempted_at", System.currentTimeMillis()).apply()
         val token = token(app)
-        val encodedProject = encode(PROJECT)
-        val encodedPath = encode(filePath(app))
-        val url = "https://gitlab.com/api/v4/projects/$encodedProject/repository/files/$encodedPath/raw?ref=HEAD"
+        val repo = repository(app)
+        require(REPOSITORY_PATTERN.matches(repo)) { "Invalid GitHub repository." }
+        val encodedPath = filePath(app).split('/').joinToString("/") { encode(it) }
+        val url = "https://api.github.com/repos/$repo/contents/$encodedPath"
         val request = Request.Builder().url(url)
-            .header("PRIVATE-TOKEN", token)
-            .header("Accept", "text/plain")
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/vnd.github.raw+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
             .build()
         val fetched = withContext(Dispatchers.IO) {
             http.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("GitLab returned HTTP ${response.code}. Check the token and file path.")
-                response.body?.string() ?: throw IOException("GitLab returned an empty file.")
+                if (!response.isSuccessful) throw IOException("GitHub returned HTTP ${response.code}. Check repository access and file path.")
+                response.body?.string() ?: throw IOException("GitHub returned an empty file.")
             }
         }
         val parsed = decodeValues(fetched)
@@ -107,7 +115,7 @@ object RemoteCredentials {
 
     fun schedule(context: Context) {
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            "remote_credentials_daily",
+            "github_remote_credentials_daily",
             ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<RemoteCredentialsWorker>(24, TimeUnit.HOURS).build(),
         )
@@ -115,7 +123,7 @@ object RemoteCredentials {
 
     private fun token(context: Context): String = decrypt(
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("token", null)
-    )
+    ).ifBlank { GitHubBackupManager(context).deviceToken() }
 
     private fun decodeValues(raw: String): Map<String, String> {
         if (raw.isBlank()) return emptyMap()
@@ -171,6 +179,7 @@ object RemoteCredentials {
         "NIKTV_TMDB_READ_ACCESS_TOKEN", "OPEN_SUBTITLES_KEY", "G_TOKEN",
     )
     private val KEY_PATTERN = Regex("[A-Za-z_][A-Za-z0-9_]*")
+    private val REPOSITORY_PATTERN = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 }
 
 class RemoteCredentialsWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
