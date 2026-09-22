@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
 import android.util.Rational
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -12,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.data.GitHubBackupScheduler
+import com.nikhil.niktv.data.PairingInvites
 import com.nikhil.niktv.data.SearchMetadataSyncScheduler
 import com.nikhil.niktv.ui.NikTvApp
 
@@ -55,6 +57,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PairingInvites.accept(intent?.data)
         AppUpdates.initialize(applicationContext)
         GitHubBackupScheduler.initialize(applicationContext)
         SearchMetadataSyncScheduler.initialize(applicationContext)
@@ -62,6 +65,12 @@ class MainActivity : ComponentActivity() {
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         setContent { NikTvApp() }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        PairingInvites.accept(intent.data)
     }
 
     override fun onUserLeaveHint() {

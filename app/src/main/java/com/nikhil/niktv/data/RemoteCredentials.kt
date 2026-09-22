@@ -43,6 +43,9 @@ object RemoteCredentials {
 
     fun initialize(context: Context) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!prefs.contains("manually_configured") && !prefs.getString("token", null).isNullOrBlank()) {
+            prefs.edit().putBoolean("manually_configured", true).apply()
+        }
         values = parseKnownValues(decrypt(prefs.getString("cached_values", null)))
         lastUpdatedAt = prefs.getLong("updated_at", 0L)
     }
@@ -52,6 +55,22 @@ object RemoteCredentials {
     fun configured(context: Context): Boolean =
         token(context).isNotBlank() && owner(context).isNotBlank() &&
             repository(context).isNotBlank() && filePath(context).isNotBlank()
+
+    fun canPairDevices(context: Context): Boolean =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean("manually_configured", false) && configured(context)
+
+    fun pairingConfiguration(context: Context): String {
+        require(canPairDevices(context)) { "Only a device with a manually entered token can pair another device." }
+        return JSONObject().put("token", token(context)).put("owner", owner(context))
+            .put("repository", repository(context)).put("path", filePath(context)).toString()
+    }
+
+    fun savePairedConnection(context: Context, configuration: String) {
+        val json = JSONObject(configuration)
+        saveConnection(context, json.getString("token"), json.getString("owner"),
+            json.getString("repository"), json.getString("path"), manuallyEntered = false)
+    }
 
     fun owner(context: Context): String =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -66,6 +85,11 @@ object RemoteCredentials {
             .getString("file_path", ".env").orEmpty()
 
     fun saveConnection(context: Context, token: String, owner: String, repository: String, path: String) {
+        saveConnection(context, token, owner, repository, path, manuallyEntered = true)
+    }
+
+    private fun saveConnection(context: Context, token: String, owner: String, repository: String,
+                               path: String, manuallyEntered: Boolean) {
         require(REPOSITORY_PATTERN.matches(owner.trim())) { "Enter a valid GitHub owner." }
         require(REPOSITORY_PATTERN.matches(repository.trim())) { "Enter the repository name only." }
         require(path.isNotBlank()) { "Enter the configuration file path." }
@@ -75,6 +99,8 @@ object RemoteCredentials {
         require(effectiveToken.isNotBlank()) { "Enter a GitHub token or configure one in GitHub backup settings." }
         prefs.edit()
             .putString("token", encrypt(effectiveToken))
+            .putBoolean("manually_configured", manuallyEntered &&
+                (token.isNotBlank() || prefs.getBoolean("manually_configured", false)))
             .putString("owner", owner.trim())
             .putString("repository", repository.trim())
             .putString("file_path", path.trim().trimStart('/'))

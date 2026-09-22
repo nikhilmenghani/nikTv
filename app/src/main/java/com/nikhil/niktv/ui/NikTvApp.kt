@@ -515,6 +515,10 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
+    val pairingInvite = com.nikhil.niktv.data.PairingInvites.pending
+    LaunchedEffect(pairingInvite) {
+        if (pairingInvite != null) vm.openSettings()
+    }
     val catalogStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val orientationMode by rememberUiOrientationMode()
 

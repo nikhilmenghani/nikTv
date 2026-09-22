@@ -2,7 +2,10 @@ package com.nikhil.niktv.ui
 
 import android.Manifest
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.view.WindowManager
@@ -57,6 +60,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Shape
@@ -113,6 +117,11 @@ import com.nikhil.niktv.update.formatDownloadBytes
 import com.nikhil.niktv.data.OfflineMediaDownloads
 import com.nikhil.niktv.data.OfflineDownloadStatus
 import com.nikhil.niktv.data.RemoteCredentials
+import com.nikhil.niktv.data.DevicePairing
+import com.nikhil.niktv.data.PairingInvites
+import com.nikhil.niktv.data.PairingCrypto
+import com.nikhil.niktv.data.RemotePairing
+import com.nikhil.niktv.data.RemotePairingSession
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -632,12 +641,13 @@ internal fun ModernSettingsScreen(
         compactSettingsHeader || tabletSettingsLayout
     val settingsDestinations = SettingsDestination.entries
     var selectedSettingsDestination by remember {
-        mutableStateOf(SettingsDestination.GENERAL)
+        mutableStateOf(if (PairingInvites.pending != null) SettingsDestination.PROFILES else SettingsDestination.GENERAL)
     }
     val settingsRailRequesters = remember {
         SettingsDestination.entries.associateWith { FocusRequester() }
     }
     val settingsPagerState = rememberPagerState(
+        initialPage = if (PairingInvites.pending != null) settingsDestinations.indexOf(SettingsDestination.PROFILES) else 0,
         pageCount = { settingsDestinations.size }
     )
     val mobileSettingsTopBarBehavior =
@@ -4849,10 +4859,101 @@ internal fun TmdbCredentialSettingsSection() {
     var repository by remember { mutableStateOf(RemoteCredentials.repository(context)) }
     var filePath by remember { mutableStateOf(RemoteCredentials.filePath(context)) }
     var tokenInput by remember { mutableStateOf("") }
+    var pairing by remember { mutableStateOf<DevicePairing?>(null) }
+    var pairingMessage by remember { mutableStateOf<String?>(null) }
+    var pairAddress by remember { mutableStateOf("") }
+    var pairPort by remember { mutableStateOf("") }
+    var pairCode by remember { mutableStateOf("") }
+    var pairingMode by remember { mutableStateOf("Nearby") }
+    var relayUrl by remember { mutableStateOf(RemotePairing.relay(context)) }
+    var remoteSession by remember { mutableStateOf<RemotePairingSession?>(null) }
+    var inviteLink by remember { mutableStateOf("") }
+    var pendingRemoteApproval by remember { mutableStateOf<RemotePairingSession?>(null) }
+    var remoteJob by remember { mutableStateOf<Job?>(null) }
+    var manualPackage by remember { mutableStateOf<String?>(null) }
+    var manualCode by remember { mutableStateOf("") }
+    var importedPackage by remember { mutableStateOf<String?>(null) }
+    var importCode by remember { mutableStateOf("") }
+    var manualBusy by remember { mutableStateOf(false) }
+    val incomingInvite = PairingInvites.pending
+    LaunchedEffect(incomingInvite) {
+        incomingInvite?.let {
+            if (it.remote != null) {
+                pairingMode = "Remote"
+                relayUrl = it.remote.relay
+                inviteLink = it.remote.inviteUri
+            } else {
+                pairingMode = "Nearby"
+                pairAddress = it.address
+                pairPort = it.port
+                pairCode = it.code
+            }
+            PairingInvites.clear()
+        }
+    }
+    var pairingBusy by remember { mutableStateOf(false) }
+    var paired by remember { mutableStateOf(RemoteCredentials.configured(context)) }
     var syncing by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val values = RemoteCredentials.values
     val updatedAt = RemoteCredentials.lastUpdatedAt
+    val fileExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri == null) { manualPackage = null; manualCode = "" }
+        else {
+            val encrypted = manualPackage
+            if (encrypted != null) scope.launch {
+                runCatching {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { it.write(encrypted.toByteArray(Charsets.UTF_8)) }
+                            ?: error("Could not write the pairing file.")
+                    }
+                }.onSuccess { pairingMessage = "Encrypted pairing file saved. Send the file and code separately." }
+                    .onFailure { pairingMessage = it.message ?: "Could not save pairing file." }
+                manualPackage = null
+            }
+        }
+    }
+    val fileImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(4096)
+                        while (output.size() <= 32_768) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                        val bytes = output.toByteArray()
+                        require(bytes.size <= 32_768) { "Pairing file is too large." }
+                        String(bytes, Charsets.UTF_8)
+                    } ?: error("Could not read the pairing file.")
+                }
+            }.onSuccess { importedPackage = it; pairingMessage = "Encrypted file selected. Enter its separate code to import." }
+                .onFailure { pairingMessage = it.message ?: "Could not read pairing file." }
+        }
+    }
+    DisposableEffect(Unit) { onDispose { pairing?.close(); remoteJob?.cancel() } }
+    pendingRemoteApproval?.let { request ->
+        ProjectCardConfirmationDialog(
+            title = "Approve remote device?",
+            message = "Confirm request ${request.id} is displayed on your other device. This sends an encrypted copy of this device's GitHub read token and private repository settings through ${request.relay}. The other device will then have the same repository access.",
+            confirmLabel = "Approve device",
+            close = { pendingRemoteApproval = null },
+            confirm = {
+                pendingRemoteApproval = null
+                pairingBusy = true
+                pairingMessage = null
+                scope.launch {
+                    runCatching { RemotePairing.approve(context, request) }
+                        .onSuccess { inviteLink = ""; pairingMessage = "Remote device approved. Waiting for it to receive the configuration." }
+                        .onFailure { pairingMessage = it.message ?: "Could not approve remote pairing." }
+                    pairingBusy = false
+                }
+            }
+        )
+    }
 
     SettingsSection("Private configuration") {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -4895,11 +4996,26 @@ internal fun TmdbCredentialSettingsSection() {
             )
             NikTvSecondaryActionButton(
                 onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val pasted = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                    if (pasted.isBlank()) {
+                        message = "Clipboard is empty. Copy the token on this device, then try again."
+                    } else {
+                        tokenInput = pasted
+                        message = "Token pasted. Select Save and sync to store it securely."
+                    }
+                },
+                enabled = !syncing
+            ) { Text("Paste token") }
+            NikTvSecondaryActionButton(
+                onClick = {
                     syncing = true
                     message = null
                     scope.launch {
                         try {
                             RemoteCredentials.saveConnection(context, tokenInput, owner, repository, filePath)
+                            paired = true
                             tokenInput = ""
                             RemoteCredentials.refresh(context, force = true)
                             message = "Configuration synced. Open Profiles in Settings to enable the preconfigured profiles."
@@ -4926,6 +5042,211 @@ internal fun TmdbCredentialSettingsSection() {
             SettingsValueRow(Icons.Default.Subtitles, "OpenSubtitles", if (values["OPEN_SUBTITLES_KEY"].isNullOrBlank()) "Not configured" else "Available")
         }
     }
+    SettingsSection("Pair devices") {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Pairing transfers private configuration once. It does not transfer watch history or backups.",
+                style = MaterialTheme.typography.bodyMedium)
+            PairingModeSelector(pairingMode) { pairingMode = it }
+            if (!RemoteCredentials.canPairDevices(context)) {
+                if (paired) Text("This paired device can receive an updated configuration but cannot approve another device.",
+                    style = MaterialTheme.typography.bodySmall)
+                if (pairingMode == "Nearby") {
+                Text("Nearby device", style = MaterialTheme.typography.titleMedium)
+                Text("Connect both devices to the same local network.", style = MaterialTheme.typography.bodySmall)
+                NikTvSecondaryActionButton(onClick = {
+                    pairingMessage = null
+                    scope.launch {
+                        runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { DevicePairing.start() } }
+                            .onSuccess { session ->
+                                pairing = session
+                                pairingMessage = "Enter this address, port and code on the configured device. Expires in 3 minutes."
+                                scope.launch {
+                                    runCatching { session.receive(context) }
+                                        .onSuccess {
+                                            paired = true
+                                            pairingMessage = if (runCatching { RemoteCredentials.refresh(context, force = true) }.isSuccess) {
+                                                "Device paired and configuration synced."
+                                            } else {
+                                                "Device paired. Select Save and sync to retry the GitHub refresh."
+                                            }
+                                        }
+                                        .onFailure { pairingMessage = it.message ?: "Pairing failed or timed out." }
+                                    pairing = null
+                                }
+                            }.onFailure { pairingMessage = it.message ?: "Could not start pairing." }
+                    }
+                }, enabled = pairing == null) { Text("Receive configuration") }
+                pairing?.let { session ->
+                    PairingQr(session.inviteUri)
+                    Text("Address: ${session.address}")
+                    Text("Port: ${session.port}")
+                    Text("One-time code: ${session.code}")
+                    NikTvSecondaryActionButton(onClick = { session.close(); pairing = null; pairingMessage = "Pairing cancelled." }) {
+                        Text("Cancel pairing")
+                    }
+                }
+                }
+                if (pairingMode == "Remote") {
+                Text("Remote device", style = MaterialTheme.typography.titleMedium)
+                TvSafeSettingsTextField(relayUrl, { relayUrl = it }, Icons.Default.Cloud,
+                    "Pairing relay URL", "HTTPS address of your NikTV pairing relay", placeholder = "https://pair.example.com")
+                NikTvSecondaryActionButton(onClick = {
+                    pairingBusy = true
+                    pairingMessage = "Creating remote pairing request…"
+                    scope.launch {
+                        runCatching { RemotePairing.create(context, relayUrl) }
+                            .onSuccess { session ->
+                                remoteSession = session
+                                pairingMessage = "Share this link or QR code with the configured device. Keep this screen open for up to 15 minutes."
+                                remoteJob = scope.launch {
+                                    runCatching { RemotePairing.await(context, session) }
+                                        .onSuccess {
+                                            paired = true
+                                            pairingMessage = if (runCatching { RemoteCredentials.refresh(context, force = true) }.isSuccess)
+                                                "Remote pairing complete and configuration synced."
+                                            else "Remote pairing complete. Select Save and sync to retry GitHub."
+                                        }.onFailure { if (remoteSession == session) pairingMessage = it.message ?: "Remote pairing failed." }
+                                    remoteSession = null
+                                }
+                            }.onFailure { pairingMessage = it.message ?: "Could not reach pairing relay." }
+                        pairingBusy = false
+                    }
+                }, enabled = !pairingBusy && remoteSession == null && relayUrl.isNotBlank()) {
+                    Text(if (pairingBusy) "Starting…" else "Request remote pairing")
+                }
+                remoteSession?.let { session ->
+                    PairingQr(session.inviteUri)
+                    Text("Request ID: ${session.id}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Pairing link: ${session.inviteUri}", style = MaterialTheme.typography.bodySmall)
+                    NikTvSecondaryActionButton(onClick = {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, session.inviteUri)
+                        }
+                        context.startActivity(Intent.createChooser(share, "Send NikTV pairing link"))
+                    }) { Text("Share pairing link") }
+                    NikTvSecondaryActionButton(onClick = {
+                        remoteJob?.cancel()
+                        remoteSession = null
+                        scope.launch { RemotePairing.cancel(session) }
+                        pairingMessage = "Remote pairing cancelled."
+                    }) { Text("Cancel remote pairing") }
+                }
+                }
+                if (pairingMode == "File") {
+                Text("Encrypted file", style = MaterialTheme.typography.titleMedium)
+                NikTvSecondaryActionButton(onClick = {
+                    fileImportLauncher.launch(arrayOf("application/json", "application/octet-stream", "text/plain"))
+                }) { Text("Select pairing file") }
+                importedPackage?.let {
+                    TvSafeSettingsTextField(importCode, { importCode = it }, Icons.Default.Key,
+                        "File unlock code", "Get this separately from the configured device", password = true)
+                    Text("Importing replaces this device's current private configuration.", style = MaterialTheme.typography.bodySmall)
+                    NikTvSecondaryActionButton(onClick = {
+                        manualBusy = true
+                        pairingMessage = null
+                        scope.launch {
+                            runCatching {
+                                val configuration = PairingCrypto.open(it, importCode)
+                                RemoteCredentials.savePairedConnection(context, configuration)
+                            }.onSuccess {
+                                paired = true
+                                importedPackage = null
+                                importCode = ""
+                                pairingMessage = if (runCatching { RemoteCredentials.refresh(context, force = true) }.isSuccess)
+                                    "Configuration imported and synced."
+                                else "Configuration imported. Select Save and sync to retry GitHub."
+                            }.onFailure { pairingMessage = it.message ?: "Could not import pairing file." }
+                            manualBusy = false
+                        }
+                    }, enabled = !manualBusy && importCode.isNotBlank()) { Text("Import configuration") }
+                }
+                }
+            } else {
+                Text("This device entered the GitHub token manually and can approve another device.",
+                    style = MaterialTheme.typography.bodySmall)
+                if (pairingMode == "Nearby") {
+                Text("Nearby device", style = MaterialTheme.typography.titleMedium)
+                TvSafeSettingsTextField(pairAddress, { pairAddress = it }, Icons.Default.Wifi,
+                    "New device address", "Shown on the receiving device")
+                TvSafeSettingsTextField(pairPort, { pairPort = it }, Icons.Default.Numbers,
+                    "Pairing port", "Shown on the receiving device")
+                TvSafeSettingsTextField(pairCode, { pairCode = it }, Icons.Default.Key,
+                    "One-time code", "Shown on the receiving device", password = true)
+                NikTvSecondaryActionButton(onClick = {
+                    pairingBusy = true
+                    pairingMessage = null
+                    scope.launch {
+                        runCatching { DevicePairing.send(context, pairAddress, pairPort.toIntOrNull() ?: 0, pairCode) }
+                            .onSuccess { pairCode = ""; pairingMessage = "Configuration sent to the new device." }
+                            .onFailure { pairingMessage = it.message ?: "Could not pair the device." }
+                        pairingBusy = false
+                    }
+                }, enabled = !pairingBusy && pairAddress.isNotBlank() && pairPort.isNotBlank() && pairCode.isNotBlank()) {
+                    Text(if (pairingBusy) "Pairing…" else "Approve new device")
+                }
+                }
+                if (pairingMode == "Remote") {
+                Text("Remote device", style = MaterialTheme.typography.titleMedium)
+                TvSafeSettingsTextField(inviteLink, { inviteLink = it }, Icons.Default.Link,
+                    "Remote pairing link", "Scan the other device's QR code or paste its link")
+                NikTvSecondaryActionButton(onClick = {
+                    runCatching { RemotePairing.parseInvite(inviteLink) }
+                        .onSuccess { pendingRemoteApproval = it }
+                        .onFailure { pairingMessage = it.message ?: "Invalid pairing link." }
+                }, enabled = !pairingBusy && inviteLink.isNotBlank()) { Text("Approve remote device") }
+                }
+                if (pairingMode == "File") {
+                Text("Encrypted file", style = MaterialTheme.typography.titleMedium)
+                NikTvSecondaryActionButton(onClick = {
+                    runCatching {
+                        val code = PairingCrypto.newSecret()
+                        val encrypted = PairingCrypto.seal(RemoteCredentials.pairingConfiguration(context), code,
+                            System.currentTimeMillis() + 24 * 60 * 60 * 1000L)
+                        manualCode = code
+                        manualPackage = encrypted
+                        fileExportLauncher.launch("niktv-pairing.json")
+                    }.onFailure { pairingMessage = it.message ?: "Could not create pairing file." }
+                }) { Text("Create encrypted pairing file") }
+                if (manualCode.isNotBlank()) {
+                    Text("File unlock code: $manualCode", style = MaterialTheme.typography.bodyMedium)
+                    Text("Send this code separately from the file. The file expires in 24 hours.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                }
+            }
+            pairingMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+}
+
+@Composable
+private fun PairingModeSelector(selected: String, onSelect: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("Nearby", "Remote", "File").forEach { mode ->
+            val content: @Composable RowScope.() -> Unit = { Text(mode, maxLines = 1) }
+            if (selected == mode) {
+                NikTvPrimaryActionButton(onClick = { onSelect(mode) }, modifier = Modifier.weight(1f), content = content)
+            } else {
+                NikTvSecondaryActionButton(onClick = { onSelect(mode) }, modifier = Modifier.weight(1f), content = content)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PairingQr(link: String) {
+    val bitmap = remember(link) {
+        val bits = com.google.zxing.qrcode.QRCodeWriter().encode(
+            link, com.google.zxing.BarcodeFormat.QR_CODE, 280, 280
+        )
+        Bitmap.createBitmap(280, 280, Bitmap.Config.ARGB_8888).also { image ->
+            for (y in 0 until 280) for (x in 0 until 280) {
+                image.setPixel(x, y, if (bits[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+            }
+        }
+    }
+    Image(bitmap.asImageBitmap(), "Scan pairing link with the configured device", Modifier.size(220.dp))
 }
 
 internal fun String.credentialDiagnosticValue(revealed: Boolean): String = when {

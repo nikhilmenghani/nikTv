@@ -43,7 +43,9 @@ internal fun settingsDestinationFor(sectionTitle: String): SettingsDestination =
         "Storage & refresh" -> SettingsDestination.GENERAL
 
         "Profiles",
-        "Connection" -> SettingsDestination.PROFILES
+        "Connection",
+        "Private configuration",
+        "Pair devices" -> SettingsDestination.PROFILES
 
         "Backup and restore",
         "Data and sync" -> SettingsDestination.CATALOG

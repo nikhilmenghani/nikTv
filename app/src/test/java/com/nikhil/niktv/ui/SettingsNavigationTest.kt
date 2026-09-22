@@ -25,6 +25,8 @@ class SettingsNavigationTest {
             "Storage & refresh" to SettingsDestination.GENERAL,
             "Profiles" to SettingsDestination.PROFILES,
             "Connection" to SettingsDestination.PROFILES,
+            "Private configuration" to SettingsDestination.PROFILES,
+            "Pair devices" to SettingsDestination.PROFILES,
             "Backup and restore" to SettingsDestination.CATALOG,
             "Data and sync" to SettingsDestination.CATALOG,
             "App updates" to SettingsDestination.SYSTEM,
