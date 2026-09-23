@@ -865,7 +865,8 @@ private fun ModernDestinationHub(
             item("iptv-live-heading", span = fullSpan) {
                 ModernHubSectionHeading(
                     "Live TV",
-                    "Provider categories selected for Home."
+                    if (dashboardSurface == DashboardSurface.HOME) "Provider categories selected for Home."
+                    else "Browse your provider categories."
                 )
             }
             gridItems(
@@ -874,7 +875,7 @@ private fun ModernDestinationHub(
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
-                    subtitle = "IPTV · Live TV",
+                    subtitle = null,
                     icon = Icons.Default.LiveTv,
                     seed = "live:${category.id}:${category.title}",
                     isTv = isTv,
@@ -903,7 +904,7 @@ private fun ModernDestinationHub(
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
-                    subtitle = "IPTV · Movies",
+                    subtitle = null,
                     icon = Icons.Default.SmartDisplay,
                     seed = "movie:${category.id}:${category.title}",
                     isTv = isTv,
@@ -932,7 +933,7 @@ private fun ModernDestinationHub(
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
-                    subtitle = "IPTV · Series",
+                    subtitle = null,
                     icon = Icons.Default.Tv,
                     seed = "series:${category.id}:${category.title}",
                     isTv = isTv,
@@ -1621,7 +1622,7 @@ private fun ModernQuickActionTile(
 @Composable
 private fun ModernDestinationTile(
     title: String,
-    subtitle: String,
+    subtitle: String?,
     icon: ImageVector,
     seed: String,
     isTv: Boolean,
@@ -1732,7 +1733,9 @@ private fun ModernDestinationTile(
             Modifier
                 .fillMaxWidth()
                 .then(
-                    if (isPhone) {
+                    if (subtitle == null) {
+                        Modifier.height(if (isTv) 128.dp else if (isPhone) 132.dp else 144.dp)
+                    } else if (isPhone) {
                         Modifier.height(88.dp)
                     } else {
                         Modifier.aspectRatio(if (isTv) 1.72f else 16f / 9f)
@@ -1748,13 +1751,15 @@ private fun ModernDestinationTile(
                 )
                 .padding(
                     when {
-                        isTv -> 18.dp
+                        isTv -> if (subtitle == null) 14.dp else 18.dp
                         isPhone -> 12.dp
                         else -> 15.dp
                     }
                 )
         ) {
-            Row(
+            if (subtitle == null) {
+                ModernProviderCategoryLabel(title, icon, pinned, isTv)
+            } else Row(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .fillMaxWidth()
@@ -1838,7 +1843,7 @@ private fun ModernDestinationTile(
                 }
             }
 
-            if (pinned) {
+            if (pinned && subtitle != null) {
                 Box(
                     modifier = Modifier.align(Alignment.TopEnd).size(34.dp),
                     contentAlignment = Alignment.Center
@@ -1852,7 +1857,7 @@ private fun ModernDestinationTile(
                 }
             }
 
-            if (isTv && focused) {
+            if (isTv && focused && subtitle != null) {
                 Box(
                     Modifier
                         .align(Alignment.BottomStart)
@@ -1886,6 +1891,49 @@ private fun ModernDestinationTile(
                 }
             }
         }
+    }
+}
+
+/** Give provider names the full card width; source/type already live in the section heading. */
+@Composable
+private fun ModernProviderCategoryLabel(
+    title: String,
+    icon: ImageVector,
+    pinned: Boolean,
+    isTv: Boolean
+) {
+    val parts = remember(title) {
+        title.split('|', limit = 2).map(String::trim)
+            .takeIf { it.size == 2 && it.all(String::isNotBlank) }
+    }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().height(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Box(Modifier.width(3.dp).height(12.dp)
+                .background(ModernBrandAccent, RoundedCornerShape(2.dp)))
+            if (parts != null) {
+                Text(parts.first(), modifier = Modifier.weight(1f),
+                    fontSize = if (isTv) 10.sp else 11.sp,
+                    lineHeight = 14.sp, fontWeight = FontWeight.Medium,
+                    color = Color(0xFFB9BDD0), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else {
+                Icon(icon, null, Modifier.size(16.dp), tint = Color(0xFFB9BDD0))
+                Spacer(Modifier.weight(1f))
+            }
+            if (pinned) {
+                Icon(Icons.Default.PushPin, "Pinned $title", Modifier.size(15.dp),
+                    tint = ModernBrandAccent)
+            }
+        }
+        Text(parts?.last() ?: title,
+            modifier = Modifier.fillMaxWidth(),
+            fontSize = if (isTv) 14.sp else 16.sp,
+            lineHeight = if (isTv) 18.sp else 21.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFFF2F3F7), maxLines = 4, overflow = TextOverflow.Ellipsis)
     }
 }
 
