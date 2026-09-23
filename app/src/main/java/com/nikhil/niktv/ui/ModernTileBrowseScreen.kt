@@ -994,15 +994,10 @@ private fun ModernRecentChannelsCollection(
 ) {
     BackHandler(onBack = close)
     val configuration = LocalConfiguration.current
-    val context = LocalContext.current
-    val themed = remember {
-        context.getSharedPreferences("modern_live_tv_tiles", Context.MODE_PRIVATE)
-            .getBoolean("themed", true)
-    }
     val columns = when {
         !isTv && configuration.smallestScreenWidthDp < 600 -> 1
         isTv -> 2
-        themed && configuration.screenWidthDp >= 800 -> 3
+        configuration.screenWidthDp >= 800 -> 3
         else -> 2
     }
     var categoryToClear by remember { mutableStateOf<Pair<String?, String>?>(null) }
@@ -1069,7 +1064,6 @@ private fun ModernRecentChannelsCollection(
             ModernLiveChannelTile(
                 item = recent.media,
                 categoryTitle = category.second,
-                themed = themed,
                 isFavorite = favorites.any { it.key == recent.key },
                 onFavorite = {
                     toggleFavorite(FavoriteItem(
@@ -2816,17 +2810,11 @@ private fun ModernIptvCollection(
         pinnedItems + state.items
     }
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
-    val liveTilePreferences = remember(context) {
-        context.getSharedPreferences("modern_live_tv_tiles", Context.MODE_PRIVATE)
-    }
-    var themedLiveTiles by remember(category.type) {
-        mutableStateOf(liveTilePreferences.getBoolean("themed", true))
-    }
     val columns = when {
         isLiveTv && isPhone -> 1
         isLiveTv && isTv -> 2
-        isLiveTv && themedLiveTiles && configuration.screenWidthDp >= 800 -> 3
-        isLiveTv && themedLiveTiles -> 2
+        isLiveTv && configuration.screenWidthDp >= 800 -> 3
+        isLiveTv -> 2
         else -> modernCollectionPosterColumns(configuration, isTv)
     }
     val fullSpan:
@@ -2954,25 +2942,6 @@ private fun ModernIptvCollection(
                         label = { Text(if (state.categoryRefreshing) "Refreshing…" else "Refresh") },
                         leadingIcon = { Icon(Icons.Default.RestartAlt, null, Modifier.size(17.dp)) }
                     )
-                    if (isLiveTv) {
-                        FilterChip(
-                            selected = themedLiveTiles,
-                            onClick = {
-                                themedLiveTiles = true
-                                liveTilePreferences.edit().putBoolean("themed", true).apply()
-                            },
-                            label = { Text("Theme") },
-                            leadingIcon = { Icon(Icons.Default.Tune, null, Modifier.size(17.dp)) }
-                        )
-                        FilterChip(
-                            selected = !themedLiveTiles,
-                            onClick = {
-                                themedLiveTiles = false
-                                liveTilePreferences.edit().putBoolean("themed", false).apply()
-                            },
-                            label = { Text("Thumbnails") }
-                        )
-                    }
                 }
             },
             modifier = Modifier.padding(
@@ -3044,7 +3013,6 @@ private fun ModernIptvCollection(
                 ModernLiveChannelTile(
                     item = media,
                     categoryTitle = category.title,
-                    themed = themedLiveTiles,
                     isFavorite = favorite,
                     onFavorite = favoriteAction,
                     isPinned = media.id in pinnedChannelIds,
@@ -3271,7 +3239,6 @@ private fun FullDescriptionDialog(
 private fun ModernLiveChannelTile(
     item: MediaItem,
     categoryTitle: String,
-    themed: Boolean,
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     isPinned: Boolean,
@@ -3360,13 +3327,7 @@ private fun ModernLiveChannelTile(
         ) {
             Row(
                 Modifier
-                    .background(
-                        if (themed) {
-                            Brush.linearGradient(listOf(palette.first, palette.second))
-                        } else {
-                            Brush.linearGradient(listOf(Color(0xFF171A20), Color(0xFF101216)))
-                        }
-                    )
+                    .background(Brush.linearGradient(listOf(palette.first, palette.second)))
                     .padding(if (isPhone) 10.dp else if (isTv) 11.dp else 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(if (isPhone) 11.dp else 14.dp)
@@ -3377,21 +3338,12 @@ private fun ModernLiveChannelTile(
                     color = Color.Black.copy(alpha = .30f)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        if (!themed && !item.logo.isNullOrBlank()) {
-                            AsyncImage(
-                                model = artworkRequest(context, item),
-                                contentDescription = item.title,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.LiveTv,
-                                null,
-                                Modifier.size(if (isPhone) 27.dp else 32.dp),
-                                tint = Color.White
-                            )
-                        }
+                        Icon(
+                            Icons.Default.LiveTv,
+                            null,
+                            Modifier.size(if (isPhone) 27.dp else 32.dp),
+                            tint = Color.White
+                        )
                     }
                 }
                 Column(
