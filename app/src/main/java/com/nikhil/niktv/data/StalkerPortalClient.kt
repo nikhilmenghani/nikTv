@@ -537,24 +537,22 @@ class StalkerPortalClient(private val context: Context) {
      * lightweight Cast4K get_short_epg flow and avoids refreshing a category. */
     suspend fun playingChannelSchedule(session: PortalSession, item: MediaItem): MediaItem = withContext(Dispatchers.IO) {
         if (session.profile.portalType != PortalType.STALKER || item.id.isBlank()) return@withContext item
-        val response = runCatching {
-            request(
-                session.profile,
-                session.endpointUrl,
+        val response = request(
+            session.profile,
+            session.endpointUrl,
+            session,
+            authorizedParams(
                 session,
-                authorizedParams(
-                    session,
-                    mapOf(
-                        "type" to "itv",
-                        "action" to "get_short_epg",
-                        "ch_id" to item.id,
-                        // One bounded request. Twenty-four entries normally
-                        // covers a full day without polling or category-wide EPG load.
-                        "size" to "24"
-                    )
+                mapOf(
+                    "type" to "itv",
+                    "action" to "get_short_epg",
+                    "ch_id" to item.id,
+                    // One bounded request. Twenty-four entries normally
+                    // covers a full day without polling or category-wide EPG load.
+                    "size" to "24"
                 )
             )
-        }.getOrNull() ?: return@withContext item
+        )
         val now = System.currentTimeMillis()
         val schedules = response.epgSchedulesByChannel(item.id)
         val schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()

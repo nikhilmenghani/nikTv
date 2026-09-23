@@ -186,6 +186,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val liveGuideLookupMutex = Mutex()
     private val liveGuidePending = mutableSetOf<String>()
     private val liveGuideAttemptedAt = mutableMapOf<String, Long>()
+    private var lastVisibleLiveGuideIds: Pair<String, List<String>>? = null
+    private var liveGuideCacheSaveJob: Job? = null
     private var profilePreparationJob: Job? = null
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
@@ -1006,21 +1008,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Fill missing guide entries only for channels visible in the browse grid. */
-    fun enrichVisibleLiveGuides(visible: List<MediaItem>) {
+    fun enrichVisibleLiveGuides(visible: List<MediaItem>) =
+        loadVisibleLiveGuides(visible, force = false)
+
+    private fun loadVisibleLiveGuides(visible: List<MediaItem>, force: Boolean) {
         val snapshot = _state.value
         val session = snapshot.session ?: return
         val category = snapshot.modernIptvCategory?.takeIf { it.type == CatalogType.LIVE_TV } ?: return
         if (session.profile.portalType != PortalType.STALKER) return
         val profileKey = session.profile.cacheKey()
+        lastVisibleLiveGuideIds = categoryRefreshKey(session, category) to
+            visible.map { it.id }.distinct()
         val now = System.currentTimeMillis()
         visible.distinctBy { it.id }.forEach { item ->
-            if (item.portalCategoryId != category.id || item.liveSchedule.any { programme ->
+            if (item.portalCategoryId != category.id || !force && item.liveSchedule.any { programme ->
                     val start = programme.startTimeMillis
                     val end = programme.endTimeMillis
                     start != null && end != null && now in start until end
                 }) return@forEach
             val key = "$profileKey|${category.id}|${item.id}"
-            if (key in liveGuidePending || now - (liveGuideAttemptedAt[key] ?: 0L) < 15 * 60_000L) {
+            if (key in liveGuidePending || !force &&
+                now - (liveGuideAttemptedAt[key] ?: 0L) < 2 * 60_000L) {
                 return@forEach
             }
             liveGuidePending += key
@@ -1031,7 +1039,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         if (active.session?.profile?.cacheKey() != profileKey ||
                             active.modernIptvCategory?.id != category.id) return@withLock
                         liveGuideAttemptedAt[key] = System.currentTimeMillis()
-                        val enriched = portal.playingChannelSchedule(session, item)
+                        val enriched = withAutomaticSessionRetry(session) { activeSession ->
+                            portal.playingChannelSchedule(activeSession, item)
+                        }
+                        Log.d("NikTvLiveGuide", "Channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
                         if (enriched.liveSchedule.isNotEmpty()) {
                             _state.update { current ->
                                 if (current.session?.profile?.cacheKey() != profileKey) return@update current
@@ -1057,6 +1068,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                         current.browseCachesByType + (CatalogType.LIVE_TV to updatedCache)
                                     } else current.browseCachesByType
                                 )
+                            }
+                            liveGuideCacheSaveJob?.cancel()
+                            liveGuideCacheSaveJob = viewModelScope.launch {
+                                delay(2_500L)
+                                _state.value.browseCachesByType[CatalogType.LIVE_TV]
+                                    ?.takeIf { it.profileKey == profileKey }
+                                    ?.let { store.saveBrowseCatalog(it, scheduleMetadataSync = false) }
                             }
                         }
                         delay(650L)
@@ -1169,10 +1187,26 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 // A background refresh only fetches the provider's first page.
                 // Keep the pages the user already loaded instead of silently
                 // collapsing the category back to page one when its cache ages.
-                val refreshedItems = if (cachedPage > page.page) {
+                val pageItems = if (cachedPage > page.page) {
                     (page.items + cachedItems).distinctBy { it.id }
                 } else {
                     page.items
+                }
+                val cachedById = if (category.type == CatalogType.LIVE_TV) {
+                    cachedItems.associateBy { it.id }
+                } else emptyMap()
+                val refreshedItems = pageItems.map { fresh ->
+                    val previous = cachedById[fresh.id]
+                    if (previous != null &&
+                        previous.liveSchedule.size > fresh.liveSchedule.size &&
+                        previous.liveSchedule.any { (it.endTimeMillis ?: 0L) > refreshedAt }) {
+                        // The first-page response often has only a generic
+                        // channel row. Keep its separately fetched guide.
+                        fresh.copy(
+                            liveProgramme = previous.liveProgramme,
+                            liveSchedule = previous.liveSchedule
+                        )
+                    } else fresh
                 }
                 val refreshedPage = maxOf(cachedPage, page.page)
                 val refreshedHasMore = if (cachedPage > page.page) {
@@ -1432,6 +1466,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val session = snapshot.session ?: return
         val category = snapshot.selectedCategory ?: return
+        if (category.type == CatalogType.LIVE_TV &&
+            snapshot.modernIptvCategory?.id == category.id) {
+            // Retry the channels currently on screen immediately, even when
+            // an automatic first-page refresh is already running.
+            val visibleIds = lastVisibleLiveGuideIds
+                ?.takeIf { it.first == categoryRefreshKey(session, category) }
+                ?.second.orEmpty().toSet()
+            if (visibleIds.isNotEmpty()) {
+                loadVisibleLiveGuides(snapshot.items.filter { it.id in visibleIds }, force = true)
+            }
+        }
         refreshCategoryInBackground(session, category, userRequested = true)
     }
 

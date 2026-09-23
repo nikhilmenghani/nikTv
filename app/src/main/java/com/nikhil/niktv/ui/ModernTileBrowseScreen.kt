@@ -3151,6 +3151,7 @@ private fun ModernCollectionHeader(
     trailingAction: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val isPhone = LocalConfiguration.current.smallestScreenWidthDp < 600
     Column(
         modifier
             .fillMaxWidth()
@@ -3167,8 +3168,8 @@ private fun ModernCollectionHeader(
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Black,
+                    style = if (isPhone) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
+                    fontWeight = if (isPhone) FontWeight.Bold else FontWeight.Black,
                     color = Color.White,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -3368,7 +3369,14 @@ private fun ModernLiveChannelTile(
         Surface(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
-                .height(if (isTv) 116.dp else 124.dp)
+                .height(
+                    when {
+                        isPhone && currentProgrammeTitle == null -> 70.dp
+                        isPhone -> 102.dp
+                        isTv -> 116.dp
+                        else -> 124.dp
+                    }
+                )
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
@@ -3418,8 +3426,8 @@ private fun ModernLiveChannelTile(
                     Modifier.fillMaxSize().padding(
                         start = if (isPhone) 15.dp else 18.dp,
                         end = 14.dp,
-                        top = if (currentProgrammeTitle == null) 16.dp else 12.dp,
-                        bottom = if (currentProgrammeTitle == null) 16.dp else 12.dp
+                        top = if (isPhone) 10.dp else if (currentProgrammeTitle == null) 16.dp else 12.dp,
+                        bottom = if (isPhone) 10.dp else if (currentProgrammeTitle == null) 16.dp else 12.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -3436,7 +3444,11 @@ private fun ModernLiveChannelTile(
                             Text(
                                 currentProgrammeTitle,
                                 color = Color.White,
-                                style = if (isTv) modernTvTileTitleStyle() else MaterialTheme.typography.titleMedium,
+                                style = when {
+                                    isTv -> modernTvTileTitleStyle()
+                                    isPhone -> MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
+                                    else -> MaterialTheme.typography.titleMedium
+                                },
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
@@ -3461,7 +3473,11 @@ private fun ModernLiveChannelTile(
                                     Text(
                                         channelName,
                                         color = Color.White,
-                                        style = if (isTv) modernTvTileTitleStyle() else MaterialTheme.typography.titleMedium,
+                                        style = when {
+                                            isTv -> modernTvTileTitleStyle()
+                                            isPhone -> MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
+                                            else -> MaterialTheme.typography.titleMedium
+                                        },
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
