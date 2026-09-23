@@ -204,13 +204,13 @@ internal fun VlcPlayerScreen(
     val currentPlayPrevious by rememberUpdatedState(onPlayPrevious)
     val currentPlayNext by rememberUpdatedState(onPlayNext)
     val currentAdvancePrevious by rememberUpdatedState<() -> Unit> {
-        if (!advancing) {
+        if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
             advancing = true
             onPlayPrevious()
         }
     }
     val currentAdvanceNext by rememberUpdatedState<() -> Unit> {
-        if (!advancing) {
+        if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
             advancing = true
             onPlayNext()
         }
@@ -1464,7 +1464,7 @@ PlayerChromeIconButton(
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.SkipPrevious,
                                         contentDescription = "Previous",
-                                        onClick = { if (!advancing) { advancing = true; onPlayPrevious() } },
+                                        onClick = currentAdvancePrevious,
                                         modifier = Modifier.focusRequester(previousRequester)
                                             .focusProperties {
                                                 up = if (seekable) progressRequester else backRequester
@@ -1562,7 +1562,7 @@ PlayerChromeIconButton(
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.SkipNext,
                                         contentDescription = "Next",
-                                        onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                                        onClick = currentAdvanceNext,
                                         modifier = Modifier.focusRequester(nextRequester)
                                             .focusProperties {
                                                 up = if (seekable) progressRequester else backRequester

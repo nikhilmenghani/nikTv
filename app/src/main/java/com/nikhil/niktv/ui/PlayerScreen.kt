@@ -1624,7 +1624,7 @@ fun PlayerScreen(
                                         pendingSingleTap?.let(playerView::removeCallbacks)
                                         pendingSingleTap = null
                                         lastTapAtMillis = 0L
-                                        if (!advancing) {
+                                        if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
                                             advancing = true
                                             if (tappedOnRight) currentOnPlayNext()
                                             else currentOnPlayPrevious()
@@ -2120,7 +2120,7 @@ PlayerChromeIconButton(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.SkipPrevious,
                                             contentDescription = "Previous",
-                                            onClick = { if (!advancing) { advancing = true; onPlayPrevious() } },
+                                            onClick = { if (media.catalogType == CatalogType.LIVE_TV || !advancing) { advancing = true; onPlayPrevious() } },
                                             modifier = Modifier.focusRequester(previousFocusRequester)
                                                 .focusProperties {
                                                     up = if (seekable) progressFocusRequester else backFocusRequester
@@ -2218,7 +2218,7 @@ PlayerChromeIconButton(
                                         PlayerChromeIconButton(
                                             icon = Icons.Default.SkipNext,
                                             contentDescription = "Next",
-                                            onClick = { if (!advancing) { advancing = true; onPlayNext() } },
+                                            onClick = { if (media.catalogType == CatalogType.LIVE_TV || !advancing) { advancing = true; onPlayNext() } },
                                             modifier = Modifier.focusRequester(nextFocusRequester)
                                                 .focusProperties {
                                                     up = if (seekable) progressFocusRequester else backFocusRequester

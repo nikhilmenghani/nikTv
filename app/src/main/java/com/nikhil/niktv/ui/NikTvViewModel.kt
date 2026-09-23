@@ -193,7 +193,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var categoryFindGeneration = 0
     private val categoryFindSaveMutex = Mutex()
     private val liveGuideLookupMutex = Mutex()
-    private val liveGuidePending = mutableSetOf<String>()
+    private val liveGuideJobs = mutableMapOf<String, Job>()
     private val liveGuideAttemptedAt = mutableMapOf<String, Long>()
     private var lastVisibleLiveGuideIds: Pair<String, List<String>>? = null
     private var liveGuideCacheSaveJob: Job? = null
@@ -1028,6 +1028,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = session.profile.cacheKey()
         lastVisibleLiveGuideIds = categoryRefreshKey(session, category) to
             visible.map { it.id }.distinct()
+        val visibleKeys = visible.map { "$profileKey|${category.id}|${it.id}" }.toSet()
+        liveGuideJobs.filterKeys { it !in visibleKeys }.values.toList().forEach { it.cancel() }
+        if (snapshot.nowPlaying != null || snapshot.loading) return
         val now = System.currentTimeMillis()
         visible.distinctBy { it.id }.forEach { item ->
             if (item.portalCategoryId != category.id || !force && item.liveSchedule.any { programme ->
@@ -1037,17 +1040,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         start != null && end != null && now in start until end
                 }) return@forEach
             val key = "$profileKey|${category.id}|${item.id}"
-            if (key in liveGuidePending || !force &&
+            if (liveGuideJobs[key]?.isActive == true || !force &&
                 now - (liveGuideAttemptedAt[key] ?: 0L) < 2 * 60_000L) {
                 return@forEach
             }
-            liveGuidePending += key
-            viewModelScope.launch {
+            val guideJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                 try {
                     liveGuideLookupMutex.withLock {
                         val active = _state.value
                         if (active.session?.profile?.cacheKey() != profileKey ||
-                            active.modernIptvCategory?.id != category.id) return@withLock
+                            active.modernIptvCategory?.id != category.id ||
+                            active.nowPlaying != null || active.loading ||
+                            item.id !in lastVisibleLiveGuideIds?.second.orEmpty()) return@withLock
                         liveGuideAttemptedAt[key] = System.currentTimeMillis()
                         val cleanItem = item.copy(
                             liveProgramme = item.liveProgramme?.takeUnless {
@@ -1098,28 +1102,35 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         delay(650L)
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    liveGuideAttemptedAt.remove(key)
                     throw cancelled
                 } catch (error: Exception) {
                     Log.w("NikTvLiveGuide", "Could not load a visible channel guide", error)
                 } finally {
-                    liveGuidePending -= key
+                    liveGuideJobs.remove(key, coroutineContext[Job])
                 }
             }
+            liveGuideJobs[key] = guideJob
+            guideJob.start()
         }
     }
 
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
-        _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null) }
+        _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null,
+            catalogLoadingMore = false) }
 
         // The per-type disk cache can contain tens of megabytes of catalogue
         // data. It is already loaded while entering the tab, so do not parse
         // the whole file again for every category selection.
         val memoryCache = _state.value.browseCachesByType[category.type]
             ?.takeIf { it.profileKey == profileKey }
-        val categoryCache = memoryCache
-            ?: store.browseCatalog(category.type, profileKey).first()
+        val categoryCache = (memoryCache
+            ?: store.browseCatalog(category.type, profileKey).first())?.validateCategory(category.id)
+        if (_state.value.session?.profile?.cacheKey() != profileKey ||
+            _state.value.selectedType != category.type ||
+            _state.value.selectedCategory?.id != category.id) return@task
         if (categoryCache != null) _state.update { it.copy(browseCache = categoryCache,
             browseCachesByType = it.browseCachesByType + (category.type to categoryCache)) }
         val cached = categoryCache?.itemsByCategory?.get(category.id)?.takeIf {
@@ -1147,9 +1158,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val firstPage = fetchInitialCatalogPage(session, category)
-        val existing = categoryCache
-            ?: _state.value.browseCachesByType[category.type]
-                ?.takeIf { it.profileKey == profileKey && it.type == category.type }
+        if (_state.value.session?.profile?.cacheKey() != profileKey ||
+            _state.value.selectedType != category.type ||
+            _state.value.selectedCategory?.id != category.id) return@task
+        val existing = _state.value.browseCachesByType[category.type]
+            ?.takeIf { it.profileKey == profileKey && it.type == category.type }
+            ?: categoryCache
         val updated = existing?.copy(
             cachedAtMillis = System.currentTimeMillis(),
             itemsByCategory = existing.itemsByCategory + (category.id to firstPage.items),
@@ -1372,7 +1386,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = _state.value
         val session = snapshot.session ?: return
         val category = snapshot.selectedCategory ?: return
-        if (snapshot.catalogLoadingMore || snapshot.categoryFindSearching || !snapshot.catalogHasMore ||
+        if (snapshot.loading || snapshot.catalogLoadingMore || snapshot.categoryFindSearching || !snapshot.catalogHasMore ||
             snapshot.selectedType !in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) return
         viewModelScope.launch {
             _state.update { it.copy(catalogLoadingMore = true) }
@@ -1384,7 +1398,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         page = snapshot.catalogPage + 1,
                         pageSize = snapshot.initialCatalogItems.takeIf {
                             activeSession.profile.portalType == PortalType.XTREAM
-                        }
+                        },
+                        includeEpg = !snapshot.modernUiEnabled
                     )
                 }
             }
@@ -1397,7 +1412,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                      * as the real end of the catalog so Load More disappears
                      * instead of repeatedly offering a no-op request.
                      */
-                    val currentItems = _state.value.items
+                    val activeCatalog = _state.value
+                    // A page may finish after the user has opened another
+                    // category/profile. Never append it to that new selection.
+                    if (activeCatalog.session?.profile?.cacheKey() != session.profile.cacheKey() ||
+                        activeCatalog.selectedType != category.type ||
+                        activeCatalog.selectedCategory?.id != category.id) return@onSuccess
+                    val currentItems = activeCatalog.items
                     val merged =
                         (currentItems + result.items)
                             .distinctBy { it.id }
@@ -1471,7 +1492,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                .onFailure { error -> _state.update { it.copy(catalogLoadingMore = false, error = error.message ?: "Could not load more titles") } }
+                .onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    _state.update {
+                        if (it.session?.profile?.cacheKey() != session.profile.cacheKey() ||
+                            it.selectedType != category.type || it.selectedCategory?.id != category.id) it
+                        else it.copy(catalogLoadingMore = false, error = error.message ?: "Could not load more titles")
+                    }
+                }
         }
     }
 
@@ -2207,7 +2235,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         existingIds: Set<String>
     ): PortalCatalogPage {
         var nextPage = requestedPage
-        var result = portal.catalogPage(session, category, nextPage)
+        var result = portal.catalogPage(session, category, nextPage, includeEpg = false)
         var duplicatePagesSkipped = 0
 
         while (
@@ -2217,7 +2245,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             duplicatePagesSkipped++
             nextPage = (result.page + 1).coerceAtLeast(nextPage + 1)
-            result = portal.catalogPage(session, category, nextPage)
+            result = portal.catalogPage(session, category, nextPage, includeEpg = false)
         }
         return result
     }
@@ -2236,7 +2264,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             session = session,
             category = category,
             page = 1,
-            pageSize = target.takeIf { session.profile.portalType == PortalType.XTREAM }
+            pageSize = target.takeIf { session.profile.portalType == PortalType.XTREAM },
+            includeEpg = !_state.value.modernUiEnabled
         )
         if (session.profile.portalType != PortalType.STALKER || !firstPage.hasMore) {
             return firstPage
@@ -2247,7 +2276,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         var latestPage = firstPage
 
         while (latestPage.hasMore && merged.size < target) {
-            val nextPage = portal.catalogPage(session, category, latestPage.page + 1)
+            val nextPage = portal.catalogPage(session, category, latestPage.page + 1,
+                includeEpg = !_state.value.modernUiEnabled)
             val additions = nextPage.items.filter { knownIds.add(it.id) }
             latestPage = nextPage
             if (additions.isEmpty()) break
@@ -5310,6 +5340,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         directFullscreen: Boolean = false
     ) = latestPlaybackRequest.run {
         try {
+            liveGuideJobs.values.toList().forEach { it.cancel() }
             // Coalesce a burst of remote presses before opening another stream.
             if (type == CatalogType.LIVE_TV && _state.value.nowPlaying != null) delay(250L)
             resolvePlayback(item, type, series, episodes, forceFreshUrl,
@@ -5791,6 +5822,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             snapshot.playbackQueueHasMore
         ) {
             val previousSize = queue.size
+            val boundaryItemId = pendingNavigationId ?: playing.media.id
             val loadStarted = snapshot.playbackQueueLoadingMore || loadMorePlaybackQueue()
             if (loadStarted && autoAdvanceAfterQueueLoadJob?.isActive != true) {
                 autoAdvanceAfterQueueLoadJob = viewModelScope.launch {
@@ -5800,7 +5832,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     if (
                         updatedPlaying.catalogType == CatalogType.LIVE_TV &&
                         updatedQueue.size > previousSize &&
-                        (playbackNavigationIndex ?: updatedQueue.indexOfFirst { it.id == updatedPlaying.media.id }) < updatedQueue.lastIndex
+                        (pendingNavigationId ?: updatedPlaying.media.id) == boundaryItemId &&
+                        (playbackNavigationIndex ?: updatedQueue.indexOfFirst { it.id == updatedPlaying.media.id }) == index
                     ) {
                         playNextEpisode()
                     }

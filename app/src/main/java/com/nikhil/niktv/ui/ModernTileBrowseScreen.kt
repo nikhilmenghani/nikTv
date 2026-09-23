@@ -2947,7 +2947,7 @@ private fun ModernIptvCollection(
             val visible = visibleIds.mapNotNull { id ->
                 displayedItems.firstOrNull { it.id == id }
             }
-            if (visible.isNotEmpty()) enrichVisibleLiveGuides(visible)
+            enrichVisibleLiveGuides(visible)
         }
     }
     val itemFocusRequesters =
