@@ -2972,15 +2972,16 @@ private fun ModernIptvCollection(
             title = category.title,
             subtitle = "IPTV · ${category.type.title} · ${state.items.size} loaded",
             close = close,
-            action = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = false,
-                        onClick = refresh,
-                        enabled = !state.loading && !state.catalogLoadingMore && !state.categoryRefreshing,
-                        label = { Text(if (state.categoryRefreshing) "Refreshing…" else "Refresh") },
-                        leadingIcon = { Icon(Icons.Default.RestartAlt, null, Modifier.size(17.dp)) }
-                    )
+            trailingAction = {
+                FilledTonalIconButton(
+                    onClick = refresh,
+                    enabled = !state.loading && !state.catalogLoadingMore && !state.categoryRefreshing
+                ) {
+                    if (state.categoryRefreshing) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.RestartAlt, "Refresh category", Modifier.size(20.dp))
+                    }
                 }
             },
             modifier = Modifier.padding(
@@ -3147,6 +3148,7 @@ private fun ModernCollectionHeader(
     subtitle: String,
     close: () -> Unit,
     action: (@Composable () -> Unit)? = null,
+    trailingAction: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -3177,6 +3179,7 @@ private fun ModernCollectionHeader(
                     color = Color(0xFFAFAFAF)
                 )
             }
+            trailingAction?.invoke()
         }
         action?.invoke()
     }
@@ -3365,7 +3368,7 @@ private fun ModernLiveChannelTile(
         Surface(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
-                .heightIn(min = if (isPhone) 86.dp else if (isTv) 98.dp else 82.dp)
+                .height(if (isTv) 116.dp else 124.dp)
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
@@ -3412,7 +3415,7 @@ private fun ModernLiveChannelTile(
                     )
                 }
                 Row(
-                    Modifier.fillMaxWidth().padding(
+                    Modifier.fillMaxSize().padding(
                         start = if (isPhone) 15.dp else 18.dp,
                         end = 14.dp,
                         top = if (currentProgrammeTitle == null) 16.dp else 12.dp,
@@ -3449,14 +3452,6 @@ private fun ModernLiveChannelTile(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            programmeProgress?.let { progress ->
-                                LinearProgressIndicator(
-                                    progress = { progress },
-                                    modifier = Modifier.fillMaxWidth().height(2.dp),
-                                    color = palette.first,
-                                    trackColor = Color.White.copy(alpha = .13f)
-                                )
-                            }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -3468,7 +3463,7 @@ private fun ModernLiveChannelTile(
                                         color = Color.White,
                                         style = if (isTv) modernTvTileTitleStyle() else MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.SemiBold,
-                                        maxLines = 3,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     detail?.let {
@@ -3509,6 +3504,21 @@ private fun ModernLiveChannelTile(
                                     tint = Color.White.copy(alpha = .90f))
                             }
                         }
+                    }
+                }
+                programmeProgress?.takeIf { currentProgrammeTitle != null }?.let { progress ->
+                    Box(
+                        Modifier.align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(start = if (isPhone) 15.dp else 18.dp,
+                                end = 14.dp, bottom = 10.dp)
+                            .height(4.dp)
+                            .background(Color.White.copy(alpha = .28f), RoundedCornerShape(2.dp))
+                    ) {
+                        Box(
+                            Modifier.fillMaxWidth(progress).fillMaxHeight()
+                                .background(ModernBrandAccent, RoundedCornerShape(2.dp))
+                        )
                     }
                 }
             }
