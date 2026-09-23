@@ -639,19 +639,8 @@ private fun QueueArtworkFallback(item: MediaItem) {
     Box(
         Modifier.fillMaxSize().background(
             Brush.linearGradient(listOf(accent.copy(alpha = .88f), Color(0xFF161C25)))
-        ),
-    ) {
-        Text(
-            item.title,
-            modifier = Modifier.align(Alignment.CenterStart).padding(horizontal = 12.dp, vertical = 25.dp),
-            color = Color.White,
-            fontSize = 11.sp,
-            lineHeight = 13.sp,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-            maxLines = 5,
-            overflow = TextOverflow.Ellipsis
         )
-    }
+    )
 }
 
 @Composable
@@ -711,9 +700,9 @@ internal fun PlayerQueueOverlay(
      * episode artwork a useful canvas and enough room for readable metadata.
      */
     val touchQueueSheetHeight =
-        (configuration.screenHeightDp * .35f).dp.coerceIn(
-            if (compactQueueGrid) 132.dp else 156.dp,
-            if (compactQueueGrid) 172.dp else 220.dp
+        (configuration.screenHeightDp * .40f).dp.coerceIn(
+            if (compactQueueGrid) 156.dp else 172.dp,
+            if (compactQueueGrid) 190.dp else 230.dp
         )
     val queueSheetMinHeight = when {
         tvQueueGrid -> 200.dp
@@ -774,8 +763,8 @@ internal fun PlayerQueueOverlay(
         else -> (touchQueueSheetHeight - 40.dp).coerceAtLeast(96.dp)
     }
     val compactQueueCardWidth =
-        if (compactQueueGrid) queueCardHeight * 1.15f
-        else queueCardHeight * 1.25f
+        if (compactQueueGrid) queueCardHeight * 1.75f
+        else queueCardHeight * 1.45f
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items, pinnedIds) {
@@ -1159,7 +1148,24 @@ internal fun PlayerQueueOverlay(
                                 description.takeUnless { compactQueueGrid }
                             ).joinToString(" · ")
 
-                        if (artworkReady) Column(
+                        if (!artworkReady) {
+                            Text(
+                                item.title,
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .fillMaxWidth()
+                                    .padding(start = 12.dp, end = 10.dp, bottom = 10.dp),
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontSize = if (item.title.length > 32) 10.sp else 11.sp,
+                                    lineHeight = 12.sp,
+                                    shadow = Shadow(Color.Black, Offset(0f, 2f), blurRadius = 8f)
+                                ),
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                maxLines = 6,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else Column(
                             Modifier
                                 .align(Alignment.BottomStart)
                                 .fillMaxWidth()
