@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.math.roundToInt
 
 internal class CatalogOperationHeld(val state: String) : CancellationException(state)
 
@@ -30,7 +31,8 @@ internal data class CatalogOperationProgress(
     val recordsInCategory: Int = 0,
     val totalRecords: Int = 0,
     val part: Int = 0,
-    val totalParts: Int = 0
+    val totalParts: Int = 0,
+    val estimatedRemainingMillis: Long = 0
 ) {
     val fraction: Float?
         get() = when {
@@ -39,6 +41,9 @@ internal data class CatalogOperationProgress(
             categoryCount > 0 -> categoryPosition.toFloat() / categoryCount
             else -> null
         }?.coerceIn(0f, 1f)
+
+    val percent: Int?
+        get() = fraction?.times(100)?.roundToInt()?.coerceIn(0, 100)
 }
 
 /** Durable device-only controls. A stop never discards a committed page or file. */
@@ -99,5 +104,46 @@ internal object CatalogOperations {
         prefs(context).edit()
             .putString("events:$key", json.encodeToString((listOf(event) + events(context, key)).take(100)))
             .putString("failures:$key", json.encodeToString(failures)).apply()
+    }
+
+    fun estimatedRemainingMillis(
+        context: Context,
+        key: String,
+        mediaType: String,
+        category: String,
+        currentPage: Int,
+        totalPages: Int?
+    ): Long {
+        if (currentPage <= 0 || totalPages == null || totalPages <= currentPage) return 0
+        val prefix = "$mediaType:$category:"
+        val samples = events(context, key)
+            .asSequence()
+            .filter { it.outcome == "Stored" && it.key.startsWith(prefix) }
+            .mapNotNull { event -> event.key.substringAfterLast(':').toIntOrNull()?.let { it to event.time } }
+            .distinctBy { it.first }
+            .sortedBy { it.first }
+            .zipWithNext { previous, next ->
+                if (next.first == previous.first + 1) next.second - previous.second else 0L
+            }
+            .filter { it in 250L..300_000L }
+            .toList()
+            .takeLast(20)
+            .sorted()
+        if (samples.size < 2) return 0
+        val medianMillis = samples[samples.size / 2]
+        return (totalPages - currentPage).toLong() * medianMillis
+    }
+}
+
+internal fun formatRemainingTime(millis: Long): String? {
+    if (millis <= 0) return null
+    val totalMinutes = (millis + 59_999L) / 60_000L
+    val days = totalMinutes / (24 * 60)
+    val hours = totalMinutes % (24 * 60) / 60
+    val minutes = totalMinutes % 60
+    return when {
+        days > 0 -> "${days}d ${hours}h"
+        hours > 0 -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
     }
 }

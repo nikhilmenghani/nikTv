@@ -87,6 +87,19 @@ class CatalogScanControlsTest {
         assertEquals(673, CatalogOperations.pageTotal(context, operation, category.id))
     }
 
+    @Test fun catalogProgressExposesRoundedPercentage() {
+        assertEquals(38, CatalogOperationProgress("Saving", page = 3_736, totalPages = 9_890).percent)
+        assertEquals(100, CatalogOperationProgress("Done", page = 11, totalPages = 10).percent)
+        assertNull(CatalogOperationProgress("Connecting").percent)
+    }
+
+    @Test fun remainingTimeFormattingIsCompact() {
+        assertEquals("8m", formatRemainingTime(7 * 60_000L + 1))
+        assertEquals("3h 12m", formatRemainingTime((3 * 60 + 12) * 60_000L))
+        assertEquals("2d 5h", formatRemainingTime((2 * 24 + 5) * 60 * 60_000L))
+        assertNull(formatRemainingTime(0))
+    }
+
     @Test fun pausedBackupDoesNotConnectAndLogsPauseInsteadOfFailure() = runBlocking {
         CatalogPreferences.setBackupEnabled(context, true)
         CatalogOperations.control(context, CatalogOperations.BACKUP, "Paused")

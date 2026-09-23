@@ -178,6 +178,19 @@ class CatalogRepositoryTest {
         assertEquals("10", repository.search(profile.cacheKey(), type)!!.items.single().id)
     }
 
+    @Test fun incrementalPageCommitPreservesEarlierRowsAndAdvancesOnlyItsBucket() = runBlocking {
+        repository.saveBrowse(cache("10", "20"))
+        val categories = listOf(Category("1", "Movies", type), Category("2", "Other", type))
+        repository.saveBrowsePage(profile.cacheKey(), type, categories, categories.first(), 2,
+            listOf(movie("30")), hasMore = true, observedAt = 200)
+
+        val browse = repository.browse(profile.cacheKey(), type)!!
+        assertEquals(setOf("10", "20", "30"), browse.itemsByCategory["1"]!!.map { it.id }.toSet())
+        assertEquals(2, browse.pagesByCategory["1"])
+        assertEquals(true, browse.hasMoreByCategory["1"])
+        assertTrue(repository.snapshot(profile, type).buckets.any { it.bucket == "2" && it.page == 0 })
+    }
+
     @Test fun restoredPageCursorBeatsNewerLocalResetAndResumesMovies() = runBlocking {
         repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.LIVE_TV, 100,
             listOf(Category("*", "All", CatalogType.LIVE_TV), Category("news", "News", CatalogType.LIVE_TV)),

@@ -41,6 +41,8 @@ private fun CatalogProgressDetails(progress: CatalogOperationProgress, isScan: B
         "Category" to value(progress.category),
         "Categories" to if (progress.categoryCount > 0) "${progress.categoryPosition} of ${progress.categoryCount}" else "N/A",
         "Page" to if (progress.page > 0) if (progress.totalPages > 0) "${progress.page} of ${progress.totalPages}" else progress.page.toString() else "N/A",
+        "Progress" to progress.percent?.let { "$it%" }.orEmpty().ifBlank { "N/A" },
+        "Time remaining" to (formatRemainingTime(progress.estimatedRemainingMillis) ?: "Calculating…"),
         "Current page" to if (progress.recordsInPage > 0) "${progress.recordsInPage} records" else "N/A",
         "In category" to if (progress.recordsInCategory > 0) "${progress.recordsInCategory} records" else "N/A",
         "Stored total" to if (progress.totalRecords > 0) progress.totalRecords.toString() else "N/A"

@@ -157,6 +157,43 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         dao.putItems(rows.filter { old[it.bucket to it.id] != it })
     }
 
+    /**
+     * Commits one provider page without reading and rewriting the whole catalogue.
+     *
+     * A large Stalker catalogue can contain well over 100,000 rows while its API
+     * returns only a handful per page.  saveBrowse is appropriate for imports and
+     * migrations, but using it for every scanned page makes page N do O(N) work.
+     */
+    suspend fun saveBrowsePage(
+        profile: String,
+        type: CatalogType,
+        categories: List<Category>,
+        category: Category,
+        page: Int,
+        items: List<MediaItem>,
+        hasMore: Boolean,
+        observedAt: Long
+    ) = db.withTransaction {
+        val oldBuckets = dao.buckets(profile, type.name).associateBy { it.bucket }
+        val allCategories = (categories + category).distinctBy { it.id }
+        dao.putBuckets(allCategories.mapIndexed { index, candidate ->
+            val prior = oldBuckets[candidate.id]
+            if (candidate.id == category.id) {
+                CatalogBucketRow(profile, type.name, candidate.id, candidate.title,
+                    page, hasMore, observedAt, index)
+            } else {
+                prior ?: CatalogBucketRow(profile, type.name, candidate.id, candidate.title,
+                    observedAt = observedAt, position = index)
+            }
+        })
+        val pagePosition = (page.coerceAtLeast(1) - 1).toLong() * PAGE_POSITION_STRIDE
+        dao.putItems(items.mapIndexed { index, item ->
+            CatalogItemRow(profile, type.name, category.id, item.id,
+                (pagePosition + index).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                json.encodeToString(item), observedAt)
+        })
+    }
+
     suspend fun saveSearch(cache: SearchCatalogCache) = db.withTransaction {
         val old = dao.items(cache.profileKey, cache.type.name).filter { it.bucket == SEARCH }.associateBy { it.id }
         dao.putBuckets(listOf(CatalogBucketRow(cache.profileKey, cache.type.name, SEARCH, "", observedAt = cache.cachedAtMillis)))
@@ -258,7 +295,10 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
     }
 
     suspend fun clear() = db.withTransaction { dao.clearItems(); dao.clearBuckets(); dao.clearEpisodes() }
-    companion object { private const val SEARCH = "@search" }
+    companion object {
+        private const val SEARCH = "@search"
+        private const val PAGE_POSITION_STRIDE = 1_000L
+    }
 }
 
 @Serializable

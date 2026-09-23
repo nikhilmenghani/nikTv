@@ -82,7 +82,12 @@ class SearchCatalogScanner internal constructor(
             phase = phase, mediaType = type.title, category = category?.title.orEmpty(),
             categoryPosition = categoryPosition, categoryCount = categoryCount,
             page = page, totalPages = totalPages ?: 0, recordsInPage = recordsInPage,
-            recordsInCategory = recordsInCategory, totalRecords = totalRecords
+            recordsInCategory = recordsInCategory, totalRecords = totalRecords,
+            estimatedRemainingMillis = category?.let {
+                CatalogOperations.estimatedRemainingMillis(
+                    appContext, operation, type.name, it.id, page, totalPages
+                )
+            } ?: 0
         ))
         CatalogOperations.check(appContext, operation)
         stage("${type.title} · Reading saved Room checkpoint")
@@ -187,7 +192,16 @@ class SearchCatalogScanner internal constructor(
                         knownTotalPages, result.items.size, items.size,
                         cache.itemsByCategory.values.sumOf { it.size })
                     try {
-                        repository.saveBrowse(cache)
+                        repository.saveBrowsePage(
+                            profile = profileKey,
+                            type = type,
+                            categories = availableCategories,
+                            category = category,
+                            page = page,
+                            items = result.items,
+                            hasMore = result.hasMore,
+                            observedAt = cache.cachedAtMillis
+                        )
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (error: Exception) {
                         CatalogOperations.page(appContext, operation, CatalogPageEvent(reportKey, location = location,
@@ -209,8 +223,6 @@ class SearchCatalogScanner internal constructor(
                 }
                 if (keepLoading) failures += 1
             }
-
-            repository.saveBrowse(cache)
             onProgress(
                 SearchCatalogScanProgress(
                     category.title,
