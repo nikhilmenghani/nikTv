@@ -301,6 +301,7 @@ fun PlayerScreen(
     offlineDownloadProgress: Float? = null,
     offlineDownloadProgressText: String? = null,
     onPlayItem: (NikMediaItem) -> Unit = {},
+    pinnedQueueIds: List<String> = emptyList(),
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((NikMediaItem) -> Unit)? = null,
     queueHasMore: Boolean = false,
@@ -419,6 +420,7 @@ fun PlayerScreen(
             onPlayPrevious = onPlayPrevious,
             onPlayNext = onPlayNext,
             onPlayItem = onPlayItem,
+            pinnedQueueIds = pinnedQueueIds,
             queueFavoriteIds = queueFavoriteIds,
             onToggleQueueFavorite = onToggleQueueFavorite,
             onProgress = onProgress,
@@ -2309,6 +2311,7 @@ PlayerChromeIconButton(
         PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
+            pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
             favoriteIds = queueFavoriteIds,
             onToggleFavorite = if (media.catalogType == CatalogType.LIVE_TV) {

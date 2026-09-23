@@ -72,6 +72,7 @@ internal fun VlcPlayerScreen(
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onPlayItem: (MediaItem) -> Unit,
+    pinnedQueueIds: List<String> = emptyList(),
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((MediaItem) -> Unit)? = null,
     onProgress: (String, Long, Long) -> Unit,
@@ -1655,6 +1656,7 @@ PlayerChromeIconButton(
         PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
+            pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
             favoriteIds = queueFavoriteIds,
             onToggleFavorite = if (media.catalogType == CatalogType.LIVE_TV) {

@@ -656,6 +656,13 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.progressLabel(),
                     onPlayItem = vm::openMedia,
+                    pinnedQueueIds = state.selectedCategory?.id?.let { categoryId ->
+                        IptvPinPreferences.pinnedChannelOrder(
+                            appContext,
+                            state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty(),
+                            categoryId
+                        )
+                    }.orEmpty(),
                     queueFavoriteIds = state.favorites
                         .asSequence()
                         .filter { it.kind == FavoriteKind.CHANNEL }

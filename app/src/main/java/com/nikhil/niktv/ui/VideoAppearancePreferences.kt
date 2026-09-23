@@ -632,6 +632,7 @@ internal fun MobileQueueSwipeHandle(
 internal fun PlayerQueueOverlay(
     items: List<MediaItem>,
     playingId: String,
+    pinnedIds: List<String> = emptyList(),
     favoriteIds: Set<String> = emptySet(),
     onToggleFavorite: ((MediaItem) -> Unit)? = null,
     hasMore: Boolean = false,
@@ -751,7 +752,11 @@ internal fun PlayerQueueOverlay(
         else queueCardHeight * 1.25f
 
     val scope = rememberCoroutineScope()
-    val uniqueItems = remember(items) { items.distinctBy { it.id } }
+    val uniqueItems = remember(items, pinnedIds) {
+        val originals = items.distinctBy { it.id }
+        pinnedIds.mapNotNull { id -> originals.firstOrNull { it.id == id } } + originals
+    }
+    fun entryKey(index: Int) = "$index:${uniqueItems[index].id}"
     val isEpisodeQueue = uniqueItems.any {
         it.seasonNumber != null || it.episodeNumber != null
     }
@@ -839,7 +844,7 @@ internal fun PlayerQueueOverlay(
             if (target < 0 || target >= uniqueItems.size) {
                 loadMoreRequester
             } else {
-                requesters.getOrPut(uniqueItems[target].id) {
+                requesters.getOrPut(entryKey(target)) {
                     FocusRequester()
                 }
             }
@@ -879,7 +884,7 @@ internal fun PlayerQueueOverlay(
                     .coerceAtLeast(0)
             focusedIndex = target
             gridState.scrollToItem(target + if (leadingLoadPrevious) 1 else 0)
-            val requester = requesters.getOrPut(uniqueItems[target].id) {
+            val requester = requesters.getOrPut(entryKey(target)) {
                 FocusRequester()
             }
             repeat(4) {
@@ -939,9 +944,7 @@ internal fun PlayerQueueOverlay(
                 firstNewIndex
             }
             focusedIndex = targetIndex
-            val requester = requesters.getOrPut(
-                uniqueItems[targetIndex].id
-            ) { FocusRequester() }
+            val requester = requesters.getOrPut(entryKey(targetIndex)) { FocusRequester() }
             repeat(4) {
                 if (
                     runCatching {
@@ -969,8 +972,8 @@ internal fun PlayerQueueOverlay(
     @Composable
     fun QueueMediaTile(index: Int, item: MediaItem) {
         val requester =
-            requesters.getOrPut(item.id) { FocusRequester() }
-        var focused by remember(item.id) { mutableStateOf(false) }
+            requesters.getOrPut(entryKey(index)) { FocusRequester() }
+        var focused by remember(entryKey(index)) { mutableStateOf(false) }
         val current = item.id == playingId
         val artwork = remember(item.id, item.title, item.logo) {
             artworkRequest(context, item)
@@ -1109,6 +1112,15 @@ internal fun PlayerQueueOverlay(
                                     )
                                 }
                             }
+                        }
+
+                        if (item.id in pinnedIds) {
+                            Icon(
+                                Icons.Default.PushPin,
+                                contentDescription = "Pinned channel",
+                                modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(17.dp),
+                                tint = Color.White
+                            )
                         }
 
                         val episodeLabel = listOfNotNull(
@@ -1629,7 +1641,7 @@ internal fun PlayerQueueOverlay(
                     items(
                         count = uniqueItems.size,
                         key = { index ->
-                            "player-queue-${uniqueItems[index].id}"
+                            "player-queue-${entryKey(index)}"
                         }
                     ) { index ->
                         QueueMediaTile(

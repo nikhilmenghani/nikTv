@@ -2807,10 +2807,13 @@ private fun ModernIptvCollection(
     val isLiveTv = category.type == CatalogType.LIVE_TV
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
     var pinnedChannelIds by remember(profileKey, category.id) {
-        mutableStateOf(IptvPinPreferences.pinnedChannels(context, profileKey, category.id))
+        mutableStateOf(IptvPinPreferences.pinnedChannelOrder(context, profileKey, category.id))
     }
-    val displayedItems = remember(state.items, pinnedChannelIds) {
-        state.items.sortedBy { it.id !in pinnedChannelIds }
+    val pinnedItems = remember(state.items, pinnedChannelIds) {
+        pinnedChannelIds.mapNotNull { id -> state.items.firstOrNull { it.id == id } }
+    }
+    val displayedItems = remember(state.items, pinnedItems) {
+        pinnedItems + state.items
     }
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val liveTilePreferences = remember(context) {
@@ -2837,7 +2840,7 @@ private fun ModernIptvCollection(
         CatalogType.SERIES -> FavoriteKind.SERIES
         CatalogType.RADIO -> FavoriteKind.CHANNEL
     }
-    val focusIds = displayedItems.map { it.id }
+    val focusIds = displayedItems.mapIndexed { index, media -> "$index:${media.id}" }
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
@@ -3007,8 +3010,8 @@ private fun ModernIptvCollection(
     ) {
         gridItemsIndexed(
             items = displayedItems,
-            key = { _, media ->
-                "modern-iptv-${category.type.name}-${media.id}"
+            key = { index, media ->
+                "modern-iptv-${category.type.name}-$index-${media.id}"
             }
         ) { index, media ->
             val tileModifier = Modifier
@@ -3020,7 +3023,7 @@ private fun ModernIptvCollection(
                     }
                 }
                 .focusRequester(
-                    itemFocusRequesters.getOrPut(media.id) {
+                    itemFocusRequesters.getOrPut(focusIds[index]) {
                         FocusRequester()
                     }
                 )

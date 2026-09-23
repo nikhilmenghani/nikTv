@@ -2,6 +2,7 @@ package com.nikhil.niktv.ui
 
 import android.content.Context
 import com.nikhil.niktv.model.CatalogType
+import org.json.JSONArray
 
 /** Profile-scoped ordering preferences for IPTV destinations and channels. */
 internal object IptvPinPreferences {
@@ -31,16 +32,35 @@ internal object IptvPinPreferences {
     }
 
     fun pinnedChannels(context: Context, profileKey: String, categoryId: String): Set<String> =
-        preferences(context).getStringSet(channelKey(profileKey, categoryId), emptySet()).orEmpty().toSet()
+        pinnedChannelOrder(context, profileKey, categoryId).toSet()
+
+    fun pinnedChannelOrder(context: Context, profileKey: String, categoryId: String): List<String> {
+        val prefs = preferences(context)
+        val key = channelKey(profileKey, categoryId)
+        val encoded = prefs.getString("$key|order", null)
+        if (encoded != null) {
+            return runCatching {
+                val array = JSONArray(encoded)
+                (0 until array.length()).map { array.getString(it) }.distinct()
+            }.getOrDefault(emptyList())
+        }
+        // Preserve pins created before explicit ordering was stored.
+        return prefs.getStringSet(key, emptySet()).orEmpty().toList().sorted()
+    }
 
     fun toggleChannel(
         context: Context,
         profileKey: String,
         categoryId: String,
         channelId: String
-    ): Set<String> {
-        val updated = pinnedChannels(context, profileKey, categoryId).toggle(channelId)
-        preferences(context).edit().putStringSet(channelKey(profileKey, categoryId), updated).apply()
+    ): List<String> {
+        val current = pinnedChannelOrder(context, profileKey, categoryId)
+        val updated = if (channelId in current) current - channelId else current + channelId
+        val key = channelKey(profileKey, categoryId)
+        preferences(context).edit()
+            .putString("$key|order", JSONArray(updated).toString())
+            .putStringSet(key, updated.toSet())
+            .apply()
         return updated
     }
 
