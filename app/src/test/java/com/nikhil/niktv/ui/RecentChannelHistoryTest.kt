@@ -22,6 +22,7 @@ class RecentChannelHistoryTest {
         val original = RecentItem(
             kind = FavoriteKind.CHANNEL,
             media = MediaItem("42", "Sports", null, null, portalCategoryId = "sports"),
+            playedAtMillis = 1_700_000_000_000L,
             profileKey = "profile",
             categoryTitle = "Live Sports"
         )

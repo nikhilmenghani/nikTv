@@ -42,6 +42,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.NonCancellable
 
 data class NikTvState(
     val profiles: List<PortalProfile> = emptyList(),
@@ -153,6 +154,11 @@ data class NikTvState(
     ,val catalogHasMore: Boolean = false
     ,val catalogLoadingMore: Boolean = false
     ,val categoryRefreshing: Boolean = false
+    ,val categoryFindQuery: String = ""
+    ,val categoryFindSearching: Boolean = false
+    ,val categoryFindPage: Int = 0
+    ,val categoryFindTotalPages: Int? = null
+    ,val categoryFindMessage: String? = null
     ,val episodePage: Int = 1
     ,val episodeHasMore: Boolean = false
     ,val episodeLoadingMore: Boolean = false
@@ -183,6 +189,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
     private val categoryRefreshJobs = mutableMapOf<String, Job>()
+    private var categoryFindJob: Job? = null
+    private var categoryFindGeneration = 0
+    private val categoryFindSaveMutex = Mutex()
     private val liveGuideLookupMutex = Mutex()
     private val liveGuidePending = mutableSetOf<String>()
     private val liveGuideAttemptedAt = mutableMapOf<String, Long>()
@@ -1024,7 +1033,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (item.portalCategoryId != category.id || !force && item.liveSchedule.any { programme ->
                     val start = programme.startTimeMillis
                     val end = programme.endTimeMillis
-                    start != null && end != null && now in start until end
+                    !isMissingLiveProgrammeTitle(programme.title) &&
+                        start != null && end != null && now in start until end
                 }) return@forEach
             val key = "$profileKey|${category.id}|${item.id}"
             if (key in liveGuidePending || !force &&
@@ -1039,11 +1049,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         if (active.session?.profile?.cacheKey() != profileKey ||
                             active.modernIptvCategory?.id != category.id) return@withLock
                         liveGuideAttemptedAt[key] = System.currentTimeMillis()
+                        val cleanItem = item.copy(
+                            liveProgramme = item.liveProgramme?.takeUnless {
+                                isMissingLiveProgrammeTitle(it.title)
+                            },
+                            liveSchedule = item.liveSchedule.filterNot {
+                                isMissingLiveProgrammeTitle(it.title)
+                            }
+                        )
                         val enriched = withAutomaticSessionRetry(session) { activeSession ->
-                            portal.playingChannelSchedule(activeSession, item)
+                            portal.playingChannelSchedule(activeSession, cleanItem)
                         }
                         Log.d("NikTvLiveGuide", "Channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
-                        if (enriched.liveSchedule.isNotEmpty()) {
+                        if (enriched.liveSchedule.isNotEmpty() || enriched != item) {
                             _state.update { current ->
                                 if (current.session?.profile?.cacheKey() != profileKey) return@update current
                                 val cache = current.browseCachesByType[CatalogType.LIVE_TV]
@@ -1199,7 +1217,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val previous = cachedById[fresh.id]
                     if (previous != null &&
                         previous.liveSchedule.size > fresh.liveSchedule.size &&
-                        previous.liveSchedule.any { (it.endTimeMillis ?: 0L) > refreshedAt }) {
+                        previous.liveSchedule.any {
+                            !isMissingLiveProgrammeTitle(it.title) &&
+                                (it.endTimeMillis ?: 0L) > refreshedAt
+                        }) {
                         // The first-page response often has only a generic
                         // channel row. Keep its separately fetched guide.
                         fresh.copy(
@@ -1351,7 +1372,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = _state.value
         val session = snapshot.session ?: return
         val category = snapshot.selectedCategory ?: return
-        if (snapshot.catalogLoadingMore || !snapshot.catalogHasMore ||
+        if (snapshot.catalogLoadingMore || snapshot.categoryFindSearching || !snapshot.catalogHasMore ||
             snapshot.selectedType !in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) return
         viewModelScope.launch {
             _state.update { it.copy(catalogLoadingMore = true) }
@@ -1451,6 +1472,148 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error -> _state.update { it.copy(catalogLoadingMore = false, error = error.message ?: "Could not load more titles") } }
+        }
+    }
+
+    fun cancelCategoryFind() {
+        categoryFindGeneration++
+        categoryFindJob?.cancel()
+        categoryFindJob = null
+        _state.update { current ->
+            current.copy(
+                categoryFindSearching = false,
+                categoryFindMessage = if (current.categoryFindSearching) {
+                    "Stopped at page ${current.categoryFindPage}. Press Find to continue."
+                } else current.categoryFindMessage
+            )
+        }
+    }
+
+    /** Search a Live TV category beyond its loaded pages without fetching EPG for every row. */
+    fun findChannelsInCategory(query: String) {
+        val requestedQuery = query.trim()
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        val category = snapshot.modernIptvCategory
+            ?.takeIf { it.type == CatalogType.LIVE_TV && it.id == snapshot.selectedCategory?.id }
+            ?: return
+        if (requestedQuery.isBlank() || snapshot.categoryFindSearching) return
+        if (!snapshot.catalogHasMore) {
+            _state.update { it.copy(
+                categoryFindQuery = requestedQuery,
+                categoryFindPage = it.catalogPage,
+                categoryFindMessage = "No further pages are currently available."
+            ) }
+            return
+        }
+
+        val profileKey = session.profile.cacheKey()
+        val key = categoryRefreshKey(session, category)
+        categoryRefreshJobs[key]?.cancel()
+        categoryFindJob?.cancel()
+        val generation = ++categoryFindGeneration
+        categoryFindJob = viewModelScope.launch {
+            var terminalMessage = "Checked every available page."
+            var fetchedPages = 0
+            var repeatedPages = 0
+            _state.update { it.copy(
+                categoryFindQuery = requestedQuery,
+                categoryFindSearching = true,
+                categoryFindPage = it.catalogPage,
+                categoryFindTotalPages = null,
+                categoryFindMessage = null
+            ) }
+            try {
+                while (true) {
+                    val current = _state.value
+                    if (generation != categoryFindGeneration ||
+                        current.session?.profile?.cacheKey() != profileKey ||
+                        current.modernIptvCategory?.id != category.id ||
+                        !current.catalogHasMore) break
+                    // Search is user initiated, but keep requests sequential and
+                    // skip EPG enrichment until matching tiles become visible.
+                    delay(650L)
+                    val nextPage = current.catalogPage + 1
+                    val result = withAutomaticSessionRetry(session) { activeSession ->
+                        portal.catalogPage(
+                            session = activeSession,
+                            category = category,
+                            page = nextPage,
+                            pageSize = current.initialCatalogItems.takeIf {
+                                activeSession.profile.portalType == PortalType.XTREAM
+                            },
+                            includeEpg = false
+                        )
+                    }
+                    coroutineContext.ensureActive()
+                    val latest = _state.value
+                    if (generation != categoryFindGeneration ||
+                        latest.session?.profile?.cacheKey() != profileKey ||
+                        latest.modernIptvCategory?.id != category.id) break
+                    val merged = (latest.items + result.items).distinctBy { it.id }
+                    repeatedPages = if (merged.size == latest.items.size) repeatedPages + 1 else 0
+                    val hasMore = result.hasMore
+                    val cache = latest.browseCachesByType[CatalogType.LIVE_TV]
+                        ?.takeIf { it.profileKey == profileKey }
+                    val updated = cache?.copy(
+                        cachedAtMillis = System.currentTimeMillis(),
+                        itemsByCategory = cache.itemsByCategory + (category.id to merged),
+                        pagesByCategory = cache.pagesByCategory + (category.id to result.page),
+                        hasMoreByCategory = cache.hasMoreByCategory + (category.id to hasMore)
+                    )
+                    _state.update { state ->
+                        if (generation != categoryFindGeneration ||
+                            state.session?.profile?.cacheKey() != profileKey ||
+                            state.modernIptvCategory?.id != category.id) state
+                        else state.copy(
+                            items = merged,
+                            catalogPage = result.page,
+                            catalogHasMore = hasMore,
+                            categoryFindPage = result.page,
+                            categoryFindTotalPages = result.totalPages,
+                            browseCache = updated ?: state.browseCache,
+                            browseCachesByType = if (updated == null) state.browseCachesByType
+                                else state.browseCachesByType + (CatalogType.LIVE_TV to updated),
+                            nowPlaying = state.nowPlaying?.takeIf {
+                                it.catalogType == CatalogType.LIVE_TV && it.media.portalCategoryId == category.id
+                            }?.withAppendedPlaybackQueue(result.items) ?: state.nowPlaying
+                        )
+                    }
+                    fetchedPages++
+                    if (fetchedPages % 5 == 0) {
+                        runCatching { persistCategoryFindCache(profileKey) }
+                            .onFailure { Log.w("NikTvCatalogCache", "Could not persist channel search pages", it) }
+                    }
+                    if (repeatedPages >= 3) {
+                        terminalMessage = "The provider repeated three pages, so the search stopped at page ${result.page}."
+                        break
+                    }
+                    if (!hasMore) break
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                terminalMessage = "Could not continue after page ${_state.value.catalogPage}: ${error.message ?: "provider unavailable"}"
+            } finally {
+                withContext(NonCancellable) {
+                    runCatching { persistCategoryFindCache(profileKey) }
+                        .onFailure { Log.w("NikTvCatalogCache", "Could not persist channel search", it) }
+                }
+                if (generation == categoryFindGeneration) {
+                    _state.update { it.copy(
+                        categoryFindSearching = false,
+                        categoryFindMessage = terminalMessage
+                    ) }
+                }
+            }
+        }
+    }
+
+    private suspend fun persistCategoryFindCache(profileKey: String) {
+        categoryFindSaveMutex.withLock {
+            _state.value.browseCachesByType[CatalogType.LIVE_TV]
+                ?.takeIf { it.profileKey == profileKey }
+                ?.let { store.saveBrowseCatalog(it, scheduleMetadataSync = false) }
         }
     }
 
@@ -2702,10 +2865,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        cancelCategoryFind()
         _state.update { current ->
             current.copy(
                 modernTmdbSection = null,
                 modernIptvCategory = category,
+                categoryFindQuery = "",
+                categoryFindPage = 0,
+                categoryFindTotalPages = null,
+                categoryFindMessage = null,
                 modernSectionOriginHome = current.homeOpen,
                 modernTmdbMovies = emptyList(),
                 modernTmdbSeries = emptyList(),
@@ -2724,6 +2892,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeModernSection() {
+        cancelCategoryFind()
         _state.update { current ->
             current.copy(
                 modernTmdbSection = null,

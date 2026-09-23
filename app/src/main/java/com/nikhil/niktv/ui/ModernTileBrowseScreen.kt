@@ -16,18 +16,23 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -38,6 +43,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -53,6 +59,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Downloading
@@ -85,6 +92,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -127,10 +135,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -148,6 +159,8 @@ import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.FavoriteSource
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
+import com.nikhil.niktv.model.matchesTitleKeywords
 import com.nikhil.niktv.model.OfflineMediaDownload
 import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.R
@@ -237,6 +250,8 @@ internal fun ModernTileBrowseScreen(
     refreshIptv: () -> Unit,
     enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
     enrichVisibleLiveGuides: (List<MediaItem>) -> Unit,
+    findChannelsInCategory: (String) -> Unit,
+    cancelCategoryFind: () -> Unit,
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
     removeIptvCategory: (CatalogType, String) -> Unit,
@@ -283,6 +298,8 @@ internal fun ModernTileBrowseScreen(
                         refresh = refreshIptv,
                         enrichFocusedMetadata = enrichFocusedCatalogMetadata,
                         enrichVisibleLiveGuides = enrichVisibleLiveGuides,
+                        findChannelsInCategory = findChannelsInCategory,
+                        cancelCategoryFind = cancelCategoryFind,
                         isTv = isTv
                     )
                 }
@@ -2798,6 +2815,7 @@ private fun ModernTmdbCollection(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ModernIptvCollection(
     state: NikTvState,
     category: Category,
@@ -2808,12 +2826,41 @@ private fun ModernIptvCollection(
     refresh: () -> Unit,
     enrichFocusedMetadata: suspend (MediaItem, CatalogType) -> Unit,
     enrichVisibleLiveGuides: (List<MediaItem>) -> Unit,
+    findChannelsInCategory: (String) -> Unit,
+    cancelCategoryFind: () -> Unit,
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isLiveTv = category.type == CatalogType.LIVE_TV
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
+    var channelQuery by rememberSaveable(category.id) { mutableStateOf("") }
+    val trimmedChannelQuery = channelQuery.trim()
+    val keyboard = LocalSoftwareKeyboardController.current
+    val remoteNavigationActive = isTv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    var channelSearchEditing by rememberSaveable(category.id) { mutableStateOf(false) }
+    var channelSearchSawIme by remember { mutableStateOf(false) }
+    val channelSearchRequester = remember(category.id) { FocusRequester() }
+    LaunchedEffect(channelSearchEditing) {
+        if (channelSearchEditing) {
+            withFrameNanos { }
+            runCatching { channelSearchRequester.requestFocus() }
+            withFrameNanos { }
+            keyboard?.show()
+        }
+    }
+    BackHandler(enabled = channelSearchEditing) {
+        channelSearchEditing = false
+        keyboard?.hide()
+    }
+    val imeVisible = WindowInsets.isImeVisible
+    LaunchedEffect(channelSearchEditing, imeVisible) {
+        when {
+            !channelSearchEditing -> channelSearchSawIme = false
+            imeVisible -> channelSearchSawIme = true
+            channelSearchSawIme -> channelSearchEditing = false
+        }
+    }
     val guideNow by produceState(System.currentTimeMillis(), category.id) {
         while (true) {
             delay(60_000L)
@@ -2826,8 +2873,10 @@ private fun ModernIptvCollection(
     val pinnedItems = remember(state.items, pinnedChannelIds) {
         pinnedChannelIds.mapNotNull { id -> state.items.firstOrNull { it.id == id } }
     }
-    val displayedItems = remember(state.items, pinnedItems) {
-        pinnedItems + state.items
+    val displayedItems = remember(state.items, pinnedItems, trimmedChannelQuery) {
+        if (isLiveTv && trimmedChannelQuery.isNotEmpty()) {
+            state.items.filter { it.title.matchesTitleKeywords(trimmedChannelQuery) }
+        } else pinnedItems + state.items
     }
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val showQualityBadge = remember(state.items) {
@@ -2878,6 +2927,9 @@ private fun ModernIptvCollection(
             ?: 0,
         initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
     )
+    LaunchedEffect(trimmedChannelQuery) {
+        if (isLiveTv && trimmedChannelQuery.isNotEmpty()) gridState.scrollToItem(0)
+    }
     LaunchedEffect(viewportKey, gridState) {
         snapshotFlow {
             gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
@@ -2962,10 +3014,12 @@ private fun ModernIptvCollection(
         moveFocus = moveFocusToIndex
     )
 
-    val appendPage = rememberCollectionPagination(
-        displayedItems.map { it.id }, state.catalogLoadingMore, gridState,
-        itemFocusRequesters, loadMore
-    )
+    val appendPage = if (trimmedChannelQuery.isEmpty()) {
+        rememberCollectionPagination(
+            displayedItems.map { it.id }, state.catalogLoadingMore, gridState,
+            itemFocusRequesters, loadMore
+        )
+    } else CollectionPagination(false) {}
 
     Column(Modifier.fillMaxSize()) {
         ModernCollectionHeader(
@@ -2975,7 +3029,8 @@ private fun ModernIptvCollection(
             trailingAction = {
                 FilledTonalIconButton(
                     onClick = refresh,
-                    enabled = !state.loading && !state.catalogLoadingMore && !state.categoryRefreshing
+                    enabled = !state.loading && !state.catalogLoadingMore &&
+                        !state.categoryRefreshing && !state.categoryFindSearching
                 ) {
                     if (state.categoryRefreshing) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -2990,6 +3045,102 @@ private fun ModernIptvCollection(
                 top = 16.dp
             )
         )
+
+        if (isLiveTv) {
+            Column(
+                Modifier.fillMaxWidth().padding(
+                    start = if (isTv) 24.dp else 18.dp,
+                    end = if (isTv) 24.dp else 18.dp,
+                    top = 12.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedTextField(
+                    value = channelQuery,
+                    onValueChange = { value ->
+                        if (state.categoryFindSearching) cancelCategoryFind()
+                        channelQuery = value
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                        .focusRequester(channelSearchRequester)
+                        .onPreviewKeyEvent { event ->
+                            if (remoteNavigationActive && !channelSearchEditing &&
+                                event.type == KeyEventType.KeyDown &&
+                                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
+                                channelSearchEditing = true
+                                true
+                            } else false
+                        }
+                        .then(if (!channelSearchEditing) {
+                            Modifier.pointerInput(Unit) {
+                                detectTapGestures { channelSearchEditing = true }
+                            }
+                        } else Modifier),
+                    singleLine = true,
+                    readOnly = remoteNavigationActive && !channelSearchEditing,
+                    shape = RoundedCornerShape(12.dp),
+                    label = { Text("Find channel") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = if (channelQuery.isNotEmpty()) {{
+                        IconButton(onClick = {
+                            if (state.categoryFindSearching) cancelCategoryFind()
+                            channelQuery = ""
+                        }) { Icon(Icons.Default.Close, "Clear channel search") }
+                    }} else null,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        channelSearchEditing = false
+                        keyboard?.hide()
+                        if (trimmedChannelQuery.isNotEmpty()) findChannelsInCategory(trimmedChannelQuery)
+                    })
+                )
+                if (trimmedChannelQuery.isNotEmpty()) {
+                    val matchCount = displayedItems.size
+                    val searchIsCurrent = state.categoryFindQuery.equals(trimmedChannelQuery, ignoreCase = true)
+                    val status = when {
+                        state.categoryFindSearching && searchIsCurrent ->
+                            "Checking page ${state.categoryFindPage}" +
+                                (state.categoryFindTotalPages?.let { " of $it" } ?: "") +
+                                " · $matchCount found"
+                        searchIsCurrent && state.categoryFindMessage != null ->
+                            "${state.categoryFindMessage} · $matchCount found"
+                        else -> "$matchCount in ${state.items.size} loaded channels"
+                    }
+                    Text(
+                        status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = .68f)
+                    )
+                    if (state.categoryFindSearching && searchIsCurrent) {
+                        state.categoryFindTotalPages?.takeIf { it > 0 }?.let { total ->
+                            LinearProgressIndicator(
+                                progress = { (state.categoryFindPage.toFloat() / total).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().height(3.dp)
+                            )
+                        }
+                    }
+                    if (state.categoryFindSearching && searchIsCurrent) {
+                        Button(
+                            onClick = cancelCategoryFind,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF282B34), contentColor = Color.White
+                            )
+                        ) { Text("Stop search") }
+                    } else if (state.catalogHasMore && !state.loading && !state.catalogLoadingMore) {
+                        Button(
+                            onClick = { findChannelsInCategory(trimmedChannelQuery) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF282B34), contentColor = Color.White
+                            )
+                        ) {
+                            Text("Search remaining pages")
+                        }
+                    }
+                }
+            }
+        }
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns),
@@ -3097,7 +3248,8 @@ private fun ModernIptvCollection(
             }
         }
 
-        if (state.catalogHasMore || state.catalogLoadingMore || appendPage.pending) {
+        if (trimmedChannelQuery.isEmpty() &&
+            (state.catalogHasMore || state.catalogLoadingMore || appendPage.pending)) {
             item("iptv-load-more", span = fullSpan) {
                 ModernLoadMoreButton(
                     label = "Load more",
@@ -3107,11 +3259,18 @@ private fun ModernIptvCollection(
             }
         }
 
-        if (state.items.isEmpty() && !state.loading) {
+        if (displayedItems.isEmpty() && !state.loading &&
+            (trimmedChannelQuery.isEmpty() ||
+                (!state.categoryFindSearching && !state.catalogHasMore))) {
             item("iptv-empty", span = fullSpan) {
-                ModernEmptyCollection(
-                    "Nothing to show in this provider category."
-                )
+                if (trimmedChannelQuery.isNotEmpty()) {
+                    Text(
+                        "No matches in the channels checked.",
+                        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = .68f)
+                    )
+                } else ModernEmptyCollection("Nothing to show in this provider category.")
             }
         }
     }
@@ -3310,9 +3469,11 @@ private fun ModernLiveChannelTile(
     val programme = item.liveSchedule.firstOrNull { entry ->
         val start = entry.startTimeMillis
         val end = entry.endTimeMillis
-        start != null && end != null && guideNow in start until end
+        !isMissingLiveProgrammeTitle(entry.title) &&
+            start != null && end != null && guideNow in start until end
     } ?: item.liveProgramme?.takeIf { entry ->
-        (entry.startTimeMillis == null || entry.startTimeMillis <= guideNow) &&
+        !isMissingLiveProgrammeTitle(entry.title) &&
+            (entry.startTimeMillis == null || entry.startTimeMillis <= guideNow) &&
             (entry.endTimeMillis == null || entry.endTimeMillis > guideNow)
     }
     val quality = remember(item.title) {

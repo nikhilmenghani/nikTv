@@ -120,25 +120,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal fun liveProgrammeDisplayTitle(title: String): String =
     title.replace(Regex("^\\s*H:i\\s+", RegexOption.IGNORE_CASE), "").trim()
 
-internal fun isMissingLiveProgrammeTitle(title: String): Boolean {
-    val normalized = liveProgrammeDisplayTitle(title)
-        .removeSurrounding("[", "]")
-        .trim()
-        .lowercase(java.util.Locale.ROOT)
-    return normalized.isBlank() || normalized in setOf(
-        "no channel info",
-        "no content available",
-        "no programme information",
-        "no program information",
-        "no information",
-        "no epg"
-    )
-}
-
 internal fun liveChannelSupportingText(
     item: MediaItem
 ): String? {
-    item.liveProgramme?.let { programme ->
+    item.liveProgramme?.takeUnless { isMissingLiveProgrammeTitle(it.title) }?.let { programme ->
         val cleanProgramme =
             if (
                 programme.title.trim().equals(

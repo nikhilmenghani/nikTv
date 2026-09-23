@@ -155,6 +155,26 @@ data class LiveProgramme(
     val endTimeMillis: Long? = null
 )
 
+/** Provider placeholder rows can include timestamps but are not programmes. */
+fun isMissingLiveProgrammeTitle(title: String): Boolean {
+    val normalized = title.replace(Regex("^\\s*H:i\\s+", RegexOption.IGNORE_CASE), "")
+        .removeSurrounding("[", "]")
+        .trim()
+        .lowercase(java.util.Locale.ROOT)
+    return normalized.isBlank() || normalized in setOf(
+        "no channel info",
+        "no content available",
+        "no programme information",
+        "no program information",
+        "no information",
+        "no epg",
+        "no guide",
+        "no guide available",
+        "guide unavailable",
+        "this channel has no guide"
+    )
+}
+
 @Serializable
 data class SearchCatalogCache(
     val profileKey: String,

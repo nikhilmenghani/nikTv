@@ -983,6 +983,7 @@ class StalkerPortalClient(private val context: Context) {
             .firstNotNullOfOrNull { key -> source.string(key)?.takeIf(String::isNotBlank) }
             ?: if (source !== this) string("cur_playing")?.takeIf(String::isNotBlank) else null)
             ?: return null
+        if (isMissingLiveProgrammeTitle(title)) return null
         fun timestamp(vararg keys: String): Long? = keys.firstNotNullOfOrNull { key ->
             source.string(key)?.toLongOrNull()?.let { raw -> if (raw < 10_000_000_000L) raw * 1_000L else raw }
         }
