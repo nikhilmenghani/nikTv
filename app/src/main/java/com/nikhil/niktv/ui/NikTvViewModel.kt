@@ -5669,7 +5669,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     directFullscreen = playing.directFullscreen
                 )
             }
-                .onFailure { error -> _state.update { it.copy(error = error.message ?: "Playback retry failed") } }
+                .onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                    _state.update { it.copy(error = error.message ?: "Playback retry failed") }
+                }
         }
     }
     fun retryPlaybackWithAlternateDecoder(
@@ -5745,6 +5748,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     directFullscreen = playing.directFullscreen
                 )
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) return@onFailure
                 _state.update { it.copy(error = error.message ?: "Could not refresh stream authorization") }
             }.also {
                 _state.update { it.copy(reauthenticating = false) }

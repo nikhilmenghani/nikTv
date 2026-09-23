@@ -700,9 +700,9 @@ internal fun PlayerQueueOverlay(
      * episode artwork a useful canvas and enough room for readable metadata.
      */
     val touchQueueSheetHeight =
-        (configuration.screenHeightDp * .40f).dp.coerceIn(
-            if (compactQueueGrid) 156.dp else 172.dp,
-            if (compactQueueGrid) 190.dp else 230.dp
+        (configuration.screenHeightDp * (if (compactQueueGrid) .30f else .36f)).dp.coerceIn(
+            if (compactQueueGrid) 132.dp else 156.dp,
+            if (compactQueueGrid) 158.dp else 220.dp
         )
     val queueSheetMinHeight = when {
         tvQueueGrid -> 200.dp
@@ -763,7 +763,7 @@ internal fun PlayerQueueOverlay(
         else -> (touchQueueSheetHeight - 40.dp).coerceAtLeast(96.dp)
     }
     val compactQueueCardWidth =
-        if (compactQueueGrid) queueCardHeight * 1.75f
+        if (compactQueueGrid) queueCardHeight * 1.65f
         else queueCardHeight * 1.45f
 
     val scope = rememberCoroutineScope()
