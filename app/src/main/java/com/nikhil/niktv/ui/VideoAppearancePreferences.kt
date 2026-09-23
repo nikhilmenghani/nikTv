@@ -629,6 +629,32 @@ internal fun MobileQueueSwipeHandle(
 
 
 @Composable
+private fun QueueArtworkFallback(item: MediaItem) {
+    val accent = remember(item.id) {
+        listOf(
+            Color(0xFF446A81), Color(0xFF526C70), Color(0xFF665C80),
+            Color(0xFF76664F), Color(0xFF526782)
+        )[(item.id.hashCode() and Int.MAX_VALUE) % 5]
+    }
+    Box(
+        Modifier.fillMaxSize().background(
+            Brush.linearGradient(listOf(accent.copy(alpha = .88f), Color(0xFF161C25)))
+        ),
+    ) {
+        Text(
+            item.title,
+            modifier = Modifier.align(Alignment.CenterStart).padding(horizontal = 12.dp, vertical = 25.dp),
+            color = Color.White,
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            maxLines = 5,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 internal fun PlayerQueueOverlay(
     items: List<MediaItem>,
     playingId: String,
@@ -641,7 +667,7 @@ internal fun PlayerQueueOverlay(
     revealProgress: Float = 1f,
     revealDragging: Boolean = false,
     onDismiss: () -> Unit,
-    onSelect: (MediaItem) -> Unit
+    onSelect: (MediaItem, Int) -> Unit
 ) {
     BackHandler(onBack = onDismiss)
 
@@ -975,6 +1001,7 @@ internal fun PlayerQueueOverlay(
             requesters.getOrPut(entryKey(index)) { FocusRequester() }
         var focused by remember(entryKey(index)) { mutableStateOf(false) }
         val current = item.id == playingId
+        var artworkReady by remember(item.id, item.logo) { mutableStateOf(false) }
         val artwork = remember(item.id, item.title, item.logo) {
             artworkRequest(context, item)
         }
@@ -1001,7 +1028,7 @@ internal fun PlayerQueueOverlay(
                         if (it.isFocused) focusedIndex = index
                     }
                     .remoteCombinedClickable(
-                        onClick = { onSelect(item) },
+                        onClick = { onSelect(item, index) },
                         onLongClick = onToggleFavorite?.let {
                             { favoriteMenuItemId = item.id }
                         }
@@ -1036,12 +1063,7 @@ internal fun PlayerQueueOverlay(
                         contentAlignment = Alignment.Center
                     ) {
                         if (item.logo.isNullOrBlank()) {
-                            Icon(
-                                Icons.Default.Movie,
-                                null,
-                                Modifier.size(34.dp),
-                                tint = Color.LightGray
-                            )
+                            QueueArtworkFallback(item)
                         } else {
                             SubcomposeAsyncImage(
                                 model = artwork,
@@ -1049,16 +1071,10 @@ internal fun PlayerQueueOverlay(
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
                             ) {
-                                when (painter.state.value) {
-                                    is AsyncImagePainter.State.Success ->
-                                        SubcomposeAsyncImageContent()
-                                    else -> Icon(
-                                        Icons.Default.Movie,
-                                        null,
-                                        Modifier.size(34.dp),
-                                        tint = Color.LightGray
-                                    )
-                                }
+                                val loaded = painter.state.value is AsyncImagePainter.State.Success
+                                LaunchedEffect(loaded) { artworkReady = loaded }
+                                if (loaded) SubcomposeAsyncImageContent()
+                                else QueueArtworkFallback(item)
                             }
                         }
 
@@ -1143,7 +1159,7 @@ internal fun PlayerQueueOverlay(
                                 description.takeUnless { compactQueueGrid }
                             ).joinToString(" · ")
 
-                        Column(
+                        if (artworkReady) Column(
                             Modifier
                                 .align(Alignment.BottomStart)
                                 .fillMaxWidth()
@@ -1160,14 +1176,14 @@ internal fun PlayerQueueOverlay(
                                 color = Color.White,
                                 style =
                                     MaterialTheme.typography.labelLarge.copy(
-                                        fontSize = 12.sp,
-                                        lineHeight = 14.sp,
+                                        fontSize = 11.sp,
+                                        lineHeight = 13.sp,
                                         shadow = Shadow(Color.Black, Offset(0f, 2f), blurRadius = 8f)
                                     ),
                                 fontWeight =
                                     androidx.compose.ui.text.font
                                         .FontWeight.SemiBold,
-                                maxLines = 3,
+                                maxLines = 5,
                                 overflow = TextOverflow.Ellipsis
                             )
                             if (subtitle.isNotBlank()) {

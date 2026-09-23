@@ -3764,6 +3764,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openMedia(item: MediaItem) {
+        playbackNavigationIndex = null
+        openMediaInternal(item)
+    }
+
+    fun openMediaFromQueue(item: MediaItem, position: Int) {
+        playbackNavigationIndex = position
+        openMediaInternal(item)
+    }
+
+    private fun openMediaInternal(item: MediaItem) {
         val snapshot = _state.value
         /*
          * OPEN_MEDIA_PREFERS_ACTIVE_QUEUE_V16
@@ -4996,6 +5006,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private val latestPlaybackRequest = LatestPlaybackRequest()
     private var pendingNavigationId: String? = null
+    private var playbackNavigationIndex: Int? = null
     private var channelScheduleJob: Job? = null
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
@@ -5439,7 +5450,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         )
         val byId = providerOrder.associateBy { it.id }
         val pinned = pinnedOrder.mapNotNull(byId::get)
-        return pinned + providerOrder.filterNot { it.id in pinnedOrder }
+        return pinned + providerOrder
     }
 
     /**
@@ -5479,10 +5490,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = snapshot.nowPlaying ?: return
         val queue = playbackNavigationQueue(playing)
 
-        val index =
-            queue.indexOfFirst {
-                it.id == (pendingNavigationId ?: playing.media.id)
-            }
+        val index = (playbackNavigationIndex ?: -1)
+            .takeIf { it in queue.indices && queue[it].id == (pendingNavigationId ?: playing.media.id) }
+            ?: queue.indexOfFirst { it.id == (pendingNavigationId ?: playing.media.id) }
 
         if (index < 0) return
 
@@ -5501,7 +5511,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     if (
                         updatedPlaying.catalogType == CatalogType.LIVE_TV &&
                         updatedQueue.size > previousSize &&
-                        updatedQueue.indexOfFirst { it.id == updatedPlaying.media.id } < updatedQueue.lastIndex
+                        (playbackNavigationIndex ?: updatedQueue.indexOfFirst { it.id == updatedPlaying.media.id }) < updatedQueue.lastIndex
                     ) {
                         playNextEpisode()
                     }
@@ -5510,18 +5520,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val next =
-            queue.getOrNull(index + 1)
-                ?: queue
-                    .firstOrNull()
-                    .takeIf {
-                        playing.catalogType ==
-                            CatalogType.LIVE_TV &&
-                            queue.size > 1
-                    }
-                ?: return
+        val nextIndex = if (index < queue.lastIndex) index + 1 else 0
+        val next = queue.getOrNull(nextIndex)
+            ?.takeIf { index < queue.lastIndex || (playing.catalogType == CatalogType.LIVE_TV && queue.size > 1) }
+            ?: return
 
         pendingNavigationId = next.id
+        playbackNavigationIndex = nextIndex
         task {
             playInternal(
                 item = next,
@@ -5537,25 +5542,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = _state.value.nowPlaying ?: return
         val queue = playbackNavigationQueue(playing)
 
-        val index =
-            queue.indexOfFirst {
-                it.id == (pendingNavigationId ?: playing.media.id)
-            }
+        val index = (playbackNavigationIndex ?: -1)
+            .takeIf { it in queue.indices && queue[it].id == (pendingNavigationId ?: playing.media.id) }
+            ?: queue.indexOfFirst { it.id == (pendingNavigationId ?: playing.media.id) }
 
         if (index < 0) return
 
-        val previous =
-            queue.getOrNull(index - 1)
-                ?: queue
-                    .lastOrNull()
-                    .takeIf {
-                        playing.catalogType ==
-                            CatalogType.LIVE_TV &&
-                            queue.size > 1
-                    }
-                ?: return
+        val previousIndex = if (index > 0) index - 1 else queue.lastIndex
+        val previous = queue.getOrNull(previousIndex)
+            ?.takeIf { index > 0 || (playing.catalogType == CatalogType.LIVE_TV && queue.size > 1) }
+            ?: return
 
         pendingNavigationId = previous.id
+        playbackNavigationIndex = previousIndex
         task {
             playInternal(
                 item = previous,
@@ -5626,6 +5625,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closePlayer() {
         latestPlaybackRequest.cancel()
         pendingNavigationId = null
+        playbackNavigationIndex = null
         channelScheduleJob?.cancel()
         autoAdvanceAfterQueueLoadJob?.cancel()
         val snapshot = _state.value

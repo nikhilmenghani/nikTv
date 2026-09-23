@@ -301,6 +301,7 @@ fun PlayerScreen(
     offlineDownloadProgress: Float? = null,
     offlineDownloadProgressText: String? = null,
     onPlayItem: (NikMediaItem) -> Unit = {},
+    onPlayQueueItem: ((NikMediaItem, Int) -> Unit)? = null,
     pinnedQueueIds: List<String> = emptyList(),
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((NikMediaItem) -> Unit)? = null,
@@ -420,6 +421,7 @@ fun PlayerScreen(
             onPlayPrevious = onPlayPrevious,
             onPlayNext = onPlayNext,
             onPlayItem = onPlayItem,
+            onPlayQueueItem = onPlayQueueItem,
             pinnedQueueIds = pinnedQueueIds,
             queueFavoriteIds = queueFavoriteIds,
             onToggleQueueFavorite = onToggleQueueFavorite,
@@ -2331,9 +2333,9 @@ PlayerChromeIconButton(
                 dpadInteraction++
                 showControlsAndFocusPlayPause()
             },
-            onSelect = {
+            onSelect = { item, index ->
                 queueVisible = false
-                onPlayItem(it)
+                if (onPlayQueueItem != null) onPlayQueueItem(item, index) else onPlayItem(item)
             }
         )
         if (pictureEditorVisible) PlayerPictureModeEditor(

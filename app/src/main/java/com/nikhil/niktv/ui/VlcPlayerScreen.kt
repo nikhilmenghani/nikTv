@@ -72,6 +72,7 @@ internal fun VlcPlayerScreen(
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onPlayItem: (MediaItem) -> Unit,
+    onPlayQueueItem: ((MediaItem, Int) -> Unit)? = null,
     pinnedQueueIds: List<String> = emptyList(),
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((MediaItem) -> Unit)? = null,
@@ -1676,9 +1677,9 @@ PlayerChromeIconButton(
                 dpadInteraction++
                 showControls()
             },
-            onSelect = {
+            onSelect = { item, index ->
                 queueVisible = false
-                onPlayItem(it)
+                if (onPlayQueueItem != null) onPlayQueueItem(item, index) else onPlayItem(item)
             }
         )
         if (pictureEditorVisible) PlayerPictureModeEditor(
