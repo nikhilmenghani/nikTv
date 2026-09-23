@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlin.math.roundToInt
+import java.util.Locale
 
 internal class CatalogOperationHeld(val state: String) : CancellationException(state)
 
@@ -42,8 +42,15 @@ internal data class CatalogOperationProgress(
             else -> null
         }?.coerceIn(0f, 1f)
 
-    val percent: Int?
-        get() = fraction?.times(100)?.roundToInt()?.coerceIn(0, 100)
+    val percentText: String?
+        get() = fraction?.let { value ->
+            val percent = if (totalPages > 0 && page < totalPages) {
+                (value * 100f).coerceAtMost(99.9f)
+            } else {
+                value * 100f
+            }
+            String.format(Locale.US, "%.1f%%", percent)
+        }
 }
 
 /** Durable device-only controls. A stop never discards a committed page or file. */

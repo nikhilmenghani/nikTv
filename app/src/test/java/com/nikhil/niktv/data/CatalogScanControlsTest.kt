@@ -87,10 +87,11 @@ class CatalogScanControlsTest {
         assertEquals(673, CatalogOperations.pageTotal(context, operation, category.id))
     }
 
-    @Test fun catalogProgressExposesRoundedPercentage() {
-        assertEquals(38, CatalogOperationProgress("Saving", page = 3_736, totalPages = 9_890).percent)
-        assertEquals(100, CatalogOperationProgress("Done", page = 11, totalPages = 10).percent)
-        assertNull(CatalogOperationProgress("Connecting").percent)
+    @Test fun catalogProgressExposesAccurateDecimalPercentage() {
+        assertEquals("37.8%", CatalogOperationProgress("Saving", page = 3_736, totalPages = 9_890).percentText)
+        assertEquals("99.9%", CatalogOperationProgress("Saving", page = 9_877, totalPages = 9_891).percentText)
+        assertEquals("100.0%", CatalogOperationProgress("Done", page = 10, totalPages = 10).percentText)
+        assertNull(CatalogOperationProgress("Connecting").percentText)
     }
 
     @Test fun remainingTimeFormattingIsCompact() {

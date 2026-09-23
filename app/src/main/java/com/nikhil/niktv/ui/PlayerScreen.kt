@@ -456,6 +456,8 @@ fun PlayerScreen(
         return
     }
     val coroutineScope = rememberCoroutineScope()
+    val livePlaybackClock = remember(media.progressKey) { LivePlaybackClock() }
+    var livePlaybackElapsedMillis by remember(media.progressKey) { mutableLongStateOf(0L) }
     val currentOnPlayPrevious by rememberUpdatedState(onPlayPrevious)
     val currentOnPlayNext by rememberUpdatedState(onPlayNext)
     val activity = remember(context) { context.findActivity() }
@@ -1066,6 +1068,12 @@ fun PlayerScreen(
         var lastProgressSave = android.os.SystemClock.elapsedRealtime()
         while (true) {
             delay(1_000)
+            if (media.catalogType == CatalogType.LIVE_TV) {
+                livePlaybackElapsedMillis = livePlaybackClock.sample(
+                    android.os.SystemClock.elapsedRealtime(), player.isPlaying
+                )
+                LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis)
+            }
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
             videoDetails = (player as? androidx.media3.exoplayer.ExoPlayer)?.videoFormat?.let { format ->
@@ -1971,9 +1979,11 @@ PlayerChromeIconButton(
                             onClick = {
                                 if (liveRecording.paused) LiveTvRecorder.resume(
                                     context,
-                                    player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L }
+                                    player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L },
+                                    livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying)
                                 )
-                                else LiveTvRecorder.pause(context)
+                                else LiveTvRecorder.pause(context,
+                                    livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying))
                             },
                             modifier = Modifier
                                 .focusRequester(recordingPauseFocusRequester)
@@ -1989,12 +1999,14 @@ PlayerChromeIconButton(
                         icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
                         contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
                         onClick = {
-                            if (liveRecording.active) LiveTvRecorder.stop(context)
+                            if (liveRecording.active) LiveTvRecorder.stop(context,
+                                livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying))
                             else LiveTvRecorder.start(
                                 context,
                                 media.media.title,
                                 media.url,
-                                player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L }
+                                player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L },
+                                livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying)
                             )
                         },
                         modifier = Modifier
@@ -2060,6 +2072,12 @@ PlayerChromeIconButton(
                                     color = Color.White,
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    formatLivePlaybackElapsed(livePlaybackElapsedMillis),
+                                    color = Color.White.copy(alpha = 0.86f),
+                                    style = MaterialTheme.typography.labelMedium
                                 )
                             }
                         }
@@ -2408,20 +2426,16 @@ PlayerChromeIconButton(
                     Icon(Icons.Default.ErrorOutline, null, Modifier.size(42.dp), tint = Color(0xFFE50914))
                     Text("This title can’t be played right now", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     Text(failure, color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        NikTvSecondaryActionButton(
-                            onClick = onBack,
-                            modifier = Modifier.focusRequester(errorBackFocusRequester)
-                                .focusProperties { right = errorRetryFocusRequester }
-                                .playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
-                        ) { Text("Go back") }
-                        NikTvPrimaryActionButton(
-                            onClick = onRetry,
-                            modifier = Modifier.focusRequester(errorRetryFocusRequester)
-                                .focusProperties { left = errorBackFocusRequester }
-                                .playerControlFocus(RoundedCornerShape(24.dp)) { controlsFocused = it }
-                        ) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("Retry with fresh link") }
-                    }
+                    PlayerErrorActions(
+                        compact = compactMobileControls,
+                        canNavigate = hasPlaybackQueue,
+                        onPrevious = onPlayPrevious,
+                        onBack = onBack,
+                        onRetry = onRetry,
+                        onNext = onPlayNext,
+                        retryModifier = Modifier.focusRequester(errorRetryFocusRequester)
+                            .playerControlFocus(RoundedCornerShape(12.dp)) { controlsFocused = it }
+                    )
                 }
             }
         }

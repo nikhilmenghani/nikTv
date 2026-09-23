@@ -81,6 +81,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Shadow
 import coil3.compose.AsyncImagePainter
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
@@ -1148,7 +1149,8 @@ internal fun PlayerQueueOverlay(
                                 style =
                                     MaterialTheme.typography.labelLarge.copy(
                                         fontSize = 12.sp,
-                                        lineHeight = 14.sp
+                                        lineHeight = 14.sp,
+                                        shadow = Shadow(Color.Black, Offset(0f, 2f), blurRadius = 8f)
                                     ),
                                 fontWeight =
                                     androidx.compose.ui.text.font
@@ -1163,7 +1165,8 @@ internal fun PlayerQueueOverlay(
                                     style =
                                         MaterialTheme.typography.labelSmall.copy(
                                             fontSize = 10.sp,
-                                            lineHeight = 12.sp
+                                            lineHeight = 12.sp,
+                                            shadow = Shadow(Color.Black, Offset(0f, 2f), blurRadius = 7f)
                                         ),
                                     maxLines = if (compactQueueGrid) 1 else 2,
                                     overflow = TextOverflow.Ellipsis

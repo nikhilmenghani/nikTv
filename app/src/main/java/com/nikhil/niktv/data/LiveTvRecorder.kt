@@ -57,8 +57,21 @@ data class RecordedLiveTvMedia(
 object LiveTvRecorder {
     private val mutableState = MutableStateFlow(LiveRecordingState())
     val state: StateFlow<LiveRecordingState> = mutableState.asStateFlow()
+    private data class PlaybackSample(val url: String, val elapsedMillis: Long, val reportedAtMillis: Long)
+    @Volatile private var playbackSample: PlaybackSample? = null
 
-    fun start(context: Context, title: String, url: String, liveOffsetMillis: Long? = null) {
+    fun reportPlaybackElapsed(url: String, elapsedMillis: Long) {
+        if (mutableState.value.active && mutableState.value.sourceUrl == url) {
+            playbackSample = PlaybackSample(url, elapsedMillis, android.os.SystemClock.elapsedRealtime())
+        }
+    }
+
+    internal fun recentPlaybackElapsed(url: String): Long? = playbackSample?.takeIf {
+        it.url == url && android.os.SystemClock.elapsedRealtime() - it.reportedAtMillis <= 2_000L
+    }?.elapsedMillis
+
+    fun start(context: Context, title: String, url: String, liveOffsetMillis: Long? = null,
+              playbackElapsedMillis: Long? = null) {
         mutableState.value = LiveRecordingState(
             active = true,
             sourceUrl = url,
@@ -70,6 +83,7 @@ object LiveTvRecorder {
             .putExtra(LiveTvRecordingService.EXTRA_TITLE, title)
             .putExtra(LiveTvRecordingService.EXTRA_URL, url)
             .putExtra(LiveTvRecordingService.EXTRA_LIVE_OFFSET_MILLIS, liveOffsetMillis ?: -1L)
+            .putExtra(LiveTvRecordingService.EXTRA_PLAYBACK_ELAPSED_MILLIS, playbackElapsedMillis ?: -1L)
         runCatching { ContextCompat.startForegroundService(context, intent) }
             .onFailure {
                 mutableState.value = LiveRecordingState(
@@ -78,26 +92,30 @@ object LiveTvRecorder {
             }
     }
 
-    fun stop(context: Context) {
+    fun stop(context: Context, playbackElapsedMillis: Long? = null) {
         val previous = mutableState.value
         mutableState.value = LiveRecordingState()
         runCatching { context.startService(
             Intent(context, LiveTvRecordingService::class.java)
                 .setAction(LiveTvRecordingService.ACTION_STOP)
+                .putExtra(LiveTvRecordingService.EXTRA_PLAYBACK_ELAPSED_MILLIS, playbackElapsedMillis ?: -1L)
         ) }.onFailure {
             mutableState.value = previous.copy(error = it.message ?: "Unable to stop recording")
         }
     }
 
-    fun pause(context: Context) = sendControl(context, LiveTvRecordingService.ACTION_PAUSE)
-    fun resume(context: Context, liveOffsetMillis: Long? = null) =
-        sendControl(context, LiveTvRecordingService.ACTION_RESUME, liveOffsetMillis)
+    fun pause(context: Context, playbackElapsedMillis: Long? = null) =
+        sendControl(context, LiveTvRecordingService.ACTION_PAUSE, playbackElapsedMillis = playbackElapsedMillis)
+    fun resume(context: Context, liveOffsetMillis: Long? = null, playbackElapsedMillis: Long? = null) =
+        sendControl(context, LiveTvRecordingService.ACTION_RESUME, liveOffsetMillis, playbackElapsedMillis)
 
-    private fun sendControl(context: Context, action: String, liveOffsetMillis: Long? = null) {
+    private fun sendControl(context: Context, action: String, liveOffsetMillis: Long? = null,
+                            playbackElapsedMillis: Long? = null) {
         runCatching {
             context.startService(Intent(context, LiveTvRecordingService::class.java)
                 .setAction(action)
-                .putExtra(LiveTvRecordingService.EXTRA_LIVE_OFFSET_MILLIS, liveOffsetMillis ?: -1L))
+                .putExtra(LiveTvRecordingService.EXTRA_LIVE_OFFSET_MILLIS, liveOffsetMillis ?: -1L)
+                .putExtra(LiveTvRecordingService.EXTRA_PLAYBACK_ELAPSED_MILLIS, playbackElapsedMillis ?: -1L))
         }.onFailure {
             mutableState.value = mutableState.value.copy(error = it.message ?: "Recording control failed")
         }
@@ -186,6 +204,8 @@ class LiveTvRecordingService : Service() {
     @Volatile private var stopRequested = false
     private var accumulatedDurationMillis = 0L
     private var lastResumedAtMillis = 0L
+    private var lastResumedPlaybackMillis: Long? = null
+    private var recordingSourceUrl: String = ""
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -206,12 +226,12 @@ class LiveTvRecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> stopRecording()
-            ACTION_PAUSE -> setPaused(true)
+            ACTION_STOP -> stopRecording(intent.playbackElapsedExtra())
+            ACTION_PAUSE -> setPaused(true, intent.playbackElapsedExtra())
             ACTION_RESUME -> {
                 requestedLiveOffsetMillis = intent.getLongExtra(EXTRA_LIVE_OFFSET_MILLIS, -1L)
                     .takeIf { it >= 0L }
-                setPaused(false)
+                setPaused(false, intent.playbackElapsedExtra())
             }
             ACTION_START -> {
                 val url = intent.getStringExtra(EXTRA_URL).orEmpty()
@@ -219,20 +239,22 @@ class LiveTvRecordingService : Service() {
                 if (url.isNotBlank() && recordingJob?.isActive != true) {
                     requestedLiveOffsetMillis = intent.getLongExtra(EXTRA_LIVE_OFFSET_MILLIS, -1L)
                         .takeIf { it >= 0L }
-                    startRecording(title, url)
+                    startRecording(title, url, intent.playbackElapsedExtra())
                 }
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startRecording(title: String, sourceUrl: String) {
+    private fun startRecording(title: String, sourceUrl: String, playbackElapsedMillis: Long?) {
         val startedAt = System.currentTimeMillis()
         paused = false
         stopRequested = false
         hlsRebaseRequested = isHls(sourceUrl)
         accumulatedDurationMillis = 0L
         lastResumedAtMillis = startedAt
+        lastResumedPlaybackMillis = playbackElapsedMillis
+        recordingSourceUrl = sourceUrl
         val initial = LiveRecordingState(
             active = true,
             sourceUrl = sourceUrl,
@@ -273,12 +295,12 @@ class LiveTvRecordingService : Service() {
         }
     }
 
-    private fun stopRecording() {
+    private fun stopRecording(playbackElapsedMillis: Long?) {
         // Set the boundary before cancelling the HTTP call. A segment response
         // can win the cancellation race; appendUrl must never commit it after
         // the user pressed Stop.
         stopRequested = true
-        if (!paused) accumulatedDurationMillis += (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L)
+        if (!paused) accumulatedDurationMillis += activeDurationMillis(playbackElapsedMillis)
         paused = true
         statusJob?.cancel()
         publishProgress(LiveTvRecorder.state.value.bytesWritten)
@@ -287,13 +309,14 @@ class LiveTvRecordingService : Service() {
         activeStreamCall?.cancel()
     }
 
-    private fun setPaused(value: Boolean) {
+    private fun setPaused(value: Boolean, playbackElapsedMillis: Long?) {
         if (recordingJob?.isActive != true || paused == value) return
         val now = System.currentTimeMillis()
         if (value) {
-            accumulatedDurationMillis += (now - lastResumedAtMillis).coerceAtLeast(0L)
+            accumulatedDurationMillis += activeDurationMillis(playbackElapsedMillis)
         } else {
             lastResumedAtMillis = now
+            lastResumedPlaybackMillis = playbackElapsedMillis
             hlsRebaseRequested = true
         }
         paused = value
@@ -301,8 +324,18 @@ class LiveTvRecordingService : Service() {
         publishProgress(LiveTvRecorder.state.value.bytesWritten)
     }
 
+    private fun activeDurationMillis(playbackElapsedMillis: Long? = null): Long {
+        val playbackNow = playbackElapsedMillis ?: LiveTvRecorder.recentPlaybackElapsed(recordingSourceUrl)
+        val playbackStart = lastResumedPlaybackMillis
+        return if (playbackNow != null && playbackStart != null && playbackNow >= playbackStart) {
+            playbackNow - playbackStart
+        } else {
+            (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L)
+        }
+    }
+
     private fun recordedDurationMillis(): Long = accumulatedDurationMillis +
-        if (!paused && recordingJob?.isActive == true) (System.currentTimeMillis() - lastResumedAtMillis).coerceAtLeast(0L) else 0L
+        if (!paused && recordingJob?.isActive == true) activeDurationMillis() else 0L
 
     private suspend fun recordHls(initialUrl: String, output: java.io.OutputStream) {
         var failures = 0
@@ -385,6 +418,14 @@ class LiveTvRecordingService : Service() {
                 } catch (error: java.io.IOException) {
                     if (stopRequested) return
                     if (paused) break
+                    if (error is RecordingHttpException && error.statusCode == 404 &&
+                        !isFinishedPlaylist && segment in mediaSegments) {
+                        // A live segment can expire while the player is still on a delayed
+                        // timeline. Skip the missing segment and rebase the next available one.
+                        written.add(segment)
+                        continueTimelineAtNextSegment = true
+                        continue
+                    }
                     if (!error.isRetriableStreamFailure() || ++failures > MAX_STREAM_RETRIES) throw error
                     delay(retryDelay(failures))
                     break
@@ -573,6 +614,7 @@ class LiveTvRecordingService : Service() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_URL = "url"
         const val EXTRA_LIVE_OFFSET_MILLIS = "live_offset_millis"
+        const val EXTRA_PLAYBACK_ELAPSED_MILLIS = "playback_elapsed_millis"
         private const val CHANNEL_ID = "niktv_live_recordings"
         private const val NOTIFICATION_ID = 2114
         private const val MAX_STREAM_RETRIES = 8
@@ -584,6 +626,10 @@ private class RecordingHttpException(
     val statusCode: Int,
     message: String
 ) : java.io.IOException(message)
+
+private fun Intent.playbackElapsedExtra(): Long? =
+    getLongExtra(LiveTvRecordingService.EXTRA_PLAYBACK_ELAPSED_MILLIS, -1L)
+        .takeIf { it >= 0L }
 
 private fun requireSuccessful(code: Int, successful: Boolean, label: String) {
     if (successful) return

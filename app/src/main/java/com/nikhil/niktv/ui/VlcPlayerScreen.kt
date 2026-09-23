@@ -120,6 +120,8 @@ internal fun VlcPlayerScreen(
     val displayedDownloadInProgress = offlineDownloadInProgress || downloadRequested
     val playerConfiguration = LocalConfiguration.current
     val compactMobileControls = playerConfiguration.smallestScreenWidthDp < 600
+    val livePlaybackClock = remember(media.progressKey) { LivePlaybackClock() }
+    var livePlaybackElapsedMillis by remember(media.progressKey) { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
     var playing by remember(media.progressKey) { mutableStateOf(true) }
     var buffering by remember(media.progressKey) { mutableStateOf(true) }
@@ -256,6 +258,13 @@ internal fun VlcPlayerScreen(
     val forwardRequester = remember(media.progressKey) { FocusRequester() }
     val nextRequester = remember(media.progressKey) { FocusRequester() }
     val playNextNowRequester = remember(media.progressKey) { FocusRequester() }
+    val errorRetryRequester = remember(media.progressKey) { FocusRequester() }
+    LaunchedEffect(error, media.progressKey) {
+        if (error != null) {
+            delay(120L)
+            runCatching { errorRetryRequester.requestFocus() }
+        }
+    }
     val progressRequester = remember(media.progressKey) { FocusRequester() }
     val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
 
@@ -616,6 +625,12 @@ internal fun VlcPlayerScreen(
     LaunchedEffect(player, media.progressKey) {
         var lastProgressSave = android.os.SystemClock.elapsedRealtime()
         while (true) {
+            if (media.catalogType == CatalogType.LIVE_TV) {
+                livePlaybackElapsedMillis = livePlaybackClock.sample(
+                    android.os.SystemClock.elapsedRealtime(), player.isPlaying
+                )
+                LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis)
+            }
             val knownDuration = player.length.coerceAtLeast(0L)
             duration = knownDuration
 
@@ -1313,8 +1328,11 @@ PlayerChromeIconButton(
                             icon = if (liveRecording.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
                             contentDescription = if (liveRecording.paused) "Resume recording" else "Pause recording",
                             onClick = {
-                                if (liveRecording.paused) LiveTvRecorder.resume(context)
-                                else LiveTvRecorder.pause(context)
+                                if (liveRecording.paused) LiveTvRecorder.resume(context,
+                                    playbackElapsedMillis = livePlaybackClock.sample(
+                                        android.os.SystemClock.elapsedRealtime(), player.isPlaying))
+                                else LiveTvRecorder.pause(context,
+                                    livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying))
                             },
                             modifier = Modifier
                                 .focusRequester(recordingPauseRequester)
@@ -1330,8 +1348,11 @@ PlayerChromeIconButton(
                         icon = if (recordingThisChannel) Icons.Default.StopCircle else Icons.Default.FiberManualRecord,
                         contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
                         onClick = {
-                            if (liveRecording.active) LiveTvRecorder.stop(context)
-                            else LiveTvRecorder.start(context, media.media.title, media.url)
+                            if (liveRecording.active) LiveTvRecorder.stop(context,
+                                livePlaybackClock.sample(android.os.SystemClock.elapsedRealtime(), player.isPlaying))
+                            else LiveTvRecorder.start(context, media.media.title, media.url,
+                                playbackElapsedMillis = livePlaybackClock.sample(
+                                    android.os.SystemClock.elapsedRealtime(), player.isPlaying))
                         },
                         modifier = Modifier
                             .focusRequester(downloadRequester)
@@ -1396,6 +1417,12 @@ PlayerChromeIconButton(
                                     color = Color.White,
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    formatLivePlaybackElapsed(livePlaybackElapsedMillis),
+                                    color = Color.White.copy(alpha = 0.86f),
+                                    style = MaterialTheme.typography.labelMedium
                                 )
                             }
                         }
@@ -1705,7 +1732,15 @@ PlayerChromeIconButton(
                     Text("This title can’t be played right now", style = MaterialTheme.typography.titleLarge)
                     Text(it, color = Color.LightGray)
                     Spacer(Modifier.height(12.dp))
-                    NikTvPrimaryActionButton(onClick = onBack) { Text("Go back") }
+                    PlayerErrorActions(
+                        compact = compactMobileControls,
+                        canNavigate = hasPlaybackQueue,
+                        onPrevious = onPlayPrevious,
+                        onBack = onBack,
+                        onRetry = { onPlaybackAuthorizationFailure(player.time.coerceAtLeast(0L)) },
+                        onNext = onPlayNext,
+                        retryModifier = Modifier.focusRequester(errorRetryRequester)
+                    )
                 }
             }
         }
