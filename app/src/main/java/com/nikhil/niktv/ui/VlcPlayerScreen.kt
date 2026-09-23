@@ -76,6 +76,7 @@ internal fun VlcPlayerScreen(
     pinnedQueueIds: List<String> = emptyList(),
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((MediaItem) -> Unit)? = null,
+    onToggleQueuePin: ((MediaItem) -> Unit)? = null,
     onProgress: (String, Long, Long) -> Unit,
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
@@ -1665,6 +1666,7 @@ PlayerChromeIconButton(
             } else {
                 null
             },
+            onTogglePin = if (media.catalogType == CatalogType.LIVE_TV) onToggleQueuePin else null,
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,
             onLoadMore = onLoadMoreQueue,

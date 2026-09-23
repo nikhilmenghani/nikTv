@@ -305,6 +305,7 @@ fun PlayerScreen(
     pinnedQueueIds: List<String> = emptyList(),
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((NikMediaItem) -> Unit)? = null,
+    onToggleQueuePin: ((NikMediaItem) -> Unit)? = null,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
     onLoadMoreQueue: () -> Boolean = { false },
@@ -425,6 +426,7 @@ fun PlayerScreen(
             pinnedQueueIds = pinnedQueueIds,
             queueFavoriteIds = queueFavoriteIds,
             onToggleQueueFavorite = onToggleQueueFavorite,
+            onToggleQueuePin = onToggleQueuePin,
             onProgress = onProgress,
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
@@ -2321,6 +2323,7 @@ PlayerChromeIconButton(
             } else {
                 null
             },
+            onTogglePin = if (media.catalogType == CatalogType.LIVE_TV) onToggleQueuePin else null,
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,
             onLoadMore = onLoadMoreQueue,

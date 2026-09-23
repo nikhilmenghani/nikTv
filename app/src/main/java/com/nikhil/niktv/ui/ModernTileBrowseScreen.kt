@@ -2272,7 +2272,7 @@ private fun MediaItem.compactEpisodeTitle(): String = title
     .trim()
 
 @Composable
-private fun ModernTileActionsMenu(
+internal fun ModernTileActionsMenu(
     expanded: Boolean,
     isFavorite: Boolean,
     dismiss: () -> Unit,

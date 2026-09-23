@@ -650,6 +650,7 @@ internal fun PlayerQueueOverlay(
     pinnedIds: List<String> = emptyList(),
     favoriteIds: Set<String> = emptySet(),
     onToggleFavorite: ((MediaItem) -> Unit)? = null,
+    onTogglePin: ((MediaItem) -> Unit)? = null,
     hasMore: Boolean = false,
     loadingMore: Boolean = false,
     onLoadMore: () -> Boolean = { false },
@@ -700,9 +701,9 @@ internal fun PlayerQueueOverlay(
      * episode artwork a useful canvas and enough room for readable metadata.
      */
     val touchQueueSheetHeight =
-        (configuration.screenHeightDp * (if (compactQueueGrid) .30f else .36f)).dp.coerceIn(
-            if (compactQueueGrid) 132.dp else 156.dp,
-            if (compactQueueGrid) 158.dp else 220.dp
+        (configuration.screenHeightDp * (if (compactQueueGrid) .30f else .27f)).dp.coerceIn(
+            if (compactQueueGrid) 132.dp else 145.dp,
+            if (compactQueueGrid) 158.dp else 172.dp
         )
     val queueSheetMinHeight = when {
         tvQueueGrid -> 200.dp
@@ -762,9 +763,7 @@ internal fun PlayerQueueOverlay(
         tvQueueGrid -> 112.dp
         else -> (touchQueueSheetHeight - 40.dp).coerceAtLeast(96.dp)
     }
-    val compactQueueCardWidth =
-        if (compactQueueGrid) queueCardHeight * 1.65f
-        else queueCardHeight * 1.45f
+    val compactQueueCardWidth = queueCardHeight * 1.65f
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items, pinnedIds) {
@@ -1018,9 +1017,9 @@ internal fun PlayerQueueOverlay(
                     }
                     .remoteCombinedClickable(
                         onClick = { onSelect(item, index) },
-                        onLongClick = onToggleFavorite?.let {
+                        onLongClick = if (onToggleFavorite != null || onTogglePin != null) {
                             { favoriteMenuItemId = item.id }
-                        }
+                        } else null
                     )
                     .focusable(),
                 color = when {
@@ -1356,37 +1355,15 @@ internal fun PlayerQueueOverlay(
                 }
             }
 
-            DropdownMenu(
-                expanded = favoriteMenuItemId == item.id,
-                onDismissRequest = { favoriteMenuItemId = null },
-                modifier = Modifier.align(Alignment.TopEnd),
-                containerColor = Color(0xFF202020),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-            ) {
-                NikDropdownMenuItem(
-                    text = {
-                        Text(
-                            if (item.id in favoriteIds) {
-                                "Remove from My List"
-                            } else {
-                                "Add to My List"
-                            }
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            if (item.id in favoriteIds) {
-                                Icons.Default.HeartBroken
-                            } else {
-                                Icons.Default.FavoriteBorder
-                            },
-                            null
-                        )
-                    },
-                    onClick = {
-                        favoriteMenuItemId = null
-                        onToggleFavorite?.invoke(item)
-                    }
+            if (onToggleFavorite != null || onTogglePin != null) {
+                ModernTileActionsMenu(
+                    expanded = favoriteMenuItemId == item.id,
+                    isFavorite = item.id in favoriteIds,
+                    dismiss = { favoriteMenuItemId = null },
+                    toggleFavorite = { onToggleFavorite?.invoke(item) },
+                    clear = null,
+                    isPinned = item.id in pinnedIds,
+                    togglePin = onTogglePin?.let { pin -> { pin(item) } }
                 )
             }
         }

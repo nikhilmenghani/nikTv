@@ -610,7 +610,17 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                  * Playback itself has one owner: PlayerScreen. Channels,
                  * movies and episodes are browsed from the in-player queue.
                  */
-                state.nowPlaying != null -> PlayerScreen(
+                state.nowPlaying != null -> {
+                  val profileKey = state.session?.profile?.cacheKey()
+                      ?: state.savedProfile?.cacheKey().orEmpty()
+                  val channelCategoryId = state.nowPlaying?.media?.portalCategoryId
+                      ?.takeIf { it.isNotBlank() } ?: state.selectedCategory?.id.orEmpty()
+                  var pinnedQueueIds by remember(profileKey, channelCategoryId) {
+                      mutableStateOf(IptvPinPreferences.pinnedChannelOrder(
+                          appContext, profileKey, channelCategoryId
+                      ))
+                  }
+                  PlayerScreen(
                     media = state.nowPlaying!!,
                     onBack = vm::closePlayer,
                     onRetry = vm::retryPlayback,
@@ -657,14 +667,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         ?.progressLabel(),
                     onPlayItem = vm::openMedia,
                     onPlayQueueItem = vm::openMediaFromQueue,
-                    pinnedQueueIds = (state.nowPlaying?.media?.portalCategoryId
-                        ?.takeIf { it.isNotBlank() } ?: state.selectedCategory?.id)?.let { categoryId ->
-                        IptvPinPreferences.pinnedChannelOrder(
-                            appContext,
-                            state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty(),
-                            categoryId
-                        )
-                    }.orEmpty(),
+                    pinnedQueueIds = pinnedQueueIds,
                     queueFavoriteIds = state.favorites
                         .asSequence()
                         .filter { it.kind == FavoriteKind.CHANNEL }
@@ -675,6 +678,16 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             FavoriteItem(FavoriteKind.CHANNEL, item)
                         )
                     },
+                    onToggleQueuePin = { item ->
+                        val categoryId = item.portalCategoryId?.takeIf { it.isNotBlank() }
+                            ?: channelCategoryId
+                        if (categoryId.isNotBlank()) {
+                            val updated = IptvPinPreferences.toggleChannel(
+                                appContext, profileKey, categoryId, item.id
+                            )
+                            if (categoryId == channelCategoryId) pinnedQueueIds = updated
+                        }
+                    },
                     queueHasMore = state.playbackQueueHasMore,
                     queueLoadingMore = state.playbackQueueLoadingMore,
                     onLoadMoreQueue = vm::loadMorePlaybackQueue,
@@ -684,6 +697,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onPlaybackEngineChanged = vm::setPlaybackEngine,
                     startFullscreen = true
                 )
+                }
 
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 state.profileLoadProgress != null -> ProfileLoadingScreen(
