@@ -12,12 +12,10 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.provider.MediaStore
-import android.system.Os
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.nikhil.niktv.R
 import java.net.URI
-import java.io.FileInputStream
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -60,7 +58,7 @@ object LiveTvRecorder {
     private val mutableState = MutableStateFlow(LiveRecordingState())
     val state: StateFlow<LiveRecordingState> = mutableState.asStateFlow()
 
-    fun start(context: Context, title: String, url: String) {
+    fun start(context: Context, title: String, url: String, liveOffsetMillis: Long? = null) {
         mutableState.value = LiveRecordingState(
             active = true,
             sourceUrl = url,
@@ -71,6 +69,7 @@ object LiveTvRecorder {
             .setAction(LiveTvRecordingService.ACTION_START)
             .putExtra(LiveTvRecordingService.EXTRA_TITLE, title)
             .putExtra(LiveTvRecordingService.EXTRA_URL, url)
+            .putExtra(LiveTvRecordingService.EXTRA_LIVE_OFFSET_MILLIS, liveOffsetMillis ?: -1L)
         runCatching { ContextCompat.startForegroundService(context, intent) }
             .onFailure {
                 mutableState.value = LiveRecordingState(
@@ -91,11 +90,14 @@ object LiveTvRecorder {
     }
 
     fun pause(context: Context) = sendControl(context, LiveTvRecordingService.ACTION_PAUSE)
-    fun resume(context: Context) = sendControl(context, LiveTvRecordingService.ACTION_RESUME)
+    fun resume(context: Context, liveOffsetMillis: Long? = null) =
+        sendControl(context, LiveTvRecordingService.ACTION_RESUME, liveOffsetMillis)
 
-    private fun sendControl(context: Context, action: String) {
+    private fun sendControl(context: Context, action: String, liveOffsetMillis: Long? = null) {
         runCatching {
-            context.startService(Intent(context, LiveTvRecordingService::class.java).setAction(action))
+            context.startService(Intent(context, LiveTvRecordingService::class.java)
+                .setAction(action)
+                .putExtra(LiveTvRecordingService.EXTRA_LIVE_OFFSET_MILLIS, liveOffsetMillis ?: -1L))
         }.onFailure {
             mutableState.value = mutableState.value.copy(error = it.message ?: "Recording control failed")
         }
@@ -180,6 +182,7 @@ class LiveTvRecordingService : Service() {
     @Volatile private var paused = false
     @Volatile private var activeStreamCall: Call? = null
     @Volatile private var hlsRebaseRequested = false
+    @Volatile private var requestedLiveOffsetMillis: Long? = null
     @Volatile private var stopRequested = false
     private var accumulatedDurationMillis = 0L
     private var lastResumedAtMillis = 0L
@@ -205,11 +208,19 @@ class LiveTvRecordingService : Service() {
         when (intent?.action) {
             ACTION_STOP -> stopRecording()
             ACTION_PAUSE -> setPaused(true)
-            ACTION_RESUME -> setPaused(false)
+            ACTION_RESUME -> {
+                requestedLiveOffsetMillis = intent.getLongExtra(EXTRA_LIVE_OFFSET_MILLIS, -1L)
+                    .takeIf { it >= 0L }
+                setPaused(false)
+            }
             ACTION_START -> {
                 val url = intent.getStringExtra(EXTRA_URL).orEmpty()
                 val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Live TV" }
-                if (url.isNotBlank() && recordingJob?.isActive != true) startRecording(title, url)
+                if (url.isNotBlank() && recordingJob?.isActive != true) {
+                    requestedLiveOffsetMillis = intent.getLongExtra(EXTRA_LIVE_OFFSET_MILLIS, -1L)
+                        .takeIf { it >= 0L }
+                    startRecording(title, url)
+                }
             }
         }
         return START_NOT_STICKY
@@ -244,15 +255,9 @@ class LiveTvRecordingService : Service() {
                     if (isHls(sourceUrl)) recordHls(sourceUrl, output)
                     else copyStream(sourceUrl, output)
                 }
-                if (isHls(sourceUrl)) {
-                    trimOutputToRecordedDuration(outputUri, accumulatedDurationMillis)
-                }
                 finishOutput(outputUri)
                 LiveTvRecorder.update(LiveRecordingState(error = null))
             } catch (_: CancellationException) {
-                if (hlsRebaseRequested || isHls(sourceUrl)) {
-                    outputUri?.let { trimOutputToRecordedDuration(it, accumulatedDurationMillis) }
-                }
                 outputUri?.let(::finishOutput)
                 LiveTvRecorder.update(LiveRecordingState())
             } catch (error: Throwable) {
@@ -318,6 +323,7 @@ class LiveTvRecordingService : Service() {
         val playlistUrl = resolvedPlaylistUrl ?: return
         val written = LinkedHashSet<String>()
         var bytes = 0L
+        var recordedMediaDurationMillis = 0L
         failures = 0
         playlistLoop@ while (currentCoroutineContext().isActive && !stopRequested) {
             awaitResume()
@@ -342,11 +348,16 @@ class LiveTvRecordingService : Service() {
                 addAll(mediaSegments)
             }
             val isFinishedPlaylist = lines.any { it == "#EXT-X-ENDLIST" }
+            val targetDurationMillis = (lines.firstOrNull { it.startsWith("#EXT-X-TARGETDURATION:") }
+                ?.substringAfter(':')?.toLongOrNull()?.coerceIn(1, 10) ?: 3L) * 1_000L
             var continueTimelineAtNextSegment = hlsRebaseRequested && !isFinishedPlaylist
             if (continueTimelineAtNextSegment) {
-                // A live manifest contains a sliding backlog. Start (and resume) at its
-                // live edge so time elapsed before Start or while paused is never recorded.
-                written.addAll(mediaSegments.dropLast(1))
+                // Start at the segment matching what the player is showing.
+                // The newest segment can be tens of seconds ahead of playback.
+                val startIndex = HlsRecordingStartSelector.segmentIndex(
+                    lines, requestedLiveOffsetMillis
+                )
+                written.addAll(mediaSegments.take(startIndex))
                 hlsRebaseRequested = false
             }
             for (segment in segments) {
@@ -355,6 +366,15 @@ class LiveTvRecordingService : Service() {
                 awaitResume()
                 if (stopRequested) return
                 if (hlsRebaseRequested) continue@playlistLoop
+                if (segment in mediaSegments) {
+                    // A live manifest can expose many seconds of future content. Do not
+                    // download it faster than the viewer's active recording time.
+                    while (!paused && !stopRequested &&
+                        recordedMediaDurationMillis > recordedDurationMillis() + targetDurationMillis) {
+                        delay(200L)
+                    }
+                    if (paused || stopRequested) continue@playlistLoop
+                }
                 val appended = try {
                     appendUrl(
                         segment,
@@ -372,14 +392,15 @@ class LiveTvRecordingService : Service() {
                 if (paused) break
                 bytes += appended
                 written.add(segment)
-                if (segment in mediaSegments) continueTimelineAtNextSegment = false
+                if (segment in mediaSegments) {
+                    recordedMediaDurationMillis += targetDurationMillis
+                    continueTimelineAtNextSegment = false
+                }
                 failures = 0
                 publishProgress(bytes)
             }
             if (isFinishedPlaylist) return
-            val targetSeconds = lines.firstOrNull { it.startsWith("#EXT-X-TARGETDURATION:") }
-                ?.substringAfter(':')?.toLongOrNull()?.coerceIn(1, 10) ?: 3L
-            delay(targetSeconds * 500L)
+            delay(targetDurationMillis / 2L)
         }
     }
 
@@ -551,24 +572,12 @@ class LiveTvRecordingService : Service() {
         const val ACTION_RESUME = "com.nikhil.niktv.action.RESUME_LIVE_RECORDING"
         const val EXTRA_TITLE = "title"
         const val EXTRA_URL = "url"
+        const val EXTRA_LIVE_OFFSET_MILLIS = "live_offset_millis"
         private const val CHANNEL_ID = "niktv_live_recordings"
         private const val NOTIFICATION_ID = 2114
         private const val MAX_STREAM_RETRIES = 8
     }
 
-    private fun trimOutputToRecordedDuration(uri: android.net.Uri, durationMillis: Long) {
-        if (durationMillis <= 0L) return
-        runCatching {
-            contentResolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
-                // Keep the shared descriptor open while scanning, then truncate
-                // at a complete 188-byte transport-stream packet boundary.
-                val cutoff = FileInputStream(Os.dup(descriptor.fileDescriptor)).use { input ->
-                    MpegTsRecordingTrimmer.cutoffBytes(input, durationMillis)
-                }
-                if (cutoff != null) Os.ftruncate(descriptor.fileDescriptor, cutoff)
-            }
-        }
-    }
 }
 
 private class RecordingHttpException(

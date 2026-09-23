@@ -1969,7 +1969,10 @@ PlayerChromeIconButton(
                             icon = if (liveRecording.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
                             contentDescription = if (liveRecording.paused) "Resume recording" else "Pause recording",
                             onClick = {
-                                if (liveRecording.paused) LiveTvRecorder.resume(context)
+                                if (liveRecording.paused) LiveTvRecorder.resume(
+                                    context,
+                                    player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L }
+                                )
                                 else LiveTvRecorder.pause(context)
                             },
                             modifier = Modifier
@@ -1987,7 +1990,12 @@ PlayerChromeIconButton(
                         contentDescription = if (recordingThisChannel) "Stop recording" else "Record live TV",
                         onClick = {
                             if (liveRecording.active) LiveTvRecorder.stop(context)
-                            else LiveTvRecorder.start(context, media.media.title, media.url)
+                            else LiveTvRecorder.start(
+                                context,
+                                media.media.title,
+                                media.url,
+                                player.currentLiveOffset.takeIf { it != C.TIME_UNSET && it >= 0L }
+                            )
                         },
                         modifier = Modifier
                             .focusRequester(downloadFocusRequester)
