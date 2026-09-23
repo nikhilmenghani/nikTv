@@ -1088,7 +1088,7 @@ private fun ShowcaseDetailsPanel(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    programme.title,
+                    liveProgrammeDisplayTitle(programme.title),
                     color = Color.White,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
@@ -1118,7 +1118,7 @@ private fun ShowcaseDetailsPanel(
                                 .format(java.util.Date(it))
                         }
                         Text(
-                            listOfNotNull(start, programme.title).joinToString(" · "),
+                            listOfNotNull(start, liveProgrammeDisplayTitle(programme.title)).joinToString(" · "),
                             color = Color.White.copy(alpha = .82f),
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,

@@ -183,6 +183,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val playbackQueuePrefetches =
         mutableMapOf<String, Deferred<PortalCatalogPage>>()
     private val categoryRefreshJobs = mutableMapOf<String, Job>()
+    private val liveGuideLookupMutex = Mutex()
+    private val liveGuidePending = mutableSetOf<String>()
+    private val liveGuideAttemptedAt = mutableMapOf<String, Long>()
     private var profilePreparationJob: Job? = null
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
@@ -1002,6 +1005,73 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Fill missing guide entries only for channels visible in the browse grid. */
+    fun enrichVisibleLiveGuides(visible: List<MediaItem>) {
+        val snapshot = _state.value
+        val session = snapshot.session ?: return
+        val category = snapshot.modernIptvCategory?.takeIf { it.type == CatalogType.LIVE_TV } ?: return
+        if (session.profile.portalType != PortalType.STALKER) return
+        val profileKey = session.profile.cacheKey()
+        val now = System.currentTimeMillis()
+        visible.distinctBy { it.id }.forEach { item ->
+            if (item.portalCategoryId != category.id || item.liveSchedule.any { programme ->
+                    val start = programme.startTimeMillis
+                    val end = programme.endTimeMillis
+                    start != null && end != null && now in start until end
+                }) return@forEach
+            val key = "$profileKey|${category.id}|${item.id}"
+            if (key in liveGuidePending || now - (liveGuideAttemptedAt[key] ?: 0L) < 15 * 60_000L) {
+                return@forEach
+            }
+            liveGuidePending += key
+            viewModelScope.launch {
+                try {
+                    liveGuideLookupMutex.withLock {
+                        val active = _state.value
+                        if (active.session?.profile?.cacheKey() != profileKey ||
+                            active.modernIptvCategory?.id != category.id) return@withLock
+                        liveGuideAttemptedAt[key] = System.currentTimeMillis()
+                        val enriched = portal.playingChannelSchedule(session, item)
+                        if (enriched.liveSchedule.isNotEmpty()) {
+                            _state.update { current ->
+                                if (current.session?.profile?.cacheKey() != profileKey) return@update current
+                                val cache = current.browseCachesByType[CatalogType.LIVE_TV]
+                                    ?.takeIf { it.profileKey == profileKey }
+                                val updatedCache = cache?.copy(itemsByCategory =
+                                    cache.itemsByCategory + (category.id to
+                                        cache.itemsByCategory[category.id].orEmpty().map { stored ->
+                                            if (stored.id == item.id) enriched else stored
+                                        })
+                                )
+                                current.copy(
+                                    items = if (current.selectedCategory?.id == category.id) {
+                                        current.items.map { stored ->
+                                            if (stored.id == item.id) enriched else stored
+                                        }
+                                    } else current.items,
+                                    browseCache = if (current.browseCache?.profileKey == profileKey &&
+                                        current.browseCache.type == CatalogType.LIVE_TV) {
+                                        updatedCache ?: current.browseCache
+                                    } else current.browseCache,
+                                    browseCachesByType = if (updatedCache != null) {
+                                        current.browseCachesByType + (CatalogType.LIVE_TV to updatedCache)
+                                    } else current.browseCachesByType
+                                )
+                            }
+                        }
+                        delay(650L)
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Log.w("NikTvLiveGuide", "Could not load a visible channel guide", error)
+                } finally {
+                    liveGuidePending -= key
+                }
+            }
+        }
+    }
+
     fun loadCategory(category: Category) = task {
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
@@ -1029,7 +1099,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             ) }
             val cachedAt = categoryCache.categoryCachedAtMillis[category.id] ?: 0L
             val maxAge = _state.value.cacheIntervalMinutes * 60_000L
-            if (System.currentTimeMillis() - cachedAt >= maxAge) {
+            // Programme guide entries age much faster than channel lists. Refresh
+            // the selected Live TV category in the background so opening it stays instant.
+            val effectiveMaxAge = if (category.type == CatalogType.LIVE_TV) {
+                minOf(maxAge, 30 * 60_000L)
+            } else maxAge
+            if (System.currentTimeMillis() - cachedAt >= effectiveMaxAge) {
                 refreshCategoryInBackground(session, category)
             }
             return@task

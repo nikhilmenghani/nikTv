@@ -964,7 +964,7 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
-    private fun JsonObject.liveProgramme(): LiveProgramme? {
+    private fun JsonObject.liveProgramme(allowGenericTitle: Boolean = false): LiveProgramme? {
         val nested = listOf("now_playing", "current_program", "current_programme", "epg")
             .asSequence()
             .mapNotNull { key -> this[key] }
@@ -975,7 +975,13 @@ class StalkerPortalClient(private val context: Context) {
             } }
             .firstOrNull()
         val source = nested ?: this
-        val title: String = (listOf("program_name", "programme_name", "title", "name", "cur_playing", "playing")
+        // Channel rows also have `name`/`title`; those are not programme names.
+        val titleKeys = if (source !== this || allowGenericTitle) {
+            listOf("program_name", "programme_name", "title", "name", "cur_playing", "playing")
+        } else {
+            listOf("program_name", "programme_name", "cur_playing", "playing")
+        }
+        val title: String = (titleKeys
             .firstNotNullOfOrNull { key -> source.string(key)?.takeIf(String::isNotBlank) }
             ?: if (source !== this) string("cur_playing")?.takeIf(String::isNotBlank) else null)
             ?: return null
@@ -997,7 +1003,7 @@ class StalkerPortalClient(private val context: Context) {
             val id = channelId?.takeIf(String::isNotBlank)
                 ?: defaultChannelId?.takeIf(String::isNotBlank)
                 ?: return
-            val programme = (node as? JsonObject)?.liveProgramme() ?: return
+            val programme = (node as? JsonObject)?.liveProgramme(allowGenericTitle = true) ?: return
             result.getOrPut(id) { mutableListOf() }.add(programme)
         }
         when (data) {

@@ -86,7 +86,7 @@ internal fun PlayerLiveScheduleSummary(
                                 Text(time.format(Date(it)), color = Color.White.copy(.55f), style = MaterialTheme.typography.labelSmall)
                             }
                             Text(
-                                programme.title,
+                                liveProgrammeDisplayTitle(programme.title),
                                 color = Color.White.copy(if (label == "NOW") .92f else .74f),
                                 style = MaterialTheme.typography.labelSmall,
                                 maxLines = 2,
@@ -244,7 +244,7 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                programme.title,
+                                liveProgrammeDisplayTitle(programme.title),
                                 color = Color.White,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Medium,

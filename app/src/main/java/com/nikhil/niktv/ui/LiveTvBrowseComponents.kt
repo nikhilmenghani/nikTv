@@ -116,6 +116,25 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Some portals prepend an unexpanded PHP time format to EPG titles. */
+internal fun liveProgrammeDisplayTitle(title: String): String =
+    title.replace(Regex("^\\s*H:i\\s+", RegexOption.IGNORE_CASE), "").trim()
+
+internal fun isMissingLiveProgrammeTitle(title: String): Boolean {
+    val normalized = liveProgrammeDisplayTitle(title)
+        .removeSurrounding("[", "]")
+        .trim()
+        .lowercase(java.util.Locale.ROOT)
+    return normalized.isBlank() || normalized in setOf(
+        "no channel info",
+        "no content available",
+        "no programme information",
+        "no program information",
+        "no information",
+        "no epg"
+    )
+}
+
 internal fun liveChannelSupportingText(
     item: MediaItem
 ): String? {
@@ -173,7 +192,7 @@ internal fun liveProgrammeSummary(
     }
 
     return listOfNotNull(
-        programme.title.takeIf { it.isNotBlank() },
+        liveProgrammeDisplayTitle(programme.title).takeIf { it.isNotBlank() },
         schedule
     ).joinToString("  •  ")
 }
@@ -191,7 +210,7 @@ internal fun LiveProgrammeFooter(programme: LiveProgramme) {
     }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-            programme.title,
+            liveProgrammeDisplayTitle(programme.title),
             color = Color(0xFFE6E6E6),
             style = MaterialTheme.typography.labelMedium,
             maxLines = 2,

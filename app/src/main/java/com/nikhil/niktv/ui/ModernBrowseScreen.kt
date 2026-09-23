@@ -189,7 +189,8 @@ internal fun ModernBrowseScreen(
     openModernIptvCategory: (Category) -> Unit,
     closeModernSection: () -> Unit,
     loadMoreModernTmdbSection: () -> Unit,
-    enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit
+    enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
+    enrichVisibleLiveGuides: (List<MediaItem>) -> Unit
 ) {
     val home = state.homeOpen
     val layoutToggleRequester = remember { FocusRequester() }
@@ -232,6 +233,7 @@ internal fun ModernBrowseScreen(
             loadMoreIptv = loadMoreCatalog,
             refreshIptv = refreshCatalog,
             enrichFocusedCatalogMetadata = enrichFocusedCatalogMetadata,
+            enrichVisibleLiveGuides = enrichVisibleLiveGuides,
             configureTmdb = { tmdbSetupOpen = true },
             configureIptv = openCategoryManager,
             removeIptvCategory = removeCategoryFilter,
