@@ -14,6 +14,9 @@ fun String.asBuildConfigString(): String {
 
 val fireTvApk = providers.gradleProperty("fireTvApk")
     .map(String::toBoolean).orElse(false)
+val embedLocalGithubToken = !providers.environmentVariable("GITHUB_ACTIONS")
+    .orNull.equals("true", ignoreCase = true) &&
+    !providers.gradleProperty("skipLocalGithubToken").orNull.equals("true", ignoreCase = true)
 
 plugins {
     id("com.google.devtools.ksp")
@@ -31,6 +34,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "LOCAL_GITHUB_TOKEN", "\"\"")
         if (fireTvApk.get()) {
             ndk { abiFilters += setOf("armeabi-v7a", "arm64-v8a") }
         }
@@ -60,6 +64,12 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            val localToken = if (embedLocalGithubToken) {
+                providers.gradleProperty("G_TOKEN").orNull
+                    ?: providers.gradleProperty("G_Token").orNull
+                    ?: ""
+            } else ""
+            buildConfigField("String", "LOCAL_GITHUB_TOKEN", localToken.asBuildConfigString())
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-dev"
             manifestPlaceholders["appLabel"] = "NikTV Dev"

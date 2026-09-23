@@ -4991,7 +4991,10 @@ internal fun TmdbCredentialSettingsSection() {
                 onValueChange = { tokenInput = it },
                 icon = Icons.Default.Key,
                 title = "GitHub read token",
-                subtitle = if (RemoteCredentials.configured(context)) "Configured · leave blank to keep current token" else "Enter once, or use the token saved for GitHub backups",
+                subtitle = if (RemoteCredentials.configured(context))
+                    "Stored securely on this device · leave blank to keep it"
+                else "Enter once, or use the token saved for GitHub backups",
+                placeholder = if (RemoteCredentials.configured(context)) "••••••••••••  Saved token" else null,
                 password = true
             )
             NikTvSecondaryActionButton(

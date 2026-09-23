@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
+import com.nikhil.niktv.BuildConfig
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -28,7 +30,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Device-owned GitHub credentials. Nothing in this store is generated into the APK. */
+/** Device-owned GitHub credentials; local debug builds may supply an initial token. */
 object RemoteCredentials {
     private const val PREFS = "github_remote_credentials"
     private const val KEY_ALIAS = "niktv_github_remote_credentials_v1"
@@ -46,8 +48,40 @@ object RemoteCredentials {
         if (!prefs.contains("manually_configured") && !prefs.getString("token", null).isNullOrBlank()) {
             prefs.edit().putBoolean("manually_configured", true).apply()
         }
+        importLocalDebugToken(context)
+        importEmbeddedDebugToken(context)
         values = parseKnownValues(decrypt(prefs.getString("cached_values", null)))
         lastUpdatedAt = prefs.getLong("updated_at", 0L)
+    }
+
+    /** Seeds a fresh local debug install; a saved token always takes precedence. */
+    private fun importEmbeddedDebugToken(context: Context) {
+        if (!BuildConfig.DEBUG || BuildConfig.LOCAL_GITHUB_TOKEN.isBlank() || token(context).isNotBlank()) return
+        try {
+            saveConnection(context, BuildConfig.LOCAL_GITHUB_TOKEN, owner(context), repository(context),
+                filePath(context), manuallyEntered = false)
+        } catch (error: Exception) {
+            Log.w("NikTvLocalCredentials", "Could not initialize local debug credentials", error)
+        }
+    }
+
+    /** Consumes a token delivered through `adb run-as` after a local debug install. */
+    private fun importLocalDebugToken(context: Context) {
+        if (!BuildConfig.DEBUG) return
+        val file = context.applicationContext.filesDir.resolve("local_github_token_import")
+        if (!file.isFile) return
+        try {
+            val token = file.readText(Charsets.UTF_8).trim()
+            val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (token.isNotBlank() && !prefs.getBoolean("manually_configured", false)) {
+                saveConnection(context, token, owner(context), repository(context), filePath(context),
+                    manuallyEntered = false)
+            }
+        } catch (error: Exception) {
+            Log.w("NikTvLocalCredentials", "Could not import locally provisioned token", error)
+        } finally {
+            file.delete()
+        }
     }
 
     fun get(name: String): String = values[name].orEmpty().trim()
