@@ -5421,11 +5421,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     it.id == playing.media.id
                 }
 
-        return if (catalogCanOwnNavigation) {
+        val providerOrder = if (catalogCanOwnNavigation) {
             currentCatalog
         } else {
             playing.episodeQueue.distinctBy { it.id }
         }
+        if (playing.catalogType != CatalogType.LIVE_TV) return providerOrder
+        val profileKey = snapshot.session?.profile?.cacheKey()
+            ?: snapshot.savedProfile?.cacheKey()
+            ?: return providerOrder
+        val categoryId = playing.media.portalCategoryId
+            ?.takeIf { it.isNotBlank() }
+            ?: snapshot.selectedCategory?.id
+            ?: return providerOrder
+        val pinnedOrder = IptvPinPreferences.pinnedChannelOrder(
+            getApplication(), profileKey, categoryId
+        )
+        val byId = providerOrder.associateBy { it.id }
+        val pinned = pinnedOrder.mapNotNull(byId::get)
+        return pinned + providerOrder.filterNot { it.id in pinnedOrder }
     }
 
     /**

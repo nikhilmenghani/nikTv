@@ -656,7 +656,8 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.progressLabel(),
                     onPlayItem = vm::openMedia,
-                    pinnedQueueIds = state.selectedCategory?.id?.let { categoryId ->
+                    pinnedQueueIds = (state.nowPlaying?.media?.portalCategoryId
+                        ?.takeIf { it.isNotBlank() } ?: state.selectedCategory?.id)?.let { categoryId ->
                         IptvPinPreferences.pinnedChannelOrder(
                             appContext,
                             state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty(),
