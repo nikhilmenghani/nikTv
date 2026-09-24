@@ -8,6 +8,7 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import okio.Path.Companion.toOkioPath
 import com.nikhil.niktv.data.RemoteCredentials
+import com.nikhil.niktv.data.CatalogRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,11 @@ class NikTvApplication : Application(), SingletonImageLoader.Factory {
         RemoteCredentials.schedule(this)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching { RemoteCredentials.refresh(this@NikTvApplication) }
+        }
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            // Derived search metadata is rebuilt locally after the v1 -> v2
+            // migration. Provider payloads and network access are not needed.
+            runCatching { CatalogRepository(this@NikTvApplication).rebuildMissingSearchIndexes() }
         }
     }
 

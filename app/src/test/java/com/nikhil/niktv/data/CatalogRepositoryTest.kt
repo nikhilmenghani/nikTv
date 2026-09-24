@@ -200,6 +200,17 @@ class CatalogRepositoryTest {
         assertEquals("A Very Specific Film", result.single().title)
     }
 
+    @Test fun missingCompactIndexRebuildsFromCanonicalRowsWithoutProviderAccess() = runBlocking {
+        repository.saveBrowse(cache("10", "20"))
+        db.catalog().clearSearchRows(profile.cacheKey(), type.name)
+        assertEquals(0, db.catalog().searchRowCount(profile.cacheKey(), type.name))
+
+        repository.rebuildMissingSearchIndexes()
+
+        assertEquals(2, db.catalog().searchRowCount(profile.cacheKey(), type.name))
+        assertEquals(listOf("10"), repository.searchIndex(profile.cacheKey(), type, "movie 10").map { it.id })
+    }
+
     @Test fun incrementalPageCommitPreservesEarlierRowsAndAdvancesOnlyItsBucket() = runBlocking {
         repository.saveBrowse(cache("10", "20"))
         val categories = listOf(Category("1", "Movies", type), Category("2", "Other", type))

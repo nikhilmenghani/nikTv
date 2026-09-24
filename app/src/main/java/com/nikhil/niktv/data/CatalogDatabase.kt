@@ -37,6 +37,7 @@ data class CatalogEpisodeRow(val profile: String, val series: String, val season
 data class CatalogMigration(@PrimaryKey val key: String)
 
 data class CatalogStoredCount(val type: String, val count: Int)
+data class CatalogProfileType(val profile: String, val type: String)
 
 /** Compact, rebuildable search metadata. Full provider payloads remain in CatalogItemRow only. */
 @Entity(
@@ -84,6 +85,8 @@ interface CatalogDao {
     suspend fun searchRows(profile: String, type: String, query: String, limit: Int): List<CatalogSearchRow>
     @Query("SELECT COUNT(*) FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
     suspend fun searchRowCount(profile: String, type: String): Int
+    @Query("SELECT DISTINCT profile, type FROM CatalogItemRow WHERE bucket != '@search'")
+    suspend fun catalogProfileTypes(): List<CatalogProfileType>
     @Query("DELETE FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
     suspend fun clearSearchRows(profile: String, type: String)
     @Query("DELETE FROM CatalogSearchRow") suspend fun clearAllSearchRows()
@@ -256,10 +259,17 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
     }
 
     suspend fun searchIndex(profile: String, type: CatalogType, query: String, limit: Int = 100): List<CatalogSearchRow> =
-        db.withTransaction {
+        run {
             ensureSearchIndex(profile, type)
             dao.searchRows(profile, type.name, query.normalizedSearchQuery(), limit.coerceIn(1, 500))
         }
+
+    suspend fun rebuildMissingSearchIndexes() {
+        dao.catalogProfileTypes().forEach { pair ->
+            val type = runCatching { CatalogType.valueOf(pair.type) }.getOrNull() ?: return@forEach
+            ensureSearchIndex(pair.profile, type)
+        }
+    }
 
     private suspend fun ensureSearchIndex(profile: String, type: CatalogType) {
         if (dao.searchRowCount(profile, type.name) > 0) return
