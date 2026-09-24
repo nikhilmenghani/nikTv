@@ -152,7 +152,9 @@ data class TmdbIptvMapping(
 data class LiveProgramme(
     val title: String,
     val startTimeMillis: Long? = null,
-    val endTimeMillis: Long? = null
+    val endTimeMillis: Long? = null,
+    /** Freshness of provider "now playing" text when broadcast times are absent. */
+    val observedAtMillis: Long? = null
 )
 
 /** Provider placeholder rows can include timestamps but are not programmes. */

@@ -160,7 +160,8 @@ import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.FavoriteSource
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
-import com.nikhil.niktv.model.matchesTitleKeywords
+import com.nikhil.niktv.model.matchesLiveChannelQuery
+import com.nikhil.niktv.model.currentLiveProgramme
 import com.nikhil.niktv.model.OfflineMediaDownload
 import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.R
@@ -1734,7 +1735,7 @@ private fun ModernDestinationTile(
                 .fillMaxWidth()
                 .then(
                     if (subtitle == null) {
-                        Modifier.height(if (isTv) 128.dp else if (isPhone) 132.dp else 144.dp)
+                        Modifier.height(if (isTv) 96.dp else 108.dp)
                     } else if (isPhone) {
                         Modifier.height(88.dp)
                     } else {
@@ -1751,7 +1752,8 @@ private fun ModernDestinationTile(
                 )
                 .padding(
                     when {
-                        isTv -> if (subtitle == null) 14.dp else 18.dp
+                        subtitle == null -> 10.dp
+                        isTv -> 18.dp
                         isPhone -> 12.dp
                         else -> 15.dp
                     }
@@ -1906,9 +1908,9 @@ private fun ModernProviderCategoryLabel(
         title.split('|', limit = 2).map(String::trim)
             .takeIf { it.size == 2 && it.all(String::isNotBlank) }
     }
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
-            Modifier.fillMaxWidth().height(18.dp),
+            Modifier.fillMaxWidth().height(16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
@@ -1933,7 +1935,7 @@ private fun ModernProviderCategoryLabel(
             fontSize = if (isTv) 14.sp else 16.sp,
             lineHeight = if (isTv) 18.sp else 21.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Color(0xFFF2F3F7), maxLines = 4, overflow = TextOverflow.Ellipsis)
+            color = Color(0xFFF2F3F7), maxLines = 3, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -2906,7 +2908,10 @@ private fun ModernIptvCollection(
         when {
             !channelSearchEditing -> channelSearchSawIme = false
             imeVisible -> channelSearchSawIme = true
-            channelSearchSawIme -> channelSearchEditing = false
+            // Fire TV's floating keyboard can report hidden insets while its
+            // editor is still open. Making the field read-only then disables
+            // the keyboard's Search action and lets Back leave the category.
+            channelSearchSawIme && !isTv -> channelSearchEditing = false
         }
     }
     val guideNow by produceState(System.currentTimeMillis(), category.id) {
@@ -2921,9 +2926,10 @@ private fun ModernIptvCollection(
     val pinnedItems = remember(state.items, pinnedChannelIds) {
         pinnedChannelIds.mapNotNull { id -> state.items.firstOrNull { it.id == id } }
     }
-    val displayedItems = remember(state.items, pinnedItems, trimmedChannelQuery) {
+    val displayedItems = remember(state.items, pinnedItems, trimmedChannelQuery, guideNow) {
         if (isLiveTv && trimmedChannelQuery.isNotEmpty()) {
-            state.items.filter { it.title.matchesTitleKeywords(trimmedChannelQuery) }
+            val now = System.currentTimeMillis()
+            state.items.filter { it.matchesLiveChannelQuery(trimmedChannelQuery, now) }
         } else pinnedItems + state.items
     }
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
@@ -3127,7 +3133,7 @@ private fun ModernIptvCollection(
                     singleLine = true,
                     readOnly = remoteNavigationActive && !channelSearchEditing,
                     shape = RoundedCornerShape(12.dp),
-                    label = { Text("Find channel") },
+                    label = { Text("Find channel or programme") },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = if (channelQuery.isNotEmpty()) {{
                         IconButton(onClick = {
@@ -3146,13 +3152,15 @@ private fun ModernIptvCollection(
                     val matchCount = displayedItems.size
                     val searchIsCurrent = state.categoryFindQuery.equals(trimmedChannelQuery, ignoreCase = true)
                     val status = when {
+                        state.categoryFindSearching && searchIsCurrent && state.categoryFindCheckingGuides ->
+                            "Checking programme guides ${state.categoryFindGuideChecked} of ${state.categoryFindGuideTotal} · $matchCount found"
                         state.categoryFindSearching && searchIsCurrent ->
                             "Checking page ${state.categoryFindPage}" +
                                 (state.categoryFindTotalPages?.let { " of $it" } ?: "") +
                                 " · $matchCount found"
                         searchIsCurrent && state.categoryFindMessage != null ->
                             "${state.categoryFindMessage} · $matchCount found"
-                        else -> "$matchCount in ${state.items.size} loaded channels"
+                        else -> "$matchCount in loaded channels and current programmes · This category only"
                     }
                     Text(
                         status,
@@ -3160,9 +3168,12 @@ private fun ModernIptvCollection(
                         color = Color.White.copy(alpha = .68f)
                     )
                     if (state.categoryFindSearching && searchIsCurrent) {
-                        state.categoryFindTotalPages?.takeIf { it > 0 }?.let { total ->
+                        val total = if (state.categoryFindCheckingGuides) state.categoryFindGuideTotal
+                            else state.categoryFindTotalPages ?: 0
+                        if (total > 0) {
                             LinearProgressIndicator(
-                                progress = { (state.categoryFindPage.toFloat() / total).coerceIn(0f, 1f) },
+                                progress = { ((if (state.categoryFindCheckingGuides) state.categoryFindGuideChecked
+                                    else state.categoryFindPage).toFloat() / total).coerceIn(0f, 1f) },
                                 modifier = Modifier.fillMaxWidth().height(3.dp)
                             )
                         }
@@ -3175,7 +3186,7 @@ private fun ModernIptvCollection(
                                 containerColor = Color(0xFF282B34), contentColor = Color.White
                             )
                         ) { Text("Stop search") }
-                    } else if (state.catalogHasMore && !state.loading && !state.catalogLoadingMore) {
+                    } else if (!state.loading && !state.catalogLoadingMore) {
                         Button(
                             onClick = { findChannelsInCategory(trimmedChannelQuery) },
                             shape = RoundedCornerShape(8.dp),
@@ -3183,7 +3194,7 @@ private fun ModernIptvCollection(
                                 containerColor = Color(0xFF282B34), contentColor = Color.White
                             )
                         ) {
-                            Text("Search remaining pages")
+                            Text("Search channels & programmes")
                         }
                     }
                 }
@@ -3514,16 +3525,7 @@ private fun ModernLiveChannelTile(
     val palette = remember(item.id, item.title) {
         destinationPalette("live:${item.id}:${item.title}")
     }
-    val programme = item.liveSchedule.firstOrNull { entry ->
-        val start = entry.startTimeMillis
-        val end = entry.endTimeMillis
-        !isMissingLiveProgrammeTitle(entry.title) &&
-            start != null && end != null && guideNow in start until end
-    } ?: item.liveProgramme?.takeIf { entry ->
-        !isMissingLiveProgrammeTitle(entry.title) &&
-            (entry.startTimeMillis == null || entry.startTimeMillis <= guideNow) &&
-            (entry.endTimeMillis == null || entry.endTimeMillis > guideNow)
-    }
+    val programme = item.currentLiveProgramme(maxOf(guideNow, System.currentTimeMillis()))
     val quality = remember(item.title) {
         Regex("\\s*\\((4K|8K|UHD|FHD|HD)\\)\\s*$", RegexOption.IGNORE_CASE)
             .find(item.title)?.groupValues?.get(1)?.uppercase()

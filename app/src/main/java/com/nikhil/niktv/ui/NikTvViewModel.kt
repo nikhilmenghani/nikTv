@@ -159,6 +159,9 @@ data class NikTvState(
     ,val categoryFindPage: Int = 0
     ,val categoryFindTotalPages: Int? = null
     ,val categoryFindMessage: String? = null
+    ,val categoryFindCheckingGuides: Boolean = false
+    ,val categoryFindGuideChecked: Int = 0
+    ,val categoryFindGuideTotal: Int = 0
     ,val episodePage: Int = 1
     ,val episodeHasMore: Boolean = false
     ,val episodeLoadingMore: Boolean = false
@@ -1030,7 +1033,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             visible.map { it.id }.distinct()
         val visibleKeys = visible.map { "$profileKey|${category.id}|${it.id}" }.toSet()
         liveGuideJobs.filterKeys { it !in visibleKeys }.values.toList().forEach { it.cancel() }
-        if (snapshot.nowPlaying != null || snapshot.loading) return
+        if (snapshot.nowPlaying != null || snapshot.loading || snapshot.categoryFindSearching) return
         val now = System.currentTimeMillis()
         visible.distinctBy { it.id }.forEach { item ->
             if (item.portalCategoryId != category.id || !force && item.liveSchedule.any { programme ->
@@ -1511,13 +1514,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             current.copy(
                 categoryFindSearching = false,
                 categoryFindMessage = if (current.categoryFindSearching) {
-                    "Stopped at page ${current.categoryFindPage}. Press Find to continue."
+                    "Search stopped. Results are kept; press Search to continue checking."
                 } else current.categoryFindMessage
             )
         }
     }
 
-    /** Search a Live TV category beyond its loaded pages without fetching EPG for every row. */
+    /** Search the whole selected category, then fill gaps in its current programme guide. */
     fun findChannelsInCategory(query: String) {
         val requestedQuery = query.trim()
         val snapshot = _state.value
@@ -1525,20 +1528,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val category = snapshot.modernIptvCategory
             ?.takeIf { it.type == CatalogType.LIVE_TV && it.id == snapshot.selectedCategory?.id }
             ?: return
-        if (requestedQuery.isBlank() || snapshot.categoryFindSearching) return
-        if (!snapshot.catalogHasMore) {
-            _state.update { it.copy(
-                categoryFindQuery = requestedQuery,
-                categoryFindPage = it.catalogPage,
-                categoryFindMessage = "No further pages are currently available."
-            ) }
-            return
-        }
+        if (requestedQuery.isBlank() || snapshot.categoryFindSearching || snapshot.loading || snapshot.catalogLoadingMore) return
 
         val profileKey = session.profile.cacheKey()
         val key = categoryRefreshKey(session, category)
         categoryRefreshJobs[key]?.cancel()
         categoryFindJob?.cancel()
+        liveGuideJobs.values.toList().forEach { it.cancel() }
         val generation = ++categoryFindGeneration
         categoryFindJob = viewModelScope.launch {
             var terminalMessage = "Checked every available page."
@@ -1549,6 +1545,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categoryFindSearching = true,
                 categoryFindPage = it.catalogPage,
                 categoryFindTotalPages = null,
+                categoryFindCheckingGuides = false,
+                categoryFindGuideChecked = 0,
+                categoryFindGuideTotal = 0,
                 categoryFindMessage = null
             ) }
             try {
@@ -1558,8 +1557,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         current.session?.profile?.cacheKey() != profileKey ||
                         current.modernIptvCategory?.id != category.id ||
                         !current.catalogHasMore) break
-                    // Search is user initiated, but keep requests sequential and
-                    // skip EPG enrichment until matching tiles become visible.
+                    // Fetch channel pages first; current programme text may
+                    // already be included. Fill missing guides in a second pass.
                     delay(650L)
                     val nextPage = current.catalogPage + 1
                     val result = withAutomaticSessionRetry(session) { activeSession ->
@@ -1618,6 +1617,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     if (!hasMore) break
                 }
+                coroutineContext.ensureActive()
+                if (generation == categoryFindGeneration &&
+                    _state.value.session?.profile?.cacheKey() == profileKey &&
+                    _state.value.modernIptvCategory?.id == category.id) {
+                    val guideSummary = findCategoryProgrammes(session, category, generation)
+                    terminalMessage = if (_state.value.catalogHasMore) "$terminalMessage $guideSummary"
+                        else "All channel pages checked. $guideSummary"
+                }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -1635,6 +1642,68 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    private suspend fun findCategoryProgrammes(session: PortalSession, category: Category, generation: Int): String {
+        val profileKey = session.profile.cacheKey()
+        fun isCurrent() = generation == categoryFindGeneration &&
+            _state.value.session?.profile?.cacheKey() == profileKey &&
+            _state.value.modernIptvCategory?.id == category.id
+        fun publishGuide(enriched: List<MediaItem>) {
+            val byId = enriched.associateBy { it.id }
+            _state.update { state ->
+                if (!isCurrent()) state else {
+                    val items = state.items.map { byId[it.id] ?: it }
+                    val cache = state.browseCachesByType[CatalogType.LIVE_TV]
+                        ?.takeIf { it.profileKey == profileKey }
+                    val updated = cache?.copy(itemsByCategory = cache.itemsByCategory + (category.id to items))
+                    state.copy(items = items, browseCache = updated ?: state.browseCache,
+                        browseCachesByType = if (updated == null) state.browseCachesByType
+                            else state.browseCachesByType + (CatalogType.LIVE_TV to updated))
+                }
+            }
+        }
+        val items = _state.value.items
+        _state.update { it.copy(categoryFindCheckingGuides = true, categoryFindGuideTotal = items.size) }
+        if (items.any { it.currentLiveProgramme(System.currentTimeMillis()) == null }) {
+            val enriched = withAutomaticSessionRetry(session) { portal.categoryChannelSchedules(it, items) }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (!isCurrent()) return ""
+            publishGuide(enriched)
+        }
+        var unavailable = 0
+        var failed = 0
+        var consecutiveFailures = 0
+        val channels = _state.value.items
+        for ((index, channel) in channels.withIndex()) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (!isCurrent()) return ""
+            var enriched = channel
+            val now = System.currentTimeMillis()
+            val key = "$profileKey|${category.id}|${channel.id}"
+            if (channel.currentLiveProgramme(now) == null &&
+                now - (liveGuideAttemptedAt[key] ?: 0L) >= 2 * 60_000L) {
+                try {
+                    delay(650L)
+                    enriched = withAutomaticSessionRetry(session) { portal.playingChannelSchedule(it, channel) }
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!isCurrent()) return ""
+                    liveGuideAttemptedAt[key] = System.currentTimeMillis()
+                    publishGuide(listOf(enriched))
+                    consecutiveFailures = 0
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    failed++
+                    consecutiveFailures++
+                    if (consecutiveFailures >= 3) return "Guide checks stopped after three provider errors. Press Search to retry."
+                }
+            }
+            if (enriched.currentLiveProgramme(System.currentTimeMillis()) == null) unavailable++
+            _state.update { it.copy(categoryFindGuideChecked = index + 1) }
+        }
+        return "Programme guides checked. $unavailable channels have no current programme information." +
+            if (failed > 0) " $failed guide requests failed; press Search to retry." else ""
     }
 
     private suspend fun persistCategoryFindCache(profileKey: String) {
@@ -5340,6 +5409,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         directFullscreen: Boolean = false
     ) = latestPlaybackRequest.run {
         try {
+            if (_state.value.categoryFindSearching) cancelCategoryFind()
             liveGuideJobs.values.toList().forEach { it.cancel() }
             // Coalesce a burst of remote presses before opening another stream.
             if (type == CatalogType.LIVE_TV && _state.value.nowPlaying != null) delay(250L)

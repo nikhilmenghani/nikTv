@@ -17,6 +17,7 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okio.ByteString.Companion.decodeBase64
 import java.net.URLEncoder
 import java.math.BigInteger
 import java.security.MessageDigest
@@ -228,7 +229,10 @@ class StalkerPortalClient(private val context: Context) {
                 request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
                     "type" to "itv", "action" to "get_epg_info", "period" to "24"
                 )))
-            }.getOrNull() ?: return items
+            }.getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                return items
+            }
             response.epgSchedulesByChannel().also { fresh ->
                 if (fresh.isNotEmpty()) {
                     epgCacheKey = cacheKey
@@ -252,6 +256,13 @@ class StalkerPortalClient(private val context: Context) {
             )
         }
     }
+
+    /** Use the shared guide once before falling back to individual channel lookups. */
+    suspend fun categoryChannelSchedules(session: PortalSession, items: List<MediaItem>): List<MediaItem> =
+        withContext(Dispatchers.IO) {
+            if (session.profile.portalType == PortalType.STALKER) enrichWithPortalEpg(session, items)
+            else items
+        }
 
     suspend fun fullCatalog(session: PortalSession, type: CatalogType, categories: List<Category>): List<MediaItem> = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamCatalog(session, type, null)
@@ -533,7 +544,26 @@ class StalkerPortalClient(private val context: Context) {
     /** Fetch only the guide for the channel being played. This mirrors the
      * lightweight Cast4K get_short_epg flow and avoids refreshing a category. */
     suspend fun playingChannelSchedule(session: PortalSession, item: MediaItem): MediaItem = withContext(Dispatchers.IO) {
-        if (session.profile.portalType != PortalType.STALKER || item.id.isBlank()) return@withContext item
+        if (item.id.isBlank()) return@withContext item
+        if (session.profile.portalType == PortalType.XTREAM) {
+            val response = requestGate.run(background = true, minimumSpacingMillis = MIN_REQUEST_SPACING_MS) {
+                xtreamRequest(session.profile, "get_short_epg", streamId = item.id)
+            }
+            val now = System.currentTimeMillis()
+            val schedule = ((response as? JsonObject)?.get("epg_listings") as? JsonArray).orEmpty()
+                .mapNotNull { node ->
+                    val entry = node as? JsonObject ?: return@mapNotNull null
+                    val encoded = entry.string("title") ?: return@mapNotNull null
+                    val title = encoded.decodeBase64()?.utf8() ?: encoded
+                    if (isMissingLiveProgrammeTitle(title)) return@mapNotNull null
+                    fun time(key: String): Long? = entry.string(key)?.toLongOrNull()?.let {
+                        if (it < 10_000_000_000L) it * 1000L else it
+                    }
+                    LiveProgramme(title, time("start_timestamp"), time("stop_timestamp"), now)
+                }.filter { it.endTimeMillis == null || it.endTimeMillis > now }
+            val updated = item.copy(liveSchedule = schedule)
+            return@withContext updated.copy(liveProgramme = updated.currentLiveProgramme(now))
+        }
         val response = request(
             session.profile,
             session.endpointUrl,
@@ -704,10 +734,11 @@ class StalkerPortalClient(private val context: Context) {
         else -> emptyList()
     }
 
-    private fun xtreamRequest(profile: PortalProfile, action: String? = null, categoryId: String? = null, seriesId: String? = null): JsonElement {
+    private fun xtreamRequest(profile: PortalProfile, action: String? = null, categoryId: String? = null, seriesId: String? = null, streamId: String? = null): JsonElement {
         val url = "${profile.portalUrl}/player_api.php".toHttpUrl().newBuilder()
             .addQueryParameter("username", profile.username)
             .addQueryParameter("password", profile.password)
+            .apply { streamId?.let { addQueryParameter("stream_id", it); addQueryParameter("limit", "24") } }
             .apply { action?.let { addQueryParameter("action", it) }; categoryId?.let { addQueryParameter("category_id", it) }; seriesId?.let { addQueryParameter("series_id", it) } }
             .build()
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").header("Accept", "application/json").build()
@@ -978,7 +1009,8 @@ class StalkerPortalClient(private val context: Context) {
         return LiveProgramme(
             title = title,
             startTimeMillis = timestamp("start_timestamp", "start_ts", "start_time"),
-            endTimeMillis = timestamp("stop_timestamp", "end_timestamp", "stop_ts", "end_ts", "end_time")
+            endTimeMillis = timestamp("stop_timestamp", "end_timestamp", "stop_ts", "end_ts", "end_time"),
+            observedAtMillis = System.currentTimeMillis()
         )
     }
 
