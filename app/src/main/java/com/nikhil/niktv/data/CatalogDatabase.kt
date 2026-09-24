@@ -85,6 +85,8 @@ interface CatalogDao {
     suspend fun searchRows(profile: String, type: String, query: String, limit: Int): List<CatalogSearchRow>
     @Query("SELECT COUNT(*) FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
     suspend fun searchRowCount(profile: String, type: String): Int
+    @Query("SELECT COUNT(DISTINCT id) FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket != '@search' AND deleted = 0")
+    suspend fun canonicalItemCount(profile: String, type: String): Int
     @Query("SELECT DISTINCT profile, type FROM CatalogItemRow WHERE bucket != '@search'")
     suspend fun catalogProfileTypes(): List<CatalogProfileType>
     @Query("DELETE FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
@@ -272,7 +274,8 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
     }
 
     private suspend fun ensureSearchIndex(profile: String, type: CatalogType) {
-        if (dao.searchRowCount(profile, type.name) > 0) return
+        val canonicalCount = dao.canonicalItemCount(profile, type.name)
+        if (canonicalCount == 0 || dao.searchRowCount(profile, type.name) >= canonicalCount) return
         var offset = 0
         while (true) {
             val rows = dao.canonicalRowsPage(profile, type.name, INDEX_REBUILD_BATCH, offset)

@@ -203,7 +203,8 @@ class CatalogRepositoryTest {
     @Test fun missingCompactIndexRebuildsFromCanonicalRowsWithoutProviderAccess() = runBlocking {
         repository.saveBrowse(cache("10", "20"))
         db.catalog().clearSearchRows(profile.cacheKey(), type.name)
-        assertEquals(0, db.catalog().searchRowCount(profile.cacheKey(), type.name))
+        repository.saveSearch(SearchCatalogCache(profile.cacheKey(), type, 100, listOf(movie("10"))))
+        assertEquals(1, db.catalog().searchRowCount(profile.cacheKey(), type.name))
 
         repository.rebuildMissingSearchIndexes()
 
