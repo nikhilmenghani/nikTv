@@ -515,16 +515,24 @@ internal fun CatalogScreen(
             icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, null, tint = Color(0xFFE50914)) },
             title = { Text("Exit NikTV?") },
             text = { Text("Are you sure you want to close the app?") },
-            dismissButton = {
-                NikTvTextActionButton(onClick = { exitConfirmationOpen = false }) { Text("Cancel") }
-            },
             confirmButton = {
-                NikTvPrimaryActionButton(
-                    onClick = { activity?.finishAffinity() },
-                    modifier = Modifier.focusRequester(exitFocusRequester),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Exit", color = Color.White, fontWeight = FontWeight.Bold)
+                    NikTvSecondaryActionButton(
+                        onClick = { exitConfirmationOpen = false },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel", style = MaterialTheme.typography.labelLarge)
+                    }
+                    NikTvPrimaryActionButton(
+                        onClick = { activity?.finishAffinity() },
+                        modifier = Modifier.weight(1f).focusRequester(exitFocusRequester)
+                    ) {
+                        Text("Exit", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             shape = RoundedCornerShape(24.dp),

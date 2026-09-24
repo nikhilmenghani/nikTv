@@ -731,62 +731,34 @@ private fun ModernDestinationHub(
             else 12.dp
         )
     ) {
-        if (dashboardSurface == DashboardSurface.HOME) {
-            item("home-header", span = fullSpan) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        item("hub-header", span = fullSpan) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    screenTitle,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White,
+                    modifier = Modifier.weight(1f)
+                )
+                NikTvSecondaryActionButton(
+                    onClick = { customizeHomeOpen = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                 ) {
+                    Icon(Icons.Default.DashboardCustomize, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        "Home",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White,
-                        modifier = Modifier.weight(1f)
-                    )
-                    NikTvSecondaryActionButton(
-                        onClick = { customizeHomeOpen = true },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Icon(Icons.Default.DashboardCustomize, null, Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Customize Home")
-                    }
-                }
-            }
-        }
-        if (dashboardSurface != DashboardSurface.HOME) {
-            item("hub-header", span = fullSpan) {
-                Column(
-                    Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            screenTitle,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White,
-                            modifier = Modifier.weight(1f)
-                        )
-                        NikTvSecondaryActionButton(
-                            onClick = { customizeHomeOpen = true },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                        ) {
-                            Icon(Icons.Default.DashboardCustomize, null, Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Browse options")
-                        }
-                    }
-                    Text(
-                        "Choose what to browse",
-                        color = Color(0xFFA7ABB5),
-                        style = MaterialTheme.typography.bodyMedium
+                        when {
+                            dashboardSurface == DashboardSurface.HOME ->
+                                if (isTv || isTablet) "Customize Home" else "Customize"
+                            isTv || isTablet -> "Browse options"
+                            else -> "Browse"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1
                     )
                 }
             }
@@ -795,10 +767,7 @@ private fun ModernDestinationHub(
         if (dashboardSurface == DashboardSurface.HOME) {
             if (recents.isNotEmpty()) {
                 item("continue-header", span = fullSpan) {
-                    ModernHubSectionHeading(
-                        "Continue Watching",
-                        "Pick up where you left off."
-                    )
+                    ModernHubSectionHeading("Continue Watching")
                 }
                 item("continue-row", span = fullSpan) {
                     ModernContinueRow(
@@ -816,10 +785,7 @@ private fun ModernDestinationHub(
 
             if (newEpisodes.isNotEmpty()) {
                 item("new-episodes-header", span = fullSpan) {
-                    ModernHubSectionHeading(
-                        "New Episodes",
-                        "Fresh episodes from series you follow."
-                    )
+                    ModernHubSectionHeading("New Episodes")
                 }
                 item("new-episodes-row", span = fullSpan) {
                     ModernNewEpisodesRow(
@@ -837,10 +803,7 @@ private fun ModernDestinationHub(
 
         if (tmdbSections.isNotEmpty()) {
             item("tmdb-heading", span = fullSpan) {
-                ModernHubSectionHeading(
-                    "TMDB Discover",
-                    "Curated collections; titles load on open."
-                )
+                ModernHubSectionHeading("TMDB collections")
             }
             gridItems(
                 items = tmdbSections,
@@ -850,9 +813,9 @@ private fun ModernDestinationHub(
             ) { section ->
                 ModernDestinationTile(
                     title = section.title,
-                    subtitle =
-                        if (section.series) "TMDB · Series"
-                        else "TMDB · Movies",
+                    subtitle = if (dashboardSurface == DashboardSurface.HOME) {
+                        if (section.series) "Series" else "Movies"
+                    } else null,
                     icon =
                         if (section.series) Icons.Default.Tv
                         else Icons.Default.SmartDisplay,
@@ -864,12 +827,10 @@ private fun ModernDestinationHub(
         }
 
         if (liveCategories.isNotEmpty()) {
-            item("iptv-live-heading", span = fullSpan) {
-                ModernHubSectionHeading(
-                    "Live TV",
-                    if (dashboardSurface == DashboardSurface.HOME) "Provider categories selected for Home."
-                    else "Browse your provider categories."
-                )
+            if (dashboardSurface == DashboardSurface.HOME) {
+                item("iptv-live-heading", span = fullSpan) {
+                    ModernHubSectionHeading("Live TV")
+                }
             }
             gridItems(
                 items = liveCategories,
@@ -894,11 +855,12 @@ private fun ModernDestinationHub(
         }
 
         if (movieCategories.isNotEmpty()) {
-            item("iptv-movie-heading", span = fullSpan) {
-                ModernHubSectionHeading(
-                    "IPTV Movies",
-                    "Provider categories selected for this profile."
-                )
+            if (dashboardSurface == DashboardSurface.HOME || tmdbSections.isNotEmpty()) {
+                item("iptv-movie-heading", span = fullSpan) {
+                    ModernHubSectionHeading(
+                        if (dashboardSurface == DashboardSurface.HOME) "IPTV Movies" else "Provider categories"
+                    )
+                }
             }
             gridItems(
                 items = movieCategories,
@@ -923,11 +885,12 @@ private fun ModernDestinationHub(
         }
 
         if (seriesCategories.isNotEmpty()) {
-            item("iptv-series-heading", span = fullSpan) {
-                ModernHubSectionHeading(
-                    "IPTV Series",
-                    "Provider categories selected for this profile."
-                )
+            if (dashboardSurface == DashboardSurface.HOME || tmdbSections.isNotEmpty()) {
+                item("iptv-series-heading", span = fullSpan) {
+                    ModernHubSectionHeading(
+                        if (dashboardSurface == DashboardSurface.HOME) "IPTV Series" else "Provider categories"
+                    )
+                }
             }
             gridItems(
                 items = seriesCategories,
@@ -1207,27 +1170,17 @@ private fun NikTvState.modernVisibleIptvCategories(
 
 @Composable
 private fun ModernHubSectionHeading(
-    title: String,
-    subtitle: String
+    title: String
 ) {
-    Column(
-        Modifier
+    Text(
+        title,
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 12.dp, bottom = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = Color.White
-        )
-        Text(
-            subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFA7ABB5)
-        )
-    }
+            .padding(top = 8.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = Color(0xFFD5D7DC)
+    )
 }
 
 @Composable
