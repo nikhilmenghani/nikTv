@@ -1441,8 +1441,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val category = snapshot.selectedCategory ?: return
         if (snapshot.loading || snapshot.catalogLoadingMore || snapshot.categoryFindSearching || !snapshot.catalogHasMore ||
             snapshot.selectedType !in setOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) return
+        _state.update { it.copy(catalogLoadingMore = true) }
         viewModelScope.launch {
-            _state.update { it.copy(catalogLoadingMore = true) }
             runCatching {
                 withAutomaticSessionRetry(session) { activeSession ->
                     portal.catalogPage(
@@ -1788,7 +1788,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 loadVisibleLiveGuides(visibleIds.mapNotNull { itemsById[it] }, force = true)
             }
         }
-        refreshCategoryInBackground(session, category, userRequested = true)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { portal.invalidateCatalog(session.profile, category) }
+            if (_state.value.session?.profile == session.profile &&
+                _state.value.selectedCategory?.id == category.id) {
+                refreshCategoryInBackground(session, category, userRequested = true)
+            }
+        }
     }
 
     fun setCacheIntervalMinutes(minutes: Int) = viewModelScope.launch {

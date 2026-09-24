@@ -3045,6 +3045,16 @@ private fun ModernIptvCollection(
         moveFocus = moveFocusToIndex
     )
 
+    PrefetchCatalogPage(
+        scope = "${state.session?.profile?.cacheKey()}:${category.type}:${category.id}",
+        ids = displayedItems.map { it.id },
+        enabled = trimmedChannelQuery.isEmpty() && state.catalogHasMore &&
+            !state.loading && !state.categoryRefreshing && !state.categoryFindSearching,
+        loading = state.catalogLoadingMore,
+        grid = gridState,
+        loadMore = loadMore
+    )
+
     val appendPage = if (trimmedChannelQuery.isEmpty()) {
         rememberCollectionPagination(
             displayedItems.map { it.id }, state.catalogLoadingMore, gridState,

@@ -95,3 +95,29 @@ internal fun appendedFocusIndex(previous: List<String>, current: List<String>): 
     val firstNew = current.indexOfFirst { it !in existing }
     return if (firstNew >= 0) firstNew else current.lastIndex
 }
+
+/** Fetch once per loaded batch; a failure leaves the explicit retry available. */
+@Composable
+internal fun PrefetchCatalogPage(
+    scope: String,
+    ids: List<String>,
+    enabled: Boolean,
+    loading: Boolean,
+    grid: LazyGridState,
+    loadMore: () -> Unit
+) {
+    var requestedBatch by remember(scope) { mutableStateOf<List<String>?>(null) }
+    val latestLoad by rememberUpdatedState(loadMore)
+    LaunchedEffect(scope, ids, enabled, loading) {
+        if (!enabled || loading || ids.isEmpty() || requestedBatch == ids) return@LaunchedEffect
+        snapshotFlow {
+            grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        }.collect { lastVisible ->
+            // The grid has a header at index zero. Keep ten channels ahead.
+            if (lastVisible >= maxOf(1, ids.size - 10) && requestedBatch != ids) {
+                requestedBatch = ids.toList()
+                latestLoad()
+            }
+        }
+    }
+}

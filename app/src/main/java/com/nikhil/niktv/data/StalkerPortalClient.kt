@@ -36,6 +36,11 @@ class StalkerPortalClient(private val context: Context) {
     @Volatile private var authenticationTrace: String = ""
     private val authMutex = Mutex()
     private val requestGate = PortalRequestGate()
+    private val xtreamCatalogCache = CatalogResponseCache<Triple<PortalProfile, CatalogType, String?>, MediaItem>()
+
+    fun invalidateCatalog(profile: PortalProfile, category: Category) {
+        xtreamCatalogCache.invalidate(Triple(profile, category.type, category.id))
+    }
     private val trafficPrefs = context.getSharedPreferences("portal_traffic_guard", Context.MODE_PRIVATE)
     @Volatile private var epgCacheKey: String? = null
     @Volatile private var epgCacheAtMillis: Long = 0L
@@ -670,7 +675,8 @@ class StalkerPortalClient(private val context: Context) {
             .apply { categoryId?.let { addQueryParameter("category_id", it) } }
             .build()
         val request = Request.Builder().url(url).header("User-Agent", "NikTV/0.1 Android").header("Accept", "application/json").build()
-        return http.newCall(request).execute().use { response ->
+        return xtreamCatalogCache.get(Triple(profile, type, categoryId)) {
+        http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("Xtream server returned HTTP ${response.code}")
             val body = response.body ?: error("Xtream server returned an empty response")
             // Xtream returns the selected category as one response rather than
@@ -704,8 +710,9 @@ class StalkerPortalClient(private val context: Context) {
                 externalTmdbId = listOf("tmdb", "tmdb_id", "tmdbid")
                     .firstNotNullOfOrNull { key -> o.string(key)?.toIntOrNull() }
             )
-            }.drop(offset).take(limit).toList()
+            }.toList()
         }
+        }.drop(offset).take(limit)
     }
 
     private fun xtreamEpisodes(session: PortalSession, series: MediaItem): List<MediaItem> {
