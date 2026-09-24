@@ -179,8 +179,9 @@ internal fun CatalogOperationPanel(
             val compactActions = LocalConfiguration.current.screenWidthDp < 600
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val actionWidth = if (compactActions) (maxWidth - 16.dp) / 3 else 148.dp
-                val actionTextStyle = if (compactActions) MaterialTheme.typography.labelSmall
-                    else MaterialTheme.typography.labelMedium
+                val actionTextStyle = if (compactActions) MaterialTheme.typography.labelMedium
+                    else MaterialTheme.typography.labelLarge
+                val actionPadding = PaddingValues(horizontal = if (compactActions) 8.dp else 16.dp, vertical = 8.dp)
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -190,20 +191,20 @@ internal fun CatalogOperationPanel(
                 val actionModifier = Modifier.width(actionWidth)
                 if (held) {
                     NikTvPrimaryActionButton(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
-                        modifier = actionModifier) { Text("Resume local", style = actionTextStyle, maxLines = 1) }
+                        modifier = actionModifier, contentPadding = actionPadding) { Text("Resume local", style = actionTextStyle, maxLines = 1) }
                     onRestoredResume?.let { restored ->
                         NikTvSecondaryActionButton(onClick = restored, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
+                            modifier = actionModifier, contentPadding = actionPadding) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
                     }
                     onFullScan?.let { fullScan ->
                         NikTvSecondaryActionButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
+                            modifier = actionModifier, contentPadding = actionPadding) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
                     }
                 } else {
                     if (onStart != null) NikTvPrimaryActionButton(
                         onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
                         enabled = !busy || (scanState == CatalogScanDisplay.QUEUED && onRetry != null),
-                        shape = RoundedCornerShape(8.dp), modifier = actionModifier) {
+                        shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) {
                         Text(text = when (scanState) {
                             CatalogScanDisplay.SCANNING -> "Scanning…"
                             CatalogScanDisplay.QUEUED -> "Try now"
@@ -214,21 +215,21 @@ internal fun CatalogOperationPanel(
                     }
                     onRestoredResume?.let { restored ->
                         NikTvSecondaryActionButton(onClick = restored, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
+                            modifier = actionModifier, contentPadding = actionPadding) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
                     }
                     onFullScan?.let { fullScan ->
                         NikTvSecondaryActionButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
+                            modifier = actionModifier, contentPadding = actionPadding) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
                     }
                     if (!isScan || busy) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
-                        shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Pause", style = actionTextStyle, maxLines = 1) }
+                        shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) { Text("Pause", style = actionTextStyle, maxLines = 1) }
                 }
                 if (mode != "Stopped" && (!isScan || busy || held)) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Stop", style = actionTextStyle, maxLines = 1) }
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) { Text("Stop", style = actionTextStyle, maxLines = 1) }
                 NikTvSecondaryActionButton(onClick = { detail = "events" },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Details", style = actionTextStyle, maxLines = 1) }
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) { Text("Details", style = actionTextStyle, maxLines = 1) }
                 if (failures.isNotEmpty()) NikTvSecondaryActionButton(onClick = { detail = "failures" },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) {
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) {
                         Text("${failures.size} failed", color = MaterialTheme.colorScheme.error,
                             style = actionTextStyle, maxLines = 1)
                     }

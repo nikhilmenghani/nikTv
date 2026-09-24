@@ -105,15 +105,24 @@ internal fun CatalogProfileSettings(
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Local database update schedule", style = MaterialTheme.typography.titleSmall)
         Text("For ${profile.name} on this device. Off allows restoring a checkpoint before scanning.", style = MaterialTheme.typography.bodySmall)
-        SettingsChoiceGrid(
-            options = listOf(0 to "Off", 6 to "6 hours", 12 to "12 hours", 24 to "Daily", 168 to "Weekly"),
-            selected = hours,
-            onSelect = { value ->
-                hours = value
-                CatalogScanPreferences.hours(context, id, value)
-                SearchMetadataSyncScheduler.configureProfile(context, profile)
+        val scheduleOptions = listOf(0 to "Off", 6 to "6h", 12 to "12h", 24 to "Daily", 168 to "Weekly")
+        SettingsChoiceRow(Modifier.fillMaxWidth()) {
+            scheduleOptions.forEachIndexed { index, (value, label) ->
+                val shape = settingsChoiceShape(index, scheduleOptions.size)
+                SettingsChoiceButton(
+                    selected = hours == value,
+                    onClick = {
+                        hours = value
+                        CatalogScanPreferences.hours(context, id, value)
+                        SearchMetadataSyncScheduler.configureProfile(context, profile)
+                    },
+                    modifier = Modifier.remoteFocusFrame(shape),
+                    shape = shape
+                ) {
+                    Text(label, style = MaterialTheme.typography.labelLarge)
+                }
             }
-        )
+        }
         Text("Scans continue in the background with a notification. Requests are paced and scans yield during playback. Android may delay work under battery restrictions. Episode details are cached when opened.", style = MaterialTheme.typography.bodySmall)
         Text("Completed scans create a GitHub checkpoint when catalog backup is enabled.", style = MaterialTheme.typography.bodySmall)
     }

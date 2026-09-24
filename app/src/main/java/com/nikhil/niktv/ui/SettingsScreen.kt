@@ -1792,9 +1792,9 @@ SettingsSection("Data and sync") {
                                         githubBackupConfig.passphrase.length >=
                                         12
                                     ),
-                        modifier = Modifier.remoteFocusFrame(
-                            RoundedCornerShape(12.dp)
-                        )
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .remoteFocusFrame(RoundedCornerShape(12.dp))
                     ) {
                         Icon(Icons.Default.Save, null)
                         Spacer(Modifier.width(8.dp))
