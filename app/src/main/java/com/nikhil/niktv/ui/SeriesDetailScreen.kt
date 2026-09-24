@@ -24,6 +24,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.*
@@ -453,7 +454,7 @@ internal fun ModernSeriesDetailScreen(
                         if (primaryEpisodeToPlay != null) {
                             NikTvPrimaryActionButton(
                                 onClick = { play(primaryEpisodeToPlay) },
-                                modifier = Modifier.height(42.dp).remoteFocusFrame(RoundedCornerShape(12.dp)),
+                                modifier = Modifier.height(42.dp),
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(horizontal = 14.dp)
                             ) {
@@ -475,17 +476,30 @@ internal fun ModernSeriesDetailScreen(
                         ) {
                             items(availableSeasons.sortedDescending()) { season ->
                                 val selected = season == selectedSeason
+                                val seasonInteraction = remember(season) { MutableInteractionSource() }
+                                val seasonFocused by seasonInteraction.collectIsFocusedAsState()
                                 FilterChip(
                                     selected = selected,
                                     onClick = { loadSeriesSeason(season) },
+                                    interactionSource = seasonInteraction,
+                                    shape = RoundedCornerShape(10.dp),
+                                    // Draw on the chip surface, not its taller
+                                    // minimum touch target, so the ring fits.
+                                    border = BorderStroke(
+                                        if (seasonFocused) 2.dp else 1.dp,
+                                        when {
+                                            seasonFocused -> Color(0xFFE7E9EF)
+                                            selected -> MaterialTheme.colorScheme.primary
+                                            else -> Color(0xFF484A52)
+                                        }
+                                    ),
                                     label = { Text("Season $season", fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium) },
                                     leadingIcon = if (selected) {{ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }} else null,
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = MaterialTheme.colorScheme.primary,
                                         selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
                                         selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
-                                    ),
-                                    modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))
+                                    )
                                 )
                             }
                         }
@@ -513,7 +527,7 @@ internal fun ModernSeriesDetailScreen(
                             label = "Search",
                             onClick = { activateEpisodeSearch() }
                         )
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(8.dp))
                         SeriesToolbarButton(
                             icon = Icons.AutoMirrored.Filled.Sort,
                             label = if (episodeSortDescending) "Newest" else "Oldest",
@@ -681,24 +695,16 @@ private fun SeriesToolbarButton(
     label: String,
     onClick: () -> Unit
 ) {
-    Surface(
+    val showLabel = LocalConfiguration.current.screenWidthDp >= 480
+    NikTvSecondaryActionButton(
         onClick = onClick,
-        shape = RoundedCornerShape(10.dp),
-        color = Color(0xFF171B23),
-        contentColor = Color.White,
-        modifier = Modifier
-            .height(40.dp)
-            .remoteFocusFrame(RoundedCornerShape(10.dp))
+        modifier = Modifier.height(40.dp).widthIn(min = 40.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Icon(icon, null, Modifier.size(18.dp))
-            if (LocalConfiguration.current.screenWidthDp >= 480) {
-                Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-            }
+        Icon(icon, if (showLabel) null else label, Modifier.size(18.dp))
+        if (showLabel) {
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
         }
     }
 }
