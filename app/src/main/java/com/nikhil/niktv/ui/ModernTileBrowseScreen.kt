@@ -57,6 +57,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Close
@@ -162,6 +163,7 @@ import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.FavoriteSource
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.PortalType
 import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
 import com.nikhil.niktv.model.matchesLiveChannelQuery
 import com.nikhil.niktv.model.currentLiveProgramme
@@ -254,6 +256,7 @@ internal fun ModernTileBrowseScreen(
     refreshIptv: () -> Unit,
     enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
     enrichVisibleLiveGuides: (List<MediaItem>) -> Unit,
+    refreshLiveProgramme: (MediaItem) -> Unit,
     findChannelsInCategory: (String) -> Unit,
     cancelCategoryFind: () -> Unit,
     configureTmdb: () -> Unit,
@@ -302,6 +305,7 @@ internal fun ModernTileBrowseScreen(
                         refresh = refreshIptv,
                         enrichFocusedMetadata = enrichFocusedCatalogMetadata,
                         enrichVisibleLiveGuides = enrichVisibleLiveGuides,
+                        refreshLiveProgramme = refreshLiveProgramme,
                         findChannelsInCategory = findChannelsInCategory,
                         cancelCategoryFind = cancelCategoryFind,
                         isTv = isTv
@@ -326,6 +330,7 @@ internal fun ModernTileBrowseScreen(
 
                         ModernDestinationHub(
                             state = state,
+                            refreshLiveProgramme = refreshLiveProgramme,
                             dashboardSurface = dashboardSurface,
                             openRecent = openRecent,
                             removeRecent = removeRecent,
@@ -532,6 +537,7 @@ private fun ModernNavButton(
 @Composable
 private fun ModernDestinationHub(
     state: NikTvState,
+    refreshLiveProgramme: (MediaItem) -> Unit,
     dashboardSurface: DashboardSurface,
     openRecent: (RecentItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
@@ -577,6 +583,8 @@ private fun ModernDestinationHub(
     if (recentChannelsOpen && dashboardSurface == DashboardSurface.LIVE_TV) {
         ModernRecentChannelsCollection(
             recents = recentChannels,
+            refreshLiveProgramme = refreshLiveProgramme,
+            xtream = state.savedProfile?.portalType == PortalType.XTREAM,
             favorites = state.favorites,
             categories = state.rawCategoriesByType[CatalogType.LIVE_TV].orEmpty(),
             clear = removeRecent,
@@ -972,6 +980,8 @@ private fun ModernDestinationHub(
 @Composable
 private fun ModernRecentChannelsCollection(
     recents: List<RecentItem>,
+    refreshLiveProgramme: (MediaItem) -> Unit,
+    xtream: Boolean,
     favorites: List<FavoriteItem>,
     categories: List<Category>,
     clear: (RecentItem) -> Unit,
@@ -1059,7 +1069,9 @@ private fun ModernRecentChannelsCollection(
         gridItems(channels, key = { it.key }) { recent ->
             ModernLiveChannelTile(
                 item = recent.media,
+                onRefreshProgramme = { refreshLiveProgramme(recent.media) },
                 categoryTitle = category.second,
+                xtream = xtream,
                 guideNow = guideNow,
                 showQualityBadge = true,
                 isFavorite = favorites.any { it.key == recent.key },
@@ -1849,10 +1861,7 @@ private fun ModernProviderCategoryLabel(
     pinned: Boolean,
     isTv: Boolean
 ) {
-    val parts = remember(title) {
-        title.split('|', limit = 2).map(String::trim)
-            .takeIf { it.size == 2 && it.all(String::isNotBlank) }
-    }
+    val parts = remember(title) { liveCategoryLabelParts(title) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(icon, null, Modifier.size(22.dp), tint = Color(0xFFB9BDD0))
@@ -2296,7 +2305,8 @@ internal fun ModernTileActionsMenu(
     viewDescription: (() -> Unit)? = null,
     clear: (() -> Unit)?,
     isPinned: Boolean = false,
-    togglePin: (() -> Unit)? = null
+    togglePin: (() -> Unit)? = null,
+    refreshProgramme: (() -> Unit)? = null
 ) {
     DropdownMenu(
         expanded = expanded,
@@ -2305,6 +2315,16 @@ internal fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        refreshProgramme?.let { refresh ->
+            NikDropdownMenuItem(
+                text = { Text("Refresh programme") },
+                leadingIcon = { Icon(Icons.Default.Refresh, null) },
+                onClick = {
+                    dismiss()
+                    refresh()
+                }
+            )
+        }
         viewDescription?.let { descriptionAction ->
             NikDropdownMenuItem(
                 text = { Text("View description") },
@@ -2817,6 +2837,7 @@ private fun ModernIptvCollection(
     refresh: () -> Unit,
     enrichFocusedMetadata: suspend (MediaItem, CatalogType) -> Unit,
     enrichVisibleLiveGuides: (List<MediaItem>) -> Unit,
+    refreshLiveProgramme: (MediaItem) -> Unit,
     findChannelsInCategory: (String) -> Unit,
     cancelCategoryFind: () -> Unit,
     isTv: Boolean
@@ -3218,7 +3239,9 @@ private fun ModernIptvCollection(
             if (isLiveTv) {
                 ModernLiveChannelTile(
                     item = media,
+                    onRefreshProgramme = { refreshLiveProgramme(media) },
                     categoryTitle = category.title,
+                    xtream = state.session?.profile?.portalType == PortalType.XTREAM,
                     guideNow = guideNow,
                     showQualityBadge = showQualityBadge,
                     isFavorite = favorite,
@@ -3460,6 +3483,8 @@ private fun FullDescriptionDialog(
 @Composable
 private fun ModernLiveChannelTile(
     item: MediaItem,
+    onRefreshProgramme: () -> Unit,
+    xtream: Boolean = false,
     categoryTitle: String,
     guideNow: Long,
     showQualityBadge: Boolean,
@@ -3476,7 +3501,6 @@ private fun ModernLiveChannelTile(
 
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
-    val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val shape = RoundedCornerShape(if (isPhone) 14.dp else 16.dp)
@@ -3485,43 +3509,18 @@ private fun ModernLiveChannelTile(
         destinationPalette("live:${item.id}:${item.title}")
     }
     val programme = item.currentLiveProgramme(maxOf(guideNow, System.currentTimeMillis()))
-    val quality = remember(item.title) {
-        Regex("\\s*\\((4K|8K|UHD|FHD|HD)\\)\\s*$", RegexOption.IGNORE_CASE)
-            .find(item.title)?.groupValues?.get(1)?.uppercase()
+    val presentation = remember(item.title, categoryTitle, xtream) {
+        liveTvTilePresentation(item.title, categoryTitle, xtream)
     }
-    val channelName = remember(item.title, categoryTitle) {
-        val withoutQuality = item.title.replace(
-            Regex("\\s*\\((4K|8K|UHD|FHD|HD)\\)\\s*$", RegexOption.IGNORE_CASE), ""
-        ).trim()
-        val group = categoryTitle.substringBefore('|').trim()
-        val withoutGroup = if ('|' in categoryTitle && group.isNotBlank() &&
-            withoutQuality.startsWith("$group ", ignoreCase = true)) {
-            withoutQuality.drop(group.length).trim()
-        } else withoutQuality
-        if (categoryTitle.contains("MOVIES", ignoreCase = true) &&
-            withoutGroup.endsWith(" MOVIES", ignoreCase = true) &&
-            withoutGroup.length > " MOVIES".length) {
-            withoutGroup.dropLast(" MOVIES".length).trim()
-        } else withoutGroup
-    }
+    val quality = presentation.quality
+    val channelName = presentation.title
     val detail = item.description?.trim()?.takeIf { description ->
         description.isNotBlank() &&
             !description.equals(categoryTitle.trim(), ignoreCase = true) &&
             !description.equals(item.title.trim(), ignoreCase = true)
     }
     val scheduleText = remember(programme?.startTimeMillis, programme?.endTimeMillis) {
-        val formatter = java.text.SimpleDateFormat(
-            "h:mm a",
-            java.util.Locale.getDefault()
-        )
-        when {
-            programme?.startTimeMillis != null && programme.endTimeMillis != null ->
-                "${formatter.format(java.util.Date(programme.startTimeMillis))}–" +
-                    formatter.format(java.util.Date(programme.endTimeMillis))
-            programme?.startTimeMillis != null ->
-                "From ${formatter.format(java.util.Date(programme.startTimeMillis))}"
-            else -> null
-        }
+        liveTileScheduleText(programme?.startTimeMillis, programme?.endTimeMillis)
     }
     val programmeProgress = remember(programme?.startTimeMillis, programme?.endTimeMillis, guideNow) {
         val start = programme?.startTimeMillis
@@ -3541,7 +3540,7 @@ private fun ModernLiveChannelTile(
                 .fillMaxWidth()
                 .then(
                     if (isPhone) Modifier.heightIn(min = if (currentProgrammeTitle == null) 60.dp else 88.dp)
-                    else Modifier.height(if (isTv) 96.dp else 104.dp)
+                    else Modifier.height(if (xtream) { if (isTv) 116.dp else 124.dp } else if (isTv) 96.dp else 104.dp)
                 )
                 .clip(shape)
                 .onFocusChanged { focused = it.isFocused }
@@ -3578,17 +3577,6 @@ private fun ModernLiveChannelTile(
                     drawCircle(accent, radius = size.height * .84f, center = center,
                         style = Stroke(width = 1.dp.toPx()))
                 }
-                item.logo?.takeIf { it.isNotBlank() }?.let {
-                    AsyncImage(
-                        model = artworkRequest(context, item),
-                        contentDescription = null,
-                        modifier = Modifier.align(Alignment.CenterEnd).padding(end = 14.dp)
-                            .size(48.dp).graphicsLayer {
-                                alpha = if (currentProgrammeTitle == null) .30f else .18f
-                            },
-                        contentScale = ContentScale.Fit
-                    )
-                }
                 Row(
                     (if (isPhone) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
                         .align(Alignment.Center).padding(
@@ -3601,6 +3589,15 @@ private fun ModernLiveChannelTile(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        presentation.context?.let {
+                            Text(
+                                it,
+                                color = Color(0xFFB9BDD0),
+                                style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         if (currentProgrammeTitle != null) {
                             Text(
                                 channelName,
@@ -3663,7 +3660,7 @@ private fun ModernLiveChannelTile(
                     }
                     Column(horizontalAlignment = Alignment.End,
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        quality?.takeIf { showQualityBadge }?.let {
+                        quality?.takeIf { showQualityBadge || xtream }?.let {
                             Surface(
                                 color = Color.White.copy(alpha = .10f),
                                 shape = RoundedCornerShape(5.dp),
@@ -3707,7 +3704,8 @@ private fun ModernLiveChannelTile(
             toggleFavorite = onFavorite,
             clear = onClear,
             isPinned = isPinned,
-            togglePin = onTogglePin
+            togglePin = onTogglePin,
+            refreshProgramme = onRefreshProgramme
         )
     }
 }

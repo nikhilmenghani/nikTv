@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
@@ -1037,7 +1038,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = _state.value
         val session = snapshot.session ?: return
         val category = snapshot.modernIptvCategory?.takeIf { it.type == CatalogType.LIVE_TV } ?: return
-        if (session.profile.portalType != PortalType.STALKER) return
         val profileKey = session.profile.cacheKey()
         lastVisibleLiveGuideIds = categoryRefreshKey(session, category) to
             visible.map { it.id }.distinct()
@@ -1047,7 +1047,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val visibleKeys = targets.map { it.key }.toSet()
         liveGuideForcedKeys.retainAll(visibleKeys)
         if (force) liveGuideForcedKeys.addAll(visibleKeys)
-        liveGuideScheduler.update(targets, paused = snapshot.nowPlaying != null || snapshot.loading ||
+        liveGuideScheduler.update(targets, paused = manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
             snapshot.categoryFindSearching || snapshot.catalogLoadingMore)
     }
 
@@ -1111,28 +1111,59 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun requestSelectedLiveGuide(session: PortalSession, item: MediaItem) {
+    private var manualLiveGuideTarget: LiveGuideTarget? = null
+
+    fun refreshLiveProgramme(item: MediaItem) {
+        val session = _state.value.session ?: return
+        if (manualLiveGuideTarget?.let { it.profileKey == session.profile.cacheKey() && it.itemId == item.id } == true) return
+        requestSelectedLiveGuide(session, item, force = true)
+    }
+
+    private fun requestSelectedLiveGuide(session: PortalSession, item: MediaItem, force: Boolean = false) {
         val target = LiveGuideTarget(session.profile.cacheKey(), item.portalCategoryId.orEmpty(), item.id)
-        if (selectedLiveGuideTarget == target && channelScheduleJob?.isActive == true) return
+        if (!force && selectedLiveGuideTarget == target && channelScheduleJob?.isActive == true) return
         channelScheduleJob?.cancel()
         publishLiveChannelGuide(target.profileKey, item)
         // An old non-empty schedule can be expired; check what is airing now.
-        if (item.currentLiveProgramme(System.currentTimeMillis()) != null) return
+        if (!force && item.currentLiveProgramme(System.currentTimeMillis()) != null) return
+        fun feedback(message: String) {
+            if (force && _state.value.session?.profile?.cacheKey() == target.profileKey) {
+                Toast.makeText(getApplication(), message, Toast.LENGTH_SHORT).show()
+            }
+        }
+        if (force) {
+            manualLiveGuideTarget = target
+            liveGuideScheduler.pause()
+            feedback("Refreshing programme…")
+        }
         selectedLiveGuideTarget = target
         channelScheduleJob = viewModelScope.launch {
             val attemptedAt = System.currentTimeMillis()
             liveGuideAttemptedAt[target.key] = attemptedAt
             try {
                 val enriched = withAutomaticSessionRetry(session) {
-                    portal.playingChannelSchedule(it, item, userSelected = true)
+                    portal.playingChannelSchedule(it,
+                        if (force) item.copy(liveProgramme = null, liveSchedule = emptyList()) else item,
+                        userSelected = true)
                 }
                 Log.d("NikTvLiveGuide", "Selected channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
                 publishLiveChannelGuide(target.profileKey, enriched)
+                feedback(if (enriched.currentLiveProgramme(System.currentTimeMillis()) != null) {
+                    "Programme updated"
+                } else "No current programme available from this provider")
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 liveGuideAttemptedAt.remove(target.key, attemptedAt)
                 throw cancelled
             } catch (error: Exception) {
                 Log.w("NikTvLiveGuide", "Could not load the selected channel guide", error)
+                feedback("Could not refresh programme. Please try again.")
+            } finally {
+                if (manualLiveGuideTarget === target) {
+                    manualLiveGuideTarget = null
+                    val snapshot = _state.value
+                    val visibleIds = lastVisibleLiveGuideIds?.second.orEmpty().toSet()
+                    loadVisibleLiveGuides(snapshot.items.filter { it.id in visibleIds }, force = false)
+                }
             }
         }
     }

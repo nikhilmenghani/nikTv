@@ -196,6 +196,7 @@ internal fun CatalogScreen(
     loadMoreModernTmdbSection: () -> Unit,
     enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
     enrichVisibleLiveGuides: (List<MediaItem>) -> Unit,
+    refreshLiveProgramme: (MediaItem) -> Unit,
     findChannelsInCategory: (String) -> Unit,
     cancelCategoryFind: () -> Unit,
     openOfflineDownloads: () -> Unit,
@@ -422,6 +423,7 @@ internal fun CatalogScreen(
                     loadMoreModernTmdbSection = loadMoreModernTmdbSection,
                     enrichFocusedCatalogMetadata = enrichFocusedCatalogMetadata,
                     enrichVisibleLiveGuides = enrichVisibleLiveGuides,
+                    refreshLiveProgramme = refreshLiveProgramme,
                     findChannelsInCategory = findChannelsInCategory,
                     cancelCategoryFind = cancelCategoryFind
                 )

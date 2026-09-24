@@ -808,6 +808,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,loadMoreModernTmdbSection = vm::loadMoreModernTmdbSection
                     ,enrichFocusedCatalogMetadata = vm::enrichFocusedCatalogMetadata
                     ,enrichVisibleLiveGuides = vm::enrichVisibleLiveGuides
+                    ,refreshLiveProgramme = vm::refreshLiveProgramme
                     ,findChannelsInCategory = vm::findChannelsInCategory
                     ,cancelCategoryFind = vm::cancelCategoryFind
                     ,openOfflineDownloads = vm::openOfflineDownloads

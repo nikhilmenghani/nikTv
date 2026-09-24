@@ -191,6 +191,7 @@ internal fun ModernBrowseScreen(
     loadMoreModernTmdbSection: () -> Unit,
     enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
     enrichVisibleLiveGuides: (List<MediaItem>) -> Unit,
+    refreshLiveProgramme: (MediaItem) -> Unit,
     findChannelsInCategory: (String) -> Unit,
     cancelCategoryFind: () -> Unit
 ) {
@@ -236,6 +237,7 @@ internal fun ModernBrowseScreen(
             refreshIptv = refreshCatalog,
             enrichFocusedCatalogMetadata = enrichFocusedCatalogMetadata,
             enrichVisibleLiveGuides = enrichVisibleLiveGuides,
+            refreshLiveProgramme = refreshLiveProgramme,
             findChannelsInCategory = findChannelsInCategory,
             cancelCategoryFind = cancelCategoryFind,
             configureTmdb = { tmdbSetupOpen = true },
