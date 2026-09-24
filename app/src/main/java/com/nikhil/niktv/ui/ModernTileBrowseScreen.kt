@@ -97,12 +97,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -2855,7 +2857,8 @@ private fun ModernIptvCollection(
     }
     val guideNow by produceState(System.currentTimeMillis(), category.id) {
         while (true) {
-            delay(60_000L)
+            // Local clock only: cached schedules advance without another provider request.
+            delay(5_000L)
             value = System.currentTimeMillis()
         }
     }
@@ -2930,15 +2933,27 @@ private fun ModernIptvCollection(
             ModernCollectionViewportMemory.put(viewportKey, index, offset)
         }
     }
-    LaunchedEffect(viewportKey, displayedItems.map { it.id }, gridState) {
+    val currentGuideItems by rememberUpdatedState(displayedItems)
+    val guideLoadingPaused by rememberUpdatedState(
+        state.loading || state.catalogLoadingMore || state.categoryFindSearching || state.nowPlaying != null
+    )
+    DisposableEffect(viewportKey, isLiveTv) {
+        onDispose { if (isLiveTv) enrichVisibleLiveGuides(emptyList()) }
+    }
+    LaunchedEffect(viewportKey, gridState, isLiveTv) {
         if (!isLiveTv) return@LaunchedEffect
         snapshotFlow {
-            gridState.layoutInfo.visibleItemsInfo.mapNotNull { visible ->
-                displayedItems.getOrNull(visible.index)
-            }.distinctBy { it.id }.map { it.id }
-        }.collect { visibleIds ->
+            val visibleIds = gridState.layoutInfo.visibleItemsInfo.sortedBy { it.index }.mapNotNull { visible ->
+                currentGuideItems.getOrNull(visible.index)?.id
+            }
+            Triple(
+                prioritizeVisibleLiveGuides(visibleIds, currentGuideItems.getOrNull(focusedPosterIndex)?.id),
+                guideLoadingPaused,
+                guideNow
+            )
+        }.collect { (visibleIds, _, _) ->
             val visible = visibleIds.mapNotNull { id ->
-                displayedItems.firstOrNull { it.id == id }
+                currentGuideItems.firstOrNull { it.id == id }
             }
             enrichVisibleLiveGuides(visible)
         }
