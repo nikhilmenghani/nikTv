@@ -787,7 +787,7 @@ class StalkerPortalClient(private val context: Context) {
             builder.header("Authorization", "Bearer ${it.token}")
             builder.header("X-Token", it.token)
         }
-        http.newCall(builder.build()).execute().use { response ->
+        http.newCall(builder.build()).readCancellable { response ->
             val body = response.body?.string().orEmpty()
             val diagnostic = buildDiagnostic(endpointUrl, params, response.code, response.header("Content-Type"), body, profile, session)
             if (!response.isSuccessful) {

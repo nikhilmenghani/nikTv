@@ -2922,6 +2922,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun openModernTmdbSection(section: TmdbHomeSection) {
+        cancelPendingPlayback()
         val snapshot = _state.value
         if (!snapshot.modernUiEnabled || snapshot.session == null) return
 
@@ -2947,6 +2948,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openModernIptvCategory(category: Category) {
+        cancelPendingPlayback()
         val snapshot = _state.value
         if (!snapshot.modernUiEnabled) return
 
@@ -4199,13 +4201,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 refreshedItemsById[queued.id] ?: queued
             }
             val refreshedSelection = refreshedItemsById[item.id] ?: item
+            val requestId = latestPlaybackRequest.begin()
             task {
                 playInternal(
                     item = refreshedSelection,
                     type = activePlayback.catalogType,
                     series = activePlayback.series,
                     episodes = refreshedQueue,
-                    directFullscreen = activePlayback.directFullscreen
+                    directFullscreen = activePlayback.directFullscreen,
+                    requestId = requestId
                 )
             }
             return
@@ -4330,6 +4334,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSearch() {
+        cancelPendingPlayback()
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
         _state.update { it.copy(offlineDownloadsOpen = false) }
@@ -5227,8 +5232,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             SearchContentType.EPISODES -> play(item, CatalogType.SERIES)
         }
     }
-    private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) = task {
-        playInternal(item, type, series, episodes)
+    private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) {
+        val requestId = latestPlaybackRequest.begin()
+        task { playInternal(item, type, series, episodes, requestId = requestId) }
     }
 
     fun downloadForOffline(item: MediaItem, type: CatalogType, series: MediaItem? = null) {
@@ -5394,17 +5400,47 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         forceFreshUrl: Boolean = false,
         authorizationRetryCount: Int = 0,
         resumePositionOverride: Long? = null,
-        directFullscreen: Boolean = false
-    ) = latestPlaybackRequest.run {
+        directFullscreen: Boolean = false,
+        requestId: Long = latestPlaybackRequest.begin(),
+        reauthenticate: Boolean = false
+    ) = latestPlaybackRequest.run(requestId) {
         try {
             if (_state.value.categoryFindSearching) cancelCategoryFind()
             liveGuideJobs.values.toList().forEach { it.cancel() }
+            channelScheduleJob?.cancel()
+            // Keep completed warm pages, but let the selected stream precede unfinished prefetches.
+            playbackQueuePrefetches.filterValues { !it.isCompleted }.keys.toList().forEach {
+                playbackQueuePrefetches.remove(it)?.cancel()
+            }
             // Coalesce a burst of remote presses before opening another stream.
-            if (type == CatalogType.LIVE_TV && _state.value.nowPlaying != null) delay(250L)
-            resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                authorizationRetryCount, resumePositionOverride, directFullscreen)
+            if (type == CatalogType.LIVE_TV && _state.value.nowPlaying != null) delay(120L)
+            val session = requireNotNull(_state.value.session)
+            if (reauthenticate && session.profile.portalType == PortalType.STALKER) {
+                _state.update { it.copy(reauthenticating = true) }
+                val refreshed = try {
+                    sessionRefreshMutex.withLock {
+                        _state.value.session?.takeIf { it.profile.cacheKey() == session.profile.cacheKey() && it.token != session.token }
+                            ?: refreshSession(session.profile)
+                    }
+                } finally {
+                    _state.update { it.copy(reauthenticating = false) }
+                }
+                resolvePlayback(item, type, series, episodes, forceFreshUrl,
+                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed)
+            } else {
+                withAutomaticSessionRetry(session) { activeSession ->
+                    resolvePlayback(item, type, series, episodes, forceFreshUrl,
+                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession)
+                }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // The generic task wrapper must not restart this selection after cancellation
+            // or repeat the authentication retry outside LatestPlaybackRequest.
+            throw PlaybackRequestException(error)
         } finally {
-            if (pendingNavigationId == item.id) pendingNavigationId = null
+            if (latestPlaybackRequest.isCurrent(requestId) && pendingNavigationId == item.id) pendingNavigationId = null
         }
     }
 
@@ -5416,10 +5452,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         forceFreshUrl: Boolean = false,
         authorizationRetryCount: Int = 0,
         resumePositionOverride: Long? = null,
-        directFullscreen: Boolean = false
+        directFullscreen: Boolean = false,
+        session: PortalSession
     ) {
         val playbackStartedAt = SystemClock.elapsedRealtime()
-        val session = requireNotNull(_state.value.session)
         val offlineEntry = _state.value.offlineDownloads
             .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${requestedItem.id}" }
         val offlineUrl = offlineEntry
@@ -5907,13 +5943,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         pendingNavigationId = next.id
         playbackNavigationIndex = nextIndex
+        val requestId = latestPlaybackRequest.begin()
         task {
             playInternal(
                 item = next,
                 type = playing.catalogType,
                 series = playing.series,
                 episodes = queue,
-                directFullscreen = playing.directFullscreen
+                directFullscreen = playing.directFullscreen,
+                requestId = requestId
             )
         }
     }
@@ -5935,13 +5973,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         pendingNavigationId = previous.id
         playbackNavigationIndex = previousIndex
+        val requestId = latestPlaybackRequest.begin()
         task {
             playInternal(
                 item = previous,
                 type = playing.catalogType,
                 series = playing.series,
                 episodes = queue,
-                directFullscreen = playing.directFullscreen
+                directFullscreen = playing.directFullscreen,
+                requestId = requestId
             )
         }
     }
@@ -6002,12 +6042,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(items = portal.catalog(session, category)) }
     }
 
-    fun closePlayer() {
+    private fun cancelPendingPlayback() {
         latestPlaybackRequest.cancel()
         pendingNavigationId = null
         playbackNavigationIndex = null
         channelScheduleJob?.cancel()
         autoAdvanceAfterQueueLoadJob?.cancel()
+    }
+
+    fun closePlayer() {
+        cancelPendingPlayback()
         val snapshot = _state.value
         val session = snapshot.session
 
@@ -6037,8 +6081,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun retryPlayback() {
         val playing = _state.value.nowPlaying ?: return
+        val requestId = latestPlaybackRequest.begin()
         viewModelScope.launch {
-            _state.update { it.copy(nowPlaying = null, error = null) }
+            _state.update { it.copy(error = null) }
             runCatching {
                 playInternal(
                     playing.media,
@@ -6046,7 +6091,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     playing.series,
                     playing.episodeQueue,
                     forceFreshUrl = true,
-                    directFullscreen = playing.directFullscreen
+                    directFullscreen = playing.directFullscreen,
+                    requestId = requestId
                 )
             }
                 .onFailure { error ->
@@ -6056,52 +6102,62 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun retryPlaybackWithAlternateDecoder(
-        positionMillis: Long
+        positionMillis: Long,
+        failedPlayback: PlayingMedia
     ) {
         val playing =
             _state.value.nowPlaying
                 ?: return
 
+        if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
+            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url) return
+
+        val requestId = latestPlaybackRequest.begin()
         viewModelScope.launch {
-            /*
-             * MTK_DECODER_RELEASE_GRACE_V14
-             *
-             * Recreate the player so the decoder selector is queried again.
-             * MediaTek/Fire TV codec services can take longer than a single
-             * frame to release the failed codec instance, so allow a short
-             * grace period before constructing the replacement player.
-             *
-             * Keep the already-resolved stream URL: a codec crash is not a
-             * portal/link failure.
-             */
-            _state.update {
-                it.copy(
-                    nowPlaying = null,
-                    error = null
-                )
-            }
+            latestPlaybackRequest.run(requestId) {
+                /*
+                 * MTK_DECODER_RELEASE_GRACE_V14
+                 *
+                 * Recreate the player so the decoder selector is queried again.
+                 * MediaTek/Fire TV codec services can take longer than a single
+                 * frame to release the failed codec instance, so allow a short
+                 * grace period before constructing the replacement player.
+                 *
+                 * Keep the already-resolved stream URL: a codec crash is not a
+                 * portal/link failure.
+                 */
+                _state.update {
+                    it.copy(
+                        nowPlaying = null,
+                        error = null
+                    )
+                }
 
-            delay(450L)
+                delay(450L)
 
-            _state.update {
-                it.copy(
-                    nowPlaying =
-                        playing.copy(
-                            resumePositionMillis =
-                                positionMillis
-                                    .coerceAtLeast(0L)
-                        )
-                )
+                _state.update {
+                    it.copy(
+                        nowPlaying =
+                            playing.copy(
+                                resumePositionMillis =
+                                    positionMillis
+                                        .coerceAtLeast(0L)
+                            )
+                    )
+                }
             }
         }
     }
-    fun retryPlaybackAfterAuthorizationFailure(positionMillis: Long) {
+    fun retryPlaybackAfterAuthorizationFailure(positionMillis: Long, failedPlayback: PlayingMedia) {
         val playing = _state.value.nowPlaying ?: return
+        if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
+            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url) return
         if (playing.authorizationRetryCount > 0) return
         if (!_state.value.automaticReauthentication) {
             _state.update { it.copy(error = "Authorization failed.") }
             return
         }
+        val requestId = latestPlaybackRequest.begin()
         viewModelScope.launch {
             /*
              * Keep PlayerScreen mounted while a rejected provider link is
@@ -6111,12 +6167,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
              * failed media URL when reauthentication completes, which already
              * recreates the player through its media.url key.
              */
-            _state.update { it.copy(error = null, reauthenticating = true) }
+            _state.update { it.copy(error = null) }
             runCatching {
-                val profile = requireNotNull(_state.value.savedProfile)
-                if (profile.portalType == PortalType.STALKER) {
-                    refreshSession(profile)
-                }
                 playInternal(
                     item = playing.media,
                     type = playing.catalogType,
@@ -6125,18 +6177,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     forceFreshUrl = true,
                     authorizationRetryCount = playing.authorizationRetryCount + 1,
                     resumePositionOverride = positionMillis,
-                    directFullscreen = playing.directFullscreen
+                    directFullscreen = playing.directFullscreen,
+                    requestId = requestId,
+                    reauthenticate = true
                 )
             }.onFailure { error ->
                 if (error is kotlinx.coroutines.CancellationException) return@onFailure
                 _state.update { it.copy(error = error.message ?: "Could not refresh stream authorization") }
-            }.also {
-                _state.update { it.copy(reauthenticating = false) }
             }
         }
     }
-    fun openSettings() = _state.update {
-        it.copy(settingsOpen = true, offlineDownloadsOpen = false, searchOpen = false, favoritesOpen = false, homeOpen = false)
+    fun openSettings() {
+        cancelPendingPlayback()
+        _state.update {
+            it.copy(settingsOpen = true, offlineDownloadsOpen = false, searchOpen = false, favoritesOpen = false, homeOpen = false)
+        }
     }
     fun openSettingsFromProfileChooser(profile: PortalProfile? = null) =
         _state.update {
@@ -6182,6 +6237,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }
     fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
     fun openProfileSwitcher() {
+        cancelPendingPlayback()
         val snapshot = _state.value
         if (snapshot.profiles.size < 2) return
         val currentIndex = snapshot.profiles.indexOfFirst {
@@ -6441,6 +6497,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openFavorites() {
+        cancelPendingPlayback()
         _state.update {
             it.copy(
                 favoritesOpen = true,
@@ -6459,19 +6516,23 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
-    fun openOfflineDownloads() = _state.update {
-        it.copy(
-            offlineDownloadsOpen = true,
-            favoritesOpen = false,
-            homeOpen = false,
-            settingsOpen = false,
-            searchOpen = false,
-            selectedSeries = null
-        )
+    fun openOfflineDownloads() {
+        cancelPendingPlayback()
+        _state.update {
+            it.copy(
+                offlineDownloadsOpen = true,
+                favoritesOpen = false,
+                homeOpen = false,
+                settingsOpen = false,
+                searchOpen = false,
+                selectedSeries = null
+            )
+        }
     }
     fun closeOfflineDownloads() = _state.update { it.copy(offlineDownloadsOpen = false) }
 
     fun playOfflineDownload(entry: OfflineMediaDownload) {
+        cancelPendingPlayback()
         val uri = OfflineMediaDownloads.playableUri(getApplication(), entry.requestId, entry.sourceUrl, entry.downloadId)
         if (uri == null) {
             _state.update { it.copy(error = "This download is not complete yet.") }
@@ -6496,6 +6557,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openHome() {
+        cancelPendingPlayback()
         _state.update { it.copy(
             homeOpen = true,
             favoritesOpen = false,
@@ -6846,7 +6908,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         if (firstError is kotlinx.coroutines.CancellationException) throw firstError
                         val snapshot = _state.value
                         val profile = snapshot.savedProfile
-                        if (!snapshot.automaticReauthentication ||
+                        if (firstError is PlaybackRequestException || !snapshot.automaticReauthentication ||
                             profile?.portalType != PortalType.STALKER ||
                             !firstError.isAuthenticationFailure()
                         ) {

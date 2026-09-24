@@ -611,6 +611,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                  * movies and episodes are browsed from the in-player queue.
                  */
                 state.nowPlaying != null -> {
+                  val playback = state.nowPlaying!!
                   val profileKey = state.session?.profile?.cacheKey()
                       ?: state.savedProfile?.cacheKey().orEmpty()
                   val channelCategoryId = state.nowPlaying?.media?.portalCategoryId
@@ -621,11 +622,11 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                       ))
                   }
                   PlayerScreen(
-                    media = state.nowPlaying!!,
+                    media = playback,
                     onBack = vm::closePlayer,
                     onRetry = vm::retryPlayback,
-                    onRetryAlternateDecoder = vm::retryPlaybackWithAlternateDecoder,
-                    onPlaybackAuthorizationFailure = vm::retryPlaybackAfterAuthorizationFailure,
+                    onRetryAlternateDecoder = { position -> vm.retryPlaybackWithAlternateDecoder(position, playback) },
+                    onPlaybackAuthorizationFailure = { position -> vm.retryPlaybackAfterAuthorizationFailure(position, playback) },
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
