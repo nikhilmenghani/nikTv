@@ -21,6 +21,20 @@ object CatalogScanPreferences {
     }
     fun cursor(context: Context, id: String) = prefs(context).getInt("cursor:$id", -1)
     fun cursor(context: Context, id: String, cursor: Int) { prefs(context).edit().putInt("cursor:$id", cursor).commit() }
+    fun activeType(context: Context, id: String): String? = prefs(context).getString("active_type:$id", null)
+    fun activeType(context: Context, id: String, type: String?) {
+        prefs(context).edit().apply {
+            if (type == null) remove("active_type:$id") else putString("active_type:$id", type)
+        }.commit()
+    }
+    fun refreshStartedAt(context: Context, id: String, type: String) =
+        prefs(context).getLong("refresh_started:$id:$type", 0L)
+    fun refreshStartedAt(context: Context, id: String, type: String, time: Long) {
+        prefs(context).edit().apply {
+            if (time <= 0L) remove("refresh_started:$id:$type")
+            else putLong("refresh_started:$id:$type", time)
+        }.commit()
+    }
     fun restoredCursor(context: Context, id: String) = prefs(context).getInt("restored_cursor:$id", -1)
     fun restoredCursor(context: Context, id: String, cursor: Int) {
         prefs(context).edit().putInt("restored_cursor:$id", cursor)

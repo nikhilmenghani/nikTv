@@ -100,7 +100,9 @@ data class PortalCatalogPage(
     val hasMore: Boolean,
     /** Exact provider-reported page count, or one derived from totalItems/pageSize. */
     val totalPages: Int? = null,
-    val totalItems: Int? = null
+    val totalItems: Int? = null,
+    /** Provider-reported page size when available; used to qualify page-count comparisons. */
+    val pageSize: Int? = null
 )
 
 @Serializable

@@ -89,8 +89,10 @@ internal object CatalogScanNotification {
         if (mediaType.isNotBlank()) add(mediaType)
         add(phase)
         if (page > 0) add(if (totalPages > 0) "page $page/$totalPages" else "page $page")
-        percentText?.let(::add)
-        formatRemainingTime(estimatedRemainingMillis)?.let { add("about $it left") }
+        percentText?.let { percent ->
+            add(if (page > 0 || categoryCount > 0 || mediaCount > 0) "$percent estimated scan position" else percent)
+        }
+        formatRemainingTime(estimatedRemainingMillis)?.let { add("about $it left in category") }
         if (totalParts > 0) add("part $part/$totalParts")
         if (totalRecords > 0) add("$totalRecords records")
     }.joinToString(" · ")

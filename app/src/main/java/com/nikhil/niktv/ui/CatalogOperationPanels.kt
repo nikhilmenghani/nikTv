@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.data.*
 import com.nikhil.niktv.model.*
@@ -38,12 +39,17 @@ private fun CatalogProgressDetails(progress: CatalogOperationProgress, isScan: B
     fun value(text: String) = text.ifBlank { "N/A" }
     val fields = if (isScan) listOf(
         "Media" to value(progress.mediaType),
+        "Media types" to if (progress.mediaCount > 0) "${progress.mediaPosition} of ${progress.mediaCount}" else "N/A",
         "Stage" to value(progress.phase),
         "Category" to value(progress.category),
         "Categories" to if (progress.categoryCount > 0) "${progress.categoryPosition} of ${progress.categoryCount}" else "N/A",
         "Page" to if (progress.page > 0) if (progress.totalPages > 0) "${progress.page} of ${progress.totalPages}" else progress.page.toString() else "N/A",
-        "Progress" to (progress.percentText ?: "N/A"),
-        "Time remaining" to (formatRemainingTime(progress.estimatedRemainingMillis) ?: "Calculating…"),
+        "Scan position (estimate)" to (progress.percentText ?: "N/A"),
+        "Category ETA" to when {
+            progress.phase.startsWith("Finalizing", ignoreCase = true) -> "Finishing…"
+            progress.totalPages > 0 && progress.page >= progress.totalPages -> "Finishing…"
+            else -> formatRemainingTime(progress.estimatedRemainingMillis) ?: "Calculating…"
+        },
         "Current page" to if (progress.recordsInPage > 0) "${progress.recordsInPage} records" else "N/A",
         "In category" to if (progress.recordsInCategory > 0) "${progress.recordsInCategory} records" else "N/A",
         "Stored total" to if (progress.totalRecords > 0) progress.totalRecords.toString() else "N/A"
@@ -81,6 +87,50 @@ internal fun catalogScanDisplay(mode: String, work: List<WorkInfo.State>?, curso
     else -> CatalogScanDisplay.IDLE
 }
 
+private data class CatalogPanelAction(
+    val label: String,
+    val onClick: () -> Unit,
+    val enabled: Boolean = true,
+    val primary: Boolean = false,
+    val error: Boolean = false
+)
+
+@Composable
+private fun CatalogPanelActionButton(
+    action: CatalogPanelAction,
+    modifier: Modifier,
+    textStyle: TextStyle,
+    contentPadding: PaddingValues
+) {
+    val content: @Composable RowScope.() -> Unit = {
+        Text(
+            action.label,
+            style = textStyle,
+            color = if (action.error) MaterialTheme.colorScheme.error else Color.Unspecified,
+            maxLines = 1
+        )
+    }
+    if (action.primary) {
+        NikTvPrimaryActionButton(
+            onClick = action.onClick,
+            enabled = action.enabled,
+            shape = RoundedCornerShape(8.dp),
+            modifier = modifier,
+            contentPadding = contentPadding,
+            content = content
+        )
+    } else {
+        NikTvSecondaryActionButton(
+            onClick = action.onClick,
+            enabled = action.enabled,
+            shape = RoundedCornerShape(8.dp),
+            modifier = modifier,
+            contentPadding = contentPadding,
+            content = content
+        )
+    }
+}
+
 @Composable
 internal fun CatalogOperationPanel(
     operation: String,
@@ -88,6 +138,7 @@ internal fun CatalogOperationPanel(
     resumeEnabled: Boolean = true,
     onStart: (() -> Unit)? = null,
     onRetry: (() -> Unit)? = null,
+    onCheckUpdates: (() -> Unit)? = null,
     onFullScan: (() -> Unit)? = null,
     onRestoredResume: (() -> Unit)? = null,
     restoredResumeLabel: String = "Resume restored",
@@ -114,6 +165,9 @@ internal fun CatalogOperationPanel(
     val scanId = operation.removePrefix("scan:")
     val scanState = catalogScanDisplay(mode, scanWork?.map { it.state },
         CatalogScanPreferences.cursor(context, scanId), CatalogScanPreferences.completed(context, scanId))
+    val checkingUpdates = isScan && scanWork?.any {
+        !it.state.isFinished && SearchMetadataSyncScheduler.UPDATE_CHECK_TAG in it.tags
+    } == true
     val interrupted = isScan && scanState == CatalogScanDisplay.INTERRUPTED
     val held = mode != "Ready" || interrupted
     val busy = isScan && scanState in listOf(CatalogScanDisplay.CHECKING, CatalogScanDisplay.QUEUED, CatalogScanDisplay.SCANNING)
@@ -138,7 +192,7 @@ internal fun CatalogOperationPanel(
     val summary = when (mode) {
         "Paused" -> "Progress saved. Resume when you’re ready."
         "Stopped" -> "Stopped. Saved progress is available to resume."
-        else -> if (isScan && scanState == CatalogScanDisplay.QUEUED) queuedExplanation else if (interrupted) "Scan interrupted. Resume from the last saved page." else if (updated == 0L) {
+        else -> if (checkingUpdates) message else if (isScan && scanState == CatalogScanDisplay.QUEUED) queuedExplanation else if (interrupted) "Scan interrupted. Resume from the last saved page." else if (updated == 0L) {
             when {
                 operation.startsWith("scan:") -> "Ready to scan channels, movies and series."
                 operation == CatalogOperations.RESTORE -> "No catalog restore is running."
@@ -158,7 +212,7 @@ internal fun CatalogOperationPanel(
                 Icon(if (operation.startsWith("scan:")) Icons.Default.Storage else Icons.Default.CloudUpload,
                     contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                if (isScan || held) Text(if (isScan) scanState.label else mode, style = MaterialTheme.typography.labelLarge,
+                if (isScan || held) Text(if (checkingUpdates) "Checking updates" else if (isScan) scanState.label else mode, style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary)
             }
             if ((isScan && scanState == CatalogScanDisplay.SCANNING) || uploadActive) {
@@ -168,7 +222,9 @@ internal fun CatalogOperationPanel(
             }
             val parts = summary.split(" · ")
             val showStage = !held && parts.size > 1 && !summary.startsWith("Complete") && !summary.startsWith("Scan already complete")
-            if (progress != null && progress.phase != "Complete") CatalogProgressDetails(progress, isScan)
+            if (progress != null && progress.phase != "Complete" && (busy || uploadActive)) {
+                CatalogProgressDetails(progress, isScan)
+            }
             else {
                 Text(if (showStage) parts.last() else summary, style = MaterialTheme.typography.bodyMedium)
                 if (showStage) Text(parts.dropLast(1).joinToString(" · "),
@@ -177,61 +233,87 @@ internal fun CatalogOperationPanel(
             if (updated > 0) Text("Updated ${operationTime(updated)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val compactActions = LocalConfiguration.current.screenWidthDp < 600
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val actionWidth = if (compactActions) (maxWidth - 16.dp) / 3 else 148.dp
-                val actionTextStyle = if (compactActions) MaterialTheme.typography.labelMedium
-                    else MaterialTheme.typography.labelLarge
-                val actionPadding = PaddingValues(horizontal = if (compactActions) 8.dp else 16.dp, vertical = 8.dp)
+            val actionTextStyle = if (compactActions) MaterialTheme.typography.labelMedium
+                else MaterialTheme.typography.labelLarge
+            val actionPadding = PaddingValues(horizontal = if (compactActions) 8.dp else 16.dp, vertical = 8.dp)
+            val actions = buildList {
+                if (held) {
+                    add(CatalogPanelAction("Resume local", onResume, resumeEnabled, primary = true))
+                    onRestoredResume?.let { add(CatalogPanelAction(restoredResumeLabel, it)) }
+                    onFullScan?.let { add(CatalogPanelAction("Refresh all", it)) }
+                } else {
+                    onStart?.let { start ->
+                        val click = when {
+                            checkingUpdates -> ({})
+                            scanState == CatalogScanDisplay.QUEUED -> onRetry ?: start
+                            scanState == CatalogScanDisplay.COMPLETE -> onCheckUpdates ?: start
+                            else -> start
+                        }
+                        val label = when {
+                            checkingUpdates -> "Checking…"
+                            scanState == CatalogScanDisplay.SCANNING -> "Scanning…"
+                            scanState == CatalogScanDisplay.QUEUED -> "Try now"
+                            scanState == CatalogScanDisplay.CHECKING -> "Checking…"
+                            scanState == CatalogScanDisplay.COMPLETE -> "Check updates"
+                            scanState == CatalogScanDisplay.IDLE -> "Start scan"
+                            else -> "Resume scan"
+                        }
+                        add(CatalogPanelAction(
+                            label = label,
+                            onClick = click,
+                            enabled = !checkingUpdates && (!busy ||
+                                (scanState == CatalogScanDisplay.QUEUED && onRetry != null)),
+                            primary = true
+                        ))
+                    }
+                    onRestoredResume?.let { add(CatalogPanelAction(restoredResumeLabel, it, enabled = !busy)) }
+                    onFullScan?.let { add(CatalogPanelAction("Refresh all", it, enabled = !busy)) }
+                    if (!isScan || busy) add(CatalogPanelAction("Pause", {
+                        CatalogOperations.control(context, operation, "Paused")
+                    }))
+                }
+                if (mode != "Stopped" && (!isScan || busy || held)) add(CatalogPanelAction("Stop", {
+                    CatalogOperations.control(context, operation, "Stopped")
+                }))
+                add(CatalogPanelAction("Details", { detail = "events" }))
+                if (failures.isNotEmpty()) add(CatalogPanelAction(
+                    label = "${failures.size} failed",
+                    onClick = { detail = "failures" },
+                    error = true
+                ))
+            }
+            if (compactActions) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    actions.chunked(3).forEach { actionRow ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            actionRow.forEach { action ->
+                                CatalogPanelActionButton(
+                                    action = action,
+                                    modifier = Modifier.weight(1f),
+                                    textStyle = actionTextStyle,
+                                    contentPadding = actionPadding
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     maxItemsInEachRow = 3
                 ) {
-                val actionModifier = Modifier.width(actionWidth)
-                if (held) {
-                    NikTvPrimaryActionButton(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
-                        modifier = actionModifier, contentPadding = actionPadding) { Text("Resume local", style = actionTextStyle, maxLines = 1) }
-                    onRestoredResume?.let { restored ->
-                        NikTvSecondaryActionButton(onClick = restored, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier, contentPadding = actionPadding) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
-                    }
-                    onFullScan?.let { fullScan ->
-                        NikTvSecondaryActionButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier, contentPadding = actionPadding) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
-                    }
-                } else {
-                    if (onStart != null) NikTvPrimaryActionButton(
-                        onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
-                        enabled = !busy || (scanState == CatalogScanDisplay.QUEUED && onRetry != null),
-                        shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) {
-                        Text(text = when (scanState) {
-                            CatalogScanDisplay.SCANNING -> "Scanning…"
-                            CatalogScanDisplay.QUEUED -> "Try now"
-                            CatalogScanDisplay.CHECKING -> "Checking…"
-                            CatalogScanDisplay.COMPLETE -> "Resume scan"
-                            else -> "Resume scan"
-                        }, style = actionTextStyle, maxLines = 1)
-                    }
-                    onRestoredResume?.let { restored ->
-                        NikTvSecondaryActionButton(onClick = restored, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier, contentPadding = actionPadding) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
-                    }
-                    onFullScan?.let { fullScan ->
-                        NikTvSecondaryActionButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier, contentPadding = actionPadding) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
-                    }
-                    if (!isScan || busy) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
-                        shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) { Text("Pause", style = actionTextStyle, maxLines = 1) }
-                }
-                if (mode != "Stopped" && (!isScan || busy || held)) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) { Text("Stop", style = actionTextStyle, maxLines = 1) }
-                NikTvSecondaryActionButton(onClick = { detail = "events" },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) { Text("Details", style = actionTextStyle, maxLines = 1) }
-                if (failures.isNotEmpty()) NikTvSecondaryActionButton(onClick = { detail = "failures" },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier, contentPadding = actionPadding) {
-                        Text("${failures.size} failed", color = MaterialTheme.colorScheme.error,
-                            style = actionTextStyle, maxLines = 1)
+                    actions.forEach { action ->
+                        CatalogPanelActionButton(
+                            action = action,
+                            modifier = Modifier.width(148.dp),
+                            textStyle = actionTextStyle,
+                            contentPadding = actionPadding
+                        )
                     }
                 }
             }
@@ -252,6 +334,281 @@ internal fun CatalogOperationPanel(
                         Text(row.detail); Text(operationTime(row.time), style = MaterialTheme.typography.bodySmall); HorizontalDivider() }
                 }
             } }, confirmButton = { NikTvSecondaryActionButton(onClick = { detail = null }) { Text("Close") } })
+    }
+}
+
+@Composable
+internal fun CatalogTypeUpdatePanels(
+    profile: PortalProfile,
+    onCheck: (CatalogType) -> Unit,
+    onResume: (CatalogType) -> Unit,
+    onRefresh: (CatalogType) -> Unit
+) {
+    val context = LocalContext.current
+    val profileId = CatalogScanPreferences.id(profile)
+    val repository = remember(context) { CatalogRepository(context) }
+    val types = remember { listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) }
+    val scanOperation = remember(profileId) { CatalogOperations.scan(profileId) }
+    val operationRevision by remember(scanOperation) {
+        CatalogOperations.observe(context, scanOperation)
+    }.collectAsState(0L)
+    val statuses by remember(profileId) { repository.observeUpdateStatuses(profile) }
+        .collectAsState(initial = emptyList())
+    var checkpoints by remember(profileId) {
+        mutableStateOf<Map<CatalogType, CatalogScanCheckpoint>?>(null)
+    }
+    val scanWork by remember(profileId) {
+        SearchMetadataSyncScheduler.observeScanWork(context, profileId)
+    }.collectAsState(initial = null)
+    val activeWork = scanWork.orEmpty().filterNot { it.state.isFinished }
+    val scanBusy = activeWork.isNotEmpty()
+    val checkingUpdates = activeWork.any { SearchMetadataSyncScheduler.UPDATE_CHECK_TAG in it.tags }
+    val scanProgress = remember(operationRevision, scanOperation) {
+        CatalogOperations.progress(context, scanOperation)
+    }
+    val selectedScanType = remember(operationRevision, profileId) {
+        CatalogScanPreferences.activeType(context, profileId)
+    }
+
+    LaunchedEffect(profileId, statuses, operationRevision, scanBusy) {
+        try {
+            checkpoints = withContext(Dispatchers.IO) {
+                types.associateWith { repository.scanCheckpoint(profile, it) }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            checkpoints = emptyMap()
+        }
+    }
+
+    val interactionsEnabled = checkpoints != null && !scanBusy
+
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Updates by media type", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Check or refresh only the part of the provider catalog you need.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        types.forEach { type ->
+            val status = statuses.firstOrNull { it.type == type.name }
+            val checkpoint = checkpoints?.get(type)
+            val savedState = status?.state?.uppercase().orEmpty()
+            val activelyScanning = scanBusy && !checkingUpdates &&
+                (selectedScanType == type.name || scanProgress?.mediaType == type.title)
+            val state = when {
+                checkpoints == null -> "LOADING"
+                savedState == "CHECKING" && checkingUpdates -> "CHECKING"
+                activelyScanning -> "SCANNING"
+                savedState == "FAILED" -> "FAILED"
+                checkpoint?.hasData == false -> "NOT_SCANNED"
+                checkpoint?.complete == false -> "INCOMPLETE"
+                savedState == "CHECKING" -> "NOT_CHECKED"
+                savedState.isNotBlank() -> savedState
+                else -> "NOT_CHECKED"
+            }
+            val badge = when (state) {
+                "LOADING" -> "Loading"
+                "CHECKING" -> "Checking"
+                "SCANNING" -> "Scanning"
+                "NO_CHANGES" -> "No changes detected"
+                "UPDATE_AVAILABLE" -> "Update available"
+                "CHANGED" -> "Changed"
+                "INCOMPLETE" -> "Incomplete"
+                "NOT_SCANNED" -> "Not scanned"
+                "FAILED" -> "Check failed"
+                else -> "Not checked"
+            }
+            val badgeColor = when (state) {
+                "NO_CHANGES" -> Color(0xFF62C58F)
+                "UPDATE_AVAILABLE", "CHANGED" -> MaterialTheme.colorScheme.tertiary
+                "FAILED" -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.primary
+            }
+            val detectedChanges = buildList {
+                status?.let { update ->
+                    update.newPages.takeIf { it > 0 }?.let { pages ->
+                        add(if (update.newPagesExact) "$pages new ${if (pages == 1) "page" else "pages"} available"
+                        else "More provider pages detected")
+                    }
+                    update.newCategories.takeIf { it > 0 }?.let { count ->
+                        add("$count new ${if (count == 1) "category" else "categories"}")
+                    }
+                    update.removedCategories.takeIf { it > 0 }?.let { count ->
+                        add("$count removed ${if (count == 1) "category" else "categories"}")
+                    }
+                }
+            }.joinToString(" · ")
+            val detail = when (state) {
+                "LOADING" -> "Reading saved scan progress…"
+                "CHECKING" -> status?.detail?.ifBlank { "Comparing provider pages with the last scan…" }
+                    ?: "Comparing provider pages with the last scan…"
+                "SCANNING" -> buildString {
+                    append(scanProgress?.phase?.ifBlank { "Refreshing from the provider" }
+                        ?: "Refreshing from the provider")
+                    scanProgress?.category?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                    scanProgress?.page?.takeIf { it > 0 }?.let { append(" · page $it") }
+                    append('…')
+                }
+                "NO_CHANGES" -> status?.detail?.ifBlank { "No new provider pages or category changes found." }
+                    ?: "No new provider pages or category changes found."
+                "UPDATE_AVAILABLE" -> status?.detail?.ifBlank { detectedChanges }
+                    ?.ifBlank { "New provider pages are ready to sync." }
+                    ?: "New provider pages are ready to sync."
+                "CHANGED" -> status?.detail?.ifBlank { detectedChanges }
+                    ?.ifBlank { "The provider catalog changed; refresh recommended." }
+                    ?: "The provider catalog changed; refresh recommended."
+                "INCOMPLETE" -> buildString {
+                    append("Resume from saved progress")
+                    checkpoint?.currentCategory?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                    checkpoint?.currentPage?.takeIf { it > 0 }?.let { append(" · page $it") }
+                    append('.')
+                }
+                "NOT_SCANNED" -> "No local ${type.title} scan has been completed yet."
+                "FAILED" -> status?.detail?.ifBlank { "Could not check the provider. Your local catalog is unchanged." }
+                    ?: "Could not check the provider. Your local catalog is unchanged."
+                else -> "Check the provider for new pages before deciding whether to sync."
+            }
+            val timing = buildList {
+                status?.checkedAt?.takeIf { it > 0 }?.let {
+                    val label = if (status.detail.startsWith("Synced", ignoreCase = true)) "Synced" else "Checked"
+                    add("$label ${operationTime(it)}")
+                }
+                checkpoint?.updatedAt?.takeIf { it > 0 }?.let {
+                    add("${if (checkpoint.complete) "Local data" else "Progress saved"} ${operationTime(it)}")
+                }
+            }
+
+            val primaryLabel: String
+            val primaryAction: () -> Unit
+            val secondaryLabel: String?
+            val secondaryAction: (() -> Unit)?
+            when (state) {
+                "INCOMPLETE" -> {
+                    primaryLabel = "Resume"
+                    primaryAction = { onResume(type) }
+                    secondaryLabel = "Restart"
+                    secondaryAction = { onRefresh(type) }
+                }
+                "NOT_SCANNED" -> {
+                    primaryLabel = "Scan"
+                    primaryAction = { onRefresh(type) }
+                    secondaryLabel = null
+                    secondaryAction = null
+                }
+                "UPDATE_AVAILABLE", "CHANGED" -> {
+                    primaryLabel = "Sync"
+                    primaryAction = { onRefresh(type) }
+                    secondaryLabel = "Check again"
+                    secondaryAction = { onCheck(type) }
+                }
+                "NO_CHANGES" -> {
+                    primaryLabel = "Check again"
+                    primaryAction = { onCheck(type) }
+                    secondaryLabel = "Refresh"
+                    secondaryAction = { onRefresh(type) }
+                }
+                "FAILED" -> {
+                    primaryLabel = "Retry check"
+                    primaryAction = { onCheck(type) }
+                    secondaryLabel = null
+                    secondaryAction = null
+                }
+                "CHECKING" -> {
+                    primaryLabel = "Checking…"
+                    primaryAction = {}
+                    secondaryLabel = "Refresh"
+                    secondaryAction = { onRefresh(type) }
+                }
+                "SCANNING" -> {
+                    primaryLabel = "Scanning…"
+                    primaryAction = {}
+                    secondaryLabel = "Refresh"
+                    secondaryAction = { onRefresh(type) }
+                }
+                else -> {
+                    primaryLabel = "Check now"
+                    primaryAction = { onCheck(type) }
+                    secondaryLabel = "Refresh"
+                    secondaryAction = { onRefresh(type) }
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFF1B1E24),
+                border = BorderStroke(1.dp, SettingsOutline)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(type.icon(), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text(type.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = badgeColor.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.55f))
+                        ) {
+                            Text(
+                                badge,
+                                Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = badgeColor,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                    Text(detail, style = MaterialTheme.typography.bodyMedium)
+                    timing.forEach { line ->
+                        Text(line, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        NikTvPrimaryActionButton(
+                            onClick = primaryAction,
+                            enabled = interactionsEnabled && state != "CHECKING" && state != "LOADING",
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                        ) {
+                            Text(primaryLabel, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        }
+                        secondaryLabel?.let { label ->
+                            NikTvSecondaryActionButton(
+                                onClick = secondaryAction ?: {},
+                                enabled = interactionsEnabled && state != "CHECKING" && state != "LOADING",
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                            ) {
+                                Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

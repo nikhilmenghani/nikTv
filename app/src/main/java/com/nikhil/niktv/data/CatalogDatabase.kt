@@ -38,6 +38,16 @@ data class CatalogMigration(@PrimaryKey val key: String)
 
 data class CatalogStoredCount(val type: String, val count: Int)
 data class CatalogProfileType(val profile: String, val type: String)
+data class CatalogBucketCount(val bucket: String, val count: Int)
+
+data class CatalogScanState(
+    val cachedAtMillis: Long = 0L,
+    val categories: List<Category> = emptyList(),
+    val pagesByCategory: Map<String, Int> = emptyMap(),
+    val hasMoreByCategory: Map<String, Boolean> = emptyMap(),
+    val itemCountsByCategory: Map<String, Int> = emptyMap(),
+    val totalItems: Int = 0
+)
 
 /** Compact, rebuildable search metadata. Full provider payloads remain in CatalogItemRow only. */
 @Entity(
@@ -57,18 +67,72 @@ data class CatalogSearchRow(
     val deleted: Boolean = false
 )
 
+/** Read-only comparison baseline promoted only after a media type finishes syncing. */
+@Entity(primaryKeys = ["profile", "type", "category"])
+data class CatalogProviderBaselineRow(
+    val profile: String,
+    val type: String,
+    val category: String,
+    val title: String,
+    val lastPage: Int,
+    val pageSize: Int,
+    val totalItems: Int,
+    val firstPageHash: String,
+    val lastPageHash: String,
+    val completedAt: Long
+)
+
+enum class CatalogUpdateState {
+    NOT_CHECKED, CHECKING, NO_CHANGES, UPDATE_AVAILABLE, CHANGED,
+    INCOMPLETE, NOT_SCANNED, FAILED
+}
+
+/** Latest provider-check verdict. This never participates in scan resumption. */
+@Entity(primaryKeys = ["profile", "type"])
+data class CatalogTypeUpdateRow(
+    val profile: String,
+    val type: String,
+    val state: String = CatalogUpdateState.NOT_CHECKED.name,
+    val detail: String = "Not checked yet.",
+    val newPages: Int = 0,
+    val newPagesExact: Boolean = false,
+    val newCategories: Int = 0,
+    val removedCategories: Int = 0,
+    val checkedAt: Long = 0L
+) {
+    val updateState: CatalogUpdateState
+        get() = runCatching { CatalogUpdateState.valueOf(state) }
+            .getOrDefault(CatalogUpdateState.NOT_CHECKED)
+}
+
+/** Device-local rows awaiting confirmation during a from-scratch refresh. Never backed up. */
+@Entity(primaryKeys = ["profile", "type", "bucket", "id"])
+data class CatalogRefreshCandidateRow(
+    val profile: String,
+    val type: String,
+    val bucket: String,
+    val id: String
+)
+
+data class CatalogScanCheckpoint(
+    val hasData: Boolean,
+    val complete: Boolean,
+    val currentCategory: String = "",
+    val currentPage: Int = 0,
+    val updatedAt: Long = 0L
+)
+
 @Dao
 interface CatalogDao {
     @Query("""SELECT a.type, COUNT(DISTINCT a.id) AS count FROM CatalogItemRow a
-        WHERE a.profile = :profile AND a.deleted = 0 AND NOT EXISTS
-        (SELECT 1 FROM CatalogItemRow b WHERE b.profile = a.profile AND b.type = a.type AND b.id = a.id
-          AND (b.observedAt > a.observedAt OR (b.observedAt = a.observedAt AND b.deleted = 1)))
+        WHERE a.profile = :profile AND a.deleted = 0
         GROUP BY a.type""")
     fun storedCounts(profile: String): Flow<List<CatalogStoredCount>>
     @Query("""SELECT a.* FROM CatalogItemRow a WHERE a.profile = :profile AND a.type = :type AND a.deleted = 0
         AND NOT EXISTS (SELECT 1 FROM CatalogItemRow b WHERE b.profile = a.profile AND b.type = a.type AND b.id = a.id
-          AND (b.observedAt > a.observedAt OR (b.observedAt = a.observedAt AND b.deleted = 1)))
-        GROUP BY a.id ORDER BY a.observedAt DESC, a.id DESC LIMIT :limit OFFSET :offset""")
+          AND b.deleted = 0 AND (b.observedAt > a.observedAt OR
+          (b.observedAt = a.observedAt AND b.bucket > a.bucket)))
+        ORDER BY a.observedAt DESC, a.id DESC LIMIT :limit OFFSET :offset""")
     suspend fun storedPage(profile: String, type: String, limit: Int, offset: Int): List<CatalogItemRow>
 
     @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type ORDER BY position, id")
@@ -87,16 +151,25 @@ interface CatalogDao {
     @Upsert suspend fun putSearchRows(rows: List<CatalogSearchRow>)
     @Query("SELECT * FROM CatalogSearchRow WHERE profile = :profile AND type = :type AND deleted = 0 AND normalizedTitle LIKE '%' || :query || '%' ORDER BY title, id LIMIT :limit")
     suspend fun searchRows(profile: String, type: String, query: String, limit: Int): List<CatalogSearchRow>
-    @Query("SELECT COUNT(*) FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
+    @Query("SELECT COUNT(*) FROM CatalogSearchRow WHERE profile = :profile AND type = :type AND deleted = 0")
     suspend fun searchRowCount(profile: String, type: String): Int
     @Query("SELECT COUNT(DISTINCT id) FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket != '@search' AND deleted = 0")
     suspend fun canonicalItemCount(profile: String, type: String): Int
+    @Query("""SELECT bucket, COUNT(*) AS count FROM CatalogItemRow
+        WHERE profile = :profile AND type = :type AND bucket != '@search' AND deleted = 0
+        GROUP BY bucket""")
+    suspend fun bucketItemCounts(profile: String, type: String): List<CatalogBucketCount>
     @Query("SELECT DISTINCT profile, type FROM CatalogItemRow WHERE bucket != '@search'")
     suspend fun catalogProfileTypes(): List<CatalogProfileType>
     @Query("DELETE FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
     suspend fun clearSearchRows(profile: String, type: String)
     @Query("DELETE FROM CatalogSearchRow") suspend fun clearAllSearchRows()
-    @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket != '@search' AND deleted = 0 ORDER BY id, observedAt DESC LIMIT :limit OFFSET :offset")
+    @Query("""SELECT a.* FROM CatalogItemRow a WHERE a.profile = :profile AND a.type = :type
+        AND a.bucket != '@search' AND a.deleted = 0 AND NOT EXISTS
+        (SELECT 1 FROM CatalogItemRow b WHERE b.profile = a.profile AND b.type = a.type
+          AND b.id = a.id AND b.bucket != '@search' AND b.deleted = 0
+          AND (b.observedAt > a.observedAt OR (b.observedAt = a.observedAt AND b.bucket > a.bucket)))
+        ORDER BY a.id LIMIT :limit OFFSET :offset""")
     suspend fun canonicalRowsPage(profile: String, type: String, limit: Int, offset: Int): List<CatalogItemRow>
     @Query("SELECT * FROM CatalogEpisodeRow") suspend fun episodes(): List<CatalogEpisodeRow>
     @Query("SELECT COUNT(*) FROM CatalogEpisodeRow WHERE profile = :profile")
@@ -104,22 +177,101 @@ interface CatalogDao {
     @Query("SELECT * FROM CatalogEpisodeRow WHERE profile = :profile ORDER BY series, season LIMIT :limit OFFSET :offset")
     suspend fun snapshotEpisodesPage(profile: String, limit: Int, offset: Int): List<CatalogEpisodeRow>
     @Query("SELECT * FROM CatalogEpisodeRow") fun observeEpisodes(): Flow<List<CatalogEpisodeRow>>
+    @Query("""SELECT id FROM CatalogItemRow WHERE profile = :profile AND type = :type
+        AND bucket = :bucket AND deleted = 0 AND position >= :startPosition AND position < :endPosition
+        ORDER BY position, id""")
+    suspend fun itemIdsInPositionRange(
+        profile: String,
+        type: String,
+        bucket: String,
+        startPosition: Int,
+        endPosition: Int
+    ): List<String>
+    @Query("SELECT COUNT(*) FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket = :bucket AND deleted = 0")
+    suspend fun bucketItemCount(profile: String, type: String, bucket: String): Int
+    @Query("SELECT * FROM CatalogProviderBaselineRow WHERE profile = :profile AND type = :type ORDER BY category")
+    suspend fun providerBaselines(profile: String, type: String): List<CatalogProviderBaselineRow>
+    @Upsert suspend fun putProviderBaselines(rows: List<CatalogProviderBaselineRow>)
+    @Query("DELETE FROM CatalogProviderBaselineRow WHERE profile = :profile AND type = :type")
+    suspend fun clearProviderBaselines(profile: String, type: String)
+    @Query("SELECT * FROM CatalogTypeUpdateRow WHERE profile = :profile ORDER BY type")
+    fun observeUpdateRows(profile: String): Flow<List<CatalogTypeUpdateRow>>
+    @Query("SELECT * FROM CatalogTypeUpdateRow WHERE profile = :profile AND type = :type")
+    suspend fun updateRow(profile: String, type: String): CatalogTypeUpdateRow?
+    @Upsert suspend fun putUpdateRows(rows: List<CatalogTypeUpdateRow>)
+    @Query("DELETE FROM CatalogProviderBaselineRow") suspend fun clearProviderBaselines()
+    @Query("DELETE FROM CatalogTypeUpdateRow") suspend fun clearUpdateRows()
+    @Query("DELETE FROM CatalogTypeUpdateRow WHERE profile = :profile AND type = :type")
+    suspend fun clearUpdateRow(profile: String, type: String)
+    @Query("DELETE FROM CatalogRefreshCandidateRow WHERE profile = :profile AND type = :type")
+    suspend fun clearRefreshCandidates(profile: String, type: String)
+    @Query("DELETE FROM CatalogRefreshCandidateRow") suspend fun clearRefreshCandidates()
+    @Upsert suspend fun putRefreshCandidates(rows: List<CatalogRefreshCandidateRow>)
+    @Query("""INSERT OR REPLACE INTO CatalogRefreshCandidateRow(profile, type, bucket, id)
+        SELECT profile, type, bucket, id FROM CatalogItemRow
+        WHERE profile = :profile AND type = :type AND deleted = 0""")
+    suspend fun stageRefreshCandidates(profile: String, type: String)
+    @Query("""DELETE FROM CatalogRefreshCandidateRow WHERE profile = :profile AND type = :type
+        AND bucket = :bucket AND id IN (:ids)""")
+    suspend fun confirmRefreshItems(profile: String, type: String, bucket: String, ids: List<String>)
+    @Query("""UPDATE CatalogItemRow SET deleted = 1,
+        observedAt = CASE WHEN observedAt >= :at THEN observedAt + 1 ELSE :at END
+        WHERE profile = :profile AND type = :type AND deleted = 0 AND EXISTS
+        (SELECT 1 FROM CatalogRefreshCandidateRow candidate
+          WHERE candidate.profile = CatalogItemRow.profile AND candidate.type = CatalogItemRow.type
+          AND candidate.bucket = CatalogItemRow.bucket AND candidate.id = CatalogItemRow.id)""")
+    suspend fun retireRefreshCandidates(profile: String, type: String, at: Long)
+    @Query("""SELECT COUNT(*) FROM CatalogRefreshCandidateRow
+        WHERE profile = :profile AND type = :type AND bucket = '@generation' AND id = :generation""")
+    suspend fun refreshGenerationCount(profile: String, type: String, generation: String): Int
+    @Query("""UPDATE CatalogItemRow SET deleted = 1,
+        observedAt = CASE WHEN observedAt >= :at THEN observedAt + 1 ELSE :at END
+        WHERE profile = :profile AND type = :type AND deleted = 0
+        AND observedAt < :startedAt AND bucket IN (:scanBuckets)""")
+    suspend fun retireRowsNotObservedSince(
+        profile: String,
+        type: String,
+        scanBuckets: List<String>,
+        startedAt: Long,
+        at: Long
+    )
+    @Query("""UPDATE CatalogItemRow SET deleted = 1,
+        observedAt = CASE WHEN observedAt >= :at THEN observedAt + 1 ELSE :at END
+        WHERE profile = :profile AND type = :type AND deleted = 0
+        AND bucket NOT IN (:activeCategories)""")
+    suspend fun retireRowsOutsideCategories(
+        profile: String,
+        type: String,
+        activeCategories: List<String>,
+        at: Long
+    )
+    @Query("""UPDATE CatalogSearchRow SET deleted = 1,
+        observedAt = CASE WHEN observedAt >= :at THEN observedAt + 1 ELSE :at END
+        WHERE profile = :profile AND type = :type AND NOT EXISTS (
+            SELECT 1 FROM CatalogItemRow item WHERE item.profile = :profile AND item.type = :type
+            AND item.id = CatalogSearchRow.id AND item.deleted = 0)""")
+    suspend fun retireOrphanedSearchRows(profile: String, type: String, at: Long)
+    @Query("DELETE FROM CatalogBucketRow WHERE profile = :profile AND type = :type AND bucket NOT IN (:activeCategories)")
+    suspend fun removeBucketsOutsideCategories(profile: String, type: String, activeCategories: List<String>)
     @Query("SELECT COUNT(*) FROM CatalogMigration WHERE `key` = :key") suspend fun migrated(key: String): Int
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun markMigrated(row: CatalogMigration)
     @Query("DELETE FROM CatalogItemRow") suspend fun clearItems()
     @Query("DELETE FROM CatalogBucketRow") suspend fun clearBuckets()
+    @Query("DELETE FROM CatalogBucketRow WHERE profile = :profile AND type = :type")
+    suspend fun clearBuckets(profile: String, type: String)
     @Query("DELETE FROM CatalogEpisodeRow") suspend fun clearEpisodes()
 }
 
 @Database(entities = [CatalogItemRow::class, CatalogBucketRow::class, CatalogEpisodeRow::class,
-    CatalogMigration::class, CatalogSearchRow::class], version = 2, exportSchema = true)
+    CatalogMigration::class, CatalogSearchRow::class, CatalogProviderBaselineRow::class,
+    CatalogTypeUpdateRow::class, CatalogRefreshCandidateRow::class], version = 3, exportSchema = true)
 abstract class CatalogDatabase : RoomDatabase() {
     abstract fun catalog(): CatalogDao
     companion object {
         @Volatile private var instance: CatalogDatabase? = null
         fun get(context: Context): CatalogDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, CatalogDatabase::class.java, "catalog.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build().also { instance = it }
         }
 
@@ -135,6 +287,34 @@ abstract class CatalogDatabase : RoomDatabase() {
                 // canonical provider rows and their scan cursors remain untouched.
                 db.execSQL("DELETE FROM `CatalogItemRow` WHERE `bucket` = '@search'")
                 db.execSQL("DELETE FROM `CatalogBucketRow` WHERE `bucket` = '@search'")
+            }
+        }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `CatalogProviderBaselineRow` (
+                    `profile` TEXT NOT NULL, `type` TEXT NOT NULL, `category` TEXT NOT NULL,
+                    `title` TEXT NOT NULL, `lastPage` INTEGER NOT NULL, `pageSize` INTEGER NOT NULL,
+                    `totalItems` INTEGER NOT NULL, `firstPageHash` TEXT NOT NULL,
+                    `lastPageHash` TEXT NOT NULL, `completedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`profile`, `type`, `category`))""")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `CatalogTypeUpdateRow` (
+                    `profile` TEXT NOT NULL, `type` TEXT NOT NULL, `state` TEXT NOT NULL,
+                    `detail` TEXT NOT NULL, `newPages` INTEGER NOT NULL,
+                    `newPagesExact` INTEGER NOT NULL, `newCategories` INTEGER NOT NULL,
+                    `removedCategories` INTEGER NOT NULL, `checkedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`profile`, `type`))""")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `CatalogRefreshCandidateRow` (
+                    `profile` TEXT NOT NULL, `type` TEXT NOT NULL, `bucket` TEXT NOT NULL,
+                    `id` TEXT NOT NULL, PRIMARY KEY(`profile`, `type`, `bucket`, `id`))""")
+                // v2 could retain a live compact-search row after every canonical copy
+                // of that ID was tombstoned. Search rows are derived, so retire orphans.
+                db.execSQL("""UPDATE `CatalogSearchRow` SET `deleted` = 1
+                    WHERE `deleted` = 0 AND NOT EXISTS (
+                        SELECT 1 FROM `CatalogItemRow` item
+                        WHERE item.`profile` = `CatalogSearchRow`.`profile`
+                        AND item.`type` = `CatalogSearchRow`.`type`
+                        AND item.`id` = `CatalogSearchRow`.`id`
+                        AND item.`bucket` != '@search' AND item.`deleted` = 0)""")
             }
         }
     }
@@ -163,14 +343,15 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
     suspend fun browse(profile: String, type: CatalogType): BrowseCatalogCache? {
         migrate(profile, type)
         return db.withTransaction {
-            val buckets = dao.buckets(profile, type.name).filterNot { it.bucket == SEARCH }
+            val buckets = dao.buckets(profile, type.name)
+                .filterNot { it.bucket == SEARCH || it.bucket == EMPTY_BUCKET }
             if (buckets.isEmpty()) return@withTransaction null
             val allRows = dao.items(profile, type.name)
-            val latest = allRows.sortedWith(compareByDescending<CatalogItemRow> { it.observedAt }.thenByDescending { it.deleted }).distinctBy { it.id }
-            val retired = latest.filter { it.deleted }.map { it.id }.toSet()
-            val rows = allRows.filterNot { it.deleted || it.id in retired }.groupBy { it.bucket }
+            val liveRows = allRows.filterNot { it.deleted }
+            val latest = liveRows.sortedByDescending { it.observedAt }.distinctBy { it.id }
+            val rows = liveRows.groupBy { it.bucket }
             val allComplete = buckets.any { it.bucket == "*" && it.page > 0 && !it.hasMore }
-            val derived = if (allComplete) latest.filterNot { it.deleted }.map { json.decodeFromString<MediaItem>(it.payload) }
+            val derived = if (allComplete) latest.map { json.decodeFromString<MediaItem>(it.payload) }
                 .groupBy { it.portalCategoryId } else emptyMap()
             BrowseCatalogCache(profile, type, buckets.maxOf { it.observedAt },
                 buckets.map { Category(it.bucket, it.title, type) },
@@ -189,7 +370,8 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
             val buckets = dao.buckets(profile, type.name)
             if (buckets.isEmpty() && rows.isEmpty()) return@withTransaction null
             SearchCatalogCache(profile, type, buckets.maxOfOrNull { it.observedAt } ?: 0L,
-                rows.sortedWith(compareByDescending<CatalogItemRow> { it.observedAt }.thenByDescending { it.deleted }).distinctBy { it.id }.filterNot { it.deleted }.map { json.decodeFromString<MediaItem>(it.payload) },
+                rows.filterNot { it.deleted }.sortedByDescending { it.observedAt }.distinctBy { it.id }
+                    .map { json.decodeFromString<MediaItem>(it.payload) },
                 buckets.filter { !it.hasMore && it.bucket != SEARCH }.map { it.bucket }.toSet())
         }
     }
@@ -197,7 +379,6 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
     suspend fun media(profile: String, type: CatalogType, id: String): MediaItem? {
         migrate(profile, type)
         val rows = dao.item(profile, type.name, id)
-        if (rows.firstOrNull()?.deleted == true) return null
         return rows.filterNot { it.deleted }.map { json.decodeFromString<MediaItem>(it.payload) }
             .firstOrNull { !it.command.isNullOrBlank() }
     }
@@ -261,6 +442,7 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
                 json.encodeToString(item), observedAt)
         })
         dao.putSearchRows(items.map { it.asSearchRow(profile, type, observedAt) })
+        if (items.isNotEmpty()) dao.confirmRefreshItems(profile, type.name, category.id, items.map { it.id })
     }
 
     suspend fun saveSearch(cache: SearchCatalogCache) = db.withTransaction {
@@ -281,7 +463,189 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         }
     }
 
+    suspend fun scanCheckpoint(profile: PortalProfile, type: CatalogType): CatalogScanCheckpoint {
+        val key = profile.cacheKey()
+        migrate(key, type)
+        return db.withTransaction {
+            val buckets = dao.buckets(key, type.name).filterNot { it.bucket == SEARCH }
+            val scanBuckets = buckets.firstOrNull { it.bucket == "*" }?.let(::listOf) ?: buckets
+            val incomplete = scanBuckets.firstOrNull { it.page <= 0 || it.hasMore }
+            CatalogScanCheckpoint(
+                hasData = scanBuckets.isNotEmpty() && scanBuckets.any { it.page > 0 },
+                complete = scanBuckets.isNotEmpty() && incomplete == null,
+                currentCategory = incomplete?.title.orEmpty(),
+                currentPage = incomplete?.page ?: scanBuckets.maxOfOrNull { it.page } ?: 0,
+                updatedAt = buckets.maxOfOrNull { it.observedAt } ?: 0L
+            )
+        }
+    }
+
+    /** Cursor/count-only scanner state; never materializes full provider payloads. */
+    suspend fun scanState(profile: PortalProfile, type: CatalogType): CatalogScanState {
+        val key = profile.cacheKey()
+        migrate(key, type)
+        return db.withTransaction {
+            val buckets = dao.buckets(key, type.name).filterNot { it.bucket == SEARCH }
+            CatalogScanState(
+                cachedAtMillis = buckets.maxOfOrNull { it.observedAt } ?: 0L,
+                categories = buckets.filterNot { it.bucket == EMPTY_BUCKET }
+                    .map { Category(it.bucket, it.title, type) },
+                pagesByCategory = buckets.associate { it.bucket to it.page },
+                hasMoreByCategory = buckets.associate { it.bucket to it.hasMore },
+                itemCountsByCategory = dao.bucketItemCounts(key, type.name)
+                    .associate { it.bucket to it.count },
+                totalItems = dao.canonicalItemCount(key, type.name)
+            )
+        }
+    }
+
+    internal suspend fun storedBucketItemCount(profile: String, type: CatalogType, bucket: String): Int =
+        dao.bucketItemCount(profile, type.name, bucket)
+
+    fun observeUpdateStatuses(profile: PortalProfile): Flow<List<CatalogTypeUpdateRow>> =
+        dao.observeUpdateRows(profile.cacheKey())
+
+    internal suspend fun updateStatus(profile: PortalProfile, type: CatalogType): CatalogTypeUpdateRow? =
+        dao.updateRow(profile.cacheKey(), type.name)
+
+    internal suspend fun saveUpdateStatus(row: CatalogTypeUpdateRow) {
+        dao.putUpdateRows(listOf(row))
+    }
+
+    internal suspend fun providerBaselines(
+        profile: PortalProfile,
+        type: CatalogType
+    ): List<CatalogProviderBaselineRow> {
+        migrate(profile.cacheKey(), type)
+        return dao.providerBaselines(profile.cacheKey(), type.name)
+    }
+
+    internal suspend fun storedPageIds(
+        profile: PortalProfile,
+        type: CatalogType,
+        category: String,
+        page: Int
+    ): List<String> {
+        val start = ((page.coerceAtLeast(1) - 1).toLong() * PAGE_POSITION_STRIDE)
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val end = (start.toLong() + PAGE_POSITION_STRIDE)
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        return dao.itemIdsInPositionRange(profile.cacheKey(), type.name, category, start, end)
+    }
+
+    /** Build a comparison baseline from a fully committed Room scan, without provider I/O. */
+    suspend fun promoteProviderBaseline(
+        profile: PortalProfile,
+        type: CatalogType,
+        completedAt: Long = System.currentTimeMillis()
+    ): Boolean {
+        val key = profile.cacheKey()
+        migrate(key, type)
+        return db.withTransaction {
+            val buckets = dao.buckets(key, type.name).filterNot { it.bucket == SEARCH }
+            val scanBuckets = buckets.firstOrNull { it.bucket == "*" }?.let(::listOf) ?: buckets
+            if (scanBuckets.isEmpty() || scanBuckets.any { it.page <= 0 || it.hasMore }) {
+                return@withTransaction false
+            }
+            dao.clearProviderBaselines(key, type.name)
+            dao.putProviderBaselines(buckets.map { bucket ->
+                val firstIds = if (bucket.page > 0) storedPageIds(profile, type, bucket.bucket, 1) else emptyList()
+                val lastIds = if (bucket.page > 0) storedPageIds(profile, type, bucket.bucket, bucket.page) else emptyList()
+                CatalogProviderBaselineRow(
+                    profile = key,
+                    type = type.name,
+                    category = bucket.bucket,
+                    title = bucket.title,
+                    lastPage = bucket.page,
+                    // Provider capacity/totals are not reconstructible from filtered, deduplicated rows.
+                    pageSize = 0,
+                    totalItems = 0,
+                    firstPageHash = catalogPageFingerprint(firstIds),
+                    lastPageHash = catalogPageFingerprint(lastIds),
+                    completedAt = completedAt
+                )
+            })
+            true
+        }
+    }
+
+    internal suspend fun ensureProviderBaseline(
+        profile: PortalProfile,
+        type: CatalogType
+    ): List<CatalogProviderBaselineRow> {
+        val existing = providerBaselines(profile, type)
+        if (existing.isNotEmpty()) return existing
+        val checkpoint = scanCheckpoint(profile, type)
+        if (checkpoint.complete) promoteProviderBaseline(profile, type, checkpoint.updatedAt)
+        return providerBaselines(profile, type)
+    }
+
+    suspend fun markTypeSynced(profile: PortalProfile, type: CatalogType, at: Long): Boolean {
+        if (!promoteProviderBaseline(profile, type, at)) return false
+        saveUpdateStatus(CatalogTypeUpdateRow(
+            profile = profile.cacheKey(),
+            type = type.name,
+            state = CatalogUpdateState.NO_CHANGES.name,
+            detail = "Synced with provider.",
+            checkedAt = at
+        ))
+        return true
+    }
+
+    /** Retire records not seen during a successfully completed refresh generation. */
+    suspend fun reconcileSuccessfulRefresh(
+        profile: PortalProfile,
+        type: CatalogType,
+        providerCategories: List<Category>,
+        startedAt: Long,
+        confirmedEmpty: Boolean = false,
+        at: Long = System.currentTimeMillis()
+    ): Boolean {
+        val active = providerCategories.filter { it.id.isNotBlank() }.distinctBy { it.id }.map { it.id }
+        if (active.isEmpty() && !confirmedEmpty) return false
+        val key = profile.cacheKey()
+        return db.withTransaction {
+            val ownsRefreshGeneration = startedAt > 0L &&
+                dao.refreshGenerationCount(key, type.name, startedAt.toString()) > 0
+            // A restored/legacy resume may safely reconcile category topology, but it
+            // must never retire unseen rows inside an active category. Only the Room-
+            // backed generation created with the candidate snapshot may do that.
+            if (confirmedEmpty && !ownsRefreshGeneration &&
+                dao.canonicalItemCount(key, type.name) > 0) {
+                return@withTransaction false
+            }
+            // Candidates were snapshotted atomically with restartScan. Anything not
+            // confirmed by a committed provider page is absent from the completed refresh.
+            if (ownsRefreshGeneration) dao.retireRefreshCandidates(key, type.name, at)
+            dao.clearRefreshCandidates(key, type.name)
+            if (confirmedEmpty) {
+                dao.clearBuckets(key, type.name)
+                dao.putBuckets(listOf(CatalogBucketRow(
+                    profile = key,
+                    type = type.name,
+                    bucket = EMPTY_BUCKET,
+                    title = "Empty provider catalog",
+                    page = 1,
+                    hasMore = false,
+                    observedAt = at
+                )))
+            } else {
+                dao.retireRowsOutsideCategories(key, type.name, active, at)
+                dao.removeBucketsOutsideCategories(key, type.name, active)
+            }
+            dao.retireOrphanedSearchRows(key, type.name, at)
+            true
+        }
+    }
+
     private suspend fun ensureSearchIndex(profile: String, type: CatalogType) {
+        db.withTransaction {
+            val repairKey = "compact-search-v3:$profile:${type.name}"
+            if (dao.migrated(repairKey) == 0) {
+                dao.retireOrphanedSearchRows(profile, type.name, System.currentTimeMillis())
+                dao.markMigrated(CatalogMigration(repairKey))
+            }
+        }
         val canonicalCount = dao.canonicalItemCount(profile, type.name)
         if (canonicalCount == 0 || dao.searchRowCount(profile, type.name) >= canonicalCount) return
         var offset = 0
@@ -301,10 +665,10 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
             !row.deleted && row.id !in seen && (category == "*" || row.bucket == category ||
                 json.decodeFromString<MediaItem>(row.payload).portalCategoryId == category)
         }
-        dao.putItems(missing.map { it.copy(deleted = true, observedAt = at) })
-        dao.putSearchRows(missing.map { row ->
-            json.decodeFromString<MediaItem>(row.payload).asSearchRow(profile, type, at).copy(deleted = true)
+        dao.putItems(missing.map { row ->
+            row.copy(deleted = true, observedAt = maxOf(at, row.observedAt + 1))
         })
+        dao.retireOrphanedSearchRows(profile, type.name, at)
     }
 
     suspend fun migrateEpisodes(caches: List<EpisodeSeasonCache>) = db.withTransaction {
@@ -346,14 +710,24 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         dao.putSearchRows(canonicalItems.filterNot { it.deleted }.map { row ->
             json.decodeFromString<MediaItem>(row.payload).asSearchRow(key, remote.type, row.observedAt)
         })
+        dao.retireOrphanedSearchRows(
+            key,
+            remote.type.name,
+            canonicalItems.maxOfOrNull { it.observedAt } ?: System.currentTimeMillis()
+        )
         dao.putBuckets(merged.buckets.filterNot { it.bucket == SEARCH }.map {
             require(it.type == remote.type.name); it.copy(profile = key)
         })
         dao.putEpisodes(merged.episodes.map {
             val cache = json.decodeFromString<EpisodeSeasonCache>(it.payload)
             require(cache.seriesId == it.series && (cache.season ?: -1) == it.season)
-            it.copy(profile = key, payload = json.encodeToString(cache.copy(profileKey = key)))
+                it.copy(profile = key, payload = json.encodeToString(cache.copy(profileKey = key)))
         })
+        // The restored snapshot is now the comparison source. A prior device-local
+        // baseline, verdict, or in-flight refresh candidate set no longer describes it.
+        dao.clearProviderBaselines(key, remote.type.name)
+        dao.clearUpdateRow(key, remote.type.name)
+        dao.clearRefreshCandidates(key, remote.type.name)
     }
 
     internal suspend fun mergeCheckpoint(profile: PortalProfile, checkpoint: CatalogCheckpoint) = db.withTransaction {
@@ -365,12 +739,23 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         checkpoint.snapshots.forEach { mergeSnapshot(profile, it) }
     }
 
-    suspend fun restartScan(profile: PortalProfile, type: CatalogType) {
+    suspend fun restartScan(profile: PortalProfile, type: CatalogType): Long {
         migrate(profile.cacheKey(), type)
-        db.withTransaction {
-            dao.putBuckets(dao.buckets(profile.cacheKey(), type.name).map {
-                it.copy(page = 0, hasMore = true, observedAt = System.currentTimeMillis())
+        return db.withTransaction {
+            val key = profile.cacheKey()
+            val generation = System.currentTimeMillis()
+            dao.clearRefreshCandidates(key, type.name)
+            dao.stageRefreshCandidates(key, type.name)
+            dao.putRefreshCandidates(listOf(CatalogRefreshCandidateRow(
+                profile = key,
+                type = type.name,
+                bucket = REFRESH_GENERATION_BUCKET,
+                id = generation.toString()
+            )))
+            dao.putBuckets(dao.buckets(key, type.name).map {
+                it.copy(page = 0, hasMore = true, observedAt = generation)
             })
+            generation
         }
     }
 
@@ -435,9 +820,13 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
     suspend fun clear() = db.withTransaction {
         dao.clearItems(); dao.clearBuckets(); dao.clearEpisodes()
         dao.clearAllSearchRows()
+        dao.clearProviderBaselines(); dao.clearUpdateRows()
+        dao.clearRefreshCandidates()
     }
     companion object {
         private const val SEARCH = "@search"
+        internal const val EMPTY_BUCKET = "@empty"
+        private const val REFRESH_GENERATION_BUCKET = "@generation"
         private const val PAGE_POSITION_STRIDE = 1_000L
         private const val INDEX_REBUILD_BATCH = 1_000
     }

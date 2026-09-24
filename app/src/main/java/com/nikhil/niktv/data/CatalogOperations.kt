@@ -25,6 +25,8 @@ internal data class CatalogOperationProgress(
     val category: String = "",
     val categoryPosition: Int = 0,
     val categoryCount: Int = 0,
+    val mediaPosition: Int = 0,
+    val mediaCount: Int = 0,
     val page: Int = 0,
     val totalPages: Int = 0,
     val recordsInPage: Int = 0,
@@ -35,22 +37,46 @@ internal data class CatalogOperationProgress(
     val estimatedRemainingMillis: Long = 0
 ) {
     val fraction: Float?
-        get() = when {
+        get() {
+            if (phase.equals("Complete", ignoreCase = true)) return 1f
+            val raw = when {
             totalParts > 0 -> part.toFloat() / totalParts
+            mediaCount > 0 && categoryCount > 0 && totalPages > 0 -> {
+                val categoryFraction = ((categoryPosition - 1).coerceAtLeast(0) +
+                    page.toFloat() / totalPages.coerceAtLeast(page).coerceAtLeast(1)) /
+                    categoryCount
+                ((mediaPosition - 1).coerceAtLeast(0) + categoryFraction) / mediaCount
+            }
+            mediaCount > 0 && categoryCount > 0 -> {
+                val completedCategories = if (phase.startsWith("Finalizing", ignoreCase = true)) {
+                    categoryPosition
+                } else {
+                    (categoryPosition - 1).coerceAtLeast(0)
+                }
+                val categoryFraction = completedCategories.toFloat() / categoryCount
+                ((mediaPosition - 1).coerceAtLeast(0) + categoryFraction) / mediaCount
+            }
+            categoryCount > 0 && totalPages > 0 ->
+                ((categoryPosition - 1).coerceAtLeast(0) +
+                    page.toFloat() / totalPages.coerceAtLeast(page).coerceAtLeast(1)) /
+                    categoryCount
             totalPages > 0 -> page.toFloat() / totalPages
-            categoryCount > 0 -> categoryPosition.toFloat() / categoryCount
+            categoryCount > 0 -> {
+                val completedCategories = if (phase.startsWith("Finalizing", ignoreCase = true)) {
+                    categoryPosition
+                } else {
+                    (categoryPosition - 1).coerceAtLeast(0)
+                }
+                completedCategories.toFloat() / categoryCount
+            }
+            mediaCount > 0 -> (mediaPosition - 1).coerceAtLeast(0).toFloat() / mediaCount
             else -> null
-        }?.coerceIn(0f, 1f)
+            }?.coerceIn(0f, 1f)
+            return raw?.coerceAtMost(0.999f)
+        }
 
     val percentText: String?
-        get() = fraction?.let { value ->
-            val percent = if (totalPages > 0 && page < totalPages) {
-                (value * 100f).coerceAtMost(99.9f)
-            } else {
-                value * 100f
-            }
-            String.format(Locale.US, "%.1f%%", percent)
-        }
+        get() = fraction?.let { String.format(Locale.US, "%.1f%%", it * 100f) }
 }
 
 /** Durable device-only controls. A stop never discards a committed page or file. */
@@ -93,6 +119,12 @@ internal object CatalogOperations {
     fun pageTotal(context: Context, key: String, category: String, total: Int?) {
         if (total == null || total <= 0) return
         prefs(context).edit().putInt("total:$key:$category", total).apply()
+    }
+    fun clearPageTotals(context: Context, key: String, mediaType: String) {
+        val prefix = "total:$key:$mediaType:"
+        val editor = prefs(context).edit()
+        prefs(context).all.keys.filter { it.startsWith(prefix) }.forEach(editor::remove)
+        editor.commit()
     }
     fun observe(context: Context, key: String) = callbackFlow {
         val p = prefs(context)

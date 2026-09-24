@@ -156,6 +156,8 @@ class CatalogRepositoryTest {
         repository.saveBrowse(cache("10"))
         val id = SearchMetadataDocuments.anonymousProfileId(profile)
         val snapshots = listOf(CatalogType.MOVIES, CatalogType.LIVE_TV, CatalogType.SERIES).map { repository.snapshot(profile, it) }
+        assertEquals(3, snapshots.size)
+        assertEquals(2, snapshots.count { it.items.isEmpty() })
         val checkpoint = CatalogCheckpoint(profileId = id, createdAt = 100, scanCompletedAt = 90, snapshots = snapshots)
         repository.clear()
         repository.mergeCheckpoint(profile, checkpoint)
@@ -228,6 +230,25 @@ class CatalogRepositoryTest {
         assertEquals(listOf("10"), repository.searchIndex(profile.cacheKey(), type, "movie 10").map { it.id })
     }
 
+    @Test fun compactIndexRepairRetiresEqualCountOrphanBeforeRebuilding() = runBlocking {
+        repository.saveBrowse(cache("10"))
+        db.catalog().clearSearchRows(profile.cacheKey(), type.name)
+        db.catalog().putSearchRows(listOf(CatalogSearchRow(
+            profile = profile.cacheKey(),
+            type = type.name,
+            id = "stale",
+            title = "Stale movie",
+            normalizedTitle = "stale movie",
+            categoryId = "1",
+            externalTmdbId = null,
+            channelNumber = null,
+            observedAt = 200
+        )))
+
+        assertTrue(repository.searchIndex(profile.cacheKey(), type, "stale").isEmpty())
+        assertEquals(listOf("10"), repository.searchIndex(profile.cacheKey(), type, "movie 10").map { it.id })
+    }
+
     @Test fun incrementalPageCommitPreservesEarlierRowsAndAdvancesOnlyItsBucket() = runBlocking {
         repository.saveBrowse(cache("10", "20"))
         val categories = listOf(Category("1", "Movies", type), Category("2", "Other", type))
@@ -259,6 +280,76 @@ class CatalogRepositoryTest {
         assertEquals(1, repository.resumeScanIndex(profile))
     }
 
+    @Test fun snapshotMergeInvalidatesProviderBaselineAndUpdateVerdict() = runBlocking {
+        repository.saveBrowse(cache("10", "20"))
+        assertTrue(repository.promoteProviderBaseline(profile, type, completedAt = 150L))
+        repository.saveUpdateStatus(CatalogTypeUpdateRow(
+            profile = profile.cacheKey(),
+            type = type.name,
+            state = CatalogUpdateState.UPDATE_AVAILABLE.name,
+            detail = "2 new provider pages available.",
+            newPages = 2,
+            newPagesExact = true,
+            checkedAt = 200L
+        ))
+        val restored = repository.snapshot(profile, type)
+
+        repository.mergeSnapshot(profile, restored)
+
+        assertTrue(repository.providerBaselines(profile, type).isEmpty())
+        assertNull(repository.updateStatus(profile, type))
+    }
+
+    @Test fun newerSnapshotTombstoneRetiresExistingCompactSearchRow() = runBlocking {
+        repository.saveBrowse(cache("10", at = 100))
+        val snapshot = repository.snapshot(profile, type)
+        val remote = snapshot.copy(items = snapshot.items.map {
+            it.copy(deleted = true, observedAt = 300)
+        })
+
+        repository.mergeSnapshot(profile, remote)
+
+        assertTrue(repository.searchIndex(profile.cacheKey(), type, "movie 10").isEmpty())
+        assertNull(repository.media(profile.cacheKey(), type, "10"))
+    }
+
+    @Test fun removedBucketDoesNotDeleteSharedIdFromCompactSearch() = runBlocking {
+        val action = Category("action", "Action", type)
+        val drama = Category("drama", "Drama", type)
+        val sharedInAction = movie("shared").copy(portalCategoryId = action.id)
+        val sharedInDrama = movie("shared").copy(portalCategoryId = drama.id)
+        repository.saveBrowse(BrowseCatalogCache(
+            profileKey = profile.cacheKey(),
+            type = type,
+            cachedAtMillis = 100L,
+            categories = listOf(action, drama),
+            itemsByCategory = mapOf(action.id to listOf(sharedInAction), drama.id to listOf(sharedInDrama)),
+            pagesByCategory = mapOf(action.id to 1, drama.id to 1),
+            hasMoreByCategory = mapOf(action.id to false, drama.id to false)
+        ))
+        repository.saveBrowsePage(
+            profile = profile.cacheKey(),
+            type = type,
+            categories = listOf(action),
+            category = action,
+            page = 1,
+            items = listOf(sharedInAction),
+            hasMore = false,
+            observedAt = 300L
+        )
+
+        repository.reconcileSuccessfulRefresh(
+            profile = profile,
+            type = type,
+            providerCategories = listOf(action),
+            startedAt = 200L,
+            at = 400L
+        )
+
+        assertEquals(listOf("shared"), repository.searchIndex(profile.cacheKey(), type, "shared").map { it.id })
+        assertEquals(listOf(action.id), repository.snapshot(profile, type).buckets.map { it.bucket })
+    }
+
     @Test fun tmdbSeriesMatchingFindsPersistedTitleWithoutVisibleBrowseItems() = runBlocking {
         val item = movie("463114").copy(title = "India's Got Latent (Hindi)")
         repository.saveBrowse(BrowseCatalogCache(profile.cacheKey(), CatalogType.SERIES, 100,
@@ -267,5 +358,126 @@ class CatalogRepositoryTest {
         val tmdb = TmdbSeries(123, "India's Got Latent", "India's Got Latent", null, null, null, "2024-01-01", null)
         val persisted = repository.search(profile.cacheKey(), CatalogType.SERIES)!!.items
         assertEquals("463114", rankTmdbSeriesMatches(tmdb, persisted).single().id)
+    }
+
+    @Test fun completedRefreshRetiresUnseenRowsAndRemovedCategories() = runBlocking {
+        val retained = movie("10")
+        val removedFromActiveCategory = movie("20")
+        val removedCategoryItem = movie("30").copy(portalCategoryId = "2")
+        val categories = listOf(
+            Category("1", "Movies", type),
+            Category("2", "Removed", type)
+        )
+        repository.saveBrowse(BrowseCatalogCache(
+            profile.cacheKey(), type, 10_000, categories,
+            mapOf("1" to listOf(retained, removedFromActiveCategory), "2" to listOf(removedCategoryItem)),
+            mapOf("1" to 1, "2" to 1), mapOf("1" to false, "2" to false)
+        ))
+        val generation = repository.restartScan(profile, type)
+
+        repository.saveBrowsePage(
+            profile.cacheKey(), type, listOf(categories.first()), categories.first(), page = 1,
+            items = listOf(retained), hasMore = false, observedAt = 300
+        )
+        repository.reconcileSuccessfulRefresh(
+            profile, type, listOf(categories.first()), startedAt = generation, at = 400
+        )
+
+        assertEquals(listOf("10"), repository.search(profile.cacheKey(), type)!!.items.map { it.id })
+        assertEquals(listOf("1"), repository.snapshot(profile, type).buckets.map { it.bucket })
+        assertNull(repository.media(profile.cacheKey(), type, "20"))
+        assertNull(repository.media(profile.cacheKey(), type, "30"))
+    }
+
+    @Test fun confirmedEmptyRefreshCreatesCompleteCheckpointAndRetiresOldRows() = runBlocking {
+        repository.saveBrowse(cache("10", "20", at = 100))
+        val generation = repository.restartScan(profile, type)
+
+        repository.reconcileSuccessfulRefresh(
+            profile = profile,
+            type = type,
+            providerCategories = emptyList(),
+            startedAt = generation,
+            confirmedEmpty = true,
+            at = 300
+        )
+
+        val checkpoint = repository.scanCheckpoint(profile, type)
+        assertTrue(checkpoint.hasData)
+        assertTrue(checkpoint.complete)
+        assertNull(repository.browse(profile.cacheKey(), type))
+        assertTrue(repository.searchIndex(profile.cacheKey(), type, "movie").isEmpty())
+        assertEquals(listOf(CatalogRepository.EMPTY_BUCKET),
+            repository.snapshot(profile, type).buckets.map { it.bucket })
+        assertTrue(repository.promoteProviderBaseline(profile, type, completedAt = 400))
+    }
+
+    @Test fun markerlessConfirmedEmptyCreatesCheckpointOnlyWhenNoLiveRowsExist() = runBlocking {
+        assertTrue(repository.reconcileSuccessfulRefresh(
+            profile = profile,
+            type = type,
+            providerCategories = emptyList(),
+            startedAt = 0,
+            confirmedEmpty = true,
+            at = 300
+        ))
+        assertTrue(repository.scanCheckpoint(profile, type).complete)
+
+        repository.saveBrowse(cache("10", at = 400))
+        assertFalse(repository.reconcileSuccessfulRefresh(
+            profile = profile,
+            type = type,
+            providerCategories = emptyList(),
+            startedAt = 0,
+            confirmedEmpty = true,
+            at = 500
+        ))
+        assertEquals(listOf("10"), repository.search(profile.cacheKey(), type)!!.items.map { it.id })
+    }
+
+    @Test fun markerlessResumeReconcilesRemovedCategoriesWithoutRetiringActiveRows() = runBlocking {
+        val active = Category("1", "Movies", type)
+        val removed = Category("2", "Removed", type)
+        repository.saveBrowse(BrowseCatalogCache(
+            profile.cacheKey(), type, 100,
+            listOf(active, removed),
+            mapOf(
+                active.id to listOf(movie("10"), movie("20")),
+                removed.id to listOf(movie("30").copy(portalCategoryId = removed.id))
+            ),
+            mapOf(active.id to 1, removed.id to 1),
+            mapOf(active.id to false, removed.id to true)
+        ))
+
+        assertTrue(repository.reconcileSuccessfulRefresh(
+            profile = profile,
+            type = type,
+            providerCategories = listOf(active),
+            startedAt = 0,
+            at = 300
+        ))
+
+        assertEquals(setOf("10", "20"), repository.search(profile.cacheKey(), type)!!.items.map { it.id }.toSet())
+        assertEquals(listOf(active.id), repository.snapshot(profile, type).buckets.map { it.bucket })
+        assertTrue(repository.scanCheckpoint(profile, type).complete)
+    }
+
+    @Test fun baselinePromotionIsPerTypeAndDoesNotChangeCheckpoint() = runBlocking {
+        repository.saveBrowse(cache("10", "20", at = 100))
+        val before = repository.scanCheckpoint(profile, type)
+
+        assertTrue(repository.promoteProviderBaseline(profile, type, completedAt = 200))
+        repository.markTypeSynced(profile, type, at = 250)
+
+        assertEquals(before, repository.scanCheckpoint(profile, type))
+        val baseline = repository.providerBaselines(profile, type).single()
+        assertEquals("1", baseline.category)
+        assertEquals(1, baseline.lastPage)
+        assertEquals(0, baseline.totalItems)
+        assertEquals(250L, baseline.completedAt)
+        val status = repository.updateStatus(profile, type)!!
+        assertEquals(CatalogUpdateState.NO_CHANGES, status.updateState)
+        assertEquals(250L, status.checkedAt)
+        assertTrue(repository.providerBaselines(profile, CatalogType.SERIES).isEmpty())
     }
 }

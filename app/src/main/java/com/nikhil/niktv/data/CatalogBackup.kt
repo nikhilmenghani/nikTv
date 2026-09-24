@@ -93,7 +93,10 @@ class CatalogBackupManager(context: Context) {
             val scanCompleteBefore = if (CatalogScanPreferences.cursor(app, profileId) == -1)
                 CatalogScanPreferences.completed(app, profileId) else 0L
             val plans = mediaTypes.associateWith { repository.snapshotPlan(profile, it) }
-            val checkpointEnabled = mediaTypes == types && plans.values.sumOf { it.recordCount } in 1..MAX_CHECKPOINT_RECORDS
+            val checkpointRecords = plans.values.sumOf { it.recordCount }
+            val checkpointEnabled = mediaTypes == types &&
+                checkpointRecords <= MAX_CHECKPOINT_RECORDS &&
+                plans.values.any { it.recordCount > 0 || it.buckets.isNotEmpty() }
             val checkpointSnapshots = mutableListOf<CatalogSnapshot>()
             for ((typeIndex, type) in mediaTypes.withIndex()) {
                 currentCoroutineContext().ensureActive()
@@ -110,10 +113,13 @@ class CatalogBackupManager(context: Context) {
                     part = typeIndex, totalParts = mediaTypes.size
                 ))
                 val plan = requireNotNull(plans[type])
-                if (plan.recordCount == 0) continue
-                val smallSnapshot = if (plan.recordCount <= LEGACY_FINGERPRINT_MAX_RECORDS)
+                val smallSnapshot = if (checkpointEnabled ||
+                    plan.recordCount in 1..LEGACY_FINGERPRINT_MAX_RECORDS)
                     repository.snapshot(profile, type) else null
                 if (checkpointEnabled) checkpointSnapshots += requireNotNull(smallSnapshot)
+                // All-type checkpoints require one snapshot for every media type,
+                // including a bucket-only confirmed-empty or unscanned snapshot.
+                if (plan.recordCount == 0 && plan.buckets.isEmpty()) continue
                 try {
                     if (uploadSnapshot(config, profile, plan, smallSnapshot)) uploaded++
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -125,7 +131,6 @@ class CatalogBackupManager(context: Context) {
                 }
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
             }
-            val checkpointRecords = plans.values.sumOf { it.recordCount }
             if (checkpointEnabled) {
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
                 CatalogOperations.message(app, CatalogOperations.BACKUP, "${profile.name} · Creating dated restore checkpoint")
@@ -248,6 +253,7 @@ class CatalogBackupManager(context: Context) {
                 val id = SearchMetadataDocuments.anonymousProfileId(profile)
                 val chunked = restoreChunked(config, profile, type, id)
                 if (chunked > 0) {
+                    clearRefreshState(profile, type)
                     imported += chunked
                     continue
                 }
@@ -275,6 +281,7 @@ class CatalogBackupManager(context: Context) {
                     require(snapshot.type == type && snapshot.profileId == id && snapshot.schemaVersion == 1)
                     CatalogOperations.message(app, "restore", "${profile.name} · ${type.title} · Merging ${snapshot.items.size} Room records")
                     repository.mergeSnapshot(profile, snapshot)
+                    clearRefreshState(profile, type)
                     imported++
                 }
             }
@@ -376,6 +383,7 @@ class CatalogBackupManager(context: Context) {
                 val checkpoint = json.decodeFromString<CatalogCheckpoint>(decoded)
                 CatalogOperations.message(app, "restore", "${profile.name} · Validating and merging checkpoint into Room")
                 repository.mergeCheckpoint(profile, checkpoint)
+                types.forEach { type -> clearRefreshState(profile, type) }
                 CatalogOperations.message(app, "restore", "Complete · ${profile.name} checkpoint merged.")
                 CatalogScanPreferences.completed(app, id, maxOf(CatalogScanPreferences.completed(app, id), checkpoint.scanCompletedAt))
                 CatalogScanPreferences.restoredCursor(app, id, repository.resumeScanIndex(profile))
@@ -384,6 +392,12 @@ class CatalogBackupManager(context: Context) {
                 checkpoint.snapshots.size
             }
         }
+
+    private fun clearRefreshState(profile: PortalProfile, type: CatalogType) {
+        val id = CatalogScanPreferences.id(profile)
+        CatalogScanPreferences.refreshStartedAt(app, id, type.name, 0L)
+        CatalogScanPreferences.activeType(app, id, null)
+    }
 
     internal fun encodePayload(compressedBase64: String, passphrase: String): String =
         if (passphrase.isBlank()) JSONObject()

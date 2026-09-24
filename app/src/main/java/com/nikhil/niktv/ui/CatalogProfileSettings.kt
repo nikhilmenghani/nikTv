@@ -68,7 +68,7 @@ internal fun CatalogProfileSettings(
     var busy by remember(id) { mutableStateOf(false) }
     var message by remember(id) { mutableStateOf<String?>(null) }
     var selectedCheckpoint by remember(id) { mutableStateOf<CatalogCheckpointFile?>(null) }
-    var confirmFullScan by remember(id) { mutableStateOf(false) }
+    var confirmRefreshAll by remember(id) { mutableStateOf(false) }
     BackupSettingsActionRow(Icons.Default.AccountCircle, "Profile · ${profile.name}",
         "All catalog actions below apply to this profile until you change it.", onClick = { chooseProfile = true })
     if (chooseProfile) AlertDialog(
@@ -81,26 +81,33 @@ internal fun CatalogProfileSettings(
                 chooseProfile = false
             }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
         } } }, confirmButton = { NikTvTextActionButton(onClick = { chooseProfile = false }) { Text("Close") } })
-    if (confirmFullScan) ProjectCardConfirmationDialog(
-        title = "Start a full ${profile.name} scan?",
-        message = "A full scan starts again with Live TV and refreshes every provider page for Live TV, Movies and Series. Existing records remain available while it runs, but it does not continue the restored Movies cursor. Use Resume scan when you want to continue from the last backed-up page.",
-        confirmLabel = "Start full scan",
-        close = { confirmFullScan = false },
+    if (confirmRefreshAll) ProjectCardConfirmationDialog(
+        title = "Refresh all ${profile.name} media?",
+        message = "Refresh all starts again with Live TV and revisits every provider page for Live TV, Movies and Series. Existing records remain available while it runs. Use a media-type Resume action when you only want to continue saved progress.",
+        confirmLabel = "Refresh all",
+        close = { confirmRefreshAll = false },
         confirm = {
-            confirmFullScan = false
+            confirmRefreshAll = false
             SearchMetadataSyncScheduler.fullScan(context, profile)
         }
     )
     CatalogOperationPanel(CatalogOperations.scan(id), "Catalog scan", onStart = {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }, onRetry = { SearchMetadataSyncScheduler.retryQueued(context, profile) },
-        onFullScan = { confirmFullScan = true },
+        onCheckUpdates = { SearchMetadataSyncScheduler.checkForUpdates(context, profile) },
+        onFullScan = { confirmRefreshAll = true },
         onRestoredResume = if (restoredAt > 0L && restoredType != null) ({
             SearchMetadataSyncScheduler.resumeRestored(context, profile)
         }) else null,
-        restoredResumeLabel = restoredType?.let { "Resume restored ${it.title}" } ?: "Resume restored") {
+        restoredResumeLabel = restoredType?.let { "Resume ${it.title}" } ?: "Resume backup") {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }
+    CatalogTypeUpdatePanels(
+        profile = profile,
+        onCheck = { type -> SearchMetadataSyncScheduler.checkForUpdates(context, profile, type) },
+        onResume = { type -> SearchMetadataSyncScheduler.resumeType(context, profile, type) },
+        onRefresh = { type -> SearchMetadataSyncScheduler.refreshType(context, profile, type) }
+    )
     CatalogDatabasePanel(profile)
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Local database update schedule", style = MaterialTheme.typography.titleSmall)

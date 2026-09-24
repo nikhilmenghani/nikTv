@@ -143,7 +143,11 @@ class StalkerPortalClient(private val context: Context) {
         includeEpg: Boolean = true
     ): PortalCatalogPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
-            if (pageSize == null) return@withContext PortalCatalogPage(xtreamCatalog(session, category), 1, false, totalPages = 1)
+            if (pageSize == null) {
+                val items = xtreamCatalog(session, category)
+                return@withContext PortalCatalogPage(items, 1, false, totalPages = 1,
+                    totalItems = items.size, pageSize = items.size)
+            }
             val requestedPage = page.coerceAtLeast(1)
             val start = (requestedPage - 1) * pageSize
             val window = xtreamCatalog(session, category.type, category.id, start, pageSize + 1)
@@ -152,7 +156,8 @@ class StalkerPortalClient(private val context: Context) {
                 items = items,
                 page = requestedPage,
                 hasMore = window.size > pageSize,
-                totalPages = if (window.size <= pageSize) requestedPage else null
+                totalPages = if (window.size <= pageSize) requestedPage else null,
+                pageSize = pageSize
             )
         }
         val action = "get_ordered_list"
@@ -214,7 +219,7 @@ class StalkerPortalClient(private val context: Context) {
             ?: if (total != null && pageSize != null && pageSize > 0) {
                 ((total + pageSize - 1) / pageSize).coerceAtLeast(requestedPage)
             } else null
-        PortalCatalogPage(items, requestedPage, hasMore, totalPages, total)
+        PortalCatalogPage(items, requestedPage, hasMore, totalPages, total, pageSize)
     }
 
     /** Enrich a whole channel page with the separate Ministra guide in one request. */

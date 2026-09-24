@@ -77,6 +77,11 @@ object SearchMetadataSyncScheduler {
     const val MEDIA_TYPE = "media_type"
     const val RESUME_ONLY = "resume_only"
     const val FULL_SCAN = "full_scan"
+    const val CHECK_ONLY = "check_only"
+    const val UPDATE_CHECK_TAG = "niktv-catalog-update-check"
+    internal const val FULL_REFRESH_TAG = "niktv-catalog-full-refresh"
+    internal const val RESUME_SCAN_TAG = "niktv-catalog-resume"
+    internal const val MEDIA_TYPE_TAG_PREFIX = "niktv-catalog-type:"
     fun configureProfile(context: Context, profile: PortalProfile) {
         val id = CatalogScanPreferences.id(profile)
         val hours = CatalogScanPreferences.hours(context, id)
@@ -86,7 +91,9 @@ object SearchMetadataSyncScheduler {
         else manager.enqueueUniquePeriodicWork(name, ExistingPeriodicWorkPolicy.UPDATE,
             PeriodicWorkRequestBuilder<PeriodicCatalogScanWorker>(hours.toLong(), TimeUnit.HOURS)
                 .setInitialDelay(hours.toLong(), TimeUnit.HOURS)
-                .setInputData(workDataOf(PROFILE_ID to id)).setConstraints(constraints()).build())
+                .setInputData(workDataOf(PROFILE_ID to id, FULL_SCAN to true))
+                .addTag(FULL_REFRESH_TAG)
+                .setConstraints(constraints()).build())
     }
 
     /** Ignore the next scheduled periodic run; only running periodic work is active now. */
@@ -108,12 +115,21 @@ object SearchMetadataSyncScheduler {
             return
         }
         val id = CatalogScanPreferences.id(profile)
+        if (!resume) CatalogScanPreferences.activeType(context, id, null)
+        val targetType = if (resume) CatalogScanPreferences.activeType(context, id) else null
         if (resume) CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
         if (CatalogOperations.held(context, CatalogOperations.scan(id))) return
-        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", if (resume) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
-                .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to resume)).setConstraints(constraints())
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        val input = Data.Builder().putString(PROFILE_ID, id).putBoolean(RESUME_ONLY, resume)
+            .apply { targetType?.let { putString(MEDIA_TYPE, it) } }.build()
+        val work = OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+            .setInputData(input).setConstraints(constraints())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .apply {
+                if (resume) addTag(RESUME_SCAN_TAG)
+                targetType?.let { addTag("$MEDIA_TYPE_TAG_PREFIX$it") }
+            }.build()
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id",
+            if (resume) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP, work)
         CatalogScanPreferences.status(context, id, "Scan requested; queued or already running. Existing listings remain searchable.")
         CatalogOperations.message(context, CatalogOperations.scan(id), "Scan queued. Waiting for network/background execution; saved listings remain available.")
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Requested")
@@ -121,10 +137,15 @@ object SearchMetadataSyncScheduler {
 
     fun fullScan(context: Context, profile: PortalProfile) {
         val id = CatalogScanPreferences.id(profile)
+        CatalogScanPreferences.activeType(context, id, null)
+        listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach {
+            CatalogScanPreferences.refreshStartedAt(context, id, it.name, 0L)
+        }
         CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
                 .setInputData(workDataOf(PROFILE_ID to id, FULL_SCAN to true))
+                .addTag(FULL_REFRESH_TAG)
                 .setConstraints(constraints())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
         CatalogScanPreferences.status(context, id, "Full scan requested. Existing records stay available while every provider page is refreshed.")
@@ -133,8 +154,64 @@ object SearchMetadataSyncScheduler {
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Full scan requested")
     }
 
+    fun refreshType(context: Context, profile: PortalProfile, type: CatalogType) {
+        val id = CatalogScanPreferences.id(profile)
+        CatalogScanPreferences.activeType(context, id, type.name)
+        CatalogScanPreferences.refreshStartedAt(context, id, type.name, 0L)
+        CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                .setInputData(workDataOf(PROFILE_ID to id, MEDIA_TYPE to type.name, FULL_SCAN to true))
+                .addTag(FULL_REFRESH_TAG)
+                .addTag("$MEDIA_TYPE_TAG_PREFIX${type.name}")
+                .setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        CatalogScanPreferences.status(context, id,
+            "${type.title} refresh requested. Existing records stay available while provider pages are revisited.")
+        CatalogOperations.message(context, CatalogOperations.scan(id), "${type.title} refresh queued.")
+        BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "${type.title} refresh requested")
+    }
+
+    fun resumeType(context: Context, profile: PortalProfile, type: CatalogType) {
+        val id = CatalogScanPreferences.id(profile)
+        CatalogScanPreferences.activeType(context, id, type.name)
+        CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                .setInputData(workDataOf(PROFILE_ID to id, MEDIA_TYPE to type.name, RESUME_ONLY to true))
+                .addTag(RESUME_SCAN_TAG)
+                .addTag("$MEDIA_TYPE_TAG_PREFIX${type.name}")
+                .setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        CatalogScanPreferences.status(context, id, "Resuming ${type.title} from its last committed provider page.")
+        CatalogOperations.message(context, CatalogOperations.scan(id), "${type.title} resume queued.")
+        BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "${type.title} resume requested")
+    }
+
+    fun checkForUpdates(context: Context, profile: PortalProfile, type: CatalogType? = null) {
+        val id = CatalogScanPreferences.id(profile)
+        if (CatalogOperations.held(context, CatalogOperations.scan(id))) return
+        val input = Data.Builder().putString(PROFILE_ID, id).putBoolean(CHECK_ONLY, true)
+            .apply { type?.let { putString(MEDIA_TYPE, it.name) } }.build()
+        val work = OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+            .setInputData(input)
+            .addTag(UPDATE_CHECK_TAG)
+            .apply { type?.let { addTag("$MEDIA_TYPE_TAG_PREFIX${it.name}") } }
+            .setConstraints(constraints())
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "$REFRESH-now-$id",
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            work
+        )
+        val label = type?.title ?: "Live TV, Movies and Series"
+        CatalogOperations.message(context, CatalogOperations.scan(id), "Update check queued for $label.")
+        BackupActivityLog.record(context, "Catalog update check · ${profile.name}", "Queued", label)
+    }
+
     fun resumeRestored(context: Context, profile: PortalProfile) {
         val id = CatalogScanPreferences.id(profile)
+        CatalogScanPreferences.activeType(context, id, null)
         val restoredCursor = CatalogScanPreferences.restoredCursor(context, id)
         if (CatalogScanPreferences.restoredAt(context, id) == 0L || restoredCursor < 0) {
             CatalogOperations.message(context, CatalogOperations.scan(id),
@@ -146,6 +223,7 @@ object SearchMetadataSyncScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
                 .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to true))
+                .addTag(RESUME_SCAN_TAG)
                 .setConstraints(constraints())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
         CatalogOperations.message(context, CatalogOperations.scan(id),
@@ -170,10 +248,31 @@ object SearchMetadataSyncScheduler {
                     configureProfile(app, profile)
                 }
                 CatalogOperations.message(app, CatalogOperations.scan(id), "Retry requested. Waiting for a connection and Android to start the scan.")
+                val pending = manual.lastOrNull { !it.state.isFinished }
+                    ?: periodic.lastOrNull { !it.state.isFinished }
+                val pendingTags = pending?.tags.orEmpty()
+                val targetType = pendingTags.firstOrNull { it.startsWith(MEDIA_TYPE_TAG_PREFIX) }
+                    ?.removePrefix(MEDIA_TYPE_TAG_PREFIX)
+                    ?: CatalogScanPreferences.activeType(app, id)
+                val checkOnly = UPDATE_CHECK_TAG in pendingTags
+                val fullScan = FULL_REFRESH_TAG in pendingTags
+                val input = Data.Builder().putString(PROFILE_ID, id)
+                    .putBoolean(CHECK_ONLY, checkOnly)
+                    .putBoolean(FULL_SCAN, fullScan)
+                    .putBoolean(RESUME_ONLY, !checkOnly && !fullScan)
+                    .apply { targetType?.let { putString(MEDIA_TYPE, it) } }.build()
+                val replacement = OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                    .setInputData(input)
+                    .setConstraints(constraints())
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    .apply {
+                        if (checkOnly) addTag(UPDATE_CHECK_TAG)
+                        if (fullScan) addTag(FULL_REFRESH_TAG)
+                        if (!checkOnly && !fullScan) addTag(RESUME_SCAN_TAG)
+                        targetType?.let { addTag("$MEDIA_TYPE_TAG_PREFIX$it") }
+                    }.build()
                 manager.enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
-                    OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
-                        .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to false))
-                        .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+                    replacement)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 CatalogOperations.message(app, CatalogOperations.scan(id), "Could not reschedule the scan. Saved progress is retained; try again.")
@@ -181,10 +280,14 @@ object SearchMetadataSyncScheduler {
         }
     }
 
-    fun continueScan(context: Context, id: String) {
+    fun continueScan(context: Context, id: String, type: CatalogType? = null) {
+        val input = Data.Builder().putString(PROFILE_ID, id).putBoolean(RESUME_ONLY, true)
+            .apply { type?.let { putString(MEDIA_TYPE, it.name) } }.build()
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.APPEND_OR_REPLACE,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
-                .setInputData(workDataOf(PROFILE_ID to id, RESUME_ONLY to true)).setInitialDelay(10, TimeUnit.SECONDS)
+                .setInputData(input).setInitialDelay(10, TimeUnit.SECONDS)
+                .addTag(RESUME_SCAN_TAG)
+                .apply { type?.let { addTag("$MEDIA_TYPE_TAG_PREFIX${it.name}") } }
                 .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
     }
 
@@ -200,6 +303,9 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             ?: return@withLock Result.success()
         val operation = "Catalog scan · ${profile.name}"
         val control = CatalogOperations.scan(id)
+        val selectedType = inputData.getString(SearchMetadataSyncScheduler.MEDIA_TYPE)
+            ?.let { runCatching { CatalogType.valueOf(it) }.getOrNull() }
+        val checkOnly = inputData.getBoolean(SearchMetadataSyncScheduler.CHECK_ONLY, false)
         var notificationJob: Job? = null
         try {
             CatalogOperations.check(context, control)
@@ -210,7 +316,9 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                 CatalogScanPreferences.status(context, id, "Paused during playback; saved scan progress will resume automatically.")
                 return@withLock Result.retry()
             }
-            setForeground(CatalogScanNotification.foreground(context, id, "Preparing catalog scan. You can leave the app."))
+            setForeground(CatalogScanNotification.foreground(context, id,
+                if (checkOnly) "Checking catalog updates. You can leave the app."
+                else "Preparing catalog scan. You can leave the app."))
             notificationJob = CoroutineScope(currentCoroutineContext()).launch {
                 var lastMessage = ""
                 while (isActive) {
@@ -227,42 +335,135 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             val session = StalkerPortalClient(context).authenticate(profile)
             CatalogOperations.check(context, control)
             val types = listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+
+            if (checkOnly) {
+                val requestedTypes = selectedType?.let(::listOf) ?: types
+                val checker = CatalogUpdateChecker(context)
+                requestedTypes.forEachIndexed { index, type ->
+                    CatalogOperations.check(context, control)
+                    CatalogOperations.progress(context, control, CatalogOperationProgress(
+                        phase = "Checking provider updates",
+                        mediaType = type.title,
+                        mediaPosition = index + 1,
+                        mediaCount = requestedTypes.size
+                    ))
+                    checker.check(session, type,
+                        checkControl = { CatalogOperations.check(context, control) }) { stage ->
+                            CatalogOperations.message(context, control, stage)
+                        }
+                }
+                val checkedRows = CatalogRepository(context).observeUpdateStatuses(profile).first()
+                    .filter { row -> requestedTypes.any { it.name == row.type } }
+                val updates = checkedRows.count {
+                    it.updateState in setOf(CatalogUpdateState.UPDATE_AVAILABLE, CatalogUpdateState.CHANGED)
+                }
+                val unresolved = checkedRows.count {
+                    it.updateState in setOf(CatalogUpdateState.INCOMPLETE, CatalogUpdateState.NOT_SCANNED, CatalogUpdateState.FAILED)
+                }
+                val message = when {
+                    updates > 0 -> "Update check complete · $updates ${if (updates == 1) "media type needs" else "media types need"} attention."
+                    unresolved > 0 -> "Update check complete · $unresolved ${if (unresolved == 1) "media type could" else "media types could"} not be compared."
+                    else -> "Update check complete · No changes detected."
+                }
+                CatalogScanPreferences.status(context, id, message)
+                CatalogOperations.message(context, control, message)
+                CatalogOperations.progress(context, control, CatalogOperationProgress(phase = "Complete"))
+                CatalogScanPreferences.cursor(context, id, -1)
+                CatalogScanPreferences.activeType(context, id, null)
+                BackupActivityLog.record(context, "Catalog update check · ${profile.name}", "Completed", message)
+                return@withLock Result.success()
+            }
+
+            val repository = CatalogRepository(context)
             var cursor = CatalogScanPreferences.cursor(context, id)
-            if (fullScan) {
-                types.forEach { CatalogRepository(context).restartScan(profile, it) }
-                cursor = 0
-                CatalogScanPreferences.cursor(context, id, cursor)
+            val scanTypes: List<CatalogType>
+            if (selectedType != null) {
+                scanTypes = listOf(selectedType)
+                if (fullScan && CatalogScanPreferences.refreshStartedAt(context, id, selectedType.name) == 0L) {
+                    val generation = repository.restartScan(profile, selectedType)
+                    CatalogOperations.clearPageTotals(context, control, selectedType.name)
+                    CatalogScanPreferences.refreshStartedAt(context, id, selectedType.name, generation)
+                }
+                else if (resumeOnly && repository.scanCheckpoint(profile, selectedType).complete &&
+                    CatalogScanPreferences.refreshStartedAt(context, id, selectedType.name) == 0L) {
+                    val message = "${selectedType.title} is already complete. Check for provider updates or choose Refresh."
+                    CatalogScanPreferences.status(context, id, message)
+                    CatalogOperations.message(context, control, message)
+                    CatalogScanPreferences.activeType(context, id, null)
+                    return@withLock Result.success()
+                }
+                BackupActivityLog.record(context, operation,
+                    if (fullScan) "Started" else "Resumed",
+                    "${selectedType.title} only; saved listings stay available.")
+            } else if (fullScan) {
+                val startingFresh = types.all {
+                    CatalogScanPreferences.refreshStartedAt(context, id, it.name) == 0L
+                }
+                types.forEach { type ->
+                    if (CatalogScanPreferences.refreshStartedAt(context, id, type.name) == 0L) {
+                        val generation = repository.restartScan(profile, type)
+                        CatalogOperations.clearPageTotals(context, control, type.name)
+                        CatalogScanPreferences.refreshStartedAt(context, id, type.name, generation)
+                    }
+                }
+                if (startingFresh || cursor < 0) {
+                    cursor = 0
+                    CatalogScanPreferences.cursor(context, id, cursor)
+                }
+                scanTypes = types.drop(cursor.coerceAtLeast(0))
                 BackupActivityLog.record(context, operation, "Started", "Updating channels, movies and series; saved listings stay available.")
             } else if (resumeOnly && cursor < 0) {
-                cursor = CatalogRepository(context).resumeScanIndex(profile)
+                cursor = repository.resumeScanIndex(profile)
                 if (cursor < 0) {
                     CatalogOperations.message(context, control,
-                        "The restored scan is already complete. Choose Full scan to refresh every provider page.")
+                        "The scan is already complete. Check for provider updates or choose Refresh all.")
                     return@withLock Result.success()
                 }
                 CatalogScanPreferences.cursor(context, id, cursor)
+                scanTypes = types.drop(cursor)
                 CatalogOperations.message(context, control,
                     "Resuming ${types[cursor].title} from the last saved provider page.")
                 BackupActivityLog.record(context, operation, "Resumed",
                     "Continuing ${types[cursor].title} from restored Room page cursors.")
             } else if (cursor < 0) {
-                types.forEach { CatalogRepository(context).restartScan(profile, it) }
+                types.forEach { type ->
+                    val generation = repository.restartScan(profile, type)
+                    CatalogOperations.clearPageTotals(context, control, type.name)
+                    CatalogScanPreferences.refreshStartedAt(context, id, type.name, generation)
+                }
                 cursor = 0
                 CatalogScanPreferences.cursor(context, id, cursor)
+                scanTypes = types
                 BackupActivityLog.record(context, operation, "Started",
                     "Scheduled refresh started from Live TV; saved listings stay available.")
-            }
+            } else scanTypes = types.drop(cursor)
             val deadline = android.os.SystemClock.elapsedRealtime() + 480_000L
-            for (index in cursor until types.size) {
+            for (type in scanTypes) {
                 CatalogOperations.check(context, control)
-                val type = types[index]
                 val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0)
                 val result = SearchCatalogScanner(context).scan(session, type, 2_000L,
-                    refreshCompleted = false, timeBudgetMillis = remaining) { progress ->
+                    refreshCompleted = false, timeBudgetMillis = remaining,
+                    mediaPosition = if (selectedType == null) types.indexOf(type) + 1 else 1,
+                    mediaCount = if (selectedType == null) types.size else 1) { progress ->
                     CatalogScanPreferences.status(context, id,
                         "${type.title} · ${progress.categoryTitle} · category ${progress.categoryPosition}/${progress.categoryCount} · page ${progress.page} · ${progress.discoveredItems} items")
                 }
                 if (result.deferred || result.failures > 0) {
+                    if (result.existingCatalogRetainedAfterEmptyResponse) {
+                        val message = "${type.title} returned no categories twice. Existing records were retained; retry after checking the provider category mapping."
+                        repository.saveUpdateStatus(CatalogTypeUpdateRow(
+                            profile = profile.cacheKey(),
+                            type = type.name,
+                            state = CatalogUpdateState.FAILED.name,
+                            detail = message,
+                            checkedAt = System.currentTimeMillis()
+                        ))
+                        CatalogScanPreferences.status(context, id, message)
+                        CatalogOperations.message(context, control, message)
+                        CatalogScanPreferences.cursor(context, id, -1)
+                        CatalogScanPreferences.activeType(context, id, null)
+                        return@withLock Result.success()
+                    }
                     CatalogScanPreferences.status(context, id, if (CatalogPlaybackActivity.playing)
                         "Paused during playback; scan progress saved." else if (result.failures > 0)
                         "Some provider pages failed; saved progress will retry automatically." else
@@ -270,19 +471,52 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                     CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
                     CatalogOperations.check(context, control)
                     if (result.deferred && !CatalogPlaybackActivity.playing && result.failures == 0) {
-                        SearchMetadataSyncScheduler.continueScan(context, id)
+                        SearchMetadataSyncScheduler.continueScan(context, id, selectedType)
                         return@withLock Result.success()
                     }
                     return@withLock Result.retry()
                 }
-                CatalogScanPreferences.cursor(context, id, index + 1)
+                val typeCompletedAt = System.currentTimeMillis()
+                val refreshStartedAt = CatalogScanPreferences.refreshStartedAt(context, id, type.name)
+                check(repository.reconcileSuccessfulRefresh(
+                    profile, type, result.providerCategories, refreshStartedAt,
+                    confirmedEmpty = result.providerConfirmedEmpty, at = typeCompletedAt
+                )) { "${type.title} provider scan could not be reconciled safely" }
+                check(repository.scanCheckpoint(profile, type).complete) {
+                    "${type.title} provider scan ended without a complete Room checkpoint"
+                }
+                check(repository.markTypeSynced(profile, type, typeCompletedAt)) {
+                    "${type.title} provider scan could not promote a completed baseline"
+                }
+                if (selectedType != null) CatalogScanPreferences.refreshStartedAt(context, id, type.name, 0L)
+                if (selectedType == null) CatalogScanPreferences.cursor(context, id, types.indexOf(type) + 1)
             }
             CatalogOperations.check(context, control)
             val now = System.currentTimeMillis()
+            if (selectedType != null) {
+                CatalogScanPreferences.activeType(context, id, null)
+                val remainingType = repository.resumeScanIndex(profile)
+                // Per-type cards own incomplete/resume state. Keeping a global cursor
+                // here would mislabel this successful targeted operation as interrupted.
+                CatalogScanPreferences.cursor(context, id, -1)
+                if (remainingType < 0) CatalogScanPreferences.completed(context, id, now)
+                val message = "Complete · ${selectedType.title} refreshed from the provider."
+                CatalogScanPreferences.status(context, id, message)
+                CatalogOperations.message(context, control, message)
+                CatalogOperations.progress(context, control, CatalogOperationProgress(phase = "Complete", mediaType = selectedType.title))
+                BackupActivityLog.record(context, operation, "Completed", "${selectedType.title} refresh completed.")
+                if (CatalogPreferences.backupEnabled(context)) {
+                    SearchMetadataSyncScheduler.requestNow(context, profile = profile, type = selectedType)
+                }
+                return@withLock Result.success()
+            }
             CatalogScanPreferences.completed(context, id, now)
             CatalogScanPreferences.cursor(context, id, -1)
+            CatalogScanPreferences.activeType(context, id, null)
+            types.forEach { CatalogScanPreferences.refreshStartedAt(context, id, it.name, 0L) }
             CatalogScanPreferences.status(context, id, "Complete · ${java.util.Date(now)} · Room backup catalog contains channels, movies and series.")
             CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
+            CatalogOperations.progress(context, control, CatalogOperationProgress(phase = "Complete"))
             BackupActivityLog.record(context, operation, "Completed", "Room backup catalog is ready to inspect or upload; app browsing remains provider/cache based.")
             if (CatalogPreferences.backupEnabled(context)) SearchMetadataSyncScheduler.requestNow(context, profile = profile)
             Result.success()
@@ -291,6 +525,21 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             Result.success()
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
+            if (checkOnly) {
+                val failedTypes = selectedType?.let(::listOf)
+                    ?: listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+                val repository = CatalogRepository(context)
+                failedTypes.forEach { type ->
+                    repository.saveUpdateStatus(CatalogTypeUpdateRow(
+                        profile = profile.cacheKey(), type = type.name,
+                        state = CatalogUpdateState.FAILED.name,
+                        detail = "Could not connect to the provider. Try the check again.",
+                        checkedAt = System.currentTimeMillis()
+                    ))
+                }
+                CatalogOperations.message(context, control, "Provider update check failed. Try again.")
+                return@withLock Result.failure()
+            }
             CatalogScanPreferences.status(context, id, "Provider scan could not finish; progress saved and retry scheduled.")
             if (!CatalogOperations.held(context, control)) CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
             BackupActivityLog.record(context, operation, "Retry scheduled", "Check provider connectivity if this continues.")

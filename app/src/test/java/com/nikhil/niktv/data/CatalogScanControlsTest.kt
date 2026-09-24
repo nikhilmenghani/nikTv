@@ -42,9 +42,11 @@ class CatalogScanControlsTest {
         assertEquals(1, CatalogRepository(context).browse(session.profile.cacheKey(), CatalogType.MOVIES)!!.pagesByCategory["1"])
         assertEquals("Stored", CatalogOperations.events(context, key).single().outcome)
         CatalogOperations.control(context, key, "Ready")
-        scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false)
+        val completed = scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false)
         assertEquals(listOf(1, 2), pages)
         assertTrue(pacing.all { it >= 2000 })
+        assertEquals(2, completed.itemCount)
+        assertTrue(completed.cache.itemsByCategory.isEmpty())
         assertEquals(setOf("1", "2"), CatalogRepository(context).search(session.profile.cacheKey(), CatalogType.MOVIES)!!.items.map { it.id }.toSet())
     }
 
@@ -77,6 +79,36 @@ class CatalogScanControlsTest {
         assertEquals(1, CatalogRepository(context).browse(session.profile.cacheKey(), CatalogType.MOVIES)!!.pagesByCategory["1"])
     }
 
+    @Test fun emptyNonterminalPageDoesNotAdvanceCheckpoint() = runBlocking {
+        val session = session()
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            PortalCatalogPage(emptyList(), page, hasMore = true)
+        }, {})
+
+        assertEquals(1, scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false).failures)
+        assertNull(CatalogRepository(context).browse(session.profile.cacheKey(), CatalogType.MOVIES))
+    }
+
+    @Test fun repeatedPageAcrossWorkerAttemptsDoesNotAdvanceCheckpoint() = runBlocking {
+        val session = session()
+        var firstAttempt = true
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            when {
+                page == 1 -> PortalCatalogPage(listOf(item("same")), page, hasMore = true)
+                firstAttempt -> throw java.io.IOException("retry")
+                else -> PortalCatalogPage(listOf(item("same")), page, hasMore = false)
+            }
+        }, {})
+
+        assertEquals(1, scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false).failures)
+        firstAttempt = false
+        assertEquals(1, scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false).failures)
+
+        val checkpoint = CatalogRepository(context).scanCheckpoint(session.profile, CatalogType.MOVIES)
+        assertEquals(1, checkpoint.currentPage)
+        assertFalse(checkpoint.complete)
+    }
+
     @Test fun providerPageTotalIsRetainedAcrossWorkerBatches() = runBlocking {
         val session = session()
         val operation = CatalogOperations.scan(CatalogScanPreferences.id(session.profile))
@@ -84,13 +116,80 @@ class CatalogScanControlsTest {
             PortalCatalogPage(listOf(item("$page")), page, hasMore = false, totalPages = 673, totalItems = 9_422)
         }, {})
         scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false)
-        assertEquals(673, CatalogOperations.pageTotal(context, operation, category.id))
+        assertEquals(673, CatalogOperations.pageTotal(context, operation, "${CatalogType.MOVIES.name}:${category.id}"))
+    }
+
+    @Test fun twoSuccessfulEmptyCategoryResponsesConfirmAnEmptyMediaType() = runBlocking {
+        val session = session()
+        CatalogOperations.control(context,
+            CatalogOperations.scan(CatalogScanPreferences.id(session.profile)), "Ready")
+        var categoryCalls = 0
+        var pageCalls = 0
+        val scanner = SearchCatalogScanner(context, { _, _ ->
+            categoryCalls += 1
+            emptyList()
+        }, { _, _, _ ->
+            pageCalls += 1
+            error("Empty catalogs must not request a page")
+        }, {})
+
+        val result = scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false)
+
+        assertTrue(result.providerConfirmedEmpty)
+        assertEquals(2, categoryCalls)
+        assertEquals(0, pageCalls)
+        assertEquals(0, result.failures)
+    }
+
+    @Test fun emptyCategoryResponsesRetainAnExistingCatalog() = runBlocking {
+        val session = session()
+        val repository = CatalogRepository(context)
+        repository.saveBrowse(BrowseCatalogCache(
+            profileKey = session.profile.cacheKey(),
+            type = CatalogType.MOVIES,
+            cachedAtMillis = 100L,
+            categories = listOf(category),
+            itemsByCategory = mapOf(category.id to listOf(item("existing"))),
+            pagesByCategory = mapOf(category.id to 1),
+            hasMoreByCategory = mapOf(category.id to false)
+        ))
+        var categoryCalls = 0
+        val scanner = SearchCatalogScanner(context, { _, _ ->
+            categoryCalls += 1
+            emptyList()
+        }, { _, _, _ -> error("Empty category responses must not request a page") }, {})
+
+        val result = scanner.scan(session, CatalogType.MOVIES, 0, refreshCompleted = false)
+
+        assertEquals(2, categoryCalls)
+        assertEquals(1, result.failures)
+        assertFalse(result.providerConfirmedEmpty)
+        assertTrue(result.existingCatalogRetainedAfterEmptyResponse)
+        assertEquals(1, result.itemCount)
+        assertEquals(listOf("existing"), repository.search(session.profile.cacheKey(), CatalogType.MOVIES)!!.items.map { it.id })
+        assertTrue(CatalogOperations.events(
+            context,
+            CatalogOperations.scan(CatalogScanPreferences.id(session.profile)),
+            failures = true
+        ).single().detail.contains("existing records were retained"))
     }
 
     @Test fun catalogProgressExposesAccurateDecimalPercentage() {
         assertEquals("37.8%", CatalogOperationProgress("Saving", page = 3_736, totalPages = 9_890).percentText)
         assertEquals("99.9%", CatalogOperationProgress("Saving", page = 9_877, totalPages = 9_891).percentText)
-        assertEquals("100.0%", CatalogOperationProgress("Done", page = 10, totalPages = 10).percentText)
+        assertEquals("99.9%", CatalogOperationProgress("Saving", page = 10, totalPages = 10).percentText)
+        assertEquals("100.0%", CatalogOperationProgress("Complete", page = 10, totalPages = 10).percentText)
+        assertEquals("100.0%", CatalogOperationProgress("Complete").percentText)
+        assertEquals("33.3%", CatalogOperationProgress("Saving", categoryPosition = 1,
+            categoryCount = 3, page = 10, totalPages = 10).percentText)
+        assertEquals("37.5%", CatalogOperationProgress("Saving", mediaPosition = 2,
+            mediaCount = 3, categoryPosition = 1, categoryCount = 2,
+            page = 1, totalPages = 4).percentText)
+        assertEquals("99.9%", CatalogOperationProgress("Finalizing catalog", mediaPosition = 3,
+            mediaCount = 3, categoryPosition = 3, categoryCount = 3,
+            page = 10, totalPages = 10).percentText)
+        assertEquals("0.0%", CatalogOperationProgress("Requesting provider", mediaPosition = 1,
+            mediaCount = 1, categoryPosition = 1, categoryCount = 1, page = 25).percentText)
         assertNull(CatalogOperationProgress("Connecting").percentText)
     }
 
