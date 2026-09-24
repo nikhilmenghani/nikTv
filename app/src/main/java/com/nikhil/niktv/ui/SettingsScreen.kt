@@ -474,7 +474,7 @@ internal fun ModernSettingsScreen(
     val versionRequester = remember { FocusRequester() }
     val oneClickUpdateRequester = remember { FocusRequester() }
     val settingsEntryRequester = remember { FocusRequester() }
-    val settingsSummaryEntryRequester = remember { FocusRequester() }
+    val settingsContentEntryRequester = remember { FocusRequester() }
     var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
     var restoreVersionFocus by remember { mutableStateOf(false) }
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
@@ -637,8 +637,6 @@ internal fun ModernSettingsScreen(
     val tabletSettingsLayout =
         !settingsIsTv &&
             settingsConfiguration.smallestScreenWidthDp >= 600
-    val modernSettingsRows =
-        compactSettingsHeader || tabletSettingsLayout
     val settingsDestinations = SettingsDestination.entries
     var selectedSettingsDestination by remember {
         mutableStateOf(if (PairingInvites.pending != null) SettingsDestination.PROFILES else SettingsDestination.GENERAL)
@@ -715,7 +713,10 @@ internal fun ModernSettingsScreen(
             }
         }
     ) { padding ->
-        val settingsPageContent: @Composable () -> Unit = { Column(
+        val settingsPageContent: @Composable () -> Unit = {
+        val activeDestination = LocalSettingsDestination.current ?: selectedSettingsDestination
+        val pageScroll = remember(activeDestination) { ScrollState(0) }
+        Column(
         Modifier
             .fillMaxSize()
             .background(
@@ -728,7 +729,9 @@ internal fun ModernSettingsScreen(
                 )
             )
             .padding(padding)
-            .verticalScroll(rememberScrollState())
+            .focusRequester(settingsContentEntryRequester)
+            .focusGroup()
+            .verticalScroll(pageScroll)
             .padding(
                 horizontal =
                     when {
@@ -747,43 +750,14 @@ internal fun ModernSettingsScreen(
             when {
                 compactSettingsHeader -> 20.dp
                 tabletSettingsLayout -> 18.dp
-                else -> 12.dp
+                else -> 20.dp
             }
         )
     ) {
-        val activeDestination =
-            LocalSettingsDestination.current
-                ?: selectedSettingsDestination
-
-        SettingsDestinationHeader(
-            destination = activeDestination,
-            compact = compactSettingsHeader || tabletSettingsLayout
-        )
-
-        if (!compactSettingsHeader) {
-            SettingsSummaryRow(
-                activeProfile = profile?.name ?: "No active profile",
-                defaultPlayer = when (state.playbackEngine) {
-                    PlaybackEngine.AUTO -> "Auto"
-                    PlaybackEngine.MEDIA3,
-                    PlaybackEngine.EXOPLAYER -> "ExoPlayer"
-                    PlaybackEngine.VLC -> "VLC"
-                },
-                backup = when (githubBackupConfig.backupMode) {
-                    com.nikhil.niktv.data.BackupMode.GITHUB -> "GitHub"
-                    com.nikhil.niktv.data.BackupMode.DEVICE -> "Device"
-                },
-                updates = "v${BuildConfig.VERSION_NAME}",
-                currentDestination = activeDestination,
-                railRequester =
-                    settingsRailRequesters.getValue(activeDestination),
-                entryRequester = settingsSummaryEntryRequester,
-                onSelect = { selectedSettingsDestination = it }
-            )
-        }
+        SettingsDestinationHeader(activeDestination)
 
         val showMobileAppearance =
-            settingsConfiguration.smallestScreenWidthDp < 600
+            !settingsIsTv && settingsConfiguration.smallestScreenWidthDp < 600
 
         val mobileDpadRequester = remember { FocusRequester() }
         val followSystemBrightnessRequester = remember { FocusRequester() }
@@ -822,277 +796,173 @@ SettingsSwitch(
                     }
                 )
 
-                HorizontalDivider()
+                SettingsDivider()
             }
-            if (modernSettingsRows) {
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.BrightnessAuto,
-                    title = "Follow system brightness",
-                    subtitle =
-                        "Use the brightness configured by this device or TV.",
-                    trailingContent = {
-SettingsSwitch(
-                            checked = followSystemBrightness,
-                            onCheckedChange = {
-                                followSystemBrightness = it
-                                AppBrightnessPreferences
-                                    .setFollowsSystem(context, it)
-                            },
-                            modifier = Modifier
-                                .focusRequester(
-                                    followSystemBrightnessRequester
-                                )
-                                .focusProperties {
-                                    up =
-                                        when {
-                                            showMobileAppearance -> mobileDpadRequester
-                                            tabletSettingsLayout -> settingsSummaryEntryRequester
-                                            else -> FocusRequester.Default
-                                        }
-                                    if (tabletSettingsLayout) {
-                                        left = settingsRailRequesters.getValue(activeDestination)
-                                    }
-                                    down =
-                                        if (followSystemBrightness) {
-                                            keepAwakeRequester
-                                        } else {
-                                            appBrightnessRequester
-                                        }
-                                }
-                        )
-                    }
-                )
-                HorizontalDivider()
 
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.Brightness6,
-                    title = "App brightness",
-                    subtitle =
-                        if (followSystemBrightness) {
-                            "System controlled."
-                        } else {
-                            "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open."
+            CompactSettingsOptionRow(
+                icon = Icons.Default.BrightnessAuto,
+                title = "Follow system brightness",
+                subtitle =
+                    "Use the brightness configured by this device or TV.",
+                trailingContent = {
+SettingsSwitch(
+                        checked = followSystemBrightness,
+                        onCheckedChange = {
+                            followSystemBrightness = it
+                            AppBrightnessPreferences
+                                .setFollowsSystem(context, it)
                         },
-                    belowContent = {
-                        Spacer(Modifier.height(6.dp))
-                        Slider(
-                            value = appBrightness,
-                            enabled = !followSystemBrightness,
-                            onValueChange = {
-                                appBrightness = it
-                                AppBrightnessPreferences.set(context, it)
-                            },
-                            valueRange =
-                                AppBrightnessPreferences.MIN..
-                                    AppBrightnessPreferences.MAX,
-                            steps = 16,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, end = 2.dp)
-                                .focusRequester(appBrightnessRequester)
-                                .onPreviewKeyEvent { event ->
-                                    if (
-                                        event.type != KeyEventType.KeyDown
-                                    ) {
-                                        return@onPreviewKeyEvent false
+                        modifier = Modifier
+                            .focusRequester(
+                                followSystemBrightnessRequester
+                            )
+                            .focusProperties {
+                                up =
+                                    when {
+                                        showMobileAppearance -> mobileDpadRequester
+                                        !compactSettingsHeader -> settingsRailRequesters.getValue(activeDestination)
+                                        else -> FocusRequester.Default
                                     }
-
-                                    when (event.key) {
-                                        Key.DirectionLeft -> {
-                                            val next =
-                                                (appBrightness -
-                                                    appBrightnessStep)
-                                                    .coerceIn(
-                                                        AppBrightnessPreferences.MIN,
-                                                        AppBrightnessPreferences.MAX
-                                                    )
-                                            appBrightness = next
-                                            AppBrightnessPreferences.set(
-                                                context,
-                                                next
-                                            )
-                                            true
-                                        }
-
-                                        Key.DirectionRight -> {
-                                            val next =
-                                                (appBrightness +
-                                                    appBrightnessStep)
-                                                    .coerceIn(
-                                                        AppBrightnessPreferences.MIN,
-                                                        AppBrightnessPreferences.MAX
-                                                    )
-                                            appBrightness = next
-                                            AppBrightnessPreferences.set(
-                                                context,
-                                                next
-                                            )
-                                            true
-                                        }
-
-                                        Key.DirectionUp -> {
-                                            followSystemBrightnessRequester
-                                                .requestFocus()
-                                            true
-                                        }
-
-                                        Key.DirectionDown -> {
-                                            keepAwakeRequester.requestFocus()
-                                            true
-                                        }
-
-                                        else -> false
-                                    }
+                                if (!compactSettingsHeader) {
+                                    left = settingsRailRequesters.getValue(activeDestination)
                                 }
-                                .remoteFocusFrame(
-                                    RoundedCornerShape(12.dp)
-                                )
-                        )
-                    }
-                )
-                HorizontalDivider()
+                                down =
+                                    if (followSystemBrightness) {
+                                        keepAwakeRequester
+                                    } else {
+                                        appBrightnessRequester
+                                    }
+                            }
+                    )
+                }
+            )
+            SettingsDivider()
 
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.LightMode,
-                    title = "Keep screen awake during playback",
-                    subtitle =
-                        if (state.keepAwakeOnlyDuringPlayback) {
-                            "Browsing may sleep normally; playback always stays awake."
-                        } else {
-                            "Keep the screen awake while NikTV is open."
+            CompactSettingsOptionRow(
+                icon = Icons.Default.Brightness6,
+                title = "App brightness",
+                subtitle =
+                    if (followSystemBrightness) {
+                        "System controlled."
+                    } else {
+                        "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open."
+                    },
+                belowContent = {
+                    Spacer(Modifier.height(6.dp))
+                    Slider(
+                        value = appBrightness,
+                        enabled = !followSystemBrightness,
+                        onValueChange = {
+                            appBrightness = it
+                            AppBrightnessPreferences.set(context, it)
                         },
-                    trailingContent = {
-SettingsSwitch(
-                            checked =
-                                state.keepAwakeOnlyDuringPlayback,
-                            onCheckedChange =
-                                setKeepAwakeOnlyDuringPlayback,
-                            modifier = Modifier
-                                .focusRequester(keepAwakeRequester)
-                                .focusProperties {
-                                    up =
-                                        if (followSystemBrightness) {
-                                            followSystemBrightnessRequester
-                                        } else {
-                                            appBrightnessRequester
-                                        }
-                                    down = orientationRequester
+                        valueRange =
+                            AppBrightnessPreferences.MIN..
+                                AppBrightnessPreferences.MAX,
+                        steps = 16,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 40.dp, end = 2.dp)
+                            .focusRequester(appBrightnessRequester)
+                            .onPreviewKeyEvent { event ->
+                                if (
+                                    event.type != KeyEventType.KeyDown
+                                ) {
+                                    return@onPreviewKeyEvent false
                                 }
-                        )
-                    }
-                )
-                HorizontalDivider()
 
-                CompactOrientationSetting(
-                    entryRequester = orientationRequester,
-                    upRequester = keepAwakeRequester,
-                    downRequester = audioFallbackRequester
-                )
-            } else {
-                ListItem(
-                    headlineContent = {
-                        Text("Follow system brightness")
-                    },
-                    supportingContent = {
-                        Text(
-                            "Use the brightness configured by this device or TV"
-                        )
-                    },
-                    leadingContent = {
-                        Icon(Icons.Default.BrightnessAuto, null)
-                    },
-                    trailingContent = {
-SettingsSwitch(
-                            checked = followSystemBrightness,
-                            onCheckedChange = {
-                                followSystemBrightness = it
-                                AppBrightnessPreferences
-                                    .setFollowsSystem(context, it)
-                            },
-                            modifier = Modifier
-                                .focusRequester(followSystemBrightnessRequester)
-                        )
-                    },
-                    colors = ListItemDefaults.colors(
-                        containerColor = Color.Transparent
-                    )
-                )
-                HorizontalDivider()
-                ListItem(
-                    headlineContent = { Text("App brightness") },
-                    supportingContent = {
-                        Text(
-                            if (followSystemBrightness) {
-                                "System controlled"
-                            } else {
-                                "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open"
+                                when (event.key) {
+                                    Key.DirectionLeft -> {
+                                        val next =
+                                            (appBrightness -
+                                                appBrightnessStep)
+                                                .coerceIn(
+                                                    AppBrightnessPreferences.MIN,
+                                                    AppBrightnessPreferences.MAX
+                                                )
+                                        appBrightness = next
+                                        AppBrightnessPreferences.set(
+                                            context,
+                                            next
+                                        )
+                                        true
+                                    }
+
+                                    Key.DirectionRight -> {
+                                        val next =
+                                            (appBrightness +
+                                                appBrightnessStep)
+                                                .coerceIn(
+                                                    AppBrightnessPreferences.MIN,
+                                                    AppBrightnessPreferences.MAX
+                                                )
+                                        appBrightness = next
+                                        AppBrightnessPreferences.set(
+                                            context,
+                                            next
+                                        )
+                                        true
+                                    }
+
+                                    Key.DirectionUp -> {
+                                        followSystemBrightnessRequester
+                                            .requestFocus()
+                                        true
+                                    }
+
+                                    Key.DirectionDown -> {
+                                        keepAwakeRequester.requestFocus()
+                                        true
+                                    }
+
+                                    else -> false
+                                }
                             }
-                        )
-                    },
-                    leadingContent = {
-                        Icon(Icons.Default.Brightness6, null)
-                    },
-                    trailingContent = {
-                        Slider(
-                            value = appBrightness,
-                            enabled = !followSystemBrightness,
-                            onValueChange = {
-                                appBrightness = it
-                                AppBrightnessPreferences.set(
-                                    context,
-                                    it
-                                )
-                            },
-                            valueRange =
-                                AppBrightnessPreferences.MIN..
-                                    AppBrightnessPreferences.MAX,
-                            steps = 16,
-                            modifier = Modifier
-                                .width(220.dp)
-                                .remoteFocusFrame(
-                                    RoundedCornerShape(12.dp)
-                                )
-                        )
-                    },
-                    colors = ListItemDefaults.colors(
-                        containerColor = Color.Transparent
+                            .remoteFocusFrame(
+                                RoundedCornerShape(12.dp)
+                            )
                     )
-                )
-                HorizontalDivider()
-                ListItem(
-                    headlineContent = {
-                        Text(
-                            "Only keep screen awake during playback"
-                        )
+                }
+            )
+            SettingsDivider()
+
+            CompactSettingsOptionRow(
+                icon = Icons.Default.LightMode,
+                title = "Keep screen awake during playback",
+                subtitle =
+                    if (state.keepAwakeOnlyDuringPlayback) {
+                        "Browsing may sleep normally; playback always stays awake."
+                    } else {
+                        "Keep the screen awake while NikTV is open."
                     },
-                    supportingContent = {
-                        Text(
-                            if (
-                                state.keepAwakeOnlyDuringPlayback
-                            ) {
-                                "NikTV may let the screen sleep while browsing; playback always stays awake."
-                            } else {
-                                "NikTV keeps the screen awake for as long as the app is open."
-                            }
-                        )
-                    },
-                    leadingContent = {
-                        Icon(Icons.Default.LightMode, null)
-                    },
-                    trailingContent = {
+                trailingContent = {
 SettingsSwitch(
-                            checked =
-                                state.keepAwakeOnlyDuringPlayback,
-                            onCheckedChange =
-                                setKeepAwakeOnlyDuringPlayback,
-                            modifier = Modifier
-                        )
-                    },
-                    colors = ListItemDefaults.colors(
-                        containerColor = Color.Transparent
+                        checked =
+                            state.keepAwakeOnlyDuringPlayback,
+                        onCheckedChange =
+                            setKeepAwakeOnlyDuringPlayback,
+                        modifier = Modifier
+                            .focusRequester(keepAwakeRequester)
+                            .focusProperties {
+                                up =
+                                    if (followSystemBrightness) {
+                                        followSystemBrightnessRequester
+                                    } else {
+                                        appBrightnessRequester
+                                    }
+                                down = orientationRequester
+                            }
                     )
-                )
-            }
+                }
+            )
+            SettingsDivider()
+
+            CompactOrientationSetting(
+                entryRequester = orientationRequester,
+                upRequester = keepAwakeRequester,
+                downRequester = audioFallbackRequester
+            )
+
 
         }
         SettingsSection("Playback") {
@@ -1118,111 +988,58 @@ SettingsSwitch(
                     )
                 }
             )
-            HorizontalDivider()
+            SettingsDivider()
             PlaybackEngineSettingsContent(
                 selectedEngine = state.playbackEngine,
                 setPlaybackEngine = setPlaybackEngine,
-                compact = modernSettingsRows,
+                compact = true,
                 entryRequester = playbackEngineRequester,
                 upRequester = audioFallbackRequester,
                 downRequester = seriesSeasonRequester
             )
-            HorizontalDivider()
-            if (modernSettingsRows) {
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.VideoLibrary,
-                    title = "Default season",
-                    subtitle =
-                        "Used when a series has no remembered season. NikTV loads one season at a time.",
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        SingleChoiceSegmentedButtonRow(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, end = 2.dp)
-                        ) {
-                            SeriesStartSeason.entries
-                                .forEachIndexed { index, option ->
-                                    val shape =
-                                        uniformSegmentShape(
-                                            index,
-                                            SeriesStartSeason.entries.size
-                                        )
-                                    val selected =
-                                        state.seriesStartSeason == option
-                                    SegmentedButton(
-                                        selected = selected,
-                                        onClick = {
-                                            setSeriesStartSeason(option)
-                                        },
-                                        modifier = Modifier
-                                            .then(
-                                                if (selected) {
-                                                    Modifier.focusRequester(
-                                                        seriesSeasonRequester
-                                                    )
-                                                } else {
-                                                    Modifier
-                                                }
-                                            )
-                                            .focusProperties {
-                                                up = playbackEngineRequester
-                                                down = catalogRefreshRequester
-                                                }
-                                            .remoteFocusFrame(shape),
-                                        shape = shape
-                                    ) {
-                                        Text(
-                                            if (
-                                                option ==
-                                                SeriesStartSeason.FIRST
-                                            ) {
-                                                "First season"
-                                            } else {
-                                                "Latest season"
-                                            },
-                                            style =
-                                                MaterialTheme.typography
-                                                    .labelLarge
-                                        )
-                                    }
-                                }
-                        }
-                    }
-                )
-            } else {
-                Column(
-                    Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "Default season",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        "Used only when a series has no remembered season. NikTV loads one season at a time.",
-                        color =
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier.fillMaxWidth()
+            SettingsDivider()
+
+            CompactSettingsOptionRow(
+                icon = Icons.Default.VideoLibrary,
+                title = "Default season",
+                subtitle =
+                    "Used when a series has no remembered season. NikTV loads one season at a time.",
+                belowContent = {
+                    Spacer(Modifier.height(8.dp))
+                    SettingsChoiceRow(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 40.dp, end = 2.dp)
                     ) {
                         SeriesStartSeason.entries
                             .forEachIndexed { index, option ->
                                 val shape =
-                                    uniformSegmentShape(
+                                    settingsChoiceShape(
                                         index,
                                         SeriesStartSeason.entries.size
                                     )
-                                SegmentedButton(
-                                    selected =
-                                        state.seriesStartSeason ==
-                                            option,
+                                val selected =
+                                    state.seriesStartSeason == option
+                                SettingsChoiceButton(
+                                    selected = selected,
                                     onClick = {
                                         setSeriesStartSeason(option)
                                     },
-                                    modifier =
-                                        Modifier.remoteFocusFrame(shape),
+                                    modifier = Modifier
+                                        .then(
+                                            if (selected) {
+                                                Modifier.focusRequester(
+                                                    seriesSeasonRequester
+                                                )
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .focusProperties {
+                                            up = playbackEngineRequester
+                                            down = catalogRefreshRequester
+                                            }
+                                        .remoteFocusFrame(shape),
                                     shape = shape
                                 ) {
                                     Text(
@@ -1233,198 +1050,129 @@ SettingsSwitch(
                                             "First season"
                                         } else {
                                             "Latest season"
-                                        }
-                                    )
-                                }
-                            }
-                    }
-                }
-            }
-
-        }
-        SettingsSection("Storage & refresh") {
-            if (modernSettingsRows) {
-                val refreshOptions =
-                    listOf(
-                        30 to "30m",
-                        60 to "1h",
-                        360 to "6h",
-                        1440 to "24h"
-                    )
-
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.Refresh,
-                    title = "Refresh interval",
-                    subtitle =
-                        "Choose how long categories and media lists stay cached on this device.",
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        SingleChoiceSegmentedButtonRow(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, end = 2.dp)
-                        ) {
-                            refreshOptions.forEachIndexed {
-                                    index,
-                                    (minutes, label) ->
-                                val shape =
-                                    uniformSegmentShape(
-                                        index,
-                                        refreshOptions.size
-                                    )
-                                val selected =
-                                    state.cacheIntervalMinutes == minutes
-                                SegmentedButton(
-                                    selected = selected,
-                                    onClick = {
-                                        setCacheIntervalMinutes(minutes)
-                                    },
-                                    modifier = Modifier
-                                        .then(
-                                            if (selected) {
-                                                Modifier.focusRequester(
-                                                    catalogRefreshRequester
-                                                )
-                                            } else {
-                                                Modifier
-                                            }
-                                        )
-                                        .focusProperties {
-                                            up = seriesSeasonRequester
-                                            down = initialCatalogItemsRequester
-                                        }
-                                        .remoteFocusFrame(shape),
-                                    shape = shape
-                                ) {
-                                    Text(
-                                        label,
+                                        },
                                         style =
                                             MaterialTheme.typography
                                                 .labelLarge
                                     )
                                 }
                             }
-                        }
                     }
+                }
+            )
+
+
+        }
+        SettingsSection("Storage & refresh") {
+
+            val refreshOptions =
+                listOf(
+                    30 to "30m",
+                    60 to "1h",
+                    360 to "6h",
+                    1440 to "24h"
                 )
-            } else {
-                Column(
-                    Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        "Refresh interval",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        "Categories and media lists are stored on this device and refreshed after this interval.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color =
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier.fillMaxWidth()
+
+            CompactSettingsOptionRow(
+                icon = Icons.Default.Refresh,
+                title = "Refresh interval",
+                subtitle =
+                    "Choose how long categories and media lists stay cached on this device.",
+                belowContent = {
+                    Spacer(Modifier.height(8.dp))
+                    SettingsChoiceRow(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 40.dp, end = 2.dp)
                     ) {
-                        listOf(
-                            30 to "30m",
-                            60 to "1h",
-                            360 to "6h",
-                            1440 to "24h"
-                        ).forEachIndexed { index, (minutes, label) ->
-                            val intervalShape =
-                                uniformSegmentShape(index, 4)
-                            SegmentedButton(
-                                selected =
-                                    state.cacheIntervalMinutes == minutes,
+                        refreshOptions.forEachIndexed {
+                                index,
+                                (minutes, label) ->
+                            val shape =
+                                settingsChoiceShape(
+                                    index,
+                                    refreshOptions.size
+                                )
+                            val selected =
+                                state.cacheIntervalMinutes == minutes
+                            SettingsChoiceButton(
+                                selected = selected,
                                 onClick = {
                                     setCacheIntervalMinutes(minutes)
                                 },
-                                modifier =
-                                    Modifier.remoteFocusFrame(
-                                        intervalShape
-                                    ),
-                                shape = intervalShape
+                                modifier = Modifier
+                                    .then(
+                                        if (selected) {
+                                            Modifier.focusRequester(
+                                                catalogRefreshRequester
+                                            )
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .focusProperties {
+                                        up = seriesSeasonRequester
+                                        down = initialCatalogItemsRequester
+                                    }
+                                    .remoteFocusFrame(shape),
+                                shape = shape
                             ) {
-                                Text(label)
+                                Text(
+                                    label,
+                                    style =
+                                        MaterialTheme.typography
+                                            .labelLarge
+                                )
                             }
                         }
                     }
                 }
-            }
+            )
+
             if (state.savedProfile != null) {
                 val itemOptions = listOf(14, 28, 42, 56)
-                if (modernSettingsRows) {
-                    CompactSettingsOptionRow(
-                        icon = Icons.Default.GridView,
-                        title = "Initial media load",
-                        subtitle = "Choose how many IPTV items load when a category opens.",
-                        belowContent = {
-                            Spacer(Modifier.height(8.dp))
-                            SingleChoiceSegmentedButtonRow(
-                                Modifier.fillMaxWidth().padding(start = 40.dp, end = 2.dp)
-                            ) {
-                                itemOptions.forEachIndexed { index, count ->
-                                    val shape = uniformSegmentShape(index, itemOptions.size)
-                                    SegmentedButton(
-                                        selected = state.initialCatalogItems == count,
-                                        onClick = { setInitialCatalogItems(count) },
-                                        modifier = Modifier
-                                            .then(
-                                                if (state.initialCatalogItems == count) {
-                                                    Modifier.focusRequester(
-                                                        initialCatalogItemsRequester
-                                                    )
-                                                } else {
-                                                    Modifier
-                                                }
-                                            )
-                                            .focusProperties {
-                                                up = catalogRefreshRequester
-                                            }
-                                            .remoteFocusFrame(shape),
-                                        shape = shape
-                                    ) { Text(count.toString()) }
-                                }
-                            }
-                        }
-                    )
-                } else {
-                    Column(
-                        Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text("Initial media load", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Choose how many IPTV items load when a category opens.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.GridView,
+                    title = "Initial media load",
+                    subtitle = "Choose how many IPTV items load when a category opens.",
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        SettingsChoiceRow(
+                            Modifier.fillMaxWidth().padding(start = 40.dp, end = 2.dp)
+                        ) {
                             itemOptions.forEachIndexed { index, count ->
-                                val shape = uniformSegmentShape(index, itemOptions.size)
-                                SegmentedButton(
+                                val shape = settingsChoiceShape(index, itemOptions.size)
+                                SettingsChoiceButton(
                                     selected = state.initialCatalogItems == count,
                                     onClick = { setInitialCatalogItems(count) },
-                                    modifier = Modifier.remoteFocusFrame(shape),
+                                    modifier = Modifier
+                                        .then(
+                                            if (state.initialCatalogItems == count) {
+                                                Modifier.focusRequester(
+                                                    initialCatalogItemsRequester
+                                                )
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .focusProperties {
+                                            up = catalogRefreshRequester
+                                        }
+                                        .remoteFocusFrame(shape),
                                     shape = shape
                                 ) { Text(count.toString()) }
                             }
                         }
                     }
-                }
+                )
+
             }
 
         }
         SettingsSection("Profiles") {
-            if (!modernSettingsRows) {
-                Text(
-                    "Preconfigured profiles",
-                    modifier = Modifier.padding(
-                        horizontal = 16.dp,
-                        vertical = 10.dp
-                    ),
-                    style = MaterialTheme.typography.titleMedium
-                )
+            if (preconfiguredProfiles.isNotEmpty()) {
+                SettingsGroupHeading("Available profiles", "Choose which configured profiles appear when NikTV opens.")
             }
 
             preconfiguredProfiles.forEachIndexed { index, builtIn ->
@@ -1468,10 +1216,11 @@ SettingsSwitch(
                     index != preconfiguredProfiles.lastIndex ||
                     state.profiles.isNotEmpty()
                 ) {
-                    HorizontalDivider()
+                    SettingsDivider()
                 }
             }
 
+            SettingsGroupHeading("Saved connections", "Open a profile or manage its saved connection.")
             state.profiles.forEachIndexed { index, saved ->
                 val isPreconfigured = preconfiguredProfiles.any {
                     it.cacheKey() == saved.cacheKey()
@@ -1542,11 +1291,11 @@ SettingsSwitch(
                     }
                 )
                 if (index != state.profiles.lastIndex) {
-                    HorizontalDivider()
+                    SettingsDivider()
                 }
             }
 
-            HorizontalDivider()
+            SettingsDivider()
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.AddCircleOutline,
                 title = "Add profile",
@@ -1560,15 +1309,6 @@ SettingsSwitch(
             )
         }
         val activeSettingsDestination = LocalSettingsDestination.current
-        if (
-            !modernSettingsRows &&
-            (
-                activeSettingsDestination == null ||
-                    activeSettingsDestination == SettingsDestination.GENERAL
-                )
-        ) {
-            OrientationSettingsSection(Modifier.focusGroup())
-        }
 
         if (
             profile != null &&
@@ -1589,13 +1329,13 @@ SettingsSwitch(
                 "Profile",
                 profile.name
             )
-            HorizontalDivider()
+            SettingsDivider()
             SettingsValueRow(
                 Icons.Default.Language,
                 "Portal",
                 profile.portalUrl
             )
-            HorizontalDivider()
+            SettingsDivider()
             SettingsValueRow(
                 Icons.Default.Security,
                 "Session",
@@ -1605,7 +1345,7 @@ SettingsSwitch(
                     "Authentication required"
                 }
             )
-            HorizontalDivider()
+            SettingsDivider()
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.Security,
                 title = "Automatically re-authenticate expired sessions",
@@ -1623,14 +1363,14 @@ SettingsSwitch(
                     )
                 }
             )
-            HorizontalDivider()
+            SettingsDivider()
             SettingsValueRow(
                 Icons.Default.Wifi,
                 "Device MAC Address",
                 deviceMacAddress
             )
 
-            HorizontalDivider()
+            SettingsDivider()
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.Refresh,
                 title = "Re-authenticate",
@@ -1643,7 +1383,7 @@ SettingsSwitch(
                     Icon(Icons.Default.ChevronRight, "Re-authenticate")
                 }
             )
-            HorizontalDivider()
+            SettingsDivider()
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.Edit,
                 title = "Edit connection",
@@ -1706,10 +1446,11 @@ SettingsSection("Data and sync") {
                     }
                 )
             }
+            SettingsGroupHeading("Local catalog", "Choose a profile, build its catalog and review scan progress.")
             CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
                 catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
             }
-            HorizontalDivider()
+            SettingsDivider()
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.Storage,
                 title = "Prefer local catalog",
@@ -1721,6 +1462,8 @@ SettingsSection("Data and sync") {
                     })
                 }
             )
+            SettingsDivider()
+            SettingsGroupHeading("Catalog backup & restore", "Transfer IPTV listings and scan checkpoints between devices.")
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.CloudUpload,
                 title = "Back up catalog from this device",
@@ -1740,18 +1483,17 @@ SettingsSection("Data and sync") {
                     })
                 }
             )
-            HorizontalDivider()
+            SettingsDivider()
             Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Backup and restore scope", style = MaterialTheme.typography.titleSmall)
                 Text("Choose the whole catalog or operate on one media type.", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(listOf<CatalogType?>(null, CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)) { type ->
-                        val label = type?.title ?: "Full catalog"
-                        FilterChip(selected = catalogTransferType == type, onClick = { catalogTransferType = type },
-                            label = { Text(label) }, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)))
-                    }
-                }
+                SettingsChoiceGrid(
+                    options = listOf<CatalogType?>(null, CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+                        .map { it to (it?.title ?: "Full catalog") },
+                    selected = catalogTransferType,
+                    onSelect = { catalogTransferType = it }
+                )
             }
             CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.BACKUP, "GitHub catalog upload", catalogBackupEnabled) {
                 com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile, type = catalogTransferType)
@@ -1780,7 +1522,7 @@ SettingsSection("Data and sync") {
             )
             if (catalogStatus.isNotBlank()) Text(catalogStatus, modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            HorizontalDivider()
+            SettingsDivider()
             BackupSettingsActionRow(
                 icon = Icons.Default.History,
                 title = "Backup and restore activity",
@@ -1789,128 +1531,75 @@ SettingsSection("Data and sync") {
                 } ?: "View timestamped activity on this device. No events yet.",
                 onClick = { backupActivityOpen = true }
             )
-            HorizontalDivider()
+            SettingsDivider()
+            SettingsGroupHeading("Device backup", "Configure storage, then export or import your settings, favorites and watch history.")
             val backupModes =
                 listOf(
                     com.nikhil.niktv.data.BackupMode.GITHUB to "GitHub",
                     com.nikhil.niktv.data.BackupMode.DEVICE to "Device"
                 )
 
-            if (modernSettingsRows) {
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.CloudUpload,
-                    title = "Backup mode",
-                    subtitle =
-                        "Choose where NikTV stores backups. Backups can contain portal credentials.",
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        SingleChoiceSegmentedButtonRow(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, end = 2.dp)
-                        ) {
-                            backupModes.forEachIndexed {
-                                    index,
-                                    (mode, label) ->
-                                val shape =
-                                    uniformSegmentShape(
-                                        index,
-                                        backupModes.size
-                                    )
-                                SegmentedButton(
-                                    selected =
-                                        githubBackupConfig.backupMode ==
-                                            mode,
-                                    onClick = {
-                                        val updated =
-                                            githubBackupConfig.copy(
-                                                backupMode = mode
-                                            )
-                                        githubBackupConfig = updated
-                                        githubBackupManager.saveConfig(
-                                            updated
-                                        )
-                                    },
-                                    modifier =
-                                        Modifier.remoteFocusFrame(shape),
-                                    shape = shape
-                                ) {
-                                    Text(
-                                        label,
-                                        style =
-                                            MaterialTheme.typography
-                                                .labelLarge
-                                    )
-                                }
-                            }
-                        }
-                    }
-                )
-            } else {
-                Text(
-                    "Backup files contain portal addresses and credentials. " +
-                        "Use a backup password when storing sensitive backups in a public repository.",
-                    modifier = Modifier.padding(
-                        horizontal = 16.dp,
-                        vertical = 10.dp
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Column(
-                    Modifier.padding(
-                        horizontal = 12.dp,
-                        vertical = 8.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        "Backup mode",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    SingleChoiceSegmentedButtonRow(
-                        Modifier.fillMaxWidth()
+
+            CompactSettingsOptionRow(
+                icon = Icons.Default.CloudUpload,
+                title = "Backup mode",
+                subtitle =
+                    "Choose where NikTV stores backups. Backups can contain portal credentials.",
+                belowContent = {
+                    Spacer(Modifier.height(8.dp))
+                    SettingsChoiceRow(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 40.dp, end = 2.dp)
                     ) {
                         backupModes.forEachIndexed {
                                 index,
                                 (mode, label) ->
                             val shape =
-                                uniformSegmentShape(
+                                settingsChoiceShape(
                                     index,
                                     backupModes.size
                                 )
-                            SegmentedButton(
+                            SettingsChoiceButton(
                                 selected =
-                                    githubBackupConfig.backupMode == mode,
+                                    githubBackupConfig.backupMode ==
+                                        mode,
                                 onClick = {
                                     val updated =
                                         githubBackupConfig.copy(
                                             backupMode = mode
                                         )
                                     githubBackupConfig = updated
-                                    githubBackupManager.saveConfig(updated)
+                                    githubBackupManager.saveConfig(
+                                        updated
+                                    )
                                 },
                                 modifier =
                                     Modifier.remoteFocusFrame(shape),
                                 shape = shape
                             ) {
-                                Text(label)
+                                Text(
+                                    label,
+                                    style =
+                                        MaterialTheme.typography
+                                            .labelLarge
+                                )
                             }
                         }
                     }
                 }
-            }
+            )
+
 
             if (
                 githubBackupConfig.backupMode ==
                 com.nikhil.niktv.data.BackupMode.GITHUB
             ) {
-                HorizontalDivider()
+                SettingsDivider()
                 Column(
                     Modifier.padding(
                         horizontal =
-                            if (modernSettingsRows) 16.dp else 12.dp,
+                            16.dp,
                         vertical = 10.dp
                     ),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -2022,107 +1711,64 @@ SettingsSection("Data and sync") {
                             "Check every ${githubBackupConfig.autoBackupIntervalHours} hours and upload only when data changes."
                         }
 
-                    if (modernSettingsRows) {
-                        CompactSettingsOptionRow(
-                            icon = Icons.Default.Refresh,
-                            title = "Automatic GitHub backup",
-                            subtitle = scheduleSummary,
-                            horizontalPadding = 0.dp,
-                            verticalPadding = 4.dp,
-                            belowContent = {
-                                Spacer(Modifier.height(8.dp))
-                                SingleChoiceSegmentedButtonRow(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(
-                                            start = 40.dp,
-                                            end = 2.dp
-                                        )
-                                ) {
-                                    scheduleOptions.forEachIndexed {
+
+                    CompactSettingsOptionRow(
+                        icon = Icons.Default.Refresh,
+                        title = "Automatic GitHub backup",
+                        subtitle = scheduleSummary,
+                        horizontalPadding = 0.dp,
+                        verticalPadding = 4.dp,
+                        belowContent = {
+                            Spacer(Modifier.height(8.dp))
+                            SettingsChoiceRow(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = 40.dp,
+                                        end = 2.dp
+                                    )
+                            ) {
+                                scheduleOptions.forEachIndexed {
+                                        index,
+                                        (hours, label) ->
+                                    val shape =
+                                        settingsChoiceShape(
                                             index,
-                                            (hours, label) ->
-                                        val shape =
-                                            uniformSegmentShape(
-                                                index,
-                                                scheduleOptions.size
-                                            )
-                                        SegmentedButton(
-                                            selected =
-                                                githubBackupConfig
-                                                    .autoBackupIntervalHours ==
-                                                    hours,
-                                            onClick = {
-                                                val updated =
-                                                    githubBackupConfig.copy(
-                                                        autoBackupIntervalHours =
-                                                            hours
-                                                    )
-                                                githubBackupConfig = updated
-                                                githubBackupManager
-                                                    .saveConfig(updated)
-                                            },
-                                            modifier =
-                                                Modifier.remoteFocusFrame(
-                                                    shape
-                                                ),
-                                            shape = shape
-                                        ) {
-                                            Text(
-                                                label,
-                                                style =
-                                                    MaterialTheme.typography
-                                                        .labelLarge
-                                            )
-                                        }
+                                            scheduleOptions.size
+                                        )
+                                    SettingsChoiceButton(
+                                        selected =
+                                            githubBackupConfig
+                                                .autoBackupIntervalHours ==
+                                                hours,
+                                        onClick = {
+                                            val updated =
+                                                githubBackupConfig.copy(
+                                                    autoBackupIntervalHours =
+                                                        hours
+                                                )
+                                            githubBackupConfig = updated
+                                            githubBackupManager
+                                                .saveConfig(updated)
+                                        },
+                                        modifier =
+                                            Modifier.remoteFocusFrame(
+                                                shape
+                                            ),
+                                        shape = shape
+                                    ) {
+                                        Text(
+                                            label,
+                                            style =
+                                                MaterialTheme.typography
+                                                    .labelLarge
+                                        )
                                     }
                                 }
                             }
-                        )
-                    } else {
-                        Text(
-                            "Automatic GitHub backup",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        SingleChoiceSegmentedButtonRow(
-                            Modifier.fillMaxWidth()
-                        ) {
-                            scheduleOptions.forEachIndexed {
-                                    index,
-                                    (hours, label) ->
-                                val shape =
-                                    uniformSegmentShape(
-                                        index,
-                                        scheduleOptions.size
-                                    )
-                                SegmentedButton(
-                                    selected =
-                                        githubBackupConfig
-                                            .autoBackupIntervalHours == hours,
-                                    onClick = {
-                                        val updated =
-                                            githubBackupConfig.copy(
-                                                autoBackupIntervalHours = hours
-                                            )
-                                        githubBackupConfig = updated
-                                        githubBackupManager.saveConfig(updated)
-                                    },
-                                    modifier =
-                                        Modifier.remoteFocusFrame(shape),
-                                    shape = shape
-                                ) {
-                                    Text(label)
-                                }
-                            }
                         }
-                        Text(
-                            scheduleSummary,
-                            style = MaterialTheme.typography.bodySmall,
-                            color =
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    )
+
 
                     NikTvSecondaryActionButton(
                         onClick = {
@@ -2184,7 +1830,7 @@ SettingsSection("Data and sync") {
                 )
             }
 
-            HorizontalDivider()
+            SettingsDivider()
             ResponsiveSettingsOptionRow(
                 icon =
                     if (
@@ -2195,7 +1841,7 @@ SettingsSection("Data and sync") {
                     } else {
                         Icons.Default.FileUpload
                     },
-                title = "Export backup",
+                title = "Export device backup",
                 subtitle =
                     if (
                         githubBackupConfig.backupMode ==
@@ -2237,7 +1883,7 @@ SettingsSection("Data and sync") {
                 }
             )
 
-            HorizontalDivider()
+            SettingsDivider()
             ResponsiveSettingsOptionRow(
                 icon =
                     if (
@@ -2248,7 +1894,7 @@ SettingsSection("Data and sync") {
                     } else {
                         Icons.Default.FileDownload
                     },
-                title = "Import backup",
+                title = "Import device backup",
                 subtitle =
                     if (
                         githubBackupConfig.backupMode ==
@@ -2502,7 +2148,7 @@ SettingsSwitch(
                         )
                     }
                 )
-                HorizontalDivider()
+                SettingsDivider()
                 ResponsiveSettingsOptionRow(
                     icon = Icons.Default.Refresh,
                     title = "Check for updates on startup",
@@ -2521,7 +2167,7 @@ SettingsSwitch(
                         )
                     }
                 )
-                HorizontalDivider()
+                SettingsDivider()
 
                 val updatePackageSummary =
                     if (updatePackagePreference == UpdatePackage.AUTO) {
@@ -2530,89 +2176,29 @@ SettingsSwitch(
                         "Use ${updatePackagePreference.displayName} for future updates"
                     }
 
-                if (modernSettingsRows) {
-                    CompactSettingsOptionRow(
-                        icon = Icons.Default.SystemUpdate,
-                        title = "Update APK",
-                        subtitle = updatePackageSummary,
-                        belowContent = {
-                            Spacer(Modifier.height(8.dp))
-                            FlowRow(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 40.dp, end = 2.dp),
-                                horizontalArrangement =
-                                    Arrangement.spacedBy(8.dp),
-                                verticalArrangement =
-                                    Arrangement.spacedBy(8.dp)
-                            ) {
-                                UpdatePackage.entries.forEach { option ->
-                                    FilterChip(
-                                        selected =
-                                            updatePackagePreference == option,
-                                        onClick = {
-                                            AppUpdates.setUpdatePackage(option)
-                                            availableUpdate = null
-                                            updateMessage =
-                                                "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
-                                        },
-                                        label = {
-                                            Text(option.displayName)
-                                        },
-                                        modifier =
-                                            Modifier.remoteFocusFrame(
-                                                RoundedCornerShape(10.dp)
-                                            )
-                                    )
+
+                CompactSettingsOptionRow(
+                    icon = Icons.Default.SystemUpdate,
+                    title = "Update APK",
+                    subtitle = updatePackageSummary,
+                    belowContent = {
+                        Spacer(Modifier.height(8.dp))
+                        Box(Modifier.padding(start = 40.dp, end = 2.dp)) {
+                            SettingsChoiceGrid(
+                                options = UpdatePackage.entries.map { it to it.displayName },
+                                selected = updatePackagePreference,
+                                onSelect = { option ->
+                                    AppUpdates.setUpdatePackage(option)
+                                    availableUpdate = null
+                                    updateMessage = "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
                                 }
-                            }
-                        }
-                    )
-                } else {
-                    Column(
-                        Modifier.padding(
-                            horizontal = 16.dp,
-                            vertical = 12.dp
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "Update APK",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            updatePackageSummary,
-                            style = MaterialTheme.typography.bodySmall,
-                            color =
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        FlowRow(
-                            horizontalArrangement =
-                                Arrangement.spacedBy(8.dp),
-                            verticalArrangement =
-                                Arrangement.spacedBy(8.dp)
-                        ) {
-                            UpdatePackage.entries.forEach { option ->
-                                FilterChip(
-                                    selected =
-                                        updatePackagePreference == option,
-                                    onClick = {
-                                        AppUpdates.setUpdatePackage(option)
-                                        availableUpdate = null
-                                        updateMessage =
-                                            "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
-                                    },
-                                    label = { Text(option.displayName) },
-                                    modifier = Modifier.remoteFocusFrame(
-                                        RoundedCornerShape(10.dp)
-                                    )
-                                )
-                            }
+                            )
                         }
                     }
-                }
+                )
 
-                HorizontalDivider()
+
+                SettingsDivider()
                 ResponsiveSettingsOptionRow(
                     icon = Icons.Default.SystemUpdateAlt,
                     title = "One-click update",
@@ -2644,7 +2230,7 @@ SettingsSwitch(
                         }
                     }
                 )
-                HorizontalDivider()
+                SettingsDivider()
 
                 val versionStatus =
                     buildString {
@@ -2713,7 +2299,7 @@ SettingsSwitch(
                     .fillMaxWidth()
                     .padding(
                         start =
-                            if (modernSettingsRows) 56.dp else 16.dp,
+                            56.dp,
                         end = 16.dp
                     )
 
@@ -2761,8 +2347,7 @@ SettingsSwitch(
                         },
                         Modifier.padding(
                             start =
-                                if (modernSettingsRows) 56.dp
-                                else 16.dp,
+                                56.dp,
                             end = 16.dp,
                             top = 8.dp,
                             bottom = 8.dp
@@ -2788,8 +2373,7 @@ SettingsSwitch(
                         "Saved in ${AppUpdates.savedLocation(version)}",
                         Modifier.padding(
                             start =
-                                if (modernSettingsRows) 56.dp
-                                else 16.dp,
+                                56.dp,
                             end = 16.dp,
                             top = 4.dp,
                             bottom = 4.dp
@@ -2859,7 +2443,7 @@ SettingsSwitch(
                     }
                 }
 
-                HorizontalDivider()
+                SettingsDivider()
                 ResponsiveSettingsOptionRow(
                     icon = Icons.Default.DeleteSweep,
                     title = "Delete older update APKs",
@@ -3000,13 +2584,13 @@ SettingsSwitch(
                     selected = selectedSettingsDestination,
                     onSelected = { selectedSettingsDestination = it },
                     requesters = settingsRailRequesters,
-                    detailRequester = settingsSummaryEntryRequester,
+                    detailRequester = settingsContentEntryRequester,
                     modifier = Modifier
                         .width(
                             when {
-                                settingsIsTv -> 248.dp
-                                tabletSettingsLayout -> 204.dp
-                                else -> 218.dp
+                                settingsIsTv -> 164.dp
+                                tabletSettingsLayout -> 176.dp
+                                else -> 176.dp
                             }
                         )
                         .fillMaxHeight()
@@ -3916,7 +3500,7 @@ internal fun PlaybackEngineSettingsContent(
             subtitle = selectedDescription,
             belowContent = {
                 Spacer(Modifier.height(8.dp))
-                SingleChoiceSegmentedButtonRow(
+                SettingsChoiceRow(
                     Modifier
                         .fillMaxWidth()
                         .padding(start = 40.dp, end = 2.dp)
@@ -3925,13 +3509,13 @@ internal fun PlaybackEngineSettingsContent(
                             index,
                             (engine, label, _) ->
                         val shape =
-                            uniformSegmentShape(
+                            settingsChoiceShape(
                                 index,
                                 engines.size
                             )
                         val selected =
                             selectedEngine == engine
-                        SegmentedButton(
+                        SettingsChoiceButton(
                             selected = selected,
                             onClick = {
                                 setPlaybackEngine(engine)
@@ -4203,185 +3787,13 @@ private val LocalSettingsDestination =
     compositionLocalOf<SettingsDestination?> { null }
 
 @Composable
-private fun SettingsDestinationHeader(
-    destination: SettingsDestination,
-    compact: Boolean
-) {
-    Column(
-        Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF2A1215),
-                border = BorderStroke(1.dp, Color(0xFF6F2028))
-            ) {
-                Icon(
-                    destination.icon(),
-                    null,
-                    Modifier
-                        .padding(if (compact) 8.dp else 10.dp)
-                        .size(if (compact) 20.dp else 24.dp),
-                    tint = Color(0xFFFF6973)
-                )
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    destination.title,
-                    style =
-                        if (compact) {
-                            MaterialTheme.typography.titleLarge
-                        } else {
-                            MaterialTheme.typography.headlineSmall
-                        },
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFF5F5F7)
-                )
-                Text(
-                    destination.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF9B9FA8)
-                )
-            }
-            if (!compact) {
-                AssistChip(
-                    onClick = {},
-                    enabled = false,
-                    label = { Text("v${BuildConfig.VERSION_NAME}") }
-                )
-            }
-        }
+private fun SettingsDestinationHeader(destination: SettingsDestination) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(destination.title, style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold, color = Color(0xFFF5F5F7))
+        Text(destination.subtitle, style = MaterialTheme.typography.bodySmall, color = SettingsMuted)
     }
 }
-
-@Composable
-private fun SettingsSummaryRow(
-    activeProfile: String,
-    defaultPlayer: String,
-    backup: String,
-    updates: String,
-    currentDestination: SettingsDestination,
-    railRequester: FocusRequester,
-    entryRequester: FocusRequester,
-    onSelect: (SettingsDestination) -> Unit
-) {
-    val summaries =
-        listOf(
-            SettingsSummary(
-                Icons.Default.AccountCircle,
-                "Active profile",
-                activeProfile,
-                SettingsDestination.PROFILES
-            ),
-            SettingsSummary(
-                Icons.Default.PlayCircle,
-                "Default player",
-                defaultPlayer,
-                SettingsDestination.GENERAL
-            ),
-            SettingsSummary(
-                Icons.Default.CloudDone,
-                "Backup",
-                backup,
-                SettingsDestination.CATALOG
-            ),
-            SettingsSummary(
-                Icons.Default.SystemUpdate,
-                "Updates",
-                updates,
-                SettingsDestination.SYSTEM
-            )
-        )
-
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        summaries.forEachIndexed { index, summary ->
-            Surface(
-                onClick = { onSelect(summary.destination) },
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 82.dp)
-                    .then(
-                        if (index == 0) {
-                            Modifier.focusRequester(entryRequester)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .then(
-                        if (index == 0) {
-                            Modifier.focusProperties {
-                                left = railRequester
-                            }
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .remoteFocusFrame(RoundedCornerShape(14.dp)),
-                shape = RoundedCornerShape(14.dp),
-                color =
-                    if (summary.destination == currentDestination) {
-                        Color(0xFF241418)
-                    } else {
-                        Color(0xFF12151B)
-                    },
-                border = BorderStroke(
-                    1.dp,
-                    if (summary.destination == currentDestination) {
-                        Color(0xFF6F2028)
-                    } else {
-                        Color(0xFF2B2F37)
-                    }
-                )
-            ) {
-                Row(
-                    Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Icon(
-                        summary.icon,
-                        null,
-                        Modifier.size(22.dp),
-                        tint = Color(0xFFFF6973)
-                    )
-                    Column(
-                        Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Text(
-                            summary.label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFF9B9FA8),
-                            maxLines = 1
-                        )
-                        Text(
-                            summary.value,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFF5F5F7),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-private data class SettingsSummary(
-    val icon: ImageVector,
-    val label: String,
-    val value: String,
-    val destination: SettingsDestination
-)
 
 @Composable
 private fun SettingsDestinationRail(
@@ -4402,21 +3814,16 @@ private fun SettingsDestinationRail(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                "Settings",
-                style = MaterialTheme.typography.titleLarge,
+                "PREFERENCES",
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFFF5F5F7)
             )
-            Text(
-                "Customize NikTV",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF81858E)
-            )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(4.dp))
 
             SettingsDestination.entries.forEach { destination ->
                 val isSelected = destination == selected
-                val shape = RoundedCornerShape(14.dp)
+                val shape = RoundedCornerShape(10.dp)
                 Surface(
                     onClick = { onSelected(destination) },
                     modifier = Modifier
@@ -4446,7 +3853,7 @@ private fun SettingsDestinationRail(
                         }
                 ) {
                     Row(
-                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -4505,22 +3912,10 @@ private fun CompactSettingsOptionRow(
     trailingContent: @Composable RowScope.() -> Unit = {},
     belowContent: @Composable ColumnScope.() -> Unit = {}
 ) {
-    val configuration = LocalConfiguration.current
-    val context = LocalContext.current
-    val tabletSettingsLayout =
-        !context.isTvLikeDevice(configuration) &&
-            configuration.smallestScreenWidthDp >= 600
-
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (tabletSettingsLayout) {
-                    Modifier.heightIn(min = 72.dp)
-                } else {
-                    Modifier
-                }
-            )
+            .heightIn(min = 72.dp)
             .padding(
                 horizontal = horizontalPadding,
                 vertical = verticalPadding
@@ -4549,13 +3944,13 @@ private fun CompactSettingsOptionRow(
             ) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
+                    fontWeight = FontWeight.SemiBold,
                     color = titleColor
                 )
                 Text(
                     subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
                     color = subtitleColor
                 )
             }
@@ -4578,47 +3973,11 @@ private fun ResponsiveSettingsOptionRow(
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     trailingContent: @Composable RowScope.() -> Unit = {}
 ) {
-    val configuration = LocalConfiguration.current
-    val context = LocalContext.current
-    val compact = configuration.screenWidthDp < 600
-    val tablet =
-        !context.isTvLikeDevice(configuration) &&
-            configuration.smallestScreenWidthDp >= 600
-
-    if (compact || tablet) {
-        CompactSettingsOptionRow(
-            icon = icon,
-            title = title,
-            subtitle = subtitle,
-            modifier = modifier,
-            iconTint = iconTint,
-            titleColor = titleColor,
-            subtitleColor = subtitleColor,
-            trailingContent = trailingContent
-        )
-    } else {
-        ListItem(
-            headlineContent = {
-                Text(title, color = titleColor)
-            },
-            supportingContent = {
-                Text(subtitle, color = subtitleColor)
-            },
-            leadingContent = {
-                Icon(icon, null, tint = iconTint)
-            },
-            trailingContent = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    content = trailingContent
-                )
-            },
-            modifier = modifier,
-            colors = ListItemDefaults.colors(
-                containerColor = Color.Transparent
-            )
-        )
-    }
+    CompactSettingsOptionRow(
+        icon = icon, title = title, subtitle = subtitle, modifier = modifier,
+        iconTint = iconTint, titleColor = titleColor, subtitleColor = subtitleColor,
+        trailingContent = trailingContent
+    )
 }
 
 @Composable
@@ -4637,18 +3996,18 @@ private fun CompactOrientationSetting(
             "Auto uses portrait on phones and landscape on tablets and TVs.",
         belowContent = {
             Spacer(Modifier.height(8.dp))
-            SingleChoiceSegmentedButtonRow(
+            SettingsChoiceRow(
                 Modifier
                     .fillMaxWidth()
                     .padding(start = 40.dp, end = 2.dp)
             ) {
                 UiOrientationMode.entries.forEachIndexed { index, mode ->
                     val shape =
-                        uniformSegmentShape(
+                        settingsChoiceShape(
                             index,
                             UiOrientationMode.entries.size
                         )
-                    SegmentedButton(
+                    SettingsChoiceButton(
                         selected = selected == mode,
                         onClick = {
                             UiOrientationPreferences.set(
@@ -4709,6 +4068,7 @@ internal fun SettingsSection(
             .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        if (destination == null || title.replace("&", "and") != destination.title.replace("&", "and")) {
         Text(
             text = title,
             modifier = Modifier.padding(horizontal = 6.dp),
@@ -4716,13 +4076,14 @@ internal fun SettingsSection(
             fontWeight = FontWeight.SemiBold,
             color = if (danger) MaterialTheme.colorScheme.error else Color(0xFFB9BDC6)
         )
+        }
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            color = if (danger) Color(0xFF171012) else Color(0xFF111318),
+            shape = RoundedCornerShape(12.dp),
+            color = if (danger) Color(0xFF171012) else SettingsSurface,
             border = BorderStroke(
                 1.dp,
-                if (danger) Color(0xFF542229) else Color(0xFF2B2F37)
+                if (danger) Color(0xFF542229) else SettingsOutline
             )
         ) {
             Column(
@@ -4740,29 +4101,7 @@ internal fun SettingsValueRow(
     label: String,
     value: String
 ) {
-    val configuration = LocalConfiguration.current
-    val context = LocalContext.current
-    val compact = configuration.screenWidthDp < 600
-    val tablet =
-        !context.isTvLikeDevice(configuration) &&
-            configuration.smallestScreenWidthDp >= 600
-
-    if (compact || tablet) {
-        CompactSettingsOptionRow(
-            icon = icon,
-            title = label,
-            subtitle = value
-        )
-    } else {
-        ListItem(
-            headlineContent = { Text(label) },
-            supportingContent = { Text(value, maxLines = 2) },
-            leadingContent = { Icon(icon, null) },
-            colors = ListItemDefaults.colors(
-                containerColor = Color.Transparent
-            )
-        )
-    }
+    CompactSettingsOptionRow(icon = icon, title = label, subtitle = value)
 }
 
 @Composable

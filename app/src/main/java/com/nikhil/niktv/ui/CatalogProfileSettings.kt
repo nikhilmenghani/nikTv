@@ -74,13 +74,13 @@ internal fun CatalogProfileSettings(
     if (chooseProfile) AlertDialog(
         onDismissRequest = { chooseProfile = false }, title = { Text("Choose catalog profile") },
         text = { LazyColumn { items(profiles) { entry ->
-            TextButton(onClick = {
+            NikTvTextActionButton(onClick = {
                 selectedId = CatalogScanPreferences.id(entry)
                 CatalogScanPreferences.selectedProfileId(context, selectedId!!)
                 onProfileSelected(entry)
                 chooseProfile = false
-            }, modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(entry.name) }
-        } } }, confirmButton = { TextButton(onClick = { chooseProfile = false }) { Text("Close") } })
+            }, modifier = Modifier.fillMaxWidth()) { Text(entry.name) }
+        } } }, confirmButton = { NikTvTextActionButton(onClick = { chooseProfile = false }) { Text("Close") } })
     if (confirmFullScan) ProjectCardConfirmationDialog(
         title = "Start a full ${profile.name} scan?",
         message = "A full scan starts again with Live TV and refreshes every provider page for Live TV, Movies and Series. Existing records remain available while it runs, but it does not continue the restored Movies cursor. Use Resume scan when you want to continue from the last backed-up page.",
@@ -105,15 +105,15 @@ internal fun CatalogProfileSettings(
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Local database update schedule", style = MaterialTheme.typography.titleSmall)
         Text("For ${profile.name} on this device. Off allows restoring a checkpoint before scanning.", style = MaterialTheme.typography.bodySmall)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(listOf(0 to "Off", 6 to "6 hours", 12 to "12 hours", 24 to "Daily", 168 to "Weekly")) { (value, label) ->
-                FilterChip(selected = hours == value, onClick = {
-                    hours = value
-                    CatalogScanPreferences.hours(context, id, value)
-                    SearchMetadataSyncScheduler.configureProfile(context, profile)
-                }, label = { Text(label) }, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)))
+        SettingsChoiceGrid(
+            options = listOf(0 to "Off", 6 to "6 hours", 12 to "12 hours", 24 to "Daily", 168 to "Weekly"),
+            selected = hours,
+            onSelect = { value ->
+                hours = value
+                CatalogScanPreferences.hours(context, id, value)
+                SearchMetadataSyncScheduler.configureProfile(context, profile)
             }
-        }
+        )
         Text("Scans continue in the background with a notification. Requests are paced and scans yield during playback. Android may delay work under battery restrictions. Episode details are cached when opened.", style = MaterialTheme.typography.bodySmall)
         Text("Completed scans create a GitHub checkpoint when catalog backup is enabled.", style = MaterialTheme.typography.bodySmall)
     }
@@ -134,16 +134,16 @@ internal fun CatalogProfileSettings(
     checkpoints?.takeIf { it.isNotEmpty() }?.let { entries ->
         AlertDialog(onDismissRequest = { checkpoints = null }, title = { Text("Restore ${profile.name}") },
             text = { LazyColumn(Modifier.heightIn(max = 360.dp)) { items(entries) { entry ->
-                TextButton(onClick = { selectedCheckpoint = entry; checkpoints = null },
-                    modifier = Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(12.dp))) {
+                NikTvTextActionButton(onClick = { selectedCheckpoint = entry; checkpoints = null },
+                    modifier = Modifier.fillMaxWidth()) {
                     Text("${DateFormat.getDateTimeInstance().format(Date(entry.timestamp))} · device ${entry.device}")
                 }
-            } } }, confirmButton = { TextButton(onClick = { checkpoints = null }) { Text("Close") } })
+            } } }, confirmButton = { NikTvTextActionButton(onClick = { checkpoints = null }) { Text("Close") } })
     }
     selectedCheckpoint?.let { entry ->
         AlertDialog(onDismissRequest = { selectedCheckpoint = null }, title = { Text("Merge catalog checkpoint?") },
             text = { Text("Restore ${profile.name} from ${DateFormat.getDateTimeInstance().format(Date(entry.timestamp))}. Newer local records are retained. Reopen the profile afterward to reload the dashboard.") },
-            confirmButton = { TextButton(onClick = {
+            confirmButton = { NikTvTextActionButton(onClick = {
                 selectedCheckpoint = null; busy = true; message = "Restoring catalog…"
                 scope.launch {
                     try {
@@ -153,6 +153,6 @@ internal fun CatalogProfileSettings(
                     catch (_: Exception) { message = "Restore failed. Check GitHub settings and the original password if this checkpoint was encrypted. See activity for the outcome." }
                     finally { busy = false }
                 }
-            }) { Text("Restore") } }, dismissButton = { TextButton(onClick = { selectedCheckpoint = null }) { Text("Cancel") } })
+            }) { Text("Restore") } }, dismissButton = { NikTvTextActionButton(onClick = { selectedCheckpoint = null }) { Text("Cancel") } })
     }
 }

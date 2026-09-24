@@ -112,6 +112,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -720,13 +721,13 @@ private fun ModernDestinationHub(
             bottom = 72.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isTv) 28.dp
-            else if (isTablet) 20.dp
-            else 12.dp
+            if (isTv) 16.dp
+            else if (isTablet) 12.dp
+            else 8.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
-            if (isTv) 28.dp
-            else if (isTablet) 20.dp
+            if (isTv) 16.dp
+            else if (isTablet) 12.dp
             else 12.dp
         )
     ) {
@@ -1052,8 +1053,8 @@ private fun ModernRecentChannelsCollection(
         columns = GridCells.Fixed(columns),
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(if (isTv) 24.dp else 18.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 8.dp)
     ) {
         item("header", span = { GridItemSpan(maxLineSpan) }) {
             ModernCollectionHeader(
@@ -1711,6 +1712,7 @@ private fun ModernDestinationTile(
                     if (isTv) ModernBrandViolet.copy(alpha = 0.34f)
                     else ModernBrandAccent.copy(alpha = 0.18f)
             )
+                .clip(shape)
                 .onFocusChanged {
                     focused = it.isFocused
                 }
@@ -1734,13 +1736,7 @@ private fun ModernDestinationTile(
             Modifier
                 .fillMaxWidth()
                 .then(
-                    if (subtitle == null) {
-                        Modifier.height(if (isTv) 96.dp else 108.dp)
-                    } else if (isPhone) {
-                        Modifier.height(88.dp)
-                    } else {
-                        Modifier.aspectRatio(if (isTv) 1.72f else 16f / 9f)
-                    }
+                    Modifier.heightIn(min = if (isPhone) 64.dp else 76.dp)
                 )
                 .background(
                     Brush.linearGradient(
@@ -1750,17 +1746,12 @@ private fun ModernDestinationTile(
                         )
                     )
                 )
-                .padding(
-                    when {
-                        subtitle == null -> 10.dp
-                        isTv -> 18.dp
-                        isPhone -> 12.dp
-                        else -> 15.dp
-                    }
-                )
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             if (subtitle == null) {
-                ModernProviderCategoryLabel(title, icon, pinned, isTv)
+                Box(Modifier.align(Alignment.CenterStart)) {
+                    ModernProviderCategoryLabel(title, icon, pinned, isTv)
+                }
             } else Row(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
@@ -1772,9 +1763,9 @@ private fun ModernDestinationTile(
                     modifier = Modifier
                         .size(
                             when {
-                                isTv -> 46.dp
-                                isPhone -> 36.dp
-                                else -> 42.dp
+                                isTv -> 32.dp
+                                isPhone -> 30.dp
+                                else -> 32.dp
                             }
                         )
                         .graphicsLayer {
@@ -1815,9 +1806,8 @@ private fun ModernDestinationTile(
                     Text(
                         title,
                         style = when {
-                            isTv -> MaterialTheme.typography.labelMedium
-                            isPhone -> MaterialTheme.typography.bodyLarge
-                            else -> MaterialTheme.typography.titleMedium
+                            isTv -> modernTvTileTitleStyle()
+                            else -> MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp)
                         },
                         fontWeight =
                             if (active) FontWeight.Black
@@ -1896,7 +1886,7 @@ private fun ModernDestinationTile(
     }
 }
 
-/** Give provider names the full card width; source/type already live in the section heading. */
+/** Compact category rows; source/type already live in the section heading. */
 @Composable
 private fun ModernProviderCategoryLabel(
     title: String,
@@ -1908,34 +1898,27 @@ private fun ModernProviderCategoryLabel(
         title.split('|', limit = 2).map(String::trim)
             .takeIf { it.size == 2 && it.all(String::isNotBlank) }
     }
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            Modifier.fillMaxWidth().height(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            Box(Modifier.width(3.dp).height(12.dp)
-                .background(ModernBrandAccent, RoundedCornerShape(2.dp)))
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(icon, null, Modifier.size(22.dp), tint = Color(0xFFB9BDD0))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (parts != null) {
-                Text(parts.first(), modifier = Modifier.weight(1f),
+                Text(parts.first(),
                     fontSize = if (isTv) 10.sp else 11.sp,
                     lineHeight = 14.sp, fontWeight = FontWeight.Medium,
                     color = Color(0xFFB9BDD0), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            } else {
-                Icon(icon, null, Modifier.size(16.dp), tint = Color(0xFFB9BDD0))
-                Spacer(Modifier.weight(1f))
             }
-            if (pinned) {
-                Icon(Icons.Default.PushPin, "Pinned $title", Modifier.size(15.dp),
-                    tint = ModernBrandAccent)
-            }
+            Text(parts?.last() ?: title,
+                modifier = Modifier.fillMaxWidth(),
+                fontSize = if (isTv) 12.sp else 14.sp,
+                lineHeight = if (isTv) 16.sp else 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFF2F3F7), maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
-        Text(parts?.last() ?: title,
-            modifier = Modifier.fillMaxWidth(),
-            fontSize = if (isTv) 14.sp else 16.sp,
-            lineHeight = if (isTv) 18.sp else 21.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFFF2F3F7), maxLines = 3, overflow = TextOverflow.Ellipsis)
+        if (pinned) {
+            Icon(Icons.Default.PushPin, "Pinned $title", Modifier.size(15.dp),
+                tint = ModernBrandAccent)
+        }
     }
 }
 
@@ -3224,10 +3207,10 @@ private fun ModernIptvCollection(
             bottom = 54.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isTv) 28.dp else 16.dp
+            if (isLiveTv) { if (isTv) 12.dp else 8.dp } else if (isTv) 28.dp else 16.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
-            if (isTv) 20.dp else 12.dp
+            if (isLiveTv && isTv) 14.dp else if (isTv) 20.dp else 12.dp
         )
     ) {
         gridItemsIndexed(
@@ -3583,14 +3566,11 @@ private fun ModernLiveChannelTile(
         Surface(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
-                .height(
-                    when {
-                        isPhone && currentProgrammeTitle == null -> 70.dp
-                        isPhone -> 102.dp
-                        isTv -> 116.dp
-                        else -> 124.dp
-                    }
+                .then(
+                    if (isPhone) Modifier.heightIn(min = if (currentProgrammeTitle == null) 60.dp else 88.dp)
+                    else Modifier.height(if (isTv) 96.dp else 104.dp)
                 )
+                .clip(shape)
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
@@ -3630,23 +3610,24 @@ private fun ModernLiveChannelTile(
                         model = artworkRequest(context, item),
                         contentDescription = null,
                         modifier = Modifier.align(Alignment.CenterEnd).padding(end = 14.dp)
-                            .size(66.dp).graphicsLayer {
+                            .size(48.dp).graphicsLayer {
                                 alpha = if (currentProgrammeTitle == null) .30f else .18f
                             },
                         contentScale = ContentScale.Fit
                     )
                 }
                 Row(
-                    Modifier.fillMaxSize().padding(
-                        start = if (isPhone) 15.dp else 18.dp,
-                        end = 14.dp,
-                        top = if (isPhone) 10.dp else if (currentProgrammeTitle == null) 16.dp else 12.dp,
-                        bottom = if (isPhone) 10.dp else if (currentProgrammeTitle == null) 16.dp else 12.dp
+                    (if (isPhone) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
+                        .align(Alignment.Center).padding(
+                        start = 12.dp,
+                        end = 12.dp,
+                        top = 10.dp,
+                        bottom = if (currentProgrammeTitle == null) 10.dp else 22.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         if (currentProgrammeTitle != null) {
                             Text(
                                 channelName,
@@ -3660,8 +3641,7 @@ private fun ModernLiveChannelTile(
                                 color = Color.White,
                                 style = when {
                                     isTv -> modernTvTileTitleStyle()
-                                    isPhone -> MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
-                                    else -> MaterialTheme.typography.titleMedium
+                                    else -> MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp)
                                 },
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 2,
@@ -3680,8 +3660,8 @@ private fun ModernLiveChannelTile(
                             }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Box(Modifier.width(3.dp).height(42.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(Modifier.width(3.dp).height(28.dp)
                                     .background(palette.first, RoundedCornerShape(2.dp)))
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
@@ -3689,8 +3669,7 @@ private fun ModernLiveChannelTile(
                                         color = Color.White,
                                         style = when {
                                             isTv -> modernTvTileTitleStyle()
-                                            isPhone -> MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp)
-                                            else -> MaterialTheme.typography.titleMedium
+                                            else -> MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 16.sp)
                                         },
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 2,
@@ -3727,12 +3706,8 @@ private fun ModernLiveChannelTile(
                                 tint = ModernBrandAccent)
                         }
                         if (currentProgrammeTitle == null) {
-                            Box(Modifier.size(34.dp)
-                                .background(Color.White.copy(alpha = .10f), CircleShape),
-                                contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.PlayArrow, null, Modifier.size(23.dp),
-                                    tint = Color.White.copy(alpha = .90f))
-                            }
+                            Icon(Icons.Default.PlayArrow, null, Modifier.size(22.dp),
+                                tint = Color.White.copy(alpha = .90f))
                         }
                     }
                 }
@@ -3740,8 +3715,7 @@ private fun ModernLiveChannelTile(
                     Box(
                         Modifier.align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .padding(start = if (isPhone) 15.dp else 18.dp,
-                                end = 14.dp, bottom = 10.dp)
+                            .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
                             .height(4.dp)
                             .background(Color.White.copy(alpha = .28f), RoundedCornerShape(2.dp))
                     ) {

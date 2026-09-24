@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -148,15 +149,15 @@ internal fun CatalogOperationPanel(
     Surface(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
         shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        color = Color(0xFF1B1E24),
+        border = BorderStroke(1.dp, SettingsOutline)
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(if (operation.startsWith("scan:")) Icons.Default.Storage else Icons.Default.CloudUpload,
                     contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 if (isScan || held) Text(if (isScan) scanState.label else mode, style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary)
             }
@@ -176,7 +177,7 @@ internal fun CatalogOperationPanel(
             if (updated > 0) Text("Updated ${operationTime(updated)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val compactActions = LocalConfiguration.current.screenWidthDp < 600
-            val actionModifier = if (compactActions) Modifier.fillMaxWidth() else Modifier
+            val actionModifier = if (compactActions) Modifier.fillMaxWidth() else Modifier.width(148.dp)
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -184,21 +185,21 @@ internal fun CatalogOperationPanel(
                 maxItemsInEachRow = if (compactActions) 1 else 3
             ) {
                 if (held) {
-                    Button(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
-                        modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Resume local") }
+                    NikTvPrimaryActionButton(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
+                        modifier = actionModifier) { Text("Resume local") }
                     onRestoredResume?.let { restored ->
-                        OutlinedButton(onClick = restored, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
+                        NikTvSecondaryActionButton(onClick = restored, shape = RoundedCornerShape(8.dp),
+                            modifier = actionModifier) { Text(restoredResumeLabel) }
                     }
                     onFullScan?.let { fullScan ->
-                        OutlinedButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
+                        NikTvSecondaryActionButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
+                            modifier = actionModifier) { Text("Full scan") }
                     }
                 } else {
-                    if (onStart != null) Button(
+                    if (onStart != null) NikTvPrimaryActionButton(
                         onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
                         enabled = !busy || (scanState == CatalogScanDisplay.QUEUED && onRetry != null),
-                        shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) {
+                        shape = RoundedCornerShape(8.dp), modifier = actionModifier) {
                         Text(when (scanState) {
                             CatalogScanDisplay.SCANNING -> "Scanning…"
                             CatalogScanDisplay.QUEUED -> "Try now"
@@ -208,23 +209,22 @@ internal fun CatalogOperationPanel(
                         })
                     }
                     onRestoredResume?.let { restored ->
-                        OutlinedButton(onClick = restored, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text(restoredResumeLabel) }
+                        NikTvSecondaryActionButton(onClick = restored, enabled = !busy, shape = RoundedCornerShape(8.dp),
+                            modifier = actionModifier) { Text(restoredResumeLabel) }
                     }
                     onFullScan?.let { fullScan ->
-                        OutlinedButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Full scan") }
+                        NikTvSecondaryActionButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),
+                            modifier = actionModifier) { Text("Full scan") }
                     }
-                    if (!isScan || busy) OutlinedButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
-                        shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Pause") }
+                    if (!isScan || busy) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
+                        shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Pause") }
                 }
-                if (mode != "Stopped" && (!isScan || busy || held)) TextButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Stop") }
-                TextButton(onClick = { detail = "events" },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("Details") }
-                if (failures.isNotEmpty()) TextButton(onClick = { detail = "failures" },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier.remoteFocusFrame(RoundedCornerShape(8.dp))) { Text("${failures.size} failed") }
+                if (mode != "Stopped" && (!isScan || busy || held)) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Stop") }
+                NikTvSecondaryActionButton(onClick = { detail = "events" },
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Details") }
+                if (failures.isNotEmpty()) NikTvSecondaryActionButton(onClick = { detail = "failures" },
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("${failures.size} failed", color = MaterialTheme.colorScheme.error) }
             }
         }
     }
@@ -242,7 +242,7 @@ internal fun CatalogOperationPanel(
                     Column(Modifier.fillMaxWidth().remoteFocusFrame(RoundedCornerShape(8.dp)).focusable().padding(8.dp)) { Text("${row.outcome} · ${row.location}", style = MaterialTheme.typography.titleSmall)
                         Text(row.detail); Text(operationTime(row.time), style = MaterialTheme.typography.bodySmall); HorizontalDivider() }
                 }
-            } }, confirmButton = { TextButton(onClick = { detail = null }) { Text("Close") } })
+            } }, confirmButton = { NikTvSecondaryActionButton(onClick = { detail = null }) { Text("Close") } })
     }
 }
 
@@ -285,9 +285,9 @@ internal fun CatalogDatabasePanel(profile: PortalProfile) {
                     }
                 }
             } }, confirmButton = { Row {
-                TextButton(enabled = offset > 0, onClick = { offset = (offset - 50).coerceAtLeast(0) }) { Text("Previous") }
-                TextButton(enabled = rows?.size == 50, onClick = { offset += 50 }) { Text("Next") }
-                TextButton(onClick = { browseType = null }) { Text("Close") }
+                NikTvSecondaryActionButton(enabled = offset > 0, onClick = { offset = (offset - 50).coerceAtLeast(0) }) { Text("Previous") }
+                NikTvSecondaryActionButton(enabled = rows?.size == 50, onClick = { offset += 50 }) { Text("Next") }
+                NikTvSecondaryActionButton(onClick = { browseType = null }) { Text("Close") }
             } })
     }
 }
