@@ -785,7 +785,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,deleteRecentSearch = vm::deleteRecentSearch
                     ,openSearchResult = vm::openSearchResult
                     ,loadMoreSearch = vm::loadMoreSearch
-                    ,scanAndSyncSearchCatalog = vm::scanAndSyncSearchCatalog
                     ,loadMoreCatalog = vm::loadMoreCatalog
                     ,loadMoreEpisodes = vm::loadMoreEpisodes
                     ,setSearchCategory = vm::setSearchCategory

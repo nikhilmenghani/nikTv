@@ -126,7 +126,6 @@ data class NikTvState(
     val browseCachesByType: Map<CatalogType, BrowseCatalogCache> = emptyMap(),
     val searchOpen: Boolean = false,
     val searchType: SearchContentType = SearchContentType.ALL,
-    val searchIndexCoverage: Map<CatalogType, SearchIndexCoverage> = emptyMap(),
     val searchScopeLocked: Boolean = false,
     val searchQuery: String = "",
     val searchLocalLoading: Boolean = false,
@@ -143,9 +142,6 @@ data class NikTvState(
     val searchPaginationGeneration: Int = 0,
     val searchCategories: List<Category> = emptyList(),
     val searchCategoryId: String = "*",
-    val searchCatalogScanning: Boolean = false,
-    val searchCatalogScanProgress: Float = 0f,
-    val searchCatalogScanMessage: String? = null,
     val categoryFilters: Map<String, List<String>> = emptyMap(),
     val categoryManagerOpen: Boolean = false,
     val categoryManagerType: CatalogType = CatalogType.LIVE_TV
@@ -203,7 +199,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var profilePreparationJob: Job? = null
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
-    private var searchCatalogScanJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -4319,17 +4314,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFullSearch() = prepareFullSearch(forceRefresh = true)
 
-    fun scanAndSyncSearchCatalog() {
-        val profile = _state.value.session?.profile ?: return
-        // The screen only requests work. Closing it or destroying this ViewModel must not cancel the scan.
-        SearchMetadataSyncScheduler.refresh(getApplication(), profile)
-        _state.update { it.copy(
-            searchCatalogScanning = false,
-            searchCatalogScanProgress = 0f,
-            searchCatalogScanMessage = "Profile scan requested in the background. View progress or resume a paused scan in Settings > Catalog & backup."
-        ) }
-    }
-
     private fun catalogTypeForSearch(type: SearchContentType): CatalogType = when (type) {
         SearchContentType.ALL -> error("All search must be split into media types")
         SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
@@ -4391,7 +4375,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 settingsOpen = false,
                 favoritesOpen = false,
                 searchType = effectiveType,
-                searchIndexCoverage = emptyMap(),
                 searchServerLoading = false,
                 searchScopeLocked = tabType != null,
                 searchResults = emptyList(),
@@ -5074,12 +5057,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
 
         val indexCache = store.searchCatalog(catalogType, profileKey).first()
-        _state.update { current ->
-            if (current.session?.profile?.cacheKey() != profileKey) current
-            else current.copy(searchIndexCoverage = current.searchIndexCoverage + (catalogType to
-                SearchIndexCoverage(indexCache?.items?.size ?: 0,
-                    indexCache?.completedCategoryIds?.size ?: 0, indexCache?.cachedAtMillis ?: 0L)))
-        }
         val indexed =
             indexCache?.items
                 .orEmpty()

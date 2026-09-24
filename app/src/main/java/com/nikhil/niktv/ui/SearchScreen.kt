@@ -11,6 +11,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,9 +49,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreInterceptKeyBeforeSoftKeyboard
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -126,8 +130,7 @@ internal fun ModernSearchScreen(
     deleteRecent: (RecentSearch) -> Unit,
     openResult: (MediaItem) -> Unit,
     loadMore: () -> Unit,
-    toggleFavorite: (FavoriteItem) -> Unit,
-    scanAndSync: () -> Unit
+    toggleFavorite: (FavoriteItem) -> Unit
 ) {
     var categoryPickerOpen by rememberSaveable(state.searchType) {
         mutableStateOf(false)
@@ -135,18 +138,16 @@ internal fun ModernSearchScreen(
     var restoreCategoryFocus by rememberSaveable(state.searchType) {
         mutableStateOf(false)
     }
-    var searchEditing by rememberSaveable { mutableStateOf(false) }
+    var searchEditing by remember { mutableStateOf(false) }
     var editSessionSawIme by remember { mutableStateOf(false) }
     var restoreQueryFocus by rememberSaveable { mutableStateOf(false) }
     var queryFocused by remember { mutableStateOf(false) }
     var showLocalSearchProgress by remember { mutableStateOf(false) }
-    var syncActivityExpanded by rememberSaveable { mutableStateOf(false) }
 
     val searchRequester = remember { FocusRequester() }
     val clearSearchRequester = remember { FocusRequester() }
     val submitSearchRequester = remember { FocusRequester() }
     val categoryRequester = remember { FocusRequester() }
-    val scanRequester = remember { FocusRequester() }
     val contentRequester = remember { FocusRequester() }
     val typeRequesters = remember { searchVisibleTypes.associateWith { FocusRequester() } }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -203,16 +204,8 @@ internal fun ModernSearchScreen(
         }
     }
 
-    /*
-     * SEARCH_SIBLING_FOCUS_V5
-     *
-     * Remote focus and text-edit focus intentionally use the same requester,
-     * but they are different focus targets. While not editing, BasicTextField
-     * is disabled and an explicit Compose focus target owns D-pad navigation.
-     * Entering edit mode removes that target, enables BasicTextField, then
-     * focuses the real text editor and opens the IME on the following frame.
-     * This keeps horizontal D-pad navigation out of the EditText cursor path.
-     */
+    // Keep the same editor focus target in both navigation and editing mode.
+    // Removing/replacing a focused node lets the sidebar/header steal focus.
     LaunchedEffect(searchEditing) {
         if (searchEditing) {
             editSessionSawIme = false
@@ -278,7 +271,7 @@ internal fun ModernSearchScreen(
         state.searchUsedServer,
         searchEditing
     ) {
-        if (state.searchType != SearchContentType.ALL && !resultsFocused && remoteNavigationActive && !searchEditing &&
+        if (state.searchType != SearchContentType.ALL && !resultsFocused && remoteNavigationActive && !searchEditing && !queryFocused && !restoreQueryFocus &&
             !state.searchLocalLoading && !state.searchServerLoading &&
             state.searchResults.isNotEmpty()
         ) {
@@ -372,7 +365,7 @@ internal fun ModernSearchScreen(
                 BasicTextField(
                     value = state.searchQuery,
                     onValueChange = setQuery,
-                    enabled = searchEditing,
+                    readOnly = !searchEditing,
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
                         color = Color.White
@@ -408,54 +401,56 @@ internal fun ModernSearchScreen(
                         }
                         .onFocusChanged {
                             queryFocused = it.isFocused
-                        }
-                        .then(
-                            if (!searchEditing) {
-                                Modifier
-                                    .onPreviewKeyEvent { event ->
-                                        if (
-                                            event.type ==
-                                                KeyEventType.KeyDown &&
-                                            event.key == Key.DirectionRight
-                                        ) {
-                                            runCatching {
-                                                if (state.searchQuery.isNotEmpty()) {
-                                                    clearSearchRequester.requestFocus()
-                                                } else {
-                                                    submitSearchRequester.requestFocus()
-                                                }
-                                            }
-                                            true
-                                        } else if (
-                                            event.type == KeyEventType.KeyDown &&
-                                            event.key == Key.DirectionDown
-                                        ) {
-                                            runCatching { typeBelowSearch.requestFocus() }
-                                            true
-                                        } else if (
-                                            event.type == KeyEventType.KeyDown &&
-                                            event.key in listOf(
-                                                Key.DirectionCenter,
-                                                Key.Enter,
-                                                Key.NumPadEnter
-                                            )
-                                        ) {
-                                            activateSearchField()
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                    .pointerInput(Unit) {
-                                        detectTapGestures {
-                                            activateSearchField()
-                                        }
-                                    }
-                                    .focusable()
-                            } else {
-                                Modifier
+                            if (!it.isFocused && searchEditing) {
+                                searchEditing = false
+                                keyboard?.hide()
                             }
-                        ),
+                        }
+                        .onPreInterceptKeyBeforeSoftKeyboard { event ->
+                            if (searchEditing && event.key == Key.Back) {
+                                if (event.type == KeyEventType.KeyUp) {
+                                    searchEditing = false
+                                    keyboard?.hide()
+                                    restoreQueryFocus = true
+                                }
+                                true
+                            } else false
+                        }
+                        .onPreviewKeyEvent { event ->
+                            if (!searchEditing) {
+                                when (event.key) {
+                                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                        // Consume the whole click; enter edit mode only
+                                        // on release so the IME cannot receive its tail.
+                                        if (event.type == KeyEventType.KeyUp) activateSearchField()
+                                        true
+                                    }
+                                    Key.DirectionRight -> {
+                                        if (event.type == KeyEventType.KeyDown) {
+                                            val target = if (state.searchQuery.isNotEmpty())
+                                                clearSearchRequester else submitSearchRequester
+                                            runCatching { target.requestFocus() }
+                                        }
+                                        true
+                                    }
+                                    Key.DirectionDown -> {
+                                        if (event.type == KeyEventType.KeyDown) {
+                                            runCatching { typeBelowSearch.requestFocus() }
+                                        }
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else false
+                        }
+                        .pointerInput(Unit) {
+                            // Observe before the text field consumes its tap;
+                            // read-only fields still handle selection gestures.
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                activateSearchField()
+                            }
+                        },
                     decorationBox = { innerTextField ->
                         Box(
                             modifier = Modifier
@@ -580,7 +575,7 @@ internal fun ModernSearchScreen(
                         .focusRequester(categoryRequester)
                         .focusProperties {
                             up = selectedTypeRequester
-                            down = scanRequester
+                            down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
                         }
                 )
             } else {
@@ -623,7 +618,7 @@ internal fun ModernSearchScreen(
                                 up = searchRequester
                                 left = typeRequesters.getValue(searchVisibleTypes.last())
                                 right = FocusRequester.Cancel
-                                down = scanRequester
+                                down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
                             }
                     )
                 }
@@ -644,81 +639,9 @@ internal fun ModernSearchScreen(
                     .focusRequester(categoryRequester)
                     .focusProperties {
                         up = searchRequester
-                        down = scanRequester
-                    }
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Text(
-            "Local index · coverage may be partial · provider search is manual",
-            color = SearchMuted,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(bottom = 4.dp)
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 1120.dp)
-                .align(Alignment.CenterHorizontally),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(onClick = { syncActivityExpanded = !syncActivityExpanded },
-                modifier = Modifier.remoteFocusFrame(RoundedCornerShape(50))) {
-                Text(if (state.searchCatalogScanning) "Sync activity · ${(state.searchCatalogScanProgress * 100).toInt()}%" else "Index & sync activity")
-            }
-            Spacer(Modifier.weight(1f))
-            NikTvSecondaryActionButton(
-                onClick = { if (!state.searchCatalogScanning) scanAndSync() },
-                modifier = Modifier
-                    .focusRequester(scanRequester)
-                    .focusProperties {
-                        up = categoryRequester
                         down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
                     }
-                    .remoteFocusFrame(RoundedCornerShape(50))
-            ) {
-                if (state.searchCatalogScanning) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Icon(Icons.Default.Sync, contentDescription = null)
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(if (state.searchCatalogScanning) "Scanning…" else "Scan & sync")
-            }
-        }
-
-        if (syncActivityExpanded) {
-            Spacer(Modifier.height(6.dp))
-            val coverage = state.searchIndexCoverage.filterKeys { type ->
-                state.searchType == SearchContentType.ALL || type.name == state.searchType.name
-            }
-            val coverageText = remember(coverage) {
-                coverage.entries.joinToString("\n") { (type, info) ->
-                    val updated = if (info.cachedAtMillis > 0) java.text.DateFormat.getDateTimeInstance(
-                        java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
-                    ).format(java.util.Date(info.cachedAtMillis)) else "not yet cached"
-                    "${type.title}: ${info.items} indexed · ${info.scannedCategories} scanned scopes · cache $updated"
-                }
-            }
-            Text(coverageText.ifBlank { "Run a search to check the local index. GitHub sync runs in the background when configured." },
-                color = SearchMuted, style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(vertical = 4.dp))
-            if (state.searchCatalogScanning) SyncProgressCard(
-                message = state.searchCatalogScanMessage ?: "No scan started in this session. Scan & sync builds the index without blocking search.",
-                progress = state.searchCatalogScanProgress,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 1120.dp)
-                    .align(Alignment.CenterHorizontally)
             )
-            else Text(state.searchCatalogScanMessage ?: "No scan started in this session.",
-                color = SearchMuted, style = MaterialTheme.typography.bodySmall)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -812,14 +735,14 @@ internal fun ModernSearchScreen(
                         state.searchUsedServer ->
                             "No provider matches"
                         else ->
-                            "No matches in this device’s index"
+                            "No matches in the device cache"
                     },
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     when {
                         !state.searchUsedServer ->
-                            "Index coverage may be partial. Scan & sync, or search the provider."
+                            "Search the provider for titles not yet cached on this device."
                         else ->
                             "Try another title or category."
                     },
