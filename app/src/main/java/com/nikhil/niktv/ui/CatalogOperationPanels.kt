@@ -177,57 +177,62 @@ internal fun CatalogOperationPanel(
             if (updated > 0) Text("Updated ${operationTime(updated)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val compactActions = LocalConfiguration.current.screenWidthDp < 600
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                maxItemsInEachRow = 3
-            ) {
-                // Fixed compact widths avoid older FlowRow implementations measuring a
-                // fractional/weighted child as the full line. Three actions plus gaps fit
-                // the operation card on phone layouts such as the POCO F1.
-                val actionModifier = Modifier.width(if (compactActions) 96.dp else 148.dp)
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val actionWidth = if (compactActions) (maxWidth - 16.dp) / 3 else 148.dp
+                val actionTextStyle = if (compactActions) MaterialTheme.typography.labelSmall
+                    else MaterialTheme.typography.labelMedium
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    maxItemsInEachRow = 3
+                ) {
+                val actionModifier = Modifier.width(actionWidth)
                 if (held) {
                     NikTvPrimaryActionButton(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
-                        modifier = actionModifier) { Text("Resume local") }
+                        modifier = actionModifier) { Text("Resume local", style = actionTextStyle, maxLines = 1) }
                     onRestoredResume?.let { restored ->
                         NikTvSecondaryActionButton(onClick = restored, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text(restoredResumeLabel) }
+                            modifier = actionModifier) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
                     }
                     onFullScan?.let { fullScan ->
                         NikTvSecondaryActionButton(onClick = fullScan, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text("Full scan") }
+                            modifier = actionModifier) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
                     }
                 } else {
                     if (onStart != null) NikTvPrimaryActionButton(
                         onClick = if (scanState == CatalogScanDisplay.QUEUED) onRetry ?: onStart else onStart,
                         enabled = !busy || (scanState == CatalogScanDisplay.QUEUED && onRetry != null),
                         shape = RoundedCornerShape(8.dp), modifier = actionModifier) {
-                        Text(when (scanState) {
+                        Text(text = when (scanState) {
                             CatalogScanDisplay.SCANNING -> "Scanning…"
                             CatalogScanDisplay.QUEUED -> "Try now"
                             CatalogScanDisplay.CHECKING -> "Checking…"
                             CatalogScanDisplay.COMPLETE -> "Resume scan"
                             else -> "Resume scan"
-                        })
+                        }, style = actionTextStyle, maxLines = 1)
                     }
                     onRestoredResume?.let { restored ->
                         NikTvSecondaryActionButton(onClick = restored, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text(restoredResumeLabel) }
+                            modifier = actionModifier) { Text(restoredResumeLabel, style = actionTextStyle, maxLines = 1) }
                     }
                     onFullScan?.let { fullScan ->
                         NikTvSecondaryActionButton(onClick = fullScan, enabled = !busy, shape = RoundedCornerShape(8.dp),
-                            modifier = actionModifier) { Text("Full scan") }
+                            modifier = actionModifier) { Text("Full scan", style = actionTextStyle, maxLines = 1) }
                     }
                     if (!isScan || busy) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Paused") },
-                        shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Pause") }
+                        shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Pause", style = actionTextStyle, maxLines = 1) }
                 }
                 if (mode != "Stopped" && (!isScan || busy || held)) NikTvSecondaryActionButton(onClick = { CatalogOperations.control(context, operation, "Stopped") },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Stop") }
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Stop", style = actionTextStyle, maxLines = 1) }
                 NikTvSecondaryActionButton(onClick = { detail = "events" },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Details") }
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("Details", style = actionTextStyle, maxLines = 1) }
                 if (failures.isNotEmpty()) NikTvSecondaryActionButton(onClick = { detail = "failures" },
-                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) { Text("${failures.size} failed", color = MaterialTheme.colorScheme.error) }
+                    shape = RoundedCornerShape(8.dp), modifier = actionModifier) {
+                        Text("${failures.size} failed", color = MaterialTheme.colorScheme.error,
+                            style = actionTextStyle, maxLines = 1)
+                    }
+                }
             }
         }
     }
