@@ -342,7 +342,8 @@ internal fun CatalogTypeUpdatePanels(
     profile: PortalProfile,
     onCheck: (CatalogType) -> Unit,
     onResume: (CatalogType) -> Unit,
-    onRefresh: (CatalogType) -> Unit
+    onRefresh: (CatalogType) -> Unit,
+    onAppend: (CatalogType) -> Unit
 ) {
     val context = LocalContext.current
     val profileId = CatalogScanPreferences.id(profile)
@@ -605,6 +606,26 @@ internal fun CatalogTypeUpdatePanels(
                                 Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
                             }
                         }
+                    }
+                    if ((state == "UPDATE_AVAILABLE" || state == "CHANGED") &&
+                        (status?.newPages ?: 0) > 0 &&
+                        (status?.newCategories ?: 0) == 0 &&
+                        (status?.removedCategories ?: 0) == 0 &&
+                        checkpoint?.complete == true) {
+                        NikTvSecondaryActionButton(
+                            onClick = { onAppend(type) },
+                            enabled = interactionsEnabled,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                        ) {
+                            Text("Append new pages", style = MaterialTheme.typography.labelMedium)
+                        }
+                        Text(
+                            "Fast add for pages after the saved end. Earlier edits, removals and reordered items require Sync.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

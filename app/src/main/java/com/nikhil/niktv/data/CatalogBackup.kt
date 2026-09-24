@@ -396,6 +396,7 @@ class CatalogBackupManager(context: Context) {
     private fun clearRefreshState(profile: PortalProfile, type: CatalogType) {
         val id = CatalogScanPreferences.id(profile)
         CatalogScanPreferences.refreshStartedAt(app, id, type.name, 0L)
+        CatalogScanPreferences.appendMode(app, id, type.name, false)
         CatalogScanPreferences.activeType(app, id, null)
     }
 

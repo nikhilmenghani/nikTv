@@ -109,6 +109,86 @@ class CatalogScanControlsTest {
         assertFalse(checkpoint.complete)
     }
 
+    @Test fun appendReadsSavedBoundaryAndNewPagesWithoutFetchingEarlierPages() = runBlocking {
+        val session = session()
+        val repository = CatalogRepository(context)
+        val profile = session.profile.cacheKey()
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            1, listOf(item("a"), item("b")), true, 100L)
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            2, listOf(item("c")), false, 100L)
+        val requested = mutableListOf<Int>()
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            requested += page
+            when (page) {
+                2 -> PortalCatalogPage(listOf(item("c"), item("d")), page, true)
+                3 -> PortalCatalogPage(listOf(item("e")), page, false)
+                else -> error("Append must not fetch page $page")
+            }
+        }, {})
+
+        val result = scanner.scan(session, CatalogType.MOVIES, 0,
+            refreshCompleted = false, appendOnly = true)
+
+        assertEquals(listOf(2, 3), requested)
+        assertEquals(0, result.failures)
+        assertFalse(result.appendBoundaryChanged)
+        assertEquals(5, result.itemCount)
+        assertEquals(3, repository.scanCheckpoint(session.profile, CatalogType.MOVIES).currentPage)
+        assertEquals(setOf("a", "b", "c", "d", "e"),
+            repository.search(profile, CatalogType.MOVIES)!!.items.map { it.id }.toSet())
+    }
+
+    @Test fun appendStopsWithoutWritingWhenSavedBoundaryWasReordered() = runBlocking {
+        val session = session()
+        val repository = CatalogRepository(context)
+        val profile = session.profile.cacheKey()
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            1, listOf(item("a")), true, 100L)
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            2, listOf(item("b")), false, 100L)
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            assertEquals(2, page)
+            PortalCatalogPage(listOf(item("new"), item("b")), page, true)
+        }, {})
+
+        val result = scanner.scan(session, CatalogType.MOVIES, 0,
+            refreshCompleted = false, appendOnly = true)
+
+        assertTrue(result.appendBoundaryChanged)
+        assertEquals(2, repository.scanCheckpoint(session.profile, CatalogType.MOVIES).currentPage)
+        assertTrue(repository.scanCheckpoint(session.profile, CatalogType.MOVIES).complete)
+        assertEquals(setOf("a", "b"), repository.search(profile, CatalogType.MOVIES)!!.items.map { it.id }.toSet())
+    }
+
+    @Test fun interruptedAppendResumesAfterItsLastCommittedPage() = runBlocking {
+        val session = session()
+        val repository = CatalogRepository(context)
+        val profile = session.profile.cacheKey()
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            1, listOf(item("a")), false, 100L)
+        val requested = mutableListOf<Int>()
+        var failNext = true
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            requested += page
+            when (page) {
+                1 -> PortalCatalogPage(listOf(item("a")), page, true)
+                2 -> if (failNext) throw java.io.IOException("temporary")
+                    else PortalCatalogPage(listOf(item("b")), page, false)
+                else -> error("Unexpected page $page")
+            }
+        }, {})
+
+        assertEquals(1, scanner.scan(session, CatalogType.MOVIES, 0,
+            refreshCompleted = false, appendOnly = true).failures)
+        assertEquals(1, repository.scanCheckpoint(session.profile, CatalogType.MOVIES).currentPage)
+        failNext = false
+        assertEquals(0, scanner.scan(session, CatalogType.MOVIES, 0,
+            refreshCompleted = false, appendOnly = true).failures)
+        assertEquals(listOf(1, 2, 2), requested)
+        assertTrue(repository.scanCheckpoint(session.profile, CatalogType.MOVIES).complete)
+    }
+
     @Test fun providerPageTotalIsRetainedAcrossWorkerBatches() = runBlocking {
         val session = session()
         val operation = CatalogOperations.scan(CatalogScanPreferences.id(session.profile))

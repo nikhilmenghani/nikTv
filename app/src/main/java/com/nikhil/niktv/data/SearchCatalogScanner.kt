@@ -30,7 +30,8 @@ data class SearchCatalogScanResult(
     val deferred: Boolean = false,
     val providerCategories: List<Category> = emptyList(),
     val providerConfirmedEmpty: Boolean = false,
-    val existingCatalogRetainedAfterEmptyResponse: Boolean = false
+    val existingCatalogRetainedAfterEmptyResponse: Boolean = false,
+    val appendBoundaryChanged: Boolean = false
 )
 
 /** Checkpointed, sequential catalogue crawler shared by UI and periodic work. */
@@ -56,17 +57,19 @@ class SearchCatalogScanner internal constructor(
         timeBudgetMillis: Long = Long.MAX_VALUE,
         mediaPosition: Int = 1,
         mediaCount: Int = 1,
+        appendOnly: Boolean = false,
         onProgress: (SearchCatalogScanProgress) -> Unit = {}
     ): SearchCatalogScanResult = withContext(Dispatchers.IO) {
         scanMutex.withLock {
             scanInternal(session, type, requestDelayMillis, refreshCompleted, timeBudgetMillis,
-                mediaPosition, mediaCount, onProgress)
+                mediaPosition, mediaCount, appendOnly, onProgress)
         }
     }
 
     private suspend fun scanInternal(
         session: PortalSession, type: CatalogType, requestDelayMillis: Long,
         refreshCompleted: Boolean, timeBudgetMillis: Long, mediaPosition: Int, mediaCount: Int,
+        appendOnly: Boolean,
         onProgress: (SearchCatalogScanProgress) -> Unit
     ): SearchCatalogScanResult {
         val started = android.os.SystemClock.elapsedRealtime()
@@ -165,7 +168,20 @@ class SearchCatalogScanner internal constructor(
                 )
             }
         }
-        val categories = effectiveCatalogCategories(availableCategories)
+        val categories = effectiveCatalogCategories(availableCategories).let { effective ->
+            if (appendOnly) effective.filter { (persisted.pagesByCategory[it.id] ?: 0) > 0 }
+            else effective
+        }
+        if (appendOnly && categories.isEmpty()) {
+            return SearchCatalogScanResult(
+                cache = BrowseCatalogCache(profileKey, type, persisted.cachedAtMillis,
+                    persisted.categories, emptyMap(), persisted.pagesByCategory, persisted.hasMoreByCategory),
+                itemCount = persisted.totalItems,
+                failures = 0,
+                providerCategories = availableCategories,
+                appendBoundaryChanged = true
+            )
+        }
         var cache = BrowseCatalogCache(
             profileKey = profileKey,
             type = type,
@@ -184,9 +200,11 @@ class SearchCatalogScanner internal constructor(
             val pageTotalKey = "${type.name}:${category.id}"
             var knownTotalPages = CatalogOperations.pageTotal(appContext, operation, pageTotalKey)
 
-            if (knownHasMore != false || refreshCompleted) {
-                val refreshFromStart = knownHasMore == false
-                if (refreshFromStart || page <= 0) page = 1 else page += 1
+            if (knownHasMore != false || refreshCompleted || appendOnly) {
+                val appendBoundary = appendOnly && knownHasMore == false && page > 0
+                val refreshFromStart = knownHasMore == false && !appendOnly
+                if (refreshFromStart || page <= 0) page = 1
+                else if (!appendBoundary) page += 1
                 var keepLoading = true
                 var pagesRead = 0
                 val seenThisScan = mutableSetOf<String>()
@@ -229,6 +247,18 @@ class SearchCatalogScanner internal constructor(
                             providerCategories = availableCategories)
                     }
                     val result = pageResult.getOrThrow()
+                    if (appendBoundary && pagesRead == 0) {
+                        val savedIds = repository.storedPageIds(
+                            session.profile, type, category.id, page)
+                        val fetchedIds = result.items.map { it.id }
+                        if (savedIds.isEmpty() || fetchedIds.take(savedIds.size) != savedIds) {
+                            CatalogOperations.page(appContext, operation, CatalogPageEvent(
+                                reportKey, location = location, outcome = "Changed",
+                                detail = "The saved last page changed. Append stopped before writing it; use Sync to refresh earlier pages."))
+                            return SearchCatalogScanResult(cache, totalRecords, failures,
+                                providerCategories = availableCategories, appendBoundaryChanged = true)
+                        }
+                    }
                     knownTotalPages = result.totalPages ?: knownTotalPages
                     CatalogOperations.pageTotal(appContext, operation, pageTotalKey, result.totalPages)
                     val newlySeen = result.items.count { seenThisScan.add(it.id) }
@@ -263,7 +293,7 @@ class SearchCatalogScanner internal constructor(
                         repository.saveBrowsePage(
                             profile = profileKey,
                             type = type,
-                            categories = availableCategories,
+                            categories = if (appendOnly) categories else availableCategories,
                             category = category,
                             page = page,
                             items = result.items,

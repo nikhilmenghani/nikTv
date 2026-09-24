@@ -35,6 +35,11 @@ object CatalogScanPreferences {
             else putLong("refresh_started:$id:$type", time)
         }.commit()
     }
+    fun appendMode(context: Context, id: String, type: String) =
+        prefs(context).getBoolean("append_mode:$id:$type", false)
+    fun appendMode(context: Context, id: String, type: String, enabled: Boolean) {
+        prefs(context).edit().putBoolean("append_mode:$id:$type", enabled).commit()
+    }
     fun restoredCursor(context: Context, id: String) = prefs(context).getInt("restored_cursor:$id", -1)
     fun restoredCursor(context: Context, id: String, cursor: Int) {
         prefs(context).edit().putInt("restored_cursor:$id", cursor)

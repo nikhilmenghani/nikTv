@@ -106,7 +106,8 @@ internal fun CatalogProfileSettings(
         profile = profile,
         onCheck = { type -> SearchMetadataSyncScheduler.checkForUpdates(context, profile, type) },
         onResume = { type -> SearchMetadataSyncScheduler.resumeType(context, profile, type) },
-        onRefresh = { type -> SearchMetadataSyncScheduler.refreshType(context, profile, type) }
+        onRefresh = { type -> SearchMetadataSyncScheduler.refreshType(context, profile, type) },
+        onAppend = { type -> SearchMetadataSyncScheduler.appendType(context, profile, type) }
     )
     CatalogDatabasePanel(profile)
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

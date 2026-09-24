@@ -78,9 +78,11 @@ object SearchMetadataSyncScheduler {
     const val RESUME_ONLY = "resume_only"
     const val FULL_SCAN = "full_scan"
     const val CHECK_ONLY = "check_only"
+    const val APPEND_ONLY = "append_only"
     const val UPDATE_CHECK_TAG = "niktv-catalog-update-check"
     internal const val FULL_REFRESH_TAG = "niktv-catalog-full-refresh"
     internal const val RESUME_SCAN_TAG = "niktv-catalog-resume"
+    internal const val APPEND_SCAN_TAG = "niktv-catalog-append"
     internal const val MEDIA_TYPE_TAG_PREFIX = "niktv-catalog-type:"
     fun configureProfile(context: Context, profile: PortalProfile) {
         val id = CatalogScanPreferences.id(profile)
@@ -140,6 +142,7 @@ object SearchMetadataSyncScheduler {
         CatalogScanPreferences.activeType(context, id, null)
         listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES).forEach {
             CatalogScanPreferences.refreshStartedAt(context, id, it.name, 0L)
+            CatalogScanPreferences.appendMode(context, id, it.name, false)
         }
         CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
@@ -156,6 +159,7 @@ object SearchMetadataSyncScheduler {
 
     fun refreshType(context: Context, profile: PortalProfile, type: CatalogType) {
         val id = CatalogScanPreferences.id(profile)
+        CatalogScanPreferences.appendMode(context, id, type.name, false)
         CatalogScanPreferences.activeType(context, id, type.name)
         CatalogScanPreferences.refreshStartedAt(context, id, type.name, 0L)
         CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
@@ -172,18 +176,40 @@ object SearchMetadataSyncScheduler {
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "${type.title} refresh requested")
     }
 
-    fun resumeType(context: Context, profile: PortalProfile, type: CatalogType) {
+    fun appendType(context: Context, profile: PortalProfile, type: CatalogType) {
         val id = CatalogScanPreferences.id(profile)
+        CatalogScanPreferences.appendMode(context, id, type.name, true)
         CatalogScanPreferences.activeType(context, id, type.name)
         CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
-                .setInputData(workDataOf(PROFILE_ID to id, MEDIA_TYPE to type.name, RESUME_ONLY to true))
-                .addTag(RESUME_SCAN_TAG)
+                .setInputData(workDataOf(PROFILE_ID to id, MEDIA_TYPE to type.name, APPEND_ONLY to true))
+                .addTag(APPEND_SCAN_TAG)
                 .addTag("$MEDIA_TYPE_TAG_PREFIX${type.name}")
                 .setConstraints(constraints())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
-        CatalogScanPreferences.status(context, id, "Resuming ${type.title} from its last committed provider page.")
+        CatalogScanPreferences.status(context, id,
+            "Appending ${type.title} pages after the saved boundary. Earlier pages are not revisited.")
+        CatalogOperations.message(context, CatalogOperations.scan(id), "${type.title} append queued.")
+        BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "Append requested",
+            "${type.title} new pages only")
+    }
+
+    fun resumeType(context: Context, profile: PortalProfile, type: CatalogType) {
+        val id = CatalogScanPreferences.id(profile)
+        val appendOnly = CatalogScanPreferences.appendMode(context, id, type.name)
+        CatalogScanPreferences.activeType(context, id, type.name)
+        CatalogOperations.control(context, CatalogOperations.scan(id), "Ready")
+        WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
+                .setInputData(workDataOf(PROFILE_ID to id, MEDIA_TYPE to type.name,
+                    RESUME_ONLY to true, APPEND_ONLY to appendOnly))
+                .addTag(if (appendOnly) APPEND_SCAN_TAG else RESUME_SCAN_TAG)
+                .addTag("$MEDIA_TYPE_TAG_PREFIX${type.name}")
+                .setConstraints(constraints())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+        CatalogScanPreferences.status(context, id,
+            "Resuming ${type.title} ${if (appendOnly) "append" else "scan"} from its last committed provider page.")
         CatalogOperations.message(context, CatalogOperations.scan(id), "${type.title} resume queued.")
         BackupActivityLog.record(context, "Catalog scan · ${profile.name}", "${type.title} resume requested")
     }
@@ -256,10 +282,13 @@ object SearchMetadataSyncScheduler {
                     ?: CatalogScanPreferences.activeType(app, id)
                 val checkOnly = UPDATE_CHECK_TAG in pendingTags
                 val fullScan = FULL_REFRESH_TAG in pendingTags
+                val appendOnly = APPEND_SCAN_TAG in pendingTags ||
+                    (targetType != null && CatalogScanPreferences.appendMode(app, id, targetType))
                 val input = Data.Builder().putString(PROFILE_ID, id)
                     .putBoolean(CHECK_ONLY, checkOnly)
                     .putBoolean(FULL_SCAN, fullScan)
-                    .putBoolean(RESUME_ONLY, !checkOnly && !fullScan)
+                    .putBoolean(APPEND_ONLY, appendOnly)
+                    .putBoolean(RESUME_ONLY, !checkOnly && !fullScan && !appendOnly)
                     .apply { targetType?.let { putString(MEDIA_TYPE, it) } }.build()
                 val replacement = OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
                     .setInputData(input)
@@ -268,7 +297,8 @@ object SearchMetadataSyncScheduler {
                     .apply {
                         if (checkOnly) addTag(UPDATE_CHECK_TAG)
                         if (fullScan) addTag(FULL_REFRESH_TAG)
-                        if (!checkOnly && !fullScan) addTag(RESUME_SCAN_TAG)
+                        if (appendOnly) addTag(APPEND_SCAN_TAG)
+                        if (!checkOnly && !fullScan && !appendOnly) addTag(RESUME_SCAN_TAG)
                         targetType?.let { addTag("$MEDIA_TYPE_TAG_PREFIX$it") }
                     }.build()
                 manager.enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.REPLACE,
@@ -280,13 +310,14 @@ object SearchMetadataSyncScheduler {
         }
     }
 
-    fun continueScan(context: Context, id: String, type: CatalogType? = null) {
+    fun continueScan(context: Context, id: String, type: CatalogType? = null, appendOnly: Boolean = false) {
         val input = Data.Builder().putString(PROFILE_ID, id).putBoolean(RESUME_ONLY, true)
+            .putBoolean(APPEND_ONLY, appendOnly)
             .apply { type?.let { putString(MEDIA_TYPE, it.name) } }.build()
         WorkManager.getInstance(context).enqueueUniqueWork("$REFRESH-now-$id", ExistingWorkPolicy.APPEND_OR_REPLACE,
             OneTimeWorkRequestBuilder<PeriodicCatalogScanWorker>()
                 .setInputData(input).setInitialDelay(10, TimeUnit.SECONDS)
-                .addTag(RESUME_SCAN_TAG)
+                .addTag(if (appendOnly) APPEND_SCAN_TAG else RESUME_SCAN_TAG)
                 .apply { type?.let { addTag("$MEDIA_TYPE_TAG_PREFIX${it.name}") } }
                 .setConstraints(constraints()).setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
     }
@@ -311,6 +342,9 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             CatalogOperations.check(context, control)
             val resumeOnly = inputData.getBoolean(SearchMetadataSyncScheduler.RESUME_ONLY, false)
             val fullScan = inputData.getBoolean(SearchMetadataSyncScheduler.FULL_SCAN, false)
+            val appendOnly = inputData.getBoolean(SearchMetadataSyncScheduler.APPEND_ONLY, false) ||
+                (resumeOnly && selectedType != null &&
+                    CatalogScanPreferences.appendMode(context, id, selectedType.name))
             if (CatalogPlaybackActivity.playing) {
                 CatalogOperations.message(context, control, "Waiting for playback to finish; saved progress will resume automatically.")
                 CatalogScanPreferences.status(context, id, "Paused during playback; saved scan progress will resume automatically.")
@@ -379,12 +413,24 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
             val scanTypes: List<CatalogType>
             if (selectedType != null) {
                 scanTypes = listOf(selectedType)
+                if (appendOnly) {
+                    val checkpoint = repository.scanCheckpoint(profile, selectedType)
+                    val savedAppend = CatalogScanPreferences.appendMode(context, id, selectedType.name)
+                    if ((!checkpoint.complete && !savedAppend) || !checkpoint.hasData) {
+                        val message = "Complete a ${selectedType.title} scan before appending pages."
+                        CatalogOperations.message(context, control, message)
+                        CatalogScanPreferences.status(context, id, message)
+                        CatalogScanPreferences.appendMode(context, id, selectedType.name, false)
+                        CatalogScanPreferences.activeType(context, id, null)
+                        return@withLock Result.success()
+                    }
+                }
                 if (fullScan && CatalogScanPreferences.refreshStartedAt(context, id, selectedType.name) == 0L) {
                     val generation = repository.restartScan(profile, selectedType)
                     CatalogOperations.clearPageTotals(context, control, selectedType.name)
                     CatalogScanPreferences.refreshStartedAt(context, id, selectedType.name, generation)
                 }
-                else if (resumeOnly && repository.scanCheckpoint(profile, selectedType).complete &&
+                else if (resumeOnly && !appendOnly && repository.scanCheckpoint(profile, selectedType).complete &&
                     CatalogScanPreferences.refreshStartedAt(context, id, selectedType.name) == 0L) {
                     val message = "${selectedType.title} is already complete. Check for provider updates or choose Refresh."
                     CatalogScanPreferences.status(context, id, message)
@@ -444,9 +490,24 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                 val result = SearchCatalogScanner(context).scan(session, type, 2_000L,
                     refreshCompleted = false, timeBudgetMillis = remaining,
                     mediaPosition = if (selectedType == null) types.indexOf(type) + 1 else 1,
-                    mediaCount = if (selectedType == null) types.size else 1) { progress ->
+                    mediaCount = if (selectedType == null) types.size else 1,
+                    appendOnly = appendOnly) { progress ->
                     CatalogScanPreferences.status(context, id,
                         "${type.title} · ${progress.categoryTitle} · category ${progress.categoryPosition}/${progress.categoryCount} · page ${progress.page} · ${progress.discoveredItems} items")
+                }
+                if (result.appendBoundaryChanged) {
+                    val message = "${type.title} saved page boundary changed. Append stopped; use Sync to refresh the full catalog."
+                    repository.saveUpdateStatus(CatalogTypeUpdateRow(
+                        profile = profile.cacheKey(), type = type.name,
+                        state = CatalogUpdateState.CHANGED.name, detail = message,
+                        checkedAt = System.currentTimeMillis()
+                    ))
+                    CatalogScanPreferences.appendMode(context, id, type.name, false)
+                    CatalogScanPreferences.activeType(context, id, null)
+                    CatalogScanPreferences.cursor(context, id, -1)
+                    CatalogScanPreferences.status(context, id, message)
+                    CatalogOperations.message(context, control, message)
+                    return@withLock Result.success()
                 }
                 if (result.deferred || result.failures > 0) {
                     if (result.existingCatalogRetainedAfterEmptyResponse) {
@@ -461,6 +522,7 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                         CatalogScanPreferences.status(context, id, message)
                         CatalogOperations.message(context, control, message)
                         CatalogScanPreferences.cursor(context, id, -1)
+                        if (appendOnly) CatalogScanPreferences.appendMode(context, id, type.name, false)
                         CatalogScanPreferences.activeType(context, id, null)
                         return@withLock Result.success()
                     }
@@ -471,12 +533,28 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                     CatalogOperations.message(context, control, CatalogScanPreferences.status(context, id))
                     CatalogOperations.check(context, control)
                     if (result.deferred && !CatalogPlaybackActivity.playing && result.failures == 0) {
-                        SearchMetadataSyncScheduler.continueScan(context, id, selectedType)
+                        SearchMetadataSyncScheduler.continueScan(context, id, selectedType, appendOnly)
                         return@withLock Result.success()
                     }
                     return@withLock Result.retry()
                 }
                 val typeCompletedAt = System.currentTimeMillis()
+                if (appendOnly) {
+                    check(repository.scanCheckpoint(profile, type).complete) {
+                        "${type.title} append ended without a complete Room checkpoint"
+                    }
+                    check(repository.markTypeSynced(profile, type, typeCompletedAt)) {
+                        "${type.title} append could not promote its new page boundary"
+                    }
+                    val message = "New ${type.title} pages appended. Earlier pages and existing media details were not checked; use Sync for a full refresh."
+                    repository.saveUpdateStatus(CatalogTypeUpdateRow(
+                        profile = profile.cacheKey(), type = type.name,
+                        state = CatalogUpdateState.CHANGED.name, detail = message,
+                        checkedAt = typeCompletedAt
+                    ))
+                    CatalogScanPreferences.appendMode(context, id, type.name, false)
+                    continue
+                }
                 val refreshStartedAt = CatalogScanPreferences.refreshStartedAt(context, id, type.name)
                 check(repository.reconcileSuccessfulRefresh(
                     profile, type, result.providerCategories, refreshStartedAt,
@@ -500,11 +578,13 @@ class PeriodicCatalogScanWorker(context: Context, params: WorkerParameters) : Co
                 // here would mislabel this successful targeted operation as interrupted.
                 CatalogScanPreferences.cursor(context, id, -1)
                 if (remainingType < 0) CatalogScanPreferences.completed(context, id, now)
-                val message = "Complete · ${selectedType.title} refreshed from the provider."
+                val message = if (appendOnly)
+                    "Complete · New ${selectedType.title} pages appended. Earlier pages were not checked."
+                else "Complete · ${selectedType.title} refreshed from the provider."
                 CatalogScanPreferences.status(context, id, message)
                 CatalogOperations.message(context, control, message)
                 CatalogOperations.progress(context, control, CatalogOperationProgress(phase = "Complete", mediaType = selectedType.title))
-                BackupActivityLog.record(context, operation, "Completed", "${selectedType.title} refresh completed.")
+                BackupActivityLog.record(context, operation, "Completed", message)
                 if (CatalogPreferences.backupEnabled(context)) {
                     SearchMetadataSyncScheduler.requestNow(context, profile = profile, type = selectedType)
                 }
