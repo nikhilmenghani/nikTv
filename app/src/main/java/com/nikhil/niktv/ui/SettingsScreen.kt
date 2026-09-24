@@ -1467,7 +1467,7 @@ SettingsSection("Data and sync") {
             ResponsiveSettingsOptionRow(
                 icon = Icons.Default.CloudUpload,
                 title = "Back up catalog from this device",
-                subtitle = "Off by default. Upload a catalog every 12 hours. Each device has its own snapshot; imports merge records. Requires GitHub; a backup password is optional.",
+                subtitle = "Off by default. Upload every 12 hours and after completed catalog updates. Each device has its own snapshot; imports merge records. Requires GitHub; a backup password is optional.",
                 trailingContent = {
                     SettingsSwitch(checked = catalogBackupEnabled, onCheckedChange = {
                         val saved = githubBackupManager.loadConfig()

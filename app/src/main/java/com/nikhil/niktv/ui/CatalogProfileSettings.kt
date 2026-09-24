@@ -112,7 +112,7 @@ internal fun CatalogProfileSettings(
     CatalogDatabasePanel(profile)
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Local database update schedule", style = MaterialTheme.typography.titleSmall)
-        Text("For ${profile.name} on this device. Off allows restoring a checkpoint before scanning.", style = MaterialTheme.typography.bodySmall)
+        Text("For ${profile.name} on this device. Each run appends new pages and resumes incomplete scans. Off allows restoring a checkpoint before scanning.", style = MaterialTheme.typography.bodySmall)
         val scheduleOptions = listOf(0 to "Off", 6 to "6h", 12 to "12h", 24 to "Daily", 168 to "Weekly")
         SettingsChoiceRow(Modifier.fillMaxWidth()) {
             scheduleOptions.forEachIndexed { index, (value, label) ->
@@ -132,7 +132,7 @@ internal fun CatalogProfileSettings(
             }
         }
         Text("Scans continue in the background with a notification. Requests are paced and scans yield during playback. Android may delay work under battery restrictions. Episode details are cached when opened.", style = MaterialTheme.typography.bodySmall)
-        Text("Completed scans create a GitHub checkpoint when catalog backup is enabled.", style = MaterialTheme.typography.bodySmall)
+        Text("Newly saved pages trigger a GitHub catalog backup when backup is enabled. Use Sync for changes to earlier pages.", style = MaterialTheme.typography.bodySmall)
     }
     BackupSettingsActionRow(Icons.Default.CloudDownload, "Restore a catalog checkpoint",
         "Choose a dated GitHub backup for ${profile.name}. Merges Room listings without replacing favorites or history.",

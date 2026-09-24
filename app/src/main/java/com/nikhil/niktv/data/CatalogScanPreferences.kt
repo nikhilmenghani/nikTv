@@ -40,6 +40,16 @@ object CatalogScanPreferences {
     fun appendMode(context: Context, id: String, type: String, enabled: Boolean) {
         prefs(context).edit().putBoolean("append_mode:$id:$type", enabled).commit()
     }
+    fun appendChanged(context: Context, id: String, type: String) =
+        prefs(context).getBoolean("append_changed:$id:$type", false)
+    fun appendChanged(context: Context, id: String, type: String, changed: Boolean) {
+        prefs(context).edit().putBoolean("append_changed:$id:$type", changed).commit()
+    }
+    fun backupPending(context: Context, id: String, type: String) =
+        prefs(context).getBoolean("backup_pending:$id:$type", false)
+    fun backupPending(context: Context, id: String, type: String, pending: Boolean) {
+        prefs(context).edit().putBoolean("backup_pending:$id:$type", pending).commit()
+    }
     fun restoredCursor(context: Context, id: String) = prefs(context).getInt("restored_cursor:$id", -1)
     fun restoredCursor(context: Context, id: String, cursor: Int) {
         prefs(context).edit().putInt("restored_cursor:$id", cursor)

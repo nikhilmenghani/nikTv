@@ -31,7 +31,8 @@ data class SearchCatalogScanResult(
     val providerCategories: List<Category> = emptyList(),
     val providerConfirmedEmpty: Boolean = false,
     val existingCatalogRetainedAfterEmptyResponse: Boolean = false,
-    val appendBoundaryChanged: Boolean = false
+    val appendBoundaryChanged: Boolean = false,
+    val pagesCommitted: Int = 0
 )
 
 /** Checkpointed, sequential catalogue crawler shared by UI and periodic work. */
@@ -192,6 +193,7 @@ class SearchCatalogScanner internal constructor(
             hasMoreByCategory = persisted.hasMoreByCategory
         )
         var failures = 0
+        var pagesCommitted = 0
         var totalRecords = persisted.totalItems
         categories.forEachIndexed { categoryIndex, category ->
             val knownHasMore = cache.hasMoreByCategory[category.id]
@@ -251,12 +253,17 @@ class SearchCatalogScanner internal constructor(
                         val savedIds = repository.storedPageIds(
                             session.profile, type, category.id, page)
                         val fetchedIds = result.items.map { it.id }
-                        if (savedIds.isEmpty() || fetchedIds.take(savedIds.size) != savedIds) {
+                        if (savedIds.isNotEmpty() && fetchedIds.take(savedIds.size) != savedIds) {
                             CatalogOperations.page(appContext, operation, CatalogPageEvent(
                                 reportKey, location = location, outcome = "Changed",
                                 detail = "The saved last page changed. Append stopped before writing it; use Sync to refresh earlier pages."))
                             return SearchCatalogScanResult(cache, totalRecords, failures,
                                 providerCategories = availableCategories, appendBoundaryChanged = true)
+                        }
+                        if (fetchedIds == savedIds && !result.hasMore) {
+                            stage("$location · No new pages")
+                            keepLoading = false
+                            break
                         }
                     }
                     knownTotalPages = result.totalPages ?: knownTotalPages
@@ -300,6 +307,11 @@ class SearchCatalogScanner internal constructor(
                             hasMore = result.hasMore,
                             observedAt = cache.cachedAtMillis
                         )
+                        CatalogScanPreferences.backupPending(
+                            appContext, CatalogScanPreferences.id(session.profile), type.name, true)
+                        if (appendOnly) CatalogScanPreferences.appendChanged(
+                            appContext, CatalogScanPreferences.id(session.profile), type.name, true)
+                        pagesCommitted += 1
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (error: Exception) {
                         CatalogOperations.page(appContext, operation, CatalogPageEvent(reportKey, location = location,
@@ -343,7 +355,7 @@ class SearchCatalogScanner internal constructor(
         structured("Finalizing catalog", categoryPosition = categories.size,
             categoryCount = categories.size, totalRecords = totalRecords)
         return SearchCatalogScanResult(cache, totalRecords, failures,
-            providerCategories = availableCategories)
+            providerCategories = availableCategories, pagesCommitted = pagesCommitted)
     }
 
     companion object {

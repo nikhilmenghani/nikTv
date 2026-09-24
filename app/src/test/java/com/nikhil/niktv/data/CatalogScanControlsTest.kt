@@ -189,6 +189,53 @@ class CatalogScanControlsTest {
         assertTrue(repository.scanCheckpoint(session.profile, CatalogType.MOVIES).complete)
     }
 
+    @Test fun unchangedAppendDoesNotRewritePageOrQueueBackup() = runBlocking {
+        val session = session()
+        val repository = CatalogRepository(context)
+        val profile = session.profile.cacheKey()
+        val id = CatalogScanPreferences.id(session.profile)
+        CatalogScanPreferences.backupPending(context, id, CatalogType.MOVIES.name, false)
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            1, listOf(item("a")), false, 100L)
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            assertEquals(1, page)
+            PortalCatalogPage(listOf(item("a")), page, false)
+        }, {})
+
+        val result = scanner.scan(session, CatalogType.MOVIES, 0,
+            refreshCompleted = false, appendOnly = true)
+
+        assertEquals(0, result.pagesCommitted)
+        assertEquals(100L, repository.scanCheckpoint(session.profile, CatalogType.MOVIES).updatedAt)
+        assertFalse(CatalogScanPreferences.backupPending(context, id, CatalogType.MOVIES.name))
+    }
+
+    @Test fun emptySavedTerminalPageCanBeCheckedAndReceiveNewItems() = runBlocking {
+        val session = session()
+        val repository = CatalogRepository(context)
+        val profile = session.profile.cacheKey()
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            1, listOf(item("a")), true, 100L)
+        repository.saveBrowsePage(profile, CatalogType.MOVIES, listOf(category), category,
+            2, emptyList(), false, 100L)
+        var newItemAvailable = false
+        val scanner = SearchCatalogScanner(context, { _, _ -> listOf(category) }, { _, _, page ->
+            assertEquals(2, page)
+            PortalCatalogPage(if (newItemAvailable) listOf(item("b")) else emptyList(), page, false)
+        }, {})
+
+        val unchanged = scanner.scan(session, CatalogType.MOVIES, 0,
+            refreshCompleted = false, appendOnly = true)
+        assertFalse(unchanged.appendBoundaryChanged)
+        assertEquals(0, unchanged.pagesCommitted)
+        newItemAvailable = true
+        val appended = scanner.scan(session, CatalogType.MOVIES, 0,
+            refreshCompleted = false, appendOnly = true)
+        assertFalse(appended.appendBoundaryChanged)
+        assertEquals(1, appended.pagesCommitted)
+        assertEquals(setOf("a", "b"), repository.search(profile, CatalogType.MOVIES)!!.items.map { it.id }.toSet())
+    }
+
     @Test fun providerPageTotalIsRetainedAcrossWorkerBatches() = runBlocking {
         val session = session()
         val operation = CatalogOperations.scan(CatalogScanPreferences.id(session.profile))
