@@ -9,7 +9,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -149,6 +148,7 @@ internal fun ModernSearchScreen(
     val submitSearchRequester = remember { FocusRequester() }
     val categoryRequester = remember { FocusRequester() }
     val contentRequester = remember { FocusRequester() }
+    val providerSearchRequester = remember { FocusRequester() }
     val typeRequesters = remember { searchVisibleTypes.associateWith { FocusRequester() } }
     val keyboard = LocalSoftwareKeyboardController.current
     val configuration = LocalConfiguration.current
@@ -195,8 +195,13 @@ internal fun ModernSearchScreen(
     val hasContentFocusTarget =
         (state.searchType == SearchContentType.ALL && state.searchQuery.isNotBlank()) ||
         state.searchResults.isNotEmpty() ||
-            (state.searchQuery.isBlank() && visibleRecentSearches.isNotEmpty()) ||
-            (state.searchQuery.isNotBlank() && !state.searchLocalLoading && !state.searchServerLoading)
+            state.searchHasMore ||
+            (state.searchQuery.isBlank() && visibleRecentSearches.isNotEmpty())
+    val belowFiltersRequester = when {
+        state.searchQuery.isNotBlank() -> providerSearchRequester
+        hasContentFocusTarget -> contentRequester
+        else -> FocusRequester.Default
+    }
 
     fun activateSearchField() {
         if (!searchEditing) {
@@ -575,7 +580,7 @@ internal fun ModernSearchScreen(
                         .focusRequester(categoryRequester)
                         .focusProperties {
                             up = selectedTypeRequester
-                            down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                            down = belowFiltersRequester
                         }
                 )
             } else {
@@ -597,7 +602,7 @@ internal fun ModernSearchScreen(
                                 .focusRequester(typeRequesters.getValue(type))
                                 .focusProperties {
                                     up = searchRequester
-                                    down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                                    down = belowFiltersRequester
                                     left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: FocusRequester.Cancel
                                     right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)] ?: categoryRequester
                                 }
@@ -618,7 +623,7 @@ internal fun ModernSearchScreen(
                                 up = searchRequester
                                 left = typeRequesters.getValue(searchVisibleTypes.last())
                                 right = FocusRequester.Cancel
-                                down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                                down = belowFiltersRequester
                             }
                     )
                 }
@@ -639,12 +644,52 @@ internal fun ModernSearchScreen(
                     .focusRequester(categoryRequester)
                     .focusProperties {
                         up = searchRequester
-                        down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                        down = belowFiltersRequester
                     }
             )
         }
 
         Spacer(Modifier.height(10.dp))
+
+        // Keep one provider action mounted throughout loading and empty states.
+        // Removing the focused empty-state button sends TV focus to the sidebar.
+        if (state.searchQuery.isNotBlank()) {
+            val resultLabel = if (state.searchResults.size == 1) "result" else "results"
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    when {
+                        state.searchLocalLoading -> "Checking device cache…"
+                        state.searchServerLoading -> "${state.searchResults.size} found so far"
+                        state.searchUsedServer -> "${state.searchResults.size} $resultLabel"
+                        else -> "${state.searchResults.size} cached $resultLabel"
+                    },
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SearchMuted
+                )
+                NikTvSecondaryActionButton(
+                    onClick = { if (!state.searchServerLoading && !state.searchLocalLoading) search(true) },
+                    modifier = Modifier
+                        .focusRequester(providerSearchRequester)
+                        .focusProperties {
+                            up = categoryRequester
+                            down = if (hasContentFocusTarget) contentRequester else FocusRequester.Default
+                        }
+                ) {
+                    Text(when {
+                        state.searchServerLoading -> "Searching provider…"
+                        state.searchLocalLoading -> "Checking cache…"
+                        state.searchProviderMessage != null -> "Retry provider"
+                        state.searchUsedServer -> "Search provider again"
+                        else -> "Search provider"
+                    })
+                }
+            }
+        }
 
         state.searchProviderMessage?.let { message ->
             Text(message, style = MaterialTheme.typography.bodySmall,
@@ -655,7 +700,7 @@ internal fun ModernSearchScreen(
                 title = state.searchActivityTitle
                     ?: if (state.searchServerLoading) "Searching IPTV provider" else "Searching this device",
                 detail = state.searchActivityDetail
-                    ?: if (state.searchServerLoading) "Waiting for provider results" else "Checking local indexes",
+                    ?: if (state.searchServerLoading) "Waiting for provider results" else "Checking saved titles on this device",
                 progress = state.searchActivityProgress,
                 providerSearch = state.searchServerLoading
             )
@@ -699,7 +744,12 @@ internal fun ModernSearchScreen(
                 ) { recent ->
                     SearchRecentRow(
                         recent = recent,
-                        onClick = { useRecent(recent) },
+                        onClick = {
+                            // The recent rows disappear as soon as a query is set.
+                            // Keep remote focus on a node that survives that change.
+                            if (remoteNavigationActive) searchRequester.requestFocus()
+                            useRecent(recent)
+                        },
                         onRemove = { deleteRecent(recent) },
                         showRemoveButton = true,
                         modifier = if (recent == visibleRecentSearches.first()) Modifier.focusRequester(contentRequester) else Modifier
@@ -749,47 +799,20 @@ internal fun ModernSearchScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                when {
-                    !state.searchUsedServer -> {
-                        NikTvSecondaryActionButton(
-                            onClick = { if (!state.searchServerLoading) search(true) },
-                            modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
-                            border = BorderStroke(1.dp, SearchOutline)
-                        ) {
-                            Icon(Icons.Default.CloudDownload, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                if (searchingSpecificCategory) {
-                                    "Search provider in $selectedCategoryTitle"
-                                } else {
-                                    "Search provider"
-                                }
-                            )
-                        }
-                    }
-
-                    searchingSpecificCategory -> {
-                        NikTvSecondaryActionButton(
-                            onClick = {
-                                /*
-                                 * SEARCH_BROADEN_EXPLICIT_V3
-                                 *
-                                 * setCategory updates StateFlow synchronously;
-                                 * search(true) then owns the explicit wildcard
-                                 * provider request and cancels the scheduled
-                                 * local preview from setCategory.
-                                 */
-                                setCategory("*")
-                                search(true)
-                            },
-                            modifier = Modifier.focusRequester(contentRequester).remoteFocusFrame(),
-                            enabled = !state.searchServerLoading,
-                            border = BorderStroke(1.dp, SearchOutline)
-                        ) {
-                            Icon(Icons.Default.SelectAll, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Search all categories")
-                        }
+                if (state.searchUsedServer && searchingSpecificCategory) {
+                    NikTvSecondaryActionButton(
+                        onClick = {
+                            // This broaden action disappears when its category
+                            // changes. Move focus to the persistent action first.
+                            if (remoteNavigationActive) providerSearchRequester.requestFocus()
+                            setCategory("*")
+                            search(true)
+                        },
+                        enabled = !state.searchServerLoading
+                    ) {
+                        Icon(Icons.Default.SelectAll, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Search all categories")
                     }
                 }
             }
@@ -797,40 +820,6 @@ internal fun ModernSearchScreen(
 
         if (state.searchResults.isNotEmpty() || state.searchHasMore ||
             (state.searchType == SearchContentType.ALL && state.searchQuery.isNotBlank())) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    if (state.searchUsedServer) {
-                        "${state.searchResults.size} results"
-                    } else {
-                        "${state.searchResults.size} available now"
-                    },
-                    Modifier.weight(1f),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                // Keep the action mounted so a remote does not lose focus on completion.
-                run {
-                    NikTvSecondaryActionButton(
-                        onClick = { if (!state.searchServerLoading) search(true) },
-                        modifier = Modifier.remoteFocusFrame(),
-                        border = BorderStroke(1.dp, SearchOutline)
-                    ) {
-                        Text(
-                            if (searchingSpecificCategory) {
-                                "Search provider in category"
-                            } else {
-                                if (state.searchUsedServer) "Search provider again" else "Search provider"
-                            }
-                        )
-                    }
-                }
-            }
-
             /*
              * SEARCH_RESULTS_ADAPTIVE_V4
              *
@@ -844,10 +833,10 @@ internal fun ModernSearchScreen(
                 screenWidthDp = configuration.screenWidthDp,
                 openResult = openResult,
                 loadMore = loadMore,
-            toggleFavorite = toggleFavorite,
-            firstItemRequester = contentRequester,
-            topRequester = categoryRequester,
-            modifier = Modifier.weight(1f)
+                toggleFavorite = toggleFavorite,
+                firstItemRequester = contentRequester,
+                topRequester = providerSearchRequester,
+                modifier = Modifier.weight(1f)
             )
         }
     }

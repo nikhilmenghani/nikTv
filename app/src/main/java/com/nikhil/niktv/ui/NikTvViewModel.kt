@@ -4556,6 +4556,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSearchQuery(query: String) {
+        if (_state.value.searchQuery == query) return
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
 
@@ -4565,12 +4566,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 searchProviderMessage = null,
                 searchServerLoading = false,
                 searchResults = emptyList(),
-                searchLocalLoading = false,
+                searchLocalLoading = query.isNotBlank(),
                 searchUsedServer = false,
                 searchPage = 0,
-                searchHasMore = false
+                searchHasMore = false,
+                searchActivityTitle = null,
+                searchActivityDetail = null,
+                searchActivityProgress = null
             )
         }
+        val current = _state.value
+        // Typing reads device caches only, after the debounce. Never make a
+        // provider request per keystroke or claim no matches before checking.
+        scheduleSearchPreview(query, current.searchType, current.searchCategoryId)
     }
 
     private fun scheduleSearchPreview(
@@ -4622,7 +4630,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     ) +
                         saved?.items.orEmpty()
                     )
-                    .distinctBy { it.searchIdentity(type) }
+                    .rankSearchResults(normalizedQuery, type)
 
             _state.update { current ->
                 val stillCurrent =
@@ -5057,6 +5065,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
 
         val indexCache = store.searchCatalog(catalogType, profileKey).first()
+        val previousSearchItems = store.pagedSearches.first()
+            .cachedSearchItems(profileKey, type, categoryId)
         val indexed =
             indexCache?.items
                 .orEmpty()
@@ -5106,7 +5116,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 memoryBrowse +
                     visible +
                     indexed +
-                    persistedBrowse
+                    persistedBrowse +
+                    previousSearchItems
             }
 
         source
