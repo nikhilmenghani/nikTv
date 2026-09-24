@@ -2064,6 +2064,9 @@ internal fun ModernCompactMediaCard(
     progress: PlaybackProgress? = null,
     sourceLabel: String? = null,
     homeCardScale: Float = 1f,
+    titleScale: Float = 1f,
+    titleMaxLines: Int = 3,
+    subtitleMaxLines: Int = 3,
     modifier: Modifier = Modifier
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -2267,23 +2270,23 @@ internal fun ModernCompactMediaCard(
                         item.title,
                         style = when {
                             isTv -> modernTvTileTitleStyle(shadowed = true).copy(
-                                fontSize = (12f * homeCardScale).sp,
-                                lineHeight = (14f * homeCardScale).sp
+                                fontSize = (12f * homeCardScale * titleScale).sp,
+                                lineHeight = (14f * homeCardScale * titleScale).sp
                             )
                             isTablet -> MaterialTheme.typography.labelLarge.copy(
-                                fontSize = 12.sp,
-                                lineHeight = 14.sp
+                                fontSize = (12f * titleScale).sp,
+                                lineHeight = (14f * titleScale).sp
                             )
                             else -> MaterialTheme.typography.labelLarge.copy(
-                                fontSize = 11.sp,
-                                lineHeight = 13.sp
+                                fontSize = (11f * titleScale).sp,
+                                lineHeight = (13f * titleScale).sp
                             )
                         },
                         fontWeight =
                             if (active) FontWeight.Bold
                             else FontWeight.SemiBold,
                         color = Color.White,
-                        maxLines = 3,
+                        maxLines = titleMaxLines,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (subtitle.isNotBlank()) {
@@ -2304,7 +2307,7 @@ internal fun ModernCompactMediaCard(
                                     lineHeight = 11.sp
                                 )
                             },
-                            maxLines = 3,
+                            maxLines = subtitleMaxLines,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

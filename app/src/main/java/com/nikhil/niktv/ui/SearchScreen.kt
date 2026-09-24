@@ -61,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.SubcomposeAsyncImage
@@ -1824,9 +1825,12 @@ private fun ModernSearchLiveResultRow(
                     Text(
                         item.title,
                         color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 12.sp else 11.sp,
+                            lineHeight = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 14.sp else 13.sp
+                        ),
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
 
@@ -1973,9 +1977,12 @@ private fun ModernSearchMediaResultRow(
                     Text(
                         item.title,
                         color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 12.sp else 11.sp,
+                            lineHeight = if (isTv || LocalConfiguration.current.screenWidthDp >= 600) 14.sp else 13.sp
+                        ),
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
 
@@ -2036,6 +2043,11 @@ private fun ModernSearchPosterResultCard(
         onClick = onClick,
         isFavorite = isFavorite,
         onFavorite = toggleFavorite,
+        // Match Continue Watching's smaller TV typography without shrinking
+        // the result grid's posters. Give long provider titles more lines.
+        titleScale = if (isTv) 0.82f else 1f,
+        titleMaxLines = 5,
+        subtitleMaxLines = 2,
         modifier = modifier.fillMaxWidth()
     )
 }
