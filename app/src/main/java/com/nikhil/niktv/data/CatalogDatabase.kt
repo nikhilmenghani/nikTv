@@ -73,6 +73,10 @@ interface CatalogDao {
 
     @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type ORDER BY position, id")
     suspend fun items(profile: String, type: String): List<CatalogItemRow>
+    @Query("SELECT COUNT(*) FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket != '@search'")
+    suspend fun snapshotItemCount(profile: String, type: String): Int
+    @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket != '@search' ORDER BY position, id LIMIT :limit OFFSET :offset")
+    suspend fun snapshotItemsPage(profile: String, type: String, limit: Int, offset: Int): List<CatalogItemRow>
     @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type AND id = :id ORDER BY observedAt DESC, deleted DESC")
     suspend fun item(profile: String, type: String, id: String): List<CatalogItemRow>
     @Query("SELECT * FROM CatalogBucketRow WHERE profile = :profile AND type = :type ORDER BY position, bucket")
@@ -95,6 +99,10 @@ interface CatalogDao {
     @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket != '@search' AND deleted = 0 ORDER BY id, observedAt DESC LIMIT :limit OFFSET :offset")
     suspend fun canonicalRowsPage(profile: String, type: String, limit: Int, offset: Int): List<CatalogItemRow>
     @Query("SELECT * FROM CatalogEpisodeRow") suspend fun episodes(): List<CatalogEpisodeRow>
+    @Query("SELECT COUNT(*) FROM CatalogEpisodeRow WHERE profile = :profile")
+    suspend fun snapshotEpisodeCount(profile: String): Int
+    @Query("SELECT * FROM CatalogEpisodeRow WHERE profile = :profile ORDER BY series, season LIMIT :limit OFFSET :offset")
+    suspend fun snapshotEpisodesPage(profile: String, limit: Int, offset: Int): List<CatalogEpisodeRow>
     @Query("SELECT * FROM CatalogEpisodeRow") fun observeEpisodes(): Flow<List<CatalogEpisodeRow>>
     @Query("SELECT COUNT(*) FROM CatalogMigration WHERE `key` = :key") suspend fun migrated(key: String): Int
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun markMigrated(row: CatalogMigration)
@@ -366,6 +374,46 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         }
     }
 
+    suspend fun snapshotPlan(profile: PortalProfile, type: CatalogType): CatalogSnapshotPlan {
+        val key = profile.cacheKey()
+        migrate(key, type)
+        return db.withTransaction {
+            CatalogSnapshotPlan(
+                profileId = SearchMetadataDocuments.anonymousProfileId(profile),
+                type = type,
+                itemCount = dao.snapshotItemCount(key, type.name),
+                episodeCount = if (type == CatalogType.SERIES) dao.snapshotEpisodeCount(key) else 0,
+                buckets = dao.buckets(key, type.name).filterNot { it.bucket == SEARCH }.map { it.copy(profile = "") }
+            )
+        }
+    }
+
+    suspend fun snapshotPart(
+        profile: PortalProfile,
+        plan: CatalogSnapshotPlan,
+        part: Int,
+        itemsPerPart: Int,
+        episodesPerPart: Int
+    ): CatalogSnapshot {
+        require(part >= 0 && itemsPerPart > 0 && episodesPerPart > 0)
+        val key = profile.cacheKey()
+        return db.withTransaction {
+            CatalogSnapshot(
+                profileId = plan.profileId,
+                type = plan.type,
+                items = dao.snapshotItemsPage(key, plan.type.name, itemsPerPart, part * itemsPerPart)
+                    .map { it.copy(profile = "") },
+                buckets = if (part == 0) plan.buckets else emptyList(),
+                episodes = if (plan.type == CatalogType.SERIES)
+                    dao.snapshotEpisodesPage(key, episodesPerPart, part * episodesPerPart).map { row ->
+                        val cache = json.decodeFromString<EpisodeSeasonCache>(row.payload).copy(profileKey = "")
+                        row.copy(profile = "", payload = json.encodeToString(cache))
+                    }
+                else emptyList()
+            )
+        }
+    }
+
     /** Returns the first media type whose restored page cursors are incomplete. */
     suspend fun resumeScanIndex(profile: PortalProfile): Int {
         val key = profile.cacheKey()
@@ -400,6 +448,16 @@ data class CatalogSnapshot(
     val schemaVersion: Int = 1, val profileId: String, val type: CatalogType,
     val items: List<CatalogItemRow>, val buckets: List<CatalogBucketRow>, val episodes: List<CatalogEpisodeRow>
 )
+
+data class CatalogSnapshotPlan(
+    val profileId: String,
+    val type: CatalogType,
+    val itemCount: Int,
+    val episodeCount: Int,
+    val buckets: List<CatalogBucketRow>
+) {
+    val recordCount: Int get() = itemCount + episodeCount
+}
 
 /** Union preserves discoveries from other devices; timestamps break conflicts per record, not per file. */
 internal fun mergeCatalogSnapshots(local: CatalogSnapshot, remote: CatalogSnapshot): CatalogSnapshot {

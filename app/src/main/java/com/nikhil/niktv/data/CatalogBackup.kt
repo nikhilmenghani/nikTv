@@ -92,7 +92,9 @@ class CatalogBackupManager(context: Context) {
             val profileId = CatalogScanPreferences.id(profile)
             val scanCompleteBefore = if (CatalogScanPreferences.cursor(app, profileId) == -1)
                 CatalogScanPreferences.completed(app, profileId) else 0L
-            val snapshots = mutableListOf<CatalogSnapshot>()
+            val plans = mediaTypes.associateWith { repository.snapshotPlan(profile, it) }
+            val checkpointEnabled = mediaTypes == types && plans.values.sumOf { it.recordCount } in 1..MAX_CHECKPOINT_RECORDS
+            val checkpointSnapshots = mutableListOf<CatalogSnapshot>()
             for ((typeIndex, type) in mediaTypes.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
@@ -107,11 +109,13 @@ class CatalogBackupManager(context: Context) {
                     categoryPosition = profileIndex + 1, categoryCount = profiles.size,
                     part = typeIndex, totalParts = mediaTypes.size
                 ))
-                val snapshot = repository.snapshot(profile, type)
-                snapshots += snapshot
-                if (snapshot.items.isEmpty() && snapshot.episodes.isEmpty()) continue
+                val plan = requireNotNull(plans[type])
+                if (plan.recordCount == 0) continue
+                val smallSnapshot = if (plan.recordCount <= LEGACY_FINGERPRINT_MAX_RECORDS)
+                    repository.snapshot(profile, type) else null
+                if (checkpointEnabled) checkpointSnapshots += requireNotNull(smallSnapshot)
                 try {
-                    if (uploadSnapshot(config, profile, snapshot)) uploaded++
+                    if (uploadSnapshot(config, profile, plan, smallSnapshot)) uploaded++
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
@@ -121,11 +125,11 @@ class CatalogBackupManager(context: Context) {
                 }
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
             }
-            val checkpointRecords = snapshots.sumOf { it.items.size + it.episodes.size }
-            if (mediaTypes == types && checkpointRecords in 1..MAX_CHECKPOINT_RECORDS) {
+            val checkpointRecords = plans.values.sumOf { it.recordCount }
+            if (checkpointEnabled) {
                 CatalogOperations.check(app, CatalogOperations.BACKUP)
                 CatalogOperations.message(app, CatalogOperations.BACKUP, "${profile.name} · Creating dated restore checkpoint")
-                runCatching { uploadCheckpoint(config, profile, snapshots, scanCompleteBefore) }
+                runCatching { uploadCheckpoint(config, profile, checkpointSnapshots, scanCompleteBefore) }
                     .onFailure { error ->
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         BackupActivityLog.record(app, "Catalog checkpoint · ${profile.name}", "Skipped", error.message ?: "Checkpoint was too large; profile/type backups are complete.")
@@ -148,49 +152,69 @@ class CatalogBackupManager(context: Context) {
         uploaded
     }
 
-    private suspend fun uploadSnapshot(config: GitHubBackupConfig, profile: PortalProfile, snapshot: CatalogSnapshot): Boolean {
-        val bytes = compressed(snapshot)
-        val fingerprint = sha256(bytes)
+    private suspend fun uploadSnapshot(
+        config: GitHubBackupConfig,
+        profile: PortalProfile,
+        plan: CatalogSnapshotPlan,
+        smallSnapshot: CatalogSnapshot?
+    ): Boolean {
+        val partCount = maxOf(1,
+            (plan.itemCount + RECORDS_PER_PART - 1) / RECORDS_PER_PART,
+            (plan.episodeCount + EPISODES_PER_PART - 1) / EPISODES_PER_PART)
+        // Preserve the legacy fingerprint for small snapshots. This lets an existing
+        // Live TV backup remain valid while large catalogs use bounded part hashing.
+        val fingerprint = if (smallSnapshot != null) sha256(compressed(smallSnapshot)) else {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            digest.update(PARTITIONED_FINGERPRINT_VERSION.toByteArray())
+            repeat(partCount) { index ->
+                currentCoroutineContext().ensureActive()
+                CatalogOperations.check(app, CatalogOperations.BACKUP)
+                CatalogOperations.message(app, CatalogOperations.BACKUP,
+                    "${profile.name} · ${plan.type.title} · Preparing part ${index + 1}/$partCount")
+                CatalogOperations.progress(app, CatalogOperations.BACKUP, CatalogOperationProgress(
+                    phase = "Preparing snapshot", mediaType = plan.type.title, category = profile.name,
+                    part = index + 1, totalParts = partCount, totalRecords = plan.recordCount
+                ))
+                val bytes = compressed(repository.snapshotPart(
+                    profile, plan, index, RECORDS_PER_PART, EPISODES_PER_PART))
+                digest.update(java.nio.ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
+                digest.update(bytes)
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }
         val device = CatalogPreferences.deviceId(app)
-        val folder = "catalog-v2/${snapshot.profileId}/${snapshot.type.name.lowercase()}/$device"
+        val folder = "catalog-v2/${plan.profileId}/${plan.type.name.lowercase()}/$device"
         val manifestPath = "$folder/manifest.niktv"
         val fingerprintKey = "${config.username}/${config.repository}/$manifestPath/${crypto.catalogKeyRevision()}/${if (config.passphrase.isBlank()) "plain-v1" else "encrypted-v1"}"
         if (CatalogPreferences.fingerprint(app, fingerprintKey) == fingerprint) return false
 
-        val parts = splitSnapshot(snapshot)
-        val partPaths = parts.indices.map { "$folder/part-${it.toString().padStart(5, '0')}.niktv" }
-        parts.forEachIndexed { index, part ->
+        val partPaths = (0 until partCount).map { "$folder/part-${it.toString().padStart(5, '0')}.niktv" }
+        repeat(partCount) { index ->
             CatalogOperations.check(app, CatalogOperations.BACKUP)
             CatalogOperations.message(app, CatalogOperations.BACKUP,
-                "${profile.name} · ${snapshot.type.title} · Uploading part ${index + 1}/${parts.size} (${snapshot.items.count { !it.deleted }} records total)")
+                "${profile.name} · ${plan.type.title} · Uploading part ${index + 1}/$partCount (${plan.recordCount} records total)")
             CatalogOperations.progress(app, CatalogOperations.BACKUP, CatalogOperationProgress(
-                phase = "Uploading", mediaType = snapshot.type.title, category = profile.name,
-                part = index + 1, totalParts = parts.size,
-                totalRecords = snapshot.items.count { !it.deleted } + snapshot.episodes.size
+                phase = "Uploading", mediaType = plan.type.title, category = profile.name,
+                part = index + 1, totalParts = partCount, totalRecords = plan.recordCount
             ))
+            val part = smallSnapshot?.let { splitSnapshotPart(it, index) }
+                ?: repository.snapshotPart(profile, plan, index, RECORDS_PER_PART, EPISODES_PER_PART)
             put(config, partPaths[index], encodeSnapshot(part, config.passphrase))
         }
-        val manifest = CatalogSnapshotManifest(profileId = snapshot.profileId, type = snapshot.type,
+        val manifest = CatalogSnapshotManifest(profileId = plan.profileId, type = plan.type,
             generatedAt = System.currentTimeMillis(), fingerprint = fingerprint, parts = partPaths)
         put(config, manifestPath, encodePayload(Base64.encodeToString(compressed(manifest), Base64.NO_WRAP), config.passphrase))
         CatalogPreferences.fingerprint(app, fingerprintKey, fingerprint)
         BackupActivityLog.record(app, "IPTV catalog backup · ${profile.name}", "Completed",
-            "${snapshot.type.title}: ${snapshot.items.count { !it.deleted }} records saved in ${parts.size} part(s).")
+            "${plan.type.title}: ${plan.recordCount} records saved in $partCount part(s).")
         return true
     }
 
-    private fun splitSnapshot(snapshot: CatalogSnapshot): List<CatalogSnapshot> {
-        val itemParts = snapshot.items.chunked(RECORDS_PER_PART)
-        val episodeParts = snapshot.episodes.chunked(EPISODES_PER_PART)
-        val count = maxOf(1, itemParts.size, episodeParts.size)
-        return (0 until count).map { index ->
-            snapshot.copy(
-                items = itemParts.getOrElse(index) { emptyList() },
-                buckets = if (index == 0) snapshot.buckets else emptyList(),
-                episodes = episodeParts.getOrElse(index) { emptyList() }
-            )
-        }
-    }
+    private fun splitSnapshotPart(snapshot: CatalogSnapshot, index: Int) = snapshot.copy(
+        items = snapshot.items.drop(index * RECORDS_PER_PART).take(RECORDS_PER_PART),
+        buckets = if (index == 0) snapshot.buckets else emptyList(),
+        episodes = snapshot.episodes.drop(index * EPISODES_PER_PART).take(EPISODES_PER_PART)
+    )
 
     private fun encodeSnapshot(snapshot: CatalogSnapshot, passphrase: String): String =
         encodePayload(Base64.encodeToString(compressed(snapshot), Base64.NO_WRAP), passphrase)
@@ -436,6 +460,8 @@ class CatalogBackupManager(context: Context) {
         private const val RECORDS_PER_PART = 2_000
         private const val EPISODES_PER_PART = 500
         private const val MAX_CHECKPOINT_RECORDS = 10_000
+        private const val LEGACY_FINGERPRINT_MAX_RECORDS = 10_000
+        private const val PARTITIONED_FINGERPRINT_VERSION = "partitioned-snapshot-v1\n"
         private const val MAX_DOWNLOAD = 20 * 1024 * 1024
         private const val MAX_EXPANDED = 80 * 1024 * 1024
     }

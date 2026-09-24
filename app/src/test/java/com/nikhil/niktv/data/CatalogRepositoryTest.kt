@@ -190,6 +190,22 @@ class CatalogRepositoryTest {
         assertEquals(2, db.catalog().searchRowCount(profile.cacheKey(), type.name))
     }
 
+    @Test fun backupSnapshotPartsPageCanonicalRowsWithoutChangingRestoreFormat() = runBlocking {
+        repository.saveBrowse(cache("10", "20", "30", "40", "50"))
+        val plan = repository.snapshotPlan(profile, type)
+        val first = repository.snapshotPart(profile, plan, 0, itemsPerPart = 2, episodesPerPart = 2)
+        val second = repository.snapshotPart(profile, plan, 1, itemsPerPart = 2, episodesPerPart = 2)
+        val third = repository.snapshotPart(profile, plan, 2, itemsPerPart = 2, episodesPerPart = 2)
+
+        assertEquals(5, plan.itemCount)
+        assertEquals(listOf("10", "20"), first.items.map { it.id })
+        assertEquals(listOf("30", "40"), second.items.map { it.id })
+        assertEquals(listOf("50"), third.items.map { it.id })
+        assertTrue(first.buckets.isNotEmpty())
+        assertTrue(second.buckets.isEmpty())
+        assertTrue((first.items + second.items + third.items).all { it.profile.isEmpty() && it.bucket != "@search" })
+    }
+
     @Test fun incrementalPageUpdatesCompactSearchMetadata() = runBlocking {
         val category = Category("1", "Movies", type)
         repository.saveBrowsePage(profile.cacheKey(), type, listOf(category), category, 1,

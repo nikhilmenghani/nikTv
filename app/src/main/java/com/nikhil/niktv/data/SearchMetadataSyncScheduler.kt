@@ -339,6 +339,13 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
             if (!CatalogOperations.held(applicationContext, CatalogOperations.BACKUP))
                 CatalogOperations.message(applicationContext, CatalogOperations.BACKUP, "Backup failed; saved files retained. Retry scheduled. See activity for details.")
             Result.retry()
+        } catch (memory: OutOfMemoryError) {
+            val message = "Backup ran out of memory while preparing a catalog snapshot. Install the streaming-backup update and retry."
+            CatalogPreferences.status(applicationContext, message)
+            CatalogOperations.message(applicationContext, CatalogOperations.BACKUP, message)
+            CatalogOperations.progress(applicationContext, CatalogOperations.BACKUP, CatalogOperationProgress(phase = "Failed"))
+            BackupActivityLog.record(applicationContext, "IPTV catalog backup", "Failed", message)
+            Result.failure()
         } finally {
             notificationJob?.cancelAndJoin()
         }
