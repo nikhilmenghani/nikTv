@@ -177,13 +177,16 @@ internal fun CatalogOperationPanel(
             if (updated > 0) Text("Updated ${operationTime(updated)}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val compactActions = LocalConfiguration.current.screenWidthDp < 600
-            val actionModifier = if (compactActions) Modifier.fillMaxWidth() else Modifier.width(148.dp)
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                maxItemsInEachRow = if (compactActions) 1 else 3
+                maxItemsInEachRow = 3
             ) {
+                // Fixed compact widths avoid older FlowRow implementations measuring a
+                // fractional/weighted child as the full line. Three actions plus gaps fit
+                // the operation card on phone layouts such as the POCO F1.
+                val actionModifier = Modifier.width(if (compactActions) 96.dp else 148.dp)
                 if (held) {
                     NikTvPrimaryActionButton(onClick = onResume, enabled = resumeEnabled, shape = RoundedCornerShape(8.dp),
                         modifier = actionModifier) { Text("Resume local") }
