@@ -237,18 +237,9 @@ class SearchCatalogScanner internal constructor(
         }
 
         CatalogOperations.check(appContext, operation)
-        stage("${type.title} · Finalizing local search index")
-        structured("Finalizing search index", totalRecords = cache.itemsByCategory.values.sumOf { it.size })
+        stage("${type.title} · Finalizing catalog")
+        structured("Finalizing catalog", totalRecords = cache.itemsByCategory.values.sumOf { it.size })
         val allItems = cache.itemsByCategory.values.flatten().distinctBy { it.id }
-        repository.saveSearch(
-            SearchCatalogCache(
-                profileKey = profileKey,
-                type = type,
-                cachedAtMillis = System.currentTimeMillis(),
-                items = allItems,
-                completedCategoryIds = cache.hasMoreByCategory.filterValues { !it }.keys
-            )
-        )
         completed.forEach { (category, seen) ->
             repository.reconcileCategory(profileKey, type, category, seen, System.currentTimeMillis())
         }

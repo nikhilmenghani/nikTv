@@ -178,6 +178,28 @@ class CatalogRepositoryTest {
         assertEquals("10", repository.search(profile.cacheKey(), type)!!.items.single().id)
     }
 
+    @Test fun compactSearchIndexDoesNotDuplicateFullPayloadRows() = runBlocking {
+        repository.saveBrowse(cache("10", "20"))
+        repository.saveSearch(SearchCatalogCache(profile.cacheKey(), type, 200,
+            listOf(movie("10"), movie("20"))))
+
+        val snapshot = repository.snapshot(profile, type)
+        assertEquals(2, snapshot.items.size)
+        assertTrue(snapshot.items.none { it.bucket == "@search" })
+        assertEquals(listOf("20"), repository.searchIndex(profile.cacheKey(), type, "movie 20").map { it.id })
+        assertEquals(2, db.catalog().searchRowCount(profile.cacheKey(), type.name))
+    }
+
+    @Test fun incrementalPageUpdatesCompactSearchMetadata() = runBlocking {
+        val category = Category("1", "Movies", type)
+        repository.saveBrowsePage(profile.cacheKey(), type, listOf(category), category, 1,
+            listOf(movie("77").copy(title = "A Very Specific Film")), hasMore = true, observedAt = 300)
+
+        val result = repository.searchIndex(profile.cacheKey(), type, "specific")
+        assertEquals(listOf("77"), result.map { it.id })
+        assertEquals("A Very Specific Film", result.single().title)
+    }
+
     @Test fun incrementalPageCommitPreservesEarlierRowsAndAdvancesOnlyItsBucket() = runBlocking {
         repository.saveBrowse(cache("10", "20"))
         val categories = listOf(Category("1", "Movies", type), Category("2", "Other", type))

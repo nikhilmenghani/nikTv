@@ -2,6 +2,8 @@ package com.nikhil.niktv.data
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -36,6 +38,24 @@ data class CatalogMigration(@PrimaryKey val key: String)
 
 data class CatalogStoredCount(val type: String, val count: Int)
 
+/** Compact, rebuildable search metadata. Full provider payloads remain in CatalogItemRow only. */
+@Entity(
+    primaryKeys = ["profile", "type", "id"],
+    indices = [Index(value = ["profile", "type", "normalizedTitle"])]
+)
+data class CatalogSearchRow(
+    val profile: String,
+    val type: String,
+    val id: String,
+    val title: String,
+    val normalizedTitle: String,
+    val categoryId: String?,
+    val externalTmdbId: Int?,
+    val channelNumber: Int?,
+    val observedAt: Long,
+    val deleted: Boolean = false
+)
+
 @Dao
 interface CatalogDao {
     @Query("""SELECT a.type, COUNT(DISTINCT a.id) AS count FROM CatalogItemRow a
@@ -59,6 +79,16 @@ interface CatalogDao {
     @Upsert suspend fun putItems(rows: List<CatalogItemRow>)
     @Upsert suspend fun putBuckets(rows: List<CatalogBucketRow>)
     @Upsert suspend fun putEpisodes(rows: List<CatalogEpisodeRow>)
+    @Upsert suspend fun putSearchRows(rows: List<CatalogSearchRow>)
+    @Query("SELECT * FROM CatalogSearchRow WHERE profile = :profile AND type = :type AND deleted = 0 AND normalizedTitle LIKE '%' || :query || '%' ORDER BY title, id LIMIT :limit")
+    suspend fun searchRows(profile: String, type: String, query: String, limit: Int): List<CatalogSearchRow>
+    @Query("SELECT COUNT(*) FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
+    suspend fun searchRowCount(profile: String, type: String): Int
+    @Query("DELETE FROM CatalogSearchRow WHERE profile = :profile AND type = :type")
+    suspend fun clearSearchRows(profile: String, type: String)
+    @Query("DELETE FROM CatalogSearchRow") suspend fun clearAllSearchRows()
+    @Query("SELECT * FROM CatalogItemRow WHERE profile = :profile AND type = :type AND bucket != '@search' AND deleted = 0 ORDER BY id, observedAt DESC LIMIT :limit OFFSET :offset")
+    suspend fun canonicalRowsPage(profile: String, type: String, limit: Int, offset: Int): List<CatalogItemRow>
     @Query("SELECT * FROM CatalogEpisodeRow") suspend fun episodes(): List<CatalogEpisodeRow>
     @Query("SELECT * FROM CatalogEpisodeRow") fun observeEpisodes(): Flow<List<CatalogEpisodeRow>>
     @Query("SELECT COUNT(*) FROM CatalogMigration WHERE `key` = :key") suspend fun migrated(key: String): Int
@@ -68,14 +98,31 @@ interface CatalogDao {
     @Query("DELETE FROM CatalogEpisodeRow") suspend fun clearEpisodes()
 }
 
-@Database(entities = [CatalogItemRow::class, CatalogBucketRow::class, CatalogEpisodeRow::class, CatalogMigration::class], version = 1, exportSchema = true)
+@Database(entities = [CatalogItemRow::class, CatalogBucketRow::class, CatalogEpisodeRow::class,
+    CatalogMigration::class, CatalogSearchRow::class], version = 2, exportSchema = true)
 abstract class CatalogDatabase : RoomDatabase() {
     abstract fun catalog(): CatalogDao
     companion object {
         @Volatile private var instance: CatalogDatabase? = null
         fun get(context: Context): CatalogDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, CatalogDatabase::class.java, "catalog.db")
+                .addMigrations(MIGRATION_1_2)
                 .build().also { instance = it }
+        }
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS `CatalogSearchRow` (`profile` TEXT NOT NULL,
+                    `type` TEXT NOT NULL, `id` TEXT NOT NULL, `title` TEXT NOT NULL,
+                    `normalizedTitle` TEXT NOT NULL, `categoryId` TEXT, `externalTmdbId` INTEGER,
+                    `channelNumber` INTEGER, `observedAt` INTEGER NOT NULL, `deleted` INTEGER NOT NULL,
+                    PRIMARY KEY(`profile`, `type`, `id`))""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_CatalogSearchRow_profile_type_normalizedTitle` ON `CatalogSearchRow` (`profile`, `type`, `normalizedTitle`)")
+                // Search rows are derived data. Removing these full-payload copies is safe;
+                // canonical provider rows and their scan cursors remain untouched.
+                db.execSQL("DELETE FROM `CatalogItemRow` WHERE `bucket` = '@search'")
+                db.execSQL("DELETE FROM `CatalogBucketRow` WHERE `bucket` = '@search'")
+            }
         }
     }
 }
@@ -85,6 +132,12 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
     private val app = context.applicationContext
     private val dao = db.catalog()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    private fun MediaItem.asSearchRow(profile: String, type: CatalogType, at: Long) = CatalogSearchRow(
+        profile = profile, type = type.name, id = id, title = title,
+        normalizedTitle = title.normalizedSearchQuery(), categoryId = portalCategoryId,
+        externalTmdbId = externalTmdbId, channelNumber = channelNumber, observedAt = at
+    )
 
     private suspend fun migrate(profile: String, type: CatalogType) = db.withTransaction {
         val key = "$profile:${type.name}"
@@ -155,6 +208,8 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
                     if (prior?.payload == payload && !prior.deleted) prior.observedAt else cache.cachedAtMillis)
         } }
         dao.putItems(rows.filter { old[it.bucket to it.id] != it })
+        dao.putSearchRows(cache.itemsByCategory.values.flatten().distinctBy { it.id }
+            .map { it.asSearchRow(cache.profileKey, cache.type, cache.cachedAtMillis) })
     }
 
     /**
@@ -192,18 +247,31 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
                 (pagePosition + index).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                 json.encodeToString(item), observedAt)
         })
+        dao.putSearchRows(items.map { it.asSearchRow(profile, type, observedAt) })
     }
 
     suspend fun saveSearch(cache: SearchCatalogCache) = db.withTransaction {
-        val old = dao.items(cache.profileKey, cache.type.name).filter { it.bucket == SEARCH }.associateBy { it.id }
-        dao.putBuckets(listOf(CatalogBucketRow(cache.profileKey, cache.type.name, SEARCH, "", observedAt = cache.cachedAtMillis)))
-        dao.putItems(cache.items.mapIndexed { index, item ->
-            val payload = json.encodeToString(item)
-            val prior = old[item.id]
-            if (prior != null && prior.observedAt > cache.cachedAtMillis) prior else
-                CatalogItemRow(cache.profileKey, cache.type.name, SEARCH, item.id, index, payload,
-                    if (prior?.payload == payload && !prior.deleted) prior.observedAt else cache.cachedAtMillis)
-        }.filter { old[it.id] != it })
+        dao.putSearchRows(cache.items.distinctBy { it.id }
+            .map { it.asSearchRow(cache.profileKey, cache.type, cache.cachedAtMillis) })
+    }
+
+    suspend fun searchIndex(profile: String, type: CatalogType, query: String, limit: Int = 100): List<CatalogSearchRow> =
+        db.withTransaction {
+            ensureSearchIndex(profile, type)
+            dao.searchRows(profile, type.name, query.normalizedSearchQuery(), limit.coerceIn(1, 500))
+        }
+
+    private suspend fun ensureSearchIndex(profile: String, type: CatalogType) {
+        if (dao.searchRowCount(profile, type.name) > 0) return
+        var offset = 0
+        while (true) {
+            val rows = dao.canonicalRowsPage(profile, type.name, INDEX_REBUILD_BATCH, offset)
+            if (rows.isEmpty()) break
+            dao.putSearchRows(rows.distinctBy { it.id }.map { row ->
+                json.decodeFromString<MediaItem>(row.payload).asSearchRow(profile, type, row.observedAt)
+            })
+            offset += rows.size
+        }
     }
 
     /** Only a fully traversed provider category may retire missing records. Interrupted scans never delete. */
@@ -213,6 +281,9 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
                 json.decodeFromString<MediaItem>(row.payload).portalCategoryId == category)
         }
         dao.putItems(missing.map { it.copy(deleted = true, observedAt = at) })
+        dao.putSearchRows(missing.map { row ->
+            json.decodeFromString<MediaItem>(row.payload).asSearchRow(profile, type, at).copy(deleted = true)
+        })
     }
 
     suspend fun migrateEpisodes(caches: List<EpisodeSeasonCache>) = db.withTransaction {
@@ -232,7 +303,7 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         return db.withTransaction {
             val key = profile.cacheKey()
             CatalogSnapshot(profileId = SearchMetadataDocuments.anonymousProfileId(profile), type = type,
-                items = dao.items(key, type.name).map { it.copy(profile = "") },
+                items = dao.items(key, type.name).filterNot { it.bucket == SEARCH }.map { it.copy(profile = "") },
                 buckets = dao.buckets(key, type.name).map { it.copy(profile = "") },
                 episodes = if (type == CatalogType.SERIES) dao.episodes().filter { it.profile == key }.map {
                     val cache = json.decodeFromString<EpisodeSeasonCache>(it.payload).copy(profileKey = "")
@@ -246,11 +317,17 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         val local = snapshot(profile, remote.type)
         val merged = mergeCatalogSnapshots(local, remote)
         val key = profile.cacheKey()
-        dao.putItems(merged.items.map { row ->
+        val canonicalItems = merged.items.filterNot { it.bucket == SEARCH }
+        dao.putItems(canonicalItems.map { row ->
             require(row.type == remote.type.name && json.decodeFromString<MediaItem>(row.payload).id == row.id)
             row.copy(profile = key)
         })
-        dao.putBuckets(merged.buckets.map { require(it.type == remote.type.name); it.copy(profile = key) })
+        dao.putSearchRows(canonicalItems.filterNot { it.deleted }.map { row ->
+            json.decodeFromString<MediaItem>(row.payload).asSearchRow(key, remote.type, row.observedAt)
+        })
+        dao.putBuckets(merged.buckets.filterNot { it.bucket == SEARCH }.map {
+            require(it.type == remote.type.name); it.copy(profile = key)
+        })
         dao.putEpisodes(merged.episodes.map {
             val cache = json.decodeFromString<EpisodeSeasonCache>(it.payload)
             require(cache.seriesId == it.series && (cache.season ?: -1) == it.season)
@@ -294,10 +371,14 @@ class CatalogRepository(context: Context, private val db: CatalogDatabase = Cata
         }
     }
 
-    suspend fun clear() = db.withTransaction { dao.clearItems(); dao.clearBuckets(); dao.clearEpisodes() }
+    suspend fun clear() = db.withTransaction {
+        dao.clearItems(); dao.clearBuckets(); dao.clearEpisodes()
+        dao.clearAllSearchRows()
+    }
     companion object {
         private const val SEARCH = "@search"
         private const val PAGE_POSITION_STRIDE = 1_000L
+        private const val INDEX_REBUILD_BATCH = 1_000
     }
 }
 
