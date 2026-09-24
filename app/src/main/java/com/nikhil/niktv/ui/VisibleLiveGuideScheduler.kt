@@ -58,8 +58,9 @@ internal class VisibleLiveGuideScheduler<Key>(
 }
 
 /** Input is in visual row order; duplicate pinned tiles need only one guide request. */
-internal fun <Key> prioritizeVisibleLiveGuides(visible: List<Key>, focused: Key?): List<Key> =
+internal fun <Key> prioritizeVisibleLiveGuides(visible: List<Key>, focused: Key?, selected: Key? = null): List<Key> =
     visible.distinct().let { ordered ->
-        if (focused != null && focused in ordered) listOf(focused) + ordered.filterNot { it == focused }
+        val priority = focused?.takeIf { it in ordered } ?: selected?.takeIf { it in ordered }
+        if (priority != null) listOf(priority) + ordered.filterNot { it == priority }
         else ordered
     }

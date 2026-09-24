@@ -81,6 +81,7 @@ data class NikTvState(
     val reauthenticating: Boolean = false,
     val nowPlaying: PlayingMedia? = null,
     val playbackReturnFocusId: String? = null,
+    val liveGuidePriorityId: String? = null,
     val restoring: Boolean = true,
     val settingsOpen: Boolean = false,
     val selectedSeries: MediaItem? = null,
@@ -1061,6 +1062,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isVisibleLiveGuideDue(target: LiveGuideTarget): Boolean {
+        if (selectedLiveGuideTarget == target && channelScheduleJob?.isActive == true) return false
         val item = visibleLiveGuideItem(target) ?: return false
         val now = System.currentTimeMillis()
         return target.key in liveGuideForcedKeys ||
@@ -1071,7 +1073,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadVisibleLiveGuide(target: LiveGuideTarget) {
         val item = visibleLiveGuideItem(target) ?: return
         val session = _state.value.session ?: return
-        val category = _state.value.modernIptvCategory ?: return
         val profileKey = target.profileKey
         val key = target.key
         val attemptedAt = System.currentTimeMillis()
@@ -1090,43 +1091,49 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 portal.playingChannelSchedule(activeSession, cleanItem)
             }
             Log.d("NikTvLiveGuide", "Channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
-            if (enriched.liveSchedule.isNotEmpty() || enriched != item) {
-                _state.update { current ->
-                    if (current.session?.profile?.cacheKey() != profileKey) return@update current
-                    val cache = current.browseCachesByType[CatalogType.LIVE_TV]
-                        ?.takeIf { it.profileKey == profileKey }
-                    val updatedCache = cache?.copy(itemsByCategory =
-                        cache.itemsByCategory + (category.id to
-                            cache.itemsByCategory[category.id].orEmpty().map { stored ->
-                                if (stored.id == item.id) enriched else stored
-                            })
-                    )
-                    current.copy(
-                        items = if (current.selectedCategory?.id == category.id) {
-                            current.items.map { stored ->
-                                if (stored.id == item.id) enriched else stored
-                            }
-                        } else current.items,
-                        browseCache = if (current.browseCache?.profileKey == profileKey &&
-                            current.browseCache.type == CatalogType.LIVE_TV) {
-                            updatedCache ?: current.browseCache
-                        } else current.browseCache,
-                        browseCachesByType = if (updatedCache != null) {
-                            current.browseCachesByType + (CatalogType.LIVE_TV to updatedCache)
-                        } else current.browseCachesByType
-                    )
-                }
-                liveGuideCacheSaveJob?.cancel()
-                liveGuideCacheSaveJob = viewModelScope.launch {
-                    delay(2_500L)
-                    _state.value.browseCachesByType[CatalogType.LIVE_TV]
-                        ?.takeIf { it.profileKey == profileKey }
-                        ?.let { store.saveBrowseCatalog(it, scheduleMetadataSync = false) }
-                }
-            }
+            publishLiveChannelGuide(profileKey, enriched)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             liveGuideAttemptedAt.remove(key, attemptedAt)
             throw cancelled
+        }
+    }
+
+    private fun publishLiveChannelGuide(profileKey: String, enriched: MediaItem) {
+        if (enriched.liveSchedule.isEmpty() && enriched.liveProgramme == null) return
+        if (_state.value.session?.profile?.cacheKey() != profileKey) return
+        _state.update { it.withLiveChannelGuide(profileKey, enriched) }
+        liveGuideCacheSaveJob?.cancel()
+        liveGuideCacheSaveJob = viewModelScope.launch {
+            delay(2_500L)
+            _state.value.browseCachesByType[CatalogType.LIVE_TV]
+                ?.takeIf { it.profileKey == profileKey }
+                ?.let { store.saveBrowseCatalog(it, scheduleMetadataSync = false) }
+        }
+    }
+
+    private fun requestSelectedLiveGuide(session: PortalSession, item: MediaItem) {
+        val target = LiveGuideTarget(session.profile.cacheKey(), item.portalCategoryId.orEmpty(), item.id)
+        if (selectedLiveGuideTarget == target && channelScheduleJob?.isActive == true) return
+        channelScheduleJob?.cancel()
+        publishLiveChannelGuide(target.profileKey, item)
+        // An old non-empty schedule can be expired; check what is airing now.
+        if (item.currentLiveProgramme(System.currentTimeMillis()) != null) return
+        selectedLiveGuideTarget = target
+        channelScheduleJob = viewModelScope.launch {
+            val attemptedAt = System.currentTimeMillis()
+            liveGuideAttemptedAt[target.key] = attemptedAt
+            try {
+                val enriched = withAutomaticSessionRetry(session) {
+                    portal.playingChannelSchedule(it, item, userSelected = true)
+                }
+                Log.d("NikTvLiveGuide", "Selected channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
+                publishLiveChannelGuide(target.profileKey, enriched)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                liveGuideAttemptedAt.remove(target.key, attemptedAt)
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w("NikTvLiveGuide", "Could not load the selected channel guide", error)
+            }
         }
     }
 
@@ -5408,6 +5415,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingNavigationId: String? = null
     private var playbackNavigationIndex: Int? = null
     private var channelScheduleJob: Job? = null
+    private var selectedLiveGuideTarget: LiveGuideTarget? = null
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private suspend fun playInternal(
@@ -5423,6 +5431,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         reauthenticate: Boolean = false
     ) = latestPlaybackRequest.run(requestId) {
         try {
+            if (type == CatalogType.LIVE_TV) _state.update { it.copy(liveGuidePriorityId = item.id) }
             if (_state.value.categoryFindSearching) cancelCategoryFind()
             liveGuideScheduler.pause()
             channelScheduleJob?.cancel()
@@ -5681,30 +5690,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 playbackQueueLoadingMore = false
             )
         }
-        if (type == CatalogType.LIVE_TV && item.liveSchedule.isEmpty()) {
-            // Playback is already available; guide enrichment is deliberately
-            // asynchronous and updates only this still-playing channel.
-            channelScheduleJob = viewModelScope.launch {
-                val enriched = try {
-                    portal.playingChannelSchedule(session, item)
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    return@launch
-                }
-                if (enriched.liveSchedule.isEmpty()) return@launch
-                _state.update { current ->
-                    val playing = current.nowPlaying
-                    if (playing?.media?.id != item.id || playing.url != url) current
-                    else playing.copy(
-                        media = enriched,
-                        episodeQueue = playing.episodeQueue.map { queued ->
-                            if (queued.id == enriched.id) enriched else queued
-                        }
-                    ).let { current.copy(nowPlaying = it) }
-                }
-            }
-        }
+        if (type == CatalogType.LIVE_TV) requestSelectedLiveGuide(session, item)
         if (
             newPlaybackScope != null &&
             initialPlaybackHasMore &&
@@ -6060,16 +6046,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(items = portal.catalog(session, category)) }
     }
 
-    private fun cancelPendingPlayback() {
+    private fun cancelPendingPlayback(cancelGuide: Boolean = true) {
         latestPlaybackRequest.cancel()
         pendingNavigationId = null
         playbackNavigationIndex = null
-        channelScheduleJob?.cancel()
+        if (cancelGuide) channelScheduleJob?.cancel()
         autoAdvanceAfterQueueLoadJob?.cancel()
     }
 
     fun closePlayer() {
-        cancelPendingPlayback()
+        // A guide can finish into the browse cache after Back; it never starts playback.
+        cancelPendingPlayback(cancelGuide = false)
         val snapshot = _state.value
         val session = snapshot.session
 

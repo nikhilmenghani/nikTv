@@ -8,6 +8,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisibleLiveGuideSchedulerTest {
+    @Test fun touchSelectionIsPrioritizedOnReturnAndNewDpadFocusTakesPrecedence() {
+        val visible = listOf("a", "b", "c")
+        assertEquals(listOf("c", "a", "b"), prioritizeVisibleLiveGuides(visible, null, "c"))
+        assertEquals(listOf("c", "a", "b"), prioritizeVisibleLiveGuides(visible, "offscreen", "c"))
+        assertEquals(listOf("b", "a", "c"), prioritizeVisibleLiveGuides(visible, "b", "c"))
+        assertEquals(visible, prioritizeVisibleLiveGuides(visible, null, "offscreen"))
+    }
     @Test fun focusedVisibleChannelPrecedesRowsAndPinnedDuplicatesAreSkipped() {
         assertEquals(listOf("c", "a", "b"), prioritizeVisibleLiveGuides(listOf("a", "b", "a", "c"), "c"))
         assertEquals(listOf("a", "b"), prioritizeVisibleLiveGuides(listOf("a", "b"), "offscreen"))

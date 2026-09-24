@@ -543,10 +543,10 @@ class StalkerPortalClient(private val context: Context) {
 
     /** Fetch only the guide for the channel being played. This mirrors the
      * lightweight Cast4K get_short_epg flow and avoids refreshing a category. */
-    suspend fun playingChannelSchedule(session: PortalSession, item: MediaItem): MediaItem = withContext(Dispatchers.IO) {
+    suspend fun playingChannelSchedule(session: PortalSession, item: MediaItem, userSelected: Boolean = false): MediaItem = withContext(Dispatchers.IO) {
         if (item.id.isBlank()) return@withContext item
         if (session.profile.portalType == PortalType.XTREAM) {
-            val response = requestGate.run(background = true, minimumSpacingMillis = MIN_REQUEST_SPACING_MS) {
+            val response = requestGate.run(background = !userSelected, minimumSpacingMillis = MIN_REQUEST_SPACING_MS) {
                 xtreamRequest(session.profile, "get_short_epg", streamId = item.id)
             }
             val now = System.currentTimeMillis()
@@ -578,7 +578,8 @@ class StalkerPortalClient(private val context: Context) {
                     // covers a full day without polling or category-wide EPG load.
                     "size" to "24"
                 )
-            )
+            ),
+            background = !userSelected
         )
         val now = System.currentTimeMillis()
         val schedules = response.epgSchedulesByChannel(item.id)
@@ -756,8 +757,14 @@ class StalkerPortalClient(private val context: Context) {
     }
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
-    private suspend fun request(profile: PortalProfile, endpointUrl: String, session: PortalSession?, params: Map<String, String>): JsonElement = requestGate.run(
-        background = params["action"] in setOf("get_short_epg", "get_epg_info"),
+    private suspend fun request(
+        profile: PortalProfile,
+        endpointUrl: String,
+        session: PortalSession?,
+        params: Map<String, String>,
+        background: Boolean = params["action"] in setOf("get_short_epg", "get_epg_info")
+    ): JsonElement = requestGate.run(
+        background = background,
         minimumSpacingMillis = if (params["action"] == "create_link") PLAYBACK_LINK_REQUEST_SPACING_MS else MIN_REQUEST_SPACING_MS,
         checkAllowed = ::checkTrafficCooldown
     ) {

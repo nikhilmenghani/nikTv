@@ -2934,6 +2934,7 @@ private fun ModernIptvCollection(
         }
     }
     val currentGuideItems by rememberUpdatedState(displayedItems)
+    val touchedGuideId by rememberUpdatedState(state.liveGuidePriorityId)
     val guideLoadingPaused by rememberUpdatedState(
         state.loading || state.catalogLoadingMore || state.categoryFindSearching || state.nowPlaying != null
     )
@@ -2947,7 +2948,8 @@ private fun ModernIptvCollection(
                 currentGuideItems.getOrNull(visible.index)?.id
             }
             Triple(
-                prioritizeVisibleLiveGuides(visibleIds, currentGuideItems.getOrNull(focusedPosterIndex)?.id),
+                prioritizeVisibleLiveGuides(visibleIds,
+                    currentGuideItems.getOrNull(focusedPosterIndex)?.id, touchedGuideId),
                 guideLoadingPaused,
                 guideNow
             )
@@ -3227,7 +3229,10 @@ private fun ModernIptvCollection(
                             context, profileKey, category.id, media.id
                         )
                     },
-                    onClick = { openItem(media) },
+                    onClick = {
+                        focusedPosterIndex = index
+                        openItem(media)
+                    },
                     modifier = tileModifier,
                     isTv = isTv
                 )
