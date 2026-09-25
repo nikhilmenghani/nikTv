@@ -17,6 +17,7 @@ internal class PortalRequestGate(
         background: Boolean,
         minimumSpacingMillis: Long,
         checkAllowed: () -> Unit = {},
+        onWait: (Long) -> Unit = {},
         block: suspend () -> T
     ): T {
         while (true) {
@@ -26,9 +27,10 @@ internal class PortalRequestGate(
                 while (requests.isNotEmpty() && timestamp - requests.first() >= 60_000L) {
                     requests.removeFirst()
                 }
-                // Keep the existing 20 requests/minute ceiling. Guides may use
-                // the first 12 slots; eight remain available to browse or play.
-                val limit = if (background) 12 else 20
+                // Keep the existing 20 requests/minute ceiling. Lightweight
+                // guide lookups may use 16 slots; four remain reserved for
+                // playback links, category loads, and other user actions.
+                val limit = if (background) 16 else 20
                 val budgetWait = if (requests.size >= limit) {
                     (requests.elementAt(requests.size - limit) + 60_000L - timestamp).coerceAtLeast(0L)
                 } else 0L
@@ -45,6 +47,7 @@ internal class PortalRequestGate(
             }
             // Never hold the network mutex during a budget/spacing wait: a
             // background guide must not block an eligible playback request.
+            onWait(wait)
             pause(wait)
         }
     }

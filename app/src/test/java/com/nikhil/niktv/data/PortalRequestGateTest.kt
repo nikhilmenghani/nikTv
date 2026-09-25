@@ -13,7 +13,7 @@ class PortalRequestGateTest {
         val resume = CompletableDeferred<Unit>()
         val waits = mutableListOf<Long>()
         val gate = PortalRequestGate(now = { 0L }, pause = { waits += it; resume.await() })
-        repeat(12) { gate.run(background = true, minimumSpacingMillis = 0L) {} }
+        repeat(16) { gate.run(background = true, minimumSpacingMillis = 0L) {} }
         var guideStarted = false
         val guide = launch(start = CoroutineStart.UNDISPATCHED) {
             gate.run(background = true, minimumSpacingMillis = 0L) { guideStarted = true }

@@ -437,7 +437,10 @@ internal fun ProfileChooserTile(
 
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
-        animationSpec = tween(durationMillis = 170),
+        // Finish before the next repeat event from a TV remote. Longer focus
+        // tweens overlap during quick D-pad navigation and make Fire TV feel
+        // as though focus is trailing the user's input.
+        animationSpec = tween(durationMillis = if (remoteNavigationActive) 90 else 170),
         label = "profileChooserTileFocus"
     )
 
@@ -455,7 +458,7 @@ internal fun ProfileChooserTile(
         1f + (0.045f * focusProgress)
 
     val iconScale =
-        1f + (0.08f * focusProgress)
+        1f + ((if (remoteNavigationActive) 0.035f else 0.08f) * focusProgress)
 
     val backgroundColor =
         lerp(

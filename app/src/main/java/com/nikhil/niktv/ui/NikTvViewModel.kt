@@ -83,6 +83,9 @@ data class NikTvState(
     val nowPlaying: PlayingMedia? = null,
     val playbackReturnFocusId: String? = null,
     val liveGuidePriorityId: String? = null,
+    val liveGuideLoadingIds: Set<String> = emptySet(),
+    val liveGuideWaitingUntilById: Map<String, Long> = emptyMap(),
+    val manualLiveGuideLoadingId: String? = null,
     val restoring: Boolean = true,
     val settingsOpen: Boolean = false,
     val selectedSeries: MediaItem? = null,
@@ -201,7 +204,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         scope = viewModelScope,
         isDue = ::isVisibleLiveGuideDue,
         load = ::loadVisibleLiveGuide,
-        onFailure = { Log.w("NikTvLiveGuide", "Could not load a visible channel guide", it) }
+        onFailure = { Log.w("NikTvLiveGuide", "Could not load a visible channel guide", it) },
+        // PortalRequestGate already enforces a one-second request spacing and
+        // a 16/minute background ceiling. A second post-response delay only
+        // makes later visible channels wait longer after slow responses.
+        spacingMillis = 0L
     )
     private val liveGuideAttemptedAt = mutableMapOf<String, Long>()
     private var lastVisibleLiveGuideIds: Pair<String, List<String>>? = null
@@ -1065,8 +1072,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (selectedLiveGuideTarget == target && channelScheduleJob?.isActive == true) return false
         val item = visibleLiveGuideItem(target) ?: return false
         val now = System.currentTimeMillis()
+        val current = item.currentLiveProgramme(now)
+        val needsTimedProgramme = current == null ||
+            current.startTimeMillis == null || current.endTimeMillis == null
         return target.key in liveGuideForcedKeys ||
-            (item.currentLiveProgramme(now) == null &&
+            (needsTimedProgramme &&
                 now - (liveGuideAttemptedAt[target.key] ?: 0L) >= 2 * 60_000L)
     }
 
@@ -1078,6 +1088,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val attemptedAt = System.currentTimeMillis()
         liveGuideAttemptedAt[key] = attemptedAt
         liveGuideForcedKeys.remove(key)
+        _state.update { it.copy(liveGuideLoadingIds = it.liveGuideLoadingIds + item.id) }
         try {
             val cleanItem = item.copy(
                 liveProgramme = item.liveProgramme?.takeUnless {
@@ -1088,13 +1099,35 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             )
             val enriched = withAutomaticSessionRetry(session) { activeSession ->
-                portal.playingChannelSchedule(activeSession, cleanItem)
+                portal.playingChannelSchedule(
+                    activeSession,
+                    cleanItem,
+                    onProviderWait = { waitMillis ->
+                        _state.update { state -> state.copy(
+                            liveGuideWaitingUntilById = state.liveGuideWaitingUntilById +
+                                (item.id to (System.currentTimeMillis() + waitMillis))
+                        ) }
+                    },
+                    onRequestStarted = {
+                        _state.update { state -> state.copy(
+                            liveGuideWaitingUntilById = state.liveGuideWaitingUntilById - item.id
+                        ) }
+                    }
+                )
             }
-            Log.d("NikTvLiveGuide", "Channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
+            Log.i(
+                "NikTvLiveGuide",
+                "Channel ${item.id}: ${enriched.liveSchedule.size} guide entries in ${System.currentTimeMillis() - attemptedAt}ms"
+            )
             publishLiveChannelGuide(profileKey, enriched)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             liveGuideAttemptedAt.remove(key, attemptedAt)
             throw cancelled
+        } finally {
+            _state.update { it.copy(
+                liveGuideLoadingIds = it.liveGuideLoadingIds - item.id,
+                liveGuideWaitingUntilById = it.liveGuideWaitingUntilById - item.id
+            ) }
         }
     }
 
@@ -1134,17 +1167,30 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (force) {
             manualLiveGuideTarget = target
             liveGuideScheduler.pause()
+            _state.update { it.copy(manualLiveGuideLoadingId = item.id) }
             feedback("Refreshing programme…")
         }
         selectedLiveGuideTarget = target
         channelScheduleJob = viewModelScope.launch {
             val attemptedAt = System.currentTimeMillis()
             liveGuideAttemptedAt[target.key] = attemptedAt
+            _state.update { it.copy(liveGuideLoadingIds = it.liveGuideLoadingIds + item.id) }
             try {
                 val enriched = withAutomaticSessionRetry(session) {
                     portal.playingChannelSchedule(it,
                         if (force) item.copy(liveProgramme = null, liveSchedule = emptyList()) else item,
-                        userSelected = true)
+                        userSelected = true,
+                        onProviderWait = { waitMillis ->
+                            _state.update { state -> state.copy(
+                                liveGuideWaitingUntilById = state.liveGuideWaitingUntilById +
+                                    (item.id to (System.currentTimeMillis() + waitMillis))
+                            ) }
+                        },
+                        onRequestStarted = {
+                            _state.update { state -> state.copy(
+                                liveGuideWaitingUntilById = state.liveGuideWaitingUntilById - item.id
+                            ) }
+                        })
                 }
                 Log.d("NikTvLiveGuide", "Selected channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
                 publishLiveChannelGuide(target.profileKey, enriched)
@@ -1158,8 +1204,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 Log.w("NikTvLiveGuide", "Could not load the selected channel guide", error)
                 feedback("Could not refresh programme. Please try again.")
             } finally {
+                _state.update { it.copy(
+                    liveGuideLoadingIds = it.liveGuideLoadingIds - item.id,
+                    liveGuideWaitingUntilById = it.liveGuideWaitingUntilById - item.id
+                ) }
                 if (manualLiveGuideTarget === target) {
                     manualLiveGuideTarget = null
+                    _state.update { it.copy(manualLiveGuideLoadingId = null) }
                     val snapshot = _state.value
                     val visibleIds = lastVisibleLiveGuideIds?.second.orEmpty().toSet()
                     loadVisibleLiveGuides(snapshot.items.filter { it.id in visibleIds }, force = false)

@@ -439,15 +439,35 @@ internal fun OfflineDownloadsScreen(
             onDismissRequest = { pendingRecordingRemoval = null },
             title = { Text("Delete recording?") },
             text = { Text("Remove “${recording.title}” from this device?") },
-            dismissButton = { NikTvTextActionButton(onClick = { pendingRecordingRemoval = null }) { Text("Keep") } },
             confirmButton = {
-                NikTvPrimaryActionButton(onClick = {
-                    LiveTvRecorder.delete(context, recording)
-                    recordings = recordings.filterNot { it.uri == recording.uri }
-                    storageRevision++
-                    pendingRecordingRemoval = null
-                }) { Text("Delete") }
-            }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    NikTvSecondaryActionButton(
+                        onClick = { pendingRecordingRemoval = null },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Keep", style = MaterialTheme.typography.labelLarge)
+                    }
+                    NikTvPrimaryActionButton(
+                        onClick = {
+                            LiveTvRecorder.delete(context, recording)
+                            recordings = recordings.filterNot { it.uri == recording.uri }
+                            storageRevision++
+                            pendingRecordingRemoval = null
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Delete", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color(0xFF181818),
+            titleContentColor = Color.White,
+            textContentColor = Color.LightGray
         )
     }
 }

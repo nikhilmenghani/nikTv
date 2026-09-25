@@ -64,6 +64,10 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            // Same package/signature/data for repeatable on-device performance tests.
+            // Opt in explicitly; ordinary development builds stay debuggable.
+            isDebuggable = !providers.gradleProperty("performanceBuild")
+                .orNull.equals("true", ignoreCase = true)
             val localToken = if (embedLocalGithubToken) {
                 providers.gradleProperty("G_TOKEN").orNull
                     ?: providers.gradleProperty("G_Token").orNull

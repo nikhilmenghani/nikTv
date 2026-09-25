@@ -61,4 +61,18 @@ class LiveChannelGuideUpdateTest {
         assertEquals(movieCache, updated.browseCache)
         assertEquals(programme, updated.browseCachesByType[CatalogType.LIVE_TV]!!.itemsByCategory["actors"]!!.single().liveProgramme)
     }
+    @Test fun unrelatedCategoryRetainsItsListIdentity() {
+        val otherItems = listOf(channel.copy(id = "other"))
+        val original = state().copy(browseCache = cache.copy(
+            itemsByCategory = cache.itemsByCategory + ("other" to otherItems)))
+        val updated = original.withLiveChannelGuide(profile.cacheKey(), enriched)
+        assertSame(otherItems, updated.browseCache!!.itemsByCategory["other"])
+    }
+
+    @Test fun identicalGuideRetainsItemsAndCache() {
+        val first = state().withLiveChannelGuide(profile.cacheKey(), enriched)
+        val second = first.withLiveChannelGuide(profile.cacheKey(), enriched)
+        assertSame(first.items, second.items)
+        assertSame(first.browseCache, second.browseCache)
+    }
 }

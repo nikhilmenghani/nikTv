@@ -467,22 +467,28 @@ internal fun ModernRailButton(icon: ImageVector, label: String, selected: Boolea
     val railConfiguration = LocalConfiguration.current
     val isTv = railContext.isTvLikeDevice(railConfiguration)
     val focusHighlight = focused && isTv
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focusHighlight) 1f else 0f,
+        animationSpec = tween(durationMillis = 90),
+        label = "railButtonFocus"
+    )
+    val restingColor = if (selected) Color(0xFF181B20) else Color.Transparent
+    val containerColor = lerp(restingColor, Color(0xFF272B33), focusProgress)
+    val borderColor = lerp(
+        if (selected) Color(0xFF3B4048) else Color.Transparent,
+        Color(0xFFF1F3F5),
+        focusProgress
+    )
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(50.dp).padding(vertical = 3.dp)
             .onFocusChanged { focused = it.isFocused }
             .semantics { role = Role.Tab; this.selected = selected },
         shape = shape,
-        color = when {
-            focusHighlight -> Color(0xFF272B33)
-            selected -> Color(0xFF181B20)
-            else -> Color.Transparent
-        },
-        border = when {
-            focusHighlight -> BorderStroke(2.dp, Color(0xFFF1F3F5))
-            selected -> BorderStroke(1.dp, Color(0xFF3B4048))
-            else -> null
-        }
+        color = containerColor,
+        border = if (focusProgress > 0f || selected) {
+            BorderStroke(1.dp + focusProgress.dp, borderColor)
+        } else null
     ) {
         Row(
             Modifier.fillMaxSize().padding(horizontal = if (expanded) 14.dp else 0.dp),

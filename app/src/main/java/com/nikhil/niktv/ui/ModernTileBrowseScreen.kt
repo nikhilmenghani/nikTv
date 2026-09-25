@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -175,6 +176,7 @@ import com.nikhil.niktv.model.TmdbHomeSection
 import com.nikhil.niktv.model.WatchedSeries
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -276,7 +278,7 @@ internal fun ModernTileBrowseScreen(
     val destinationKey = "${dashboardSurface}:${activeTmdb}:${activeIptv?.id}"
     destinationStateHolder.SaveableStateProvider(destinationKey) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().destinationEntrance(destinationKey, isTv),
             color = ModernAppBackground
         ) {
             when {
@@ -1073,6 +1075,9 @@ private fun ModernRecentChannelsCollection(
                 categoryTitle = category.second,
                 xtream = xtream,
                 guideNow = guideNow,
+                programmeLoading = false,
+                programmeWaitingUntil = null,
+                programmeStatusNow = guideNow,
                 showQualityBadge = true,
                 isFavorite = favorites.any { it.key == recent.key },
                 onFavorite = {
@@ -1479,7 +1484,7 @@ private fun ModernQuickActionTile(
     var focused by remember { mutableStateOf(false) }
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
-        animationSpec = tween(durationMillis = 170),
+        animationSpec = tween(durationMillis = if (isTv) 90 else 170),
         label = "modernQuickActionFocus"
     )
     val pressProgress by animateFloatAsState(
@@ -1632,7 +1637,7 @@ private fun ModernDestinationTile(
     val iconScale =
         1f + (
             when {
-                isTv -> 0.12f
+                isTv -> 0.04f
                 isTablet -> 0.06f
                 else -> 0.04f
             } * visualProgress
@@ -2560,7 +2565,14 @@ private fun ModernTmdbCollection(
                             itemEnd > viewportEnd -> itemEnd - viewportEnd
                             else -> 0
                         }
-                        if (delta != 0) gridState.scrollBy(delta.toFloat())
+                        if (delta != 0) {
+                            // Finish before a normal remote repeat, while
+                            // keeping row-to-row movement visually continuous.
+                            gridState.animateScrollBy(
+                                delta.toFloat(),
+                                animationSpec = tween(durationMillis = 90)
+                            )
+                        }
                     } else {
                         gridState.scrollToItem(targetGridIndex)
                     }
@@ -2826,7 +2838,7 @@ private fun ModernTmdbCollection(
 }
 
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 private fun ModernIptvCollection(
     state: NikTvState,
     category: Category,
@@ -2876,10 +2888,21 @@ private fun ModernIptvCollection(
             channelSearchSawIme && !isTv -> channelSearchEditing = false
         }
     }
-    val guideNow by produceState(System.currentTimeMillis(), category.id) {
+    val guideClock = produceState(System.currentTimeMillis(), category.id) {
         while (true) {
             // Local clock only: cached schedules advance without another provider request.
             delay(5_000L)
+            value = System.currentTimeMillis()
+        }
+    }
+    val guideWaitClock = produceState(
+        System.currentTimeMillis(),
+        category.id,
+        state.manualLiveGuideLoadingId?.let(state.liveGuideWaitingUntilById::containsKey) == true
+    ) {
+        value = System.currentTimeMillis()
+        while (state.manualLiveGuideLoadingId?.let(state.liveGuideWaitingUntilById::containsKey) == true) {
+            delay(1_000L)
             value = System.currentTimeMillis()
         }
     }
@@ -2889,7 +2912,7 @@ private fun ModernIptvCollection(
     val pinnedItems = remember(state.items, pinnedChannelIds) {
         pinnedChannelIds.mapNotNull { id -> state.items.firstOrNull { it.id == id } }
     }
-    val displayedItems = remember(state.items, pinnedItems, trimmedChannelQuery, guideNow) {
+    val displayedItems = remember(state.items, pinnedItems, trimmedChannelQuery, if (trimmedChannelQuery.isEmpty()) 0L else guideClock.value) {
         if (isLiveTv && trimmedChannelQuery.isNotEmpty()) {
             val now = System.currentTimeMillis()
             state.items.filter { it.matchesLiveChannelQuery(trimmedChannelQuery, now) }
@@ -2920,7 +2943,9 @@ private fun ModernIptvCollection(
         CatalogType.SERIES -> FavoriteKind.SERIES
         CatalogType.RADIO -> FavoriteKind.CHANNEL
     }
-    val focusIds = displayedItems.mapIndexed { index, media -> "$index:${media.id}" }
+    val focusIds = remember(displayedItems) {
+        displayedItems.mapIndexed { index, media -> "$index:${media.id}" }
+    }
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
@@ -2938,7 +2963,12 @@ private fun ModernIptvCollection(
     val restoredViewport = remember(viewportKey) {
         ModernCollectionViewportMemory.get(viewportKey)
     }
+    // Compose nearby rows during idle time; retain half a viewport for reverse scrolling.
+    // This only caches UI rows, never fetches additional provider pages.
     val gridState = rememberLazyGridState(
+        cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(
+            aheadFraction = 1f, behindFraction = .5f
+        ),
         initialFirstVisibleItemIndex = restoredViewport?.index
             ?.coerceAtMost(displayedItems.size)
             ?: 0,
@@ -2971,10 +3001,16 @@ private fun ModernIptvCollection(
             Triple(
                 prioritizeVisibleLiveGuides(visibleIds,
                     currentGuideItems.getOrNull(focusedPosterIndex)?.id, touchedGuideId),
-                guideLoadingPaused,
-                guideNow
+                guideLoadingPaused || gridState.isScrollInProgress,
+                guideClock.value
             )
-        }.collect { (visibleIds, _, _) ->
+        }.collectLatest { (visibleIds, paused, _) ->
+            if (paused) {
+                enrichVisibleLiveGuides(emptyList())
+                return@collectLatest
+            }
+            // Ignore transient rows during flings and rapid remote navigation.
+            delay(200L)
             val visible = visibleIds.mapNotNull { id ->
                 currentGuideItems.firstOrNull { it.id == id }
             }
@@ -3011,7 +3047,14 @@ private fun ModernIptvCollection(
                             itemEnd > viewportEnd -> itemEnd - viewportEnd
                             else -> 0
                         }
-                        if (delta != 0) gridState.scrollBy(delta.toFloat())
+                        if (delta != 0) {
+                            // Finish before a normal remote repeat, while
+                            // keeping row-to-row movement visually continuous.
+                            gridState.animateScrollBy(
+                                delta.toFloat(),
+                                animationSpec = tween(durationMillis = 90)
+                            )
+                        }
                     } else {
                         gridState.scrollToItem(targetGridIndex)
                     }
@@ -3221,6 +3264,11 @@ private fun ModernIptvCollection(
             }
         ) { index, media ->
             val tileModifier = Modifier
+                .animateItem(
+                    fadeInSpec = tween(160),
+                    placementSpec = null,
+                    fadeOutSpec = null
+                )
                 .onFocusChanged {
                     if (it.hasFocus) {
                         focusedPosterIndex = index
@@ -3252,7 +3300,12 @@ private fun ModernIptvCollection(
                     onRefreshProgramme = { refreshLiveProgramme(media) },
                     categoryTitle = category.title,
                     xtream = state.session?.profile?.portalType == PortalType.XTREAM,
-                    guideNow = guideNow,
+                    guideNow = guideClock.value,
+                    programmeLoading = media.id == state.manualLiveGuideLoadingId &&
+                        media.id in state.liveGuideLoadingIds,
+                    programmeWaitingUntil = state.liveGuideWaitingUntilById[media.id]
+                        ?.takeIf { media.id == state.manualLiveGuideLoadingId },
+                    programmeStatusNow = guideWaitClock.value,
                     showQualityBadge = showQualityBadge,
                     isFavorite = favorite,
                     onFavorite = favoriteAction,
@@ -3497,6 +3550,9 @@ private fun ModernLiveChannelTile(
     xtream: Boolean = false,
     categoryTitle: String,
     guideNow: Long,
+    programmeLoading: Boolean,
+    programmeWaitingUntil: Long?,
+    programmeStatusNow: Long,
     showQualityBadge: Boolean,
     isFavorite: Boolean,
     onFavorite: () -> Unit,
@@ -3518,6 +3574,13 @@ private fun ModernLiveChannelTile(
     val palette = remember(item.id, item.title) {
         destinationPalette("live:${item.id}:${item.title}")
     }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val tileScale = animateFloatAsState(
+        targetValue = if (pressed) .98f else if (focused) if (isTv) 1.008f else 1.015f else 1f,
+        animationSpec = if (isTv) tween(durationMillis = 90) else
+            spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
+        label = "liveTileInteraction"
+    )
     val programme = item.currentLiveProgramme(maxOf(guideNow, System.currentTimeMillis()))
     val presentation = remember(item.title, categoryTitle, xtream) {
         liveTvTilePresentation(item.title, categoryTitle, xtream)
@@ -3543,10 +3606,14 @@ private fun ModernLiveChannelTile(
     val currentProgrammeTitle = programme?.title?.let(::liveProgrammeDisplayTitle)?.takeIf {
         !isMissingLiveProgrammeTitle(it) && !it.equals(item.title.trim(), ignoreCase = true)
     }
+    val providerWaitSeconds = programmeWaitingUntil?.let { until ->
+        ((until - programmeStatusNow + 999L) / 1_000L).coerceAtLeast(1L)
+    }
 
     Box(Modifier.fillMaxWidth()) {
         Surface(
             modifier = modifier.then(returningTile.modifier)
+                .graphicsLayer { scaleX = tileScale.value; scaleY = tileScale.value }
                 .fillMaxWidth()
                 .then(
                     if (isPhone) Modifier.heightIn(min = if (currentProgrammeTitle == null) 60.dp else 88.dp)
@@ -3655,7 +3722,25 @@ private fun ModernLiveChannelTile(
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    detail?.let {
+                                    if (programmeLoading) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(12.dp),
+                                                strokeWidth = 1.5.dp,
+                                                color = Color.White.copy(alpha = .72f)
+                                            )
+                                            Text(
+                                                providerWaitSeconds?.let { "Waiting for provider · ${it}s" }
+                                                    ?: "Loading programme…",
+                                                color = Color.White.copy(alpha = .68f),
+                                                style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.bodySmall,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    } else detail?.let {
                                         Text(
                                             it,
                                             color = Color.White.copy(alpha = .68f),
@@ -3692,17 +3777,17 @@ private fun ModernLiveChannelTile(
                     }
                 }
                 programmeProgress?.takeIf { currentProgrammeTitle != null }?.let { progress ->
-                    Box(
+                    Canvas(
                         Modifier.align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
                             .height(4.dp)
-                            .background(Color.White.copy(alpha = .28f), RoundedCornerShape(2.dp))
                     ) {
-                        Box(
-                            Modifier.fillMaxWidth(progress).fillMaxHeight()
-                                .background(ModernBrandAccent, RoundedCornerShape(2.dp))
-                        )
+                        val radius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
+                        drawRoundRect(Color.White.copy(alpha = .28f), cornerRadius = radius)
+                        drawRoundRect(ModernBrandAccent,
+                            size = androidx.compose.ui.geometry.Size(size.width * progress, size.height),
+                            cornerRadius = radius)
                     }
                 }
             }

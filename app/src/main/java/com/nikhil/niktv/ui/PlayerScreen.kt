@@ -570,6 +570,8 @@ fun PlayerScreen(
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
+    var playbackHasBeenReady by remember(media.progressKey) { mutableStateOf(false) }
+    var bufferingIndicatorVisible by remember(media.progressKey) { mutableStateOf(true) }
     var position by remember(media.progressKey) { mutableLongStateOf(0L) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var videoDetails by remember(media.progressKey) { mutableStateOf("") }
@@ -842,12 +844,21 @@ fun PlayerScreen(
                 ?: 0L
         if (playbackState == Player.STATE_READY) {
             startupTimedOut = false
+            playbackHasBeenReady = true
         }
 
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
-                if (state == Player.STATE_READY) startupTimedOut = false
+                if (state == Player.STATE_READY) {
+                    startupTimedOut = false
+                    playbackHasBeenReady = true
+                }
+                val bufferedMillis = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L)
+                android.util.Log.i(
+                    "NikTvPlayback",
+                    "state=$state bufferedMs=$bufferedMillis positionMs=${player.currentPosition} live=${media.catalogType == CatalogType.LIVE_TV}"
+                )
                 if (
                     state == Player.STATE_ENDED &&
                     media.catalogType == CatalogType.SERIES &&
@@ -993,6 +1004,20 @@ fun PlayerScreen(
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
+    }
+    LaunchedEffect(playbackState, playbackHasBeenReady, decoderRecoveryInProgress) {
+        bufferingIndicatorVisible = when {
+            decoderRecoveryInProgress -> true
+            playbackState == Player.STATE_IDLE -> true
+            playbackState != Player.STATE_BUFFERING -> false
+            !playbackHasBeenReady -> true
+            else -> {
+                // Do not flash a full-screen reconnect notice for sub-second
+                // jitter. Longer interruptions are still shown to the viewer.
+                delay(750L)
+                playbackState == Player.STATE_BUFFERING
+            }
+        }
     }
     DisposableEffect(player, media.progressKey, localLease) {
         onDispose {
@@ -1838,25 +1863,34 @@ fun PlayerScreen(
                     )
                     Spacer(Modifier.width(if (compactMobileControls) 8.dp else 12.dp))
                     Column(
-                        Modifier.weight(1f).padding(top = 2.dp, end = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                        Modifier.weight(1f).padding(
+                            top = 2.dp,
+                            end = if (compactMobileControls) 44.dp else 56.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalAlignment = Alignment.End
                     ) {
                         Text(
                             media.media.title,
                             color = Color.White,
                             style = if (compactMobileControls) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                            maxLines = 1
+                            maxLines = 1,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
                         )
                         media.series?.let {
                             Text(
                                 it.title,
                                 color = Color.White.copy(alpha = 0.72f),
                                 style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1
+                                maxLines = 1,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End
                             )
                         }
-                        PlayerDateTime(compact = compactMobileControls)
+                        PlayerDateTime(
+                            compact = compactMobileControls,
+                            modifier = Modifier.align(Alignment.End)
+                        )
                         PlayerDownloadStatusPill(
                             if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)
                             else offlineDownloadProgressText.orEmpty()
@@ -2374,11 +2408,7 @@ PlayerChromeIconButton(
             }
         )
         if (
-            (
-                playbackState == Player.STATE_BUFFERING ||
-                    playbackState == Player.STATE_IDLE ||
-                    decoderRecoveryInProgress
-                ) &&
+            (bufferingIndicatorVisible || decoderRecoveryInProgress) &&
             playbackError == null &&
             !startupTimedOut
         ) {
@@ -2394,6 +2424,8 @@ PlayerChromeIconButton(
                 Text(
                     if (decoderRecoveryInProgress) {
                         "Switching to a compatible decoder…"
+                    } else if (playbackHasBeenReady) {
+                        "Buffering stream…"
                     } else {
                         "Connecting to stream…"
                     },

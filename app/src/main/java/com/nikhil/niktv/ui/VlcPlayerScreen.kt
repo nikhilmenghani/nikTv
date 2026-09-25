@@ -1191,25 +1191,34 @@ internal fun VlcPlayerScreen(
                     )
                     Spacer(Modifier.width(if (compactMobileControls) 8.dp else 12.dp))
                     Column(
-                        Modifier.weight(1f).padding(top = 2.dp, end = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                        Modifier.weight(1f).padding(
+                            top = 2.dp,
+                            end = if (compactMobileControls) 44.dp else 56.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalAlignment = Alignment.End
                     ) {
                         Text(
                             media.media.title,
                             color = Color.White,
                             style = if (compactMobileControls) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                            maxLines = 1
+                            maxLines = 1,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
                         )
                         media.series?.let {
                             Text(
                                 it.title,
                                 color = Color.White.copy(alpha = 0.72f),
                                 style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1
+                                maxLines = 1,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End
                             )
                         }
-                        PlayerDateTime(compact = compactMobileControls)
+                        PlayerDateTime(
+                            compact = compactMobileControls,
+                            modifier = Modifier.align(Alignment.End)
+                        )
                         PlayerDownloadStatusPill(
                             if (recordingThisChannel) LiveTvRecorder.statusText(liveRecording)
                             else offlineDownloadProgressText.orEmpty()
