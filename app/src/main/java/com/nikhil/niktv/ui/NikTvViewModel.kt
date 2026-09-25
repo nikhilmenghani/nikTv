@@ -213,6 +213,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val liveGuideAttemptedAt = mutableMapOf<String, Long>()
     private var lastVisibleLiveGuideIds: Pair<String, List<String>>? = null
     private var liveGuideCacheSaveJob: Job? = null
+    private var liveGuideExpiryJob: Job? = null
     private var profilePreparationJob: Job? = null
     private var searchPreviewJob: kotlinx.coroutines.Job? = null
     private var searchServerJob: kotlinx.coroutines.Job? = null
@@ -412,7 +413,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             // These are optional enrichments, never a prerequisite for opening Home.
-            step { refreshWatchedSeriesIfDue() }
+            // Opening a profile must reconcile subscribed series before the
+            // viewer has to visit each series. Later checks remain interval-bound.
+            step { refreshWatchedSeriesIfDue(force = true) }
             loadDashboardDiscovery()
             step { enrichHomeArtwork(profileKey) }
         }
@@ -1040,6 +1043,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             lastVisibleLiveGuideIds = null
             liveGuideForcedKeys.clear()
             liveGuideScheduler.update(emptyList())
+            liveGuideExpiryJob?.cancel()
+            liveGuideExpiryJob = null
             return
         }
         val snapshot = _state.value
@@ -1054,8 +1059,30 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val visibleKeys = targets.map { it.key }.toSet()
         liveGuideForcedKeys.retainAll(visibleKeys)
         if (force) liveGuideForcedKeys.addAll(visibleKeys)
-        liveGuideScheduler.update(targets, paused = manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
-            snapshot.categoryFindSearching || snapshot.catalogLoadingMore)
+        val paused = manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
+            snapshot.categoryFindSearching || snapshot.catalogLoadingMore
+        liveGuideScheduler.update(targets, paused = paused)
+        scheduleVisibleLiveGuideExpiry(targets, paused)
+    }
+
+    /** Wake the guide queue just after the first visible programme finishes. */
+    private fun scheduleVisibleLiveGuideExpiry(targets: List<LiveGuideTarget>, paused: Boolean) {
+        liveGuideExpiryJob?.cancel()
+        liveGuideExpiryJob = null
+        if (paused || targets.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val refreshAt = nextVisibleProgrammeExpiry(
+            targets.mapNotNull(::visibleLiveGuideItem),
+            now
+        ) ?: return
+        liveGuideExpiryJob = viewModelScope.launch {
+            delay((refreshAt - System.currentTimeMillis()).coerceAtLeast(0L) + 1_000L)
+            val snapshot = _state.value
+            val stillPaused = manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
+                snapshot.categoryFindSearching || snapshot.catalogLoadingMore
+            liveGuideScheduler.update(targets, paused = stillPaused)
+            if (!stillPaused) scheduleVisibleLiveGuideExpiry(targets, paused = false)
+        }
     }
 
     private fun visibleLiveGuideItem(target: LiveGuideTarget): MediaItem? {
@@ -1135,6 +1162,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (enriched.liveSchedule.isEmpty() && enriched.liveProgramme == null) return
         if (_state.value.session?.profile?.cacheKey() != profileKey) return
         _state.update { it.withLiveChannelGuide(profileKey, enriched) }
+        val visible = lastVisibleLiveGuideIds
+        if (visible?.first?.startsWith(profileKey) == true) {
+            val snapshot = _state.value
+            val categoryId = snapshot.modernIptvCategory?.id
+            if (categoryId != null) {
+                val targets = visible.second.map { LiveGuideTarget(profileKey, categoryId, it) }
+                scheduleVisibleLiveGuideExpiry(
+                    targets,
+                    manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
+                        snapshot.categoryFindSearching || snapshot.catalogLoadingMore
+                )
+            }
+        }
         liveGuideCacheSaveJob?.cancel()
         liveGuideCacheSaveJob = viewModelScope.launch {
             delay(2_500L)
@@ -2733,7 +2773,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         backgroundTmdb: Boolean = false
     ) {
         val session = _state.value.session ?: return
-        val loaded = loadInitialEpisodeBatch(session, series, requestedSeason)
+        val loaded = withAutomaticSessionRetry(session) { activeSession ->
+            loadInitialEpisodeBatch(activeSession, series, requestedSeason)
+        }
         val raw = loaded.episodes.distinctBy { it.id }
         if (raw.isEmpty() && previous?.rawIptvEpisodes().orEmpty().isNotEmpty()) {
             // A transient or incomplete provider response must not erase a
@@ -2932,15 +2974,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 cached.hasMore &&
                     cached.rawIptvEpisodes().size < INITIAL_EPISODE_BATCH_LIMIT
             viewModelScope.launch {
-                if (
-                    cached.iptvEpisodes.isEmpty() ||
-                    cacheAge >= maxAge ||
-                    incompleteSeasonIndexNeedsRefresh ||
-                    initialEpisodeBatchNeedsFill
-                ) {
-                    refreshEpisodeCache(series, desired ?: cached.season, cached, forceTmdb = now - cached.tmdbCachedAtMillis >= maxAge)
-                } else {
-                    enrichEpisodeCacheFromTmdb(series, cached, force = false)
+                runCatching {
+                    if (
+                        cached.iptvEpisodes.isEmpty() ||
+                        cacheAge >= maxAge ||
+                        incompleteSeasonIndexNeedsRefresh ||
+                        initialEpisodeBatchNeedsFill
+                    ) {
+                        refreshEpisodeCache(series, desired ?: cached.season, cached, forceTmdb = now - cached.tmdbCachedAtMillis >= maxAge)
+                    } else {
+                        enrichEpisodeCacheFromTmdb(series, cached, force = false)
+                    }
+                }.onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    Log.w("NikTvEpisodeMetadata", "Background episode cache refresh failed for ${series.id}; keeping cached episodes", error)
                 }
             }
             return
@@ -6909,24 +6956,41 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.saveWatchedSeries(allWatchedSeries)
     }
 
-    private suspend fun refreshWatchedSeriesIfDue() {
+    private suspend fun refreshWatchedSeriesIfDue(force: Boolean = false) {
         if (!watchRefreshMutex.tryLock()) return
         try {
         val session = _state.value.session ?: return
         val profileKey = session.profile.cacheKey()
-        val interval = _state.value.cacheIntervalMinutes * 60_000L
+        // New-episode notifications should not wait for a long catalogue cache
+        // lifetime. Keep the user's shorter setting, but check subscriptions at
+        // least every fifteen minutes while the profile is active.
+        val interval = minOf(
+            _state.value.cacheIntervalMinutes * 60_000L,
+            WATCHED_SERIES_REFRESH_MILLIS
+        )
         val now = System.currentTimeMillis()
         var scoped = allWatchedSeries.filter { it.profileKey == profileKey }
         var changed = false
         scoped.forEachIndexed { index, watched ->
-            if (now - watched.checkedAtMillis < interval) return@forEachIndexed
+            if (!force && now - watched.checkedAtMillis < interval) return@forEachIndexed
             val latest = runCatching {
                 withAutomaticSessionRetry(session) { activeSession ->
                     portal.episodeSeason(activeSession, watched.series, SeriesStartSeason.LAST)
                 }
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                Log.w(
+                    "NikTvWatchedSeries",
+                    "Could not check ${watched.series.id} for new episodes; it remains due for retry",
+                    error
+                )
             }.getOrNull()
                 ?: return@forEachIndexed
             val discovered = latest.episodes.filterNot { it.id in watched.knownEpisodeIds }
+            Log.i(
+                "NikTvWatchedSeries",
+                "Checked ${watched.series.id}: latest=${latest.episodes.size} new=${discovered.size} forced=$force"
+            )
             val replacement = watched.copy(
                 knownEpisodeIds = watched.knownEpisodeIds + latest.episodes.map { it.id },
                 newEpisodes = (discovered + watched.newEpisodes).distinctBy { it.id }
@@ -7090,6 +7154,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val MODERN_TMDB_PAGE_SIZE = 20
         private const val EPISODE_METADATA_VERSION = 4
         private const val SEASON_DISCOVERY_RECHECK_MILLIS = 5 * 60_000L
+        private const val WATCHED_SERIES_REFRESH_MILLIS = 15 * 60_000L
         private const val MODERN_TMDB_MAX_PAGES = 3
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)

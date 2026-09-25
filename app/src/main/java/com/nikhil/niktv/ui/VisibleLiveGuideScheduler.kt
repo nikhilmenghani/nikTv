@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.currentLiveProgramme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -64,3 +66,10 @@ internal fun <Key> prioritizeVisibleLiveGuides(visible: List<Key>, focused: Key?
         if (priority != null) listOf(priority) + ordered.filterNot { it == priority }
         else ordered
     }
+
+/** Earliest point at which a currently displayed timed programme becomes stale. */
+internal fun nextVisibleProgrammeExpiry(items: List<MediaItem>, now: Long): Long? =
+    items.asSequence()
+        .mapNotNull { it.currentLiveProgramme(now)?.endTimeMillis }
+        .filter { it > now }
+        .minOrNull()

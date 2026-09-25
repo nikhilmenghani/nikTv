@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.model.LiveProgramme
+import com.nikhil.niktv.model.MediaItem
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
@@ -8,6 +10,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisibleLiveGuideSchedulerTest {
+    @Test fun expiryWakeUsesFirstAiringProgrammeEndAndIgnoresStaleEntries() {
+        val now = 1_000L
+        fun channel(id: String, start: Long, end: Long) = MediaItem(
+            id = id,
+            title = id,
+            logo = null,
+            command = id,
+            liveSchedule = listOf(LiveProgramme(id, start, end))
+        )
+        assertEquals(
+            1_500L,
+            nextVisibleProgrammeExpiry(
+                listOf(
+                    channel("expired", 100L, 900L),
+                    channel("later", 900L, 2_000L),
+                    channel("first", 900L, 1_500L)
+                ),
+                now
+            )
+        )
+        assertNull(nextVisibleProgrammeExpiry(listOf(channel("expired", 100L, 900L)), now))
+    }
+
     @Test fun touchSelectionIsPrioritizedOnReturnAndNewDpadFocusTakesPrecedence() {
         val visible = listOf("a", "b", "c")
         assertEquals(listOf("c", "a", "b"), prioritizeVisibleLiveGuides(visible, null, "c"))

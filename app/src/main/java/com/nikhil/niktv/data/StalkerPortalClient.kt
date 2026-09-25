@@ -792,7 +792,11 @@ class StalkerPortalClient(private val context: Context) {
         onRequestStarted: () -> Unit = {}
     ): JsonElement = requestGate.run(
         background = background,
-        minimumSpacingMillis = if (params["action"] == "create_link") PLAYBACK_LINK_REQUEST_SPACING_MS else MIN_REQUEST_SPACING_MS,
+        minimumSpacingMillis = when (params["action"]) {
+            "create_link" -> PLAYBACK_LINK_REQUEST_SPACING_MS
+            "get_short_epg" -> GUIDE_REQUEST_SPACING_MS
+            else -> MIN_REQUEST_SPACING_MS
+        },
         checkAllowed = ::checkTrafficCooldown,
         onWait = onProviderWait
     ) {
@@ -863,7 +867,7 @@ class StalkerPortalClient(private val context: Context) {
             if (params["action"] != "handshake" && params["action"] != "get_profile" && authenticationTrace.isNotBlank()) {
                 appendLine()
                 appendLine()
-                append(authenticationTrace)
+                append(redact(authenticationTrace, profile, session))
             }
         }
     }
@@ -872,6 +876,12 @@ class StalkerPortalClient(private val context: Context) {
         var safe = value.replace(profile.macAddress, "<redacted-mac>", ignoreCase = true)
             .replace(URLEncoder.encode(profile.macAddress, "UTF-8"), "<redacted-mac>", ignoreCase = true)
         session?.token?.takeIf(String::isNotBlank)?.let { safe = safe.replace(it, "<redacted-token>") }
+        safe = safe.replace(
+            Regex("\"(password|login|token)\"\\s*:\\s*\"[^\"]*\"", RegexOption.IGNORE_CASE)
+        ) { match ->
+            val key = match.groupValues[1]
+            "\"$key\":\"<redacted>\""
+        }
         return safe
     }
 
@@ -1146,6 +1156,7 @@ class StalkerPortalClient(private val context: Context) {
         private const val HW_VERSION = "1.7-BD-00"
         private const val API_SIGNATURE = "262"
         private const val MIN_REQUEST_SPACING_MS = 1_000L
+        private const val GUIDE_REQUEST_SPACING_MS = 250L
         private const val PLAYBACK_LINK_REQUEST_SPACING_MS = 150L
     }
 

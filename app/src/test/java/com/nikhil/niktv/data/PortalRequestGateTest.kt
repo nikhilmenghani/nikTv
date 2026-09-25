@@ -13,7 +13,7 @@ class PortalRequestGateTest {
         val resume = CompletableDeferred<Unit>()
         val waits = mutableListOf<Long>()
         val gate = PortalRequestGate(now = { 0L }, pause = { waits += it; resume.await() })
-        repeat(16) { gate.run(background = true, minimumSpacingMillis = 0L) {} }
+        repeat(48) { gate.run(background = true, minimumSpacingMillis = 0L) {} }
         var guideStarted = false
         val guide = launch(start = CoroutineStart.UNDISPATCHED) {
             gate.run(background = true, minimumSpacingMillis = 0L) { guideStarted = true }
@@ -26,11 +26,11 @@ class PortalRequestGateTest {
         guide.cancelAndJoin()
     }
 
-    @Test fun totalTrafficStillCannotExceedTwentyRequestsPerMinute() = runBlocking {
+    @Test fun totalTrafficStillCannotExceedSixtyRequestsPerMinute() = runBlocking {
         var now = 0L
         val resume = CompletableDeferred<Unit>()
         val gate = PortalRequestGate(now = { now }, pause = { resume.await() })
-        repeat(20) { gate.run(background = false, minimumSpacingMillis = 0L) {} }
+        repeat(60) { gate.run(background = false, minimumSpacingMillis = 0L) {} }
         var started = false
         val pending = launch(start = CoroutineStart.UNDISPATCHED) {
             gate.run(background = false, minimumSpacingMillis = 0L) { started = true }

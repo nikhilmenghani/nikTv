@@ -27,10 +27,11 @@ internal class PortalRequestGate(
                 while (requests.isNotEmpty() && timestamp - requests.first() >= 60_000L) {
                     requests.removeFirst()
                 }
-                // Keep the existing 20 requests/minute ceiling. Lightweight
-                // guide lookups may use 16 slots; four remain reserved for
-                // playback links, category loads, and other user actions.
-                val limit = if (background) 16 else 20
+                // Cast4K issues a short-EPG request as focus changes and does
+                // not impose an app-side minute limit. Keep a bounded ceiling
+                // here, while reserving twelve slots for playback and other
+                // user actions if a user moves rapidly through the channel row.
+                val limit = if (background) 48 else 60
                 val budgetWait = if (requests.size >= limit) {
                     (requests.elementAt(requests.size - limit) + 60_000L - timestamp).coerceAtLeast(0L)
                 } else 0L
