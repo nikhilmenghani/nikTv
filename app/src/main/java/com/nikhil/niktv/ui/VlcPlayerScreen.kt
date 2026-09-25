@@ -1753,6 +1753,10 @@ PlayerChromeIconButton(
                         onBack = onBack,
                         onRetry = { onPlaybackAuthorizationFailure(player.time.coerceAtLeast(0L)) },
                         onNext = onPlayNext,
+                        alternatePlayerLabel = "ExoPlayer",
+                        onSwitchPlayer = {
+                            onSelectPlayer(PlaybackEngine.MEDIA3, player.time.coerceAtLeast(0L))
+                        },
                         retryModifier = Modifier.focusRequester(errorRetryRequester)
                     )
                 }

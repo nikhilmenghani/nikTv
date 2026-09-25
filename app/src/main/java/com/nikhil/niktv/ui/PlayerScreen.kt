@@ -2473,6 +2473,14 @@ PlayerChromeIconButton(
                         onBack = onBack,
                         onRetry = onRetry,
                         onNext = onPlayNext,
+                        alternatePlayerLabel = "VLC",
+                        onSwitchPlayer = {
+                            val selectedEngine = PlaybackEngine.VLC
+                            selectedPlayerChoice = selectedEngine
+                            engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                            onPlaybackEngineChanged(selectedEngine)
+                            sessionEngineOverride = selectedEngine
+                        },
                         retryModifier = Modifier.focusRequester(errorRetryFocusRequester)
                             .playerControlFocus(RoundedCornerShape(12.dp)) { controlsFocused = it }
                     )
