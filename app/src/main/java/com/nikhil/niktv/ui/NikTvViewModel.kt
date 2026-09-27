@@ -1218,7 +1218,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val enriched = withAutomaticSessionRetry(session) {
                     portal.playingChannelSchedule(it,
-                        if (force) item.copy(liveProgramme = null, liveSchedule = emptyList()) else item,
+                        item,
                         userSelected = true,
                         onProviderWait = { waitMillis ->
                             _state.update { state -> state.copy(
@@ -1234,9 +1234,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 Log.d("NikTvLiveGuide", "Selected channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
                 publishLiveChannelGuide(target.profileKey, enriched)
-                feedback(if (enriched.currentLiveProgramme(System.currentTimeMillis()) != null) {
-                    "Programme updated"
-                } else "No current programme available from this provider")
+                val now = System.currentTimeMillis()
+                val previousProgramme = item.currentLiveProgramme(now)
+                val refreshedProgramme = enriched.currentLiveProgramme(now)
+                feedback(when {
+                    refreshedProgramme == null -> "No current programme available from this provider"
+                    refreshedProgramme != previousProgramme -> "Programme updated"
+                    else -> "Current programme is already up to date"
+                })
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 liveGuideAttemptedAt.remove(target.key, attemptedAt)
                 throw cancelled
@@ -5224,12 +5229,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val memoryBrowse =
             scopedItems(snapshot.browseCachesByType[catalogType])
 
-        val persistedBrowse =
-            scopedItems(
-                store.browseCatalog(catalogType, profileKey).first()
-            )
-
         val indexCache = store.searchCatalog(catalogType, profileKey).first()
+        // Both established disk caches can contain the same full catalogue.
+        // Decode the browse cache only when the dedicated search cache is not
+        // available, rather than parsing the catalogue twice per keystroke.
+        val persistedBrowse = if (indexCache?.items.isNullOrEmpty()) {
+            scopedItems(store.browseCatalog(catalogType, profileKey).first())
+        } else {
+            emptyList()
+        }
         val previousSearchItems = store.pagedSearches.first()
             .cachedSearchItems(profileKey, type, categoryId)
         val indexed =

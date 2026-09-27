@@ -46,11 +46,18 @@ class LiveChannelSearchTest {
             .matchesLiveChannelQuery("shinchan", now))
     }
 
-    @Test fun ignoresPlaceholderAndUntimedScheduleRows() {
+    @Test fun ignoresPlaceholderButAcceptsFreshUntimedScheduleRows() {
         val item = channel.copy(liveProgramme = programme("No content available"),
             liveSchedule = listOf(LiveProgramme("Shinchan", observedAtMillis = now)))
         assertFalse(item.matchesLiveChannelQuery("content", now))
-        assertFalse(item.matchesLiveChannelQuery("shinchan", now))
+        assertTrue(item.matchesLiveChannelQuery("shinchan", now))
+    }
+
+    @Test fun rejectsStaleUntimedScheduleRows() {
+        val item = channel.copy(liveSchedule = listOf(
+            LiveProgramme("Shinchan", observedAtMillis = now - 300_000)
+        ))
+        assertNull(item.currentLiveProgramme(now))
     }
 
     @Test fun timedCurrentScheduleWinsOverOldInlineTitle() {

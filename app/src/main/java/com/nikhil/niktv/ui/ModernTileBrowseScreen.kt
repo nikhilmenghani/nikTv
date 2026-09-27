@@ -3544,7 +3544,7 @@ private fun FullDescriptionDialog(
 }
 
 @Composable
-private fun ModernLiveChannelTile(
+internal fun ModernLiveChannelTile(
     item: MediaItem,
     onRefreshProgramme: () -> Unit,
     xtream: Boolean = false,
@@ -3561,7 +3561,9 @@ private fun ModernLiveChannelTile(
     onClick: () -> Unit,
     onClear: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    isTv: Boolean
+    isTv: Boolean,
+    onFocusChange: (Boolean) -> Unit = {},
+    onMenuVisibilityChange: (Boolean) -> Unit = {}
 ) {
     val returningTile = rememberReturningTile(onClick)
 
@@ -3620,11 +3622,17 @@ private fun ModernLiveChannelTile(
                     else Modifier.height(if (xtream) { if (isTv) 116.dp else 124.dp } else if (isTv) 96.dp else 104.dp)
                 )
                 .clip(shape)
-                .onFocusChanged { focused = it.isFocused }
+                .onFocusChanged {
+                    focused = it.isFocused
+                    onFocusChange(it.isFocused)
+                }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
                     onClick = returningTile.open,
-                    onLongClick = { menuOpen = true }
+                    onLongClick = {
+                        menuOpen = true
+                        onMenuVisibilityChange(true)
+                    }
                 ),
             shape = shape,
             color = Color.Transparent,
@@ -3795,7 +3803,10 @@ private fun ModernLiveChannelTile(
         ModernTileActionsMenu(
             expanded = menuOpen,
             isFavorite = isFavorite,
-            dismiss = { menuOpen = false },
+            dismiss = {
+                menuOpen = false
+                onMenuVisibilityChange(false)
+            },
             toggleFavorite = onFavorite,
             clear = onClear,
             isPinned = isPinned,

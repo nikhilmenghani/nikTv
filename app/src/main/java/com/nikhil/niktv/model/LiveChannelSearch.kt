@@ -13,6 +13,11 @@ fun MediaItem.currentLiveProgramme(now: Long): LiveProgramme? {
     }
     return liveSchedule.firstOrNull {
         it.startTimeMillis != null && it.endTimeMillis != null && it.isAiring()
+    } ?: liveSchedule.firstOrNull {
+        // Some providers return the current short-EPG row without broadcast
+        // bounds. It is still the same programme shown by the full-guide
+        // calendar, and observedAtMillis prevents it becoming a stale match.
+        (it.startTimeMillis == null || it.endTimeMillis == null) && it.isAiring()
     } ?: liveProgramme?.takeIf { it.isAiring() }
 }
 

@@ -77,6 +77,9 @@ internal fun VlcPlayerScreen(
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((MediaItem) -> Unit)? = null,
     onToggleQueuePin: ((MediaItem) -> Unit)? = null,
+    onRefreshQueueProgramme: ((MediaItem) -> Unit)? = null,
+    liveQueueCategoryTitle: String = "",
+    liveQueueXtream: Boolean = false,
     onProgress: (String, Long, Long) -> Unit,
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
@@ -187,6 +190,9 @@ internal fun VlcPlayerScreen(
     var pictureModePickerVisible by remember { mutableStateOf(false) }
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
+    var audioDialogOpen by remember(media.media.id) { mutableStateOf(false) }
+    var audioTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
+    var selectedAudioTrackId by remember(media.media.id) { mutableStateOf<Int?>(null) }
     var selectedSubtitleTrackId by remember(media.media.id) { mutableStateOf<Int?>(null) }
     var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(initialSubtitleDelayMs) }
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile) }
@@ -246,6 +252,7 @@ internal fun VlcPlayerScreen(
     val downloadRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleRequester = remember(media.progressKey) { FocusRequester() }
+    val audioRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
@@ -336,6 +343,12 @@ internal fun VlcPlayerScreen(
             delay(80)
             runCatching { playRequester.requestFocus() }
         }
+    }
+    fun refreshAudioTracks() {
+        audioTracks = player.audioTracks.orEmpty()
+            .filter { it.id >= 0 }
+            .map { it.id to (it.name?.takeIf(String::isNotBlank) ?: "Audio ${it.id}") }
+        selectedAudioTrackId = player.audioTrack.takeIf { it >= 0 }
     }
 
     // The VLC AndroidView is deliberately retained while moving through a queue.
@@ -503,6 +516,7 @@ internal fun VlcPlayerScreen(
                     buffering = false
                     advancing = false
                     refreshSubtitleTracks()
+                    refreshAudioTracks()
                     externalSubtitleFile?.takeIf { !externalSubtitleAttached && it.exists() }?.let { file ->
                         externalSubtitleAttached = player.addSlave(
                             IMedia.Slave.Type.Subtitle,
@@ -1124,6 +1138,7 @@ internal fun VlcPlayerScreen(
             val secondaryActionRequesters = buildList {
                 if (media.catalogType != CatalogType.LIVE_TV) {
                     add(subtitleRequester)
+                    if (audioTracks.size > 1) add(audioRequester)
                     add(downloadRequester)
                 }
                 add(resizeRequester)
@@ -1236,6 +1251,19 @@ PlayerChromeIconButton(
                                 .playerSecondaryFocus(subtitleRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                             onFocused = { controlsFocused = it }
                         )
+                        }
+                        if (media.catalogType != CatalogType.LIVE_TV && audioTracks.size > 1) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.AudioFile,
+                                contentDescription = "Audio language",
+                                onClick = { refreshAudioTracks(); audioDialogOpen = true },
+                                modifier = Modifier.playerSecondaryFocus(
+                                    audioRequester, secondaryActionRequesters,
+                                    extraControlsRequester, lastPlaybackActionRequester,
+                                    if (seekable) progressRequester else backRequester
+                                ),
+                                onFocused = { controlsFocused = it }
+                            )
                         }
                         if (media.catalogType != CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
@@ -1676,6 +1704,9 @@ PlayerChromeIconButton(
                 null
             },
             onTogglePin = if (media.catalogType == CatalogType.LIVE_TV) onToggleQueuePin else null,
+            onRefreshProgramme = if (media.catalogType == CatalogType.LIVE_TV) onRefreshQueueProgramme else null,
+            liveCategoryTitle = liveQueueCategoryTitle,
+            liveXtream = liveQueueXtream,
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,
             onLoadMore = onLoadMoreQueue,
@@ -1871,6 +1902,20 @@ PlayerChromeIconButton(
                         refreshSubtitleTracks()
                     }
                 }
+            )
+        }
+        if (audioDialogOpen) {
+            PlayerAudioTrackDialog(
+                tracks = audioTracks.map { (id, label) ->
+                    PlayerAudioTrackOption(id.toString(), label, selectedAudioTrackId == id)
+                },
+                onSelect = { id ->
+                    id.toIntOrNull()?.let { trackId ->
+                        if (player.setAudioTrack(trackId)) selectedAudioTrackId = trackId
+                    }
+                    audioDialogOpen = false
+                },
+                onDismiss = { audioDialogOpen = false }
             )
         }
         }

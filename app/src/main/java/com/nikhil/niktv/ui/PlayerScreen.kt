@@ -110,6 +110,13 @@ private data class Media3SubtitleTrack(
     val trackIndex: Int
 )
 
+private data class Media3AudioTrack(
+    val id: String,
+    val label: String,
+    val group: Tracks.Group,
+    val trackIndex: Int
+)
+
 private const val DOWNLOADED_SUBTITLE_TRACK_ID = "niktv:downloaded"
 
 internal fun Modifier.playerActivityObserver(onActivity: () -> Unit): Modifier =
@@ -306,6 +313,9 @@ fun PlayerScreen(
     queueFavoriteIds: Set<String> = emptySet(),
     onToggleQueueFavorite: ((NikMediaItem) -> Unit)? = null,
     onToggleQueuePin: ((NikMediaItem) -> Unit)? = null,
+    onRefreshQueueProgramme: ((NikMediaItem) -> Unit)? = null,
+    liveQueueCategoryTitle: String = "",
+    liveQueueXtream: Boolean = false,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
     onLoadMoreQueue: () -> Boolean = { false },
@@ -427,6 +437,9 @@ fun PlayerScreen(
             queueFavoriteIds = queueFavoriteIds,
             onToggleQueueFavorite = onToggleQueueFavorite,
             onToggleQueuePin = onToggleQueuePin,
+            onRefreshQueueProgramme = onRefreshQueueProgramme,
+            liveQueueCategoryTitle = liveQueueCategoryTitle,
+            liveQueueXtream = liveQueueXtream,
             onProgress = onProgress,
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
@@ -578,6 +591,8 @@ fun PlayerScreen(
     var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
     var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Media3SubtitleTrack>>(emptyList()) }
+    var audioDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
+    var audioTracks by remember(media.progressKey) { mutableStateOf<List<Media3AudioTrack>>(emptyList()) }
 
     /*
      * MTK_AVC_SEAMLESS_RECOVERY_V14
@@ -598,6 +613,7 @@ fun PlayerScreen(
     val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val audioFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -882,6 +898,23 @@ fun PlayerScreen(
                                 label = format.label
                                     ?: format.language?.let { language -> Locale.forLanguageTag(language).displayName }
                                     ?: "Subtitle ${index + 1}",
+                                group = group,
+                                trackIndex = index
+                            )
+                        }
+                    }
+                audioTracks = tracks.groups
+                    .filter { it.type == C.TRACK_TYPE_AUDIO }
+                    .flatMap { group ->
+                        (0 until group.length).map { index ->
+                            val format = group.getTrackFormat(index)
+                            val language = format.language
+                                ?.let { Locale.forLanguageTag(it).displayName }
+                                ?.takeIf(String::isNotBlank)
+                            Media3AudioTrack(
+                                id = "${group.mediaTrackGroup.id}:$index",
+                                label = format.label?.takeIf(String::isNotBlank)
+                                    ?: language ?: "Audio ${index + 1}",
                                 group = group,
                                 trackIndex = index
                             )
@@ -1796,6 +1829,7 @@ fun PlayerScreen(
             val secondaryActionRequesters = buildList {
                 if (media.catalogType != CatalogType.LIVE_TV) {
                     add(subtitleFocusRequester)
+                    if (audioTracks.size > 1) add(audioFocusRequester)
                     add(downloadFocusRequester)
                 }
                 add(resizeFocusRequester)
@@ -1908,6 +1942,19 @@ PlayerChromeIconButton(
                                 .playerSecondaryFocus(subtitleFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
                             onFocused = { controlsFocused = it }
                         )
+                        }
+                        if (media.catalogType != CatalogType.LIVE_TV && audioTracks.size > 1) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.AudioFile,
+                                contentDescription = "Audio language",
+                                onClick = { audioDialogOpen = true },
+                                modifier = Modifier.playerSecondaryFocus(
+                                    audioFocusRequester, secondaryActionRequesters,
+                                    extraControlsRequester, lastPlaybackActionRequester,
+                                    if (seekable) progressFocusRequester else backFocusRequester
+                                ),
+                                onFocused = { controlsFocused = it }
+                            )
                         }
                         if (media.catalogType != CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
@@ -2358,6 +2405,9 @@ PlayerChromeIconButton(
                 null
             },
             onTogglePin = if (media.catalogType == CatalogType.LIVE_TV) onToggleQueuePin else null,
+            onRefreshProgramme = if (media.catalogType == CatalogType.LIVE_TV) onRefreshQueueProgramme else null,
+            liveCategoryTitle = liveQueueCategoryTitle,
+            liveXtream = liveQueueXtream,
             hasMore = queueHasMore,
             loadingMore = queueLoadingMore,
             onLoadMore = onLoadMoreQueue,
@@ -2624,6 +2674,30 @@ PlayerChromeIconButton(
                         externalSubtitleEnabled = false
                     }
                 }
+            )
+        }
+        if (audioDialogOpen) {
+            PlayerAudioTrackDialog(
+                tracks = audioTracks.map { track ->
+                    PlayerAudioTrackOption(
+                        track.id,
+                        track.label,
+                        track.group.isTrackSelected(track.trackIndex)
+                    )
+                },
+                onSelect = { id ->
+                    audioTracks.firstOrNull { it.id == id }?.let { track ->
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                            .setOverrideForType(
+                                TrackSelectionOverride(track.group.mediaTrackGroup, listOf(track.trackIndex))
+                            )
+                            .build()
+                    }
+                    audioDialogOpen = false
+                },
+                onDismiss = { audioDialogOpen = false }
             )
         }
         }

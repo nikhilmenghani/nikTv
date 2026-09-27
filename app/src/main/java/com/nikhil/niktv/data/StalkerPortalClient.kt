@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,7 +37,13 @@ class StalkerPortalClient(private val context: Context) {
     @Volatile private var authenticationTrace: String = ""
     private val authMutex = Mutex()
     private val requestGate = PortalRequestGate()
-    private val xtreamCatalogCache = CatalogResponseCache<Triple<PortalProfile, CatalogType, String?>, MediaItem>()
+    // Xtream search downloads a complete media type in one response. Retain it
+    // for the session so subsequent searches filter memory instead of
+    // repeatedly downloading thousands of records; explicit catalogue refresh
+    // still invalidates the affected key.
+    private val xtreamCatalogCache = CatalogResponseCache<Triple<PortalProfile, CatalogType, String?>, MediaItem>(
+        ttlMillis = 30 * 60_000L
+    )
 
     fun invalidateCatalog(profile: PortalProfile, category: Category) {
         xtreamCatalogCache.invalidate(Triple(profile, category.type, category.id))
@@ -564,14 +571,23 @@ class StalkerPortalClient(private val context: Context) {
         if (session.profile.portalType == PortalType.XTREAM) {
             val response = requestGate.run(
                 background = !userSelected,
-                minimumSpacingMillis = MIN_REQUEST_SPACING_MS,
+                minimumSpacingMillis = GUIDE_REQUEST_SPACING_MS,
                 onWait = onProviderWait
             ) {
                 onRequestStarted()
                 xtreamRequest(session.profile, "get_short_epg", streamId = item.id)
             }
             val now = System.currentTimeMillis()
-            val schedule = ((response as? JsonObject)?.get("epg_listings") as? JsonArray).orEmpty()
+            val entries = response.xtreamEpgEntries()
+            if (entries.isEmpty()) {
+                val shape = when (response) {
+                    is JsonObject -> "object keys=${response.keys.sorted().joinToString()}"
+                    is JsonArray -> "array size=${response.size}"
+                    else -> response::class.simpleName.orEmpty()
+                }
+                Log.i("NikTvLiveGuide", "Xtream channel ${item.id}: empty short EPG ($shape)")
+            }
+            val schedule = entries
                 .mapNotNull { node ->
                     val entry = node as? JsonObject ?: return@mapNotNull null
                     val encoded = entry.string("title") ?: return@mapNotNull null
@@ -595,9 +611,10 @@ class StalkerPortalClient(private val context: Context) {
                     "type" to "itv",
                     "action" to "get_short_epg",
                     "ch_id" to item.id,
-                    // One bounded request. Twenty-four entries normally
-                    // covers a full day without polling or category-wide EPG load.
-                    "size" to "24"
+                    // Match Cast4K's known-good short EPG request. Some
+                    // Ministra portals return an empty payload for larger
+                    // values even though the channel has programme data.
+                    "size" to "5"
                 )
             ),
             background = !userSelected,
@@ -605,10 +622,57 @@ class StalkerPortalClient(private val context: Context) {
             onRequestStarted = onRequestStarted
         )
         val now = System.currentTimeMillis()
-        val schedules = response.epgSchedulesByChannel(item.id)
-        val schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
+        var schedules = response.epgSchedulesByChannel(item.id)
+        var schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
             .filter { it.endTimeMillis == null || it.endTimeMillis > now }
             .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
+
+        /*
+         * Some Ministra providers expose a channel in get_epg_info but return
+         * an empty get_short_epg payload for that same channel. The player
+         * calendar can therefore have the programme while a manual tile
+         * refresh incorrectly says that the provider supplied nothing. Reuse
+         * the full-guide cache first, then make one full-guide request only
+         * for this empty-short-guide case.
+         */
+        if (schedule.isEmpty()) {
+            val cacheKey = "${session.endpointUrl}|${session.token.take(12)}"
+            val fullSchedules = if (
+                epgCacheKey == cacheKey &&
+                now - epgCacheAtMillis < EPG_CACHE_MILLIS &&
+                epgCache.isNotEmpty()
+            ) {
+                epgCache
+            } else {
+                request(
+                    session.profile,
+                    session.endpointUrl,
+                    session,
+                    authorizedParams(session, mapOf(
+                        "type" to "itv",
+                        "action" to "get_epg_info",
+                        "period" to "24"
+                    )),
+                    background = !userSelected,
+                    onProviderWait = onProviderWait,
+                    onRequestStarted = onRequestStarted
+                ).epgSchedulesByChannel().also { fresh ->
+                    if (fresh.isNotEmpty()) {
+                        epgCacheKey = cacheKey
+                        epgCacheAtMillis = now
+                        epgCache = fresh
+                    }
+                }
+            }
+            schedules = fullSchedules
+            schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
+                .filter { it.endTimeMillis == null || it.endTimeMillis > now }
+                .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
+            Log.i(
+                "NikTvLiveGuide",
+                "Channel ${item.id}: short EPG empty, full guide supplied ${schedule.size} entries"
+            )
+        }
         if (schedule.isEmpty()) return@withContext item
         item.copy(
             liveProgramme = schedule.firstOrNull { programme ->
@@ -828,19 +892,45 @@ class StalkerPortalClient(private val context: Context) {
             builder.header("X-Token", it.token)
         }
         http.newCall(builder.build()).readCancellable { response ->
-            val body = response.body?.string().orEmpty()
-            val diagnostic = buildDiagnostic(endpointUrl, params, response.code, response.header("Content-Type"), body, profile, session)
+            val responseBody = response.body
+            val declaredLength = responseBody?.contentLength() ?: 0L
+            if (declaredLength > MAX_PORTAL_JSON_BYTES) {
+                throw IllegalStateException(
+                    "NikTV rejected an unexpectedly large portal response " +
+                        "(${declaredLength} bytes) for ${params["action"] ?: "unknown action"}."
+                )
+            }
+            val body = responseBody?.let { payload ->
+                val source = payload.source()
+                source.request(MAX_PORTAL_JSON_BYTES + 1L)
+                if (source.buffer.size > MAX_PORTAL_JSON_BYTES) {
+                    throw IllegalStateException(
+                        "NikTV rejected an unexpectedly large portal response " +
+                            "(more than ${MAX_PORTAL_JSON_BYTES} bytes) for ${params["action"] ?: "unknown action"}."
+                    )
+                }
+                source.buffer.readUtf8()
+            }.orEmpty()
             if (!response.isSuccessful) {
                 val retryAfter = response.header("Retry-After")?.toLongOrNull()
                     ?: runCatching { parsePortalResponse(body).payload().string("retry_after")?.toLongOrNull() }.getOrNull()
                 if (response.code == 429) recordRateLimit(retryAfter)
-                throw PortalHttpException(response.code, retryAfter, diagnostic)
+                throw PortalHttpException(
+                    response.code,
+                    retryAfter,
+                    buildDiagnostic(endpointUrl, params, response.code, response.header("Content-Type"), body, profile, session)
+                )
             }
-            if (body.isBlank()) error(diagnostic)
+            if (body.isBlank()) {
+                error(buildDiagnostic(endpointUrl, params, response.code, response.header("Content-Type"), body, profile, session))
+            }
             try {
                 parsePortalResponse(body).also { clearRateLimitStrikes() }
-            } catch (_: Throwable) {
-                error(diagnostic)
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    buildDiagnostic(endpointUrl, params, response.code, response.header("Content-Type"), body, profile, session),
+                    error
+                )
             }
         }
     }
@@ -854,7 +944,12 @@ class StalkerPortalClient(private val context: Context) {
         profile: PortalProfile,
         session: PortalSession?
     ): String {
-        val safeBody = redact(body, profile, session)
+        // Diagnostics must never duplicate an arbitrarily large provider
+        // response. In particular, redacting a full catalogue creates several
+        // temporary strings and can exhaust the Android heap before parsing
+        // even begins.
+        val bodyPreview = body.take(MAX_DIAGNOSTIC_BODY_CHARS)
+        val safeBody = redact(bodyPreview, profile, session)
         return buildString {
             appendLine("NikTV portal diagnostics")
             appendLine("Endpoint: $endpointUrl")
@@ -864,6 +959,10 @@ class StalkerPortalClient(private val context: Context) {
             appendLine("Response length: ${body.length}")
             appendLine("Response body:")
             append(if (safeBody.isBlank()) "<empty>" else safeBody)
+            if (body.length > bodyPreview.length) {
+                appendLine()
+                append("<truncated ${body.length - bodyPreview.length} characters>")
+            }
             if (params["action"] != "handshake" && params["action"] != "get_profile" && authenticationTrace.isNotBlank()) {
                 appendLine()
                 appendLine()
@@ -1024,6 +1123,19 @@ class StalkerPortalClient(private val context: Context) {
     private fun JsonElement.payload(): JsonElement = (this as? JsonObject)?.get("js") ?: this
     private fun JsonElement.array(): List<JsonElement> = when (this) { is JsonArray -> this; is JsonObject -> values.firstOrNull { it is JsonArray } as? JsonArray ?: emptyList(); else -> emptyList() }
     private fun JsonElement.arrayFromData(): List<JsonElement> = ((this as? JsonObject)?.get("data") ?: this).array()
+    private fun JsonElement.xtreamEpgEntries(): List<JsonElement> = when (this) {
+        is JsonArray -> this
+        is JsonObject -> {
+            val container = listOf("epg_listings", "listings", "data", "epg")
+                .firstNotNullOfOrNull { key -> this[key] }
+            when (container) {
+                is JsonArray -> container
+                is JsonObject -> container.values.firstOrNull { it is JsonArray } as? JsonArray ?: emptyList()
+                else -> emptyList()
+            }
+        }
+        else -> emptyList()
+    }
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
@@ -1106,6 +1218,8 @@ class StalkerPortalClient(private val context: Context) {
         return result.mapValues { (_, values) -> values.distinct().sortedBy { it.startTimeMillis } }
     }
     companion object {
+        private const val MAX_DIAGNOSTIC_BODY_CHARS = 16_384
+        private const val MAX_PORTAL_JSON_BYTES = 32L * 1024L * 1024L
         private const val EPG_CACHE_MILLIS = 5 * 60 * 1000L
         internal fun rankMovieDetailCommands(
             selectedId: String,

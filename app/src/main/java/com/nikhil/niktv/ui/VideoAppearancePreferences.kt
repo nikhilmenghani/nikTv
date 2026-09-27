@@ -71,6 +71,8 @@ import kotlinx.coroutines.delay
 import java.util.Calendar
 import kotlin.math.roundToInt
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.currentLiveProgramme
+import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.animation.core.animateFloatAsState
@@ -651,6 +653,9 @@ internal fun PlayerQueueOverlay(
     favoriteIds: Set<String> = emptySet(),
     onToggleFavorite: ((MediaItem) -> Unit)? = null,
     onTogglePin: ((MediaItem) -> Unit)? = null,
+    onRefreshProgramme: ((MediaItem) -> Unit)? = null,
+    liveCategoryTitle: String = "",
+    liveXtream: Boolean = false,
     hasMore: Boolean = false,
     loadingMore: Boolean = false,
     onLoadMore: () -> Boolean = { false },
@@ -685,9 +690,11 @@ internal fun PlayerQueueOverlay(
                 android.content.pm.PackageManager.FEATURE_TOUCHSCREEN
             )
     val touchQueueRail = !tvQueueGrid
+    val liveChannelQueue = onTogglePin != null
     val compactQueueGrid =
         touchQueueRail && configuration.smallestScreenWidthDp < 600
     val queueColumnCount = when {
+        tvQueueGrid && liveChannelQueue -> 2
         tvQueueGrid -> 6
         compactQueueGrid -> 3
         configuration.screenWidthDp < 900 -> 4
@@ -714,6 +721,7 @@ internal fun PlayerQueueOverlay(
         (
             configuration.screenHeightDp *
                 when {
+                    tvQueueGrid && liveChannelQueue -> .72f
                     tvQueueGrid -> .48f
                     compactQueueGrid -> .64f
                     else -> .54f
@@ -760,10 +768,23 @@ internal fun PlayerQueueOverlay(
         else -> 12.dp
     }
     val queueCardHeight = when {
+        tvQueueGrid && liveChannelQueue -> if (liveXtream) 116.dp else 96.dp
         tvQueueGrid -> 112.dp
         else -> (touchQueueSheetHeight - 40.dp).coerceAtLeast(96.dp)
     }
-    val compactQueueCardWidth = queueCardHeight * 1.65f
+    // Touch queues are a single horizontal rail. Size cards from the usable
+    // width so four full tiles remain visible while programme titles get more
+    // room than the old height-derived cards allowed.
+    val compactQueueCardWidth = if (touchQueueRail) {
+        (
+            configuration.screenWidthDp.dp -
+                (queueOuterHorizontalPadding * 2) -
+                (queueSheetPadding * 2) -
+                (queueGridHorizontalSpacing * 3)
+            ) / 4f
+    } else {
+        queueCardHeight * 1.65f
+    }
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items, pinnedIds) {
@@ -809,6 +830,7 @@ internal fun PlayerQueueOverlay(
     var focusFirstLoadedItem by remember { mutableStateOf(false) }
     var favoriteMenuItemId by remember { mutableStateOf<String?>(null) }
     var observedLoading by remember { mutableStateOf(false) }
+    var guideNow by remember { mutableStateOf(System.currentTimeMillis()) }
     val renderedReveal by animateFloatAsState(
         targetValue = if (gridReady) revealProgress.coerceIn(0f, 1f) else 0f,
         animationSpec = if (revealDragging) snap() else tween(220),
@@ -816,6 +838,13 @@ internal fun PlayerQueueOverlay(
     )
 
     val showPaginationTile = showLoadMore || loadMoreRequested
+
+    LaunchedEffect(liveChannelQueue) {
+        while (liveChannelQueue) {
+            guideNow = System.currentTimeMillis()
+            delay(5_000L)
+        }
+    }
 
     /*
      * Season pages can arrive newest-first from IPTV while the player presents
@@ -989,6 +1018,44 @@ internal fun PlayerQueueOverlay(
             requesters.getOrPut(entryKey(index)) { FocusRequester() }
         var focused by remember(entryKey(index)) { mutableStateOf(false) }
         val current = item.id == playingId
+
+        if (liveChannelQueue) {
+            ModernLiveChannelTile(
+                item = item,
+                onRefreshProgramme = { onRefreshProgramme?.invoke(item) },
+                xtream = liveXtream,
+                categoryTitle = liveCategoryTitle,
+                guideNow = guideNow,
+                programmeLoading = false,
+                programmeWaitingUntil = null,
+                programmeStatusNow = guideNow,
+                showQualityBadge = true,
+                isFavorite = item.id in favoriteIds,
+                onFavorite = { onToggleFavorite?.invoke(item) },
+                isPinned = item.id in pinnedIds,
+                onTogglePin = onTogglePin?.let { pin -> { pin(item) } },
+                onClick = { onSelect(item, index) },
+                modifier = Modifier
+                    .then(
+                        if (touchQueueRail) {
+                            Modifier.width(compactQueueCardWidth)
+                        } else {
+                            Modifier.fillMaxWidth()
+                        }
+                    )
+                    .focusRequester(requester),
+                isTv = tvQueueGrid,
+                onFocusChange = { isFocused ->
+                    focused = isFocused
+                    if (isFocused) focusedIndex = index
+                },
+                onMenuVisibilityChange = { visible ->
+                    favoriteMenuItemId = item.id.takeIf { visible }
+                }
+            )
+            return
+        }
+
         var artworkReady by remember(item.id, item.logo) { mutableStateOf(false) }
         val artwork = remember(item.id, item.title, item.logo) {
             artworkRequest(context, item)
@@ -1017,7 +1084,11 @@ internal fun PlayerQueueOverlay(
                     }
                     .remoteCombinedClickable(
                         onClick = { onSelect(item, index) },
-                        onLongClick = if (onToggleFavorite != null || onTogglePin != null) {
+                        onLongClick = if (
+                            onToggleFavorite != null ||
+                            onTogglePin != null ||
+                            onRefreshProgramme != null
+                        ) {
                             { favoriteMenuItemId = item.id }
                         } else null
                     )
@@ -1355,7 +1426,11 @@ internal fun PlayerQueueOverlay(
                 }
             }
 
-            if (onToggleFavorite != null || onTogglePin != null) {
+            if (
+                onToggleFavorite != null ||
+                onTogglePin != null ||
+                onRefreshProgramme != null
+            ) {
                 ModernTileActionsMenu(
                     expanded = favoriteMenuItemId == item.id,
                     isFavorite = item.id in favoriteIds,
@@ -1363,7 +1438,8 @@ internal fun PlayerQueueOverlay(
                     toggleFavorite = { onToggleFavorite?.invoke(item) },
                     clear = null,
                     isPinned = item.id in pinnedIds,
-                    togglePin = onTogglePin?.let { pin -> { pin(item) } }
+                    togglePin = onTogglePin?.let { pin -> { pin(item) } },
+                    refreshProgramme = onRefreshProgramme?.let { refresh -> { refresh(item) } }
                 )
             }
         }

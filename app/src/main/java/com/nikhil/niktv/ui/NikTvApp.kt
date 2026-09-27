@@ -616,6 +616,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                       ?: state.savedProfile?.cacheKey().orEmpty()
                   val channelCategoryId = state.nowPlaying?.media?.portalCategoryId
                       ?.takeIf { it.isNotBlank() } ?: state.selectedCategory?.id.orEmpty()
+                  val channelCategoryTitle = state.rawCategoriesByType[CatalogType.LIVE_TV]
+                      ?.firstOrNull { it.id == channelCategoryId }?.title
+                      ?: state.selectedCategory?.takeIf { it.id == channelCategoryId }?.title.orEmpty()
                   var pinnedQueueIds by remember(profileKey, channelCategoryId) {
                       mutableStateOf(IptvPinPreferences.pinnedChannelOrder(
                           appContext, profileKey, channelCategoryId
@@ -689,6 +692,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             if (categoryId == channelCategoryId) pinnedQueueIds = updated
                         }
                     },
+                    onRefreshQueueProgramme = vm::refreshLiveProgramme,
+                    liveQueueCategoryTitle = channelCategoryTitle,
+                    liveQueueXtream = state.session?.profile?.portalType == PortalType.XTREAM,
                     queueHasMore = state.playbackQueueHasMore,
                     queueLoadingMore = state.playbackQueueLoadingMore,
                     onLoadMoreQueue = vm::loadMorePlaybackQueue,
