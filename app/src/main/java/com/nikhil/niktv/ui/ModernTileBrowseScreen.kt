@@ -2535,8 +2535,21 @@ private fun ModernTmdbCollection(
             mutableMapOf<String, FocusRequester>()
         }
 
+    PrefetchCatalogPage(
+        scope = "tmdb:${section.name}",
+        ids = focusIds,
+        enabled = state.modernTmdbHasMore && !state.modernTmdbLoading,
+        loading = state.modernTmdbLoading,
+        grid = gridState,
+        loadMore = loadMore
+    )
     val appendPage = rememberCollectionPagination(
-        focusIds, state.modernTmdbLoading, gridState, itemFocusRequesters, loadMore
+        focusIds,
+        state.modernTmdbLoading,
+        gridState,
+        itemFocusRequesters,
+        loadMore,
+        itemOffset = 0
     )
     val focusScope = rememberCoroutineScope()
     val moveFocusToIndex: (Int) -> Unit = { targetIndex ->
@@ -3450,7 +3463,7 @@ private fun ModernCollectionHeader(
 }
 
 @Composable
-private fun FullDescriptionDialog(
+internal fun FullDescriptionDialog(
     title: String,
     description: String,
     cast: List<String> = emptyList(),

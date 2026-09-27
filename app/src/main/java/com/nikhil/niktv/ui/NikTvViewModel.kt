@@ -16,6 +16,7 @@ import com.nikhil.niktv.data.TrendingMovie
 import com.nikhil.niktv.data.TrendingSeries
 import com.nikhil.niktv.data.matchTmdbMovie
 import com.nikhil.niktv.data.matchTmdbSeries
+import com.nikhil.niktv.data.isReleased
 import com.nikhil.niktv.data.rankTmdbMovieMatches
 import com.nikhil.niktv.data.rankTmdbSeriesMatches
 import com.nikhil.niktv.data.TmdbMovie
@@ -3212,9 +3213,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (section.series) {
                 runCatching {
                     val requested = page * MODERN_TMDB_PAGE_SIZE
-                    val pageItems = tmdb.homeSeries(section, requested)
+                    val rawPageItems = tmdb.homeSeries(section, requested)
                         .drop((page - 1) * MODERN_TMDB_PAGE_SIZE)
                         .take(MODERN_TMDB_PAGE_SIZE)
+                    val pageItems = rawPageItems.filter { it.isReleased() }
                     val candidates = localSeriesCandidates(_state.value)
                     val savedMappings = store.tmdbMappings.first()
                         .filter {
@@ -3222,14 +3224,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 it.type == CatalogType.SERIES
                         }
                         .associateBy { it.tmdbId }
-                    pageItems.map { series ->
-                        TrendingSeries(
-                            tmdb = series,
-                            iptv = savedMappings[series.id]?.media
-                                ?: matchTmdbSeries(series, candidates)
-                        )
+                    val rows = withContext(Dispatchers.Default) {
+                        pageItems.map { series ->
+                            TrendingSeries(
+                                tmdb = series,
+                                iptv = savedMappings[series.id]?.media
+                                    ?: matchTmdbSeries(series, candidates)
+                            )
+                        }
                     }
-                }.onSuccess { rows ->
+                    rows to (rawPageItems.size == MODERN_TMDB_PAGE_SIZE)
+                }.onSuccess { (rows, rawPageWasFull) ->
                     _state.update { current ->
                         if (current.modernTmdbSection != section ||
                             current.session?.profile?.cacheKey() != profileKey
@@ -3245,7 +3250,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 modernTmdbLoading = false,
                                 modernTmdbPage = page,
                                 modernTmdbHasMore =
-                                    rows.size == MODERN_TMDB_PAGE_SIZE &&
+                                    rawPageWasFull &&
                                         page < MODERN_TMDB_MAX_PAGES,
                                 modernTmdbError = null
                             )
@@ -3265,9 +3270,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 runCatching {
                     val requested = page * MODERN_TMDB_PAGE_SIZE
-                    val pageItems = tmdb.homeMovies(section, requested)
+                    val rawPageItems = tmdb.homeMovies(section, requested)
                         .drop((page - 1) * MODERN_TMDB_PAGE_SIZE)
                         .take(MODERN_TMDB_PAGE_SIZE)
+                    val pageItems = rawPageItems.filter { it.isReleased() }
                     val candidates = localMovieCandidates(_state.value)
                     val savedMappings = store.tmdbMappings.first()
                         .filter {
@@ -3275,14 +3281,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 it.type == CatalogType.MOVIES
                         }
                         .associateBy { it.tmdbId }
-                    pageItems.map { movie ->
-                        TrendingMovie(
-                            tmdb = movie,
-                            iptv = savedMappings[movie.id]?.media
-                                ?: matchTmdbMovie(movie, candidates)
-                        )
+                    val rows = withContext(Dispatchers.Default) {
+                        pageItems.map { movie ->
+                            TrendingMovie(
+                                tmdb = movie,
+                                iptv = savedMappings[movie.id]?.media
+                                    ?: matchTmdbMovie(movie, candidates)
+                            )
+                        }
                     }
-                }.onSuccess { rows ->
+                    rows to (rawPageItems.size == MODERN_TMDB_PAGE_SIZE)
+                }.onSuccess { (rows, rawPageWasFull) ->
                     _state.update { current ->
                         if (current.modernTmdbSection != section ||
                             current.session?.profile?.cacheKey() != profileKey
@@ -3298,7 +3307,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 modernTmdbLoading = false,
                                 modernTmdbPage = page,
                                 modernTmdbHasMore =
-                                    rows.size == MODERN_TMDB_PAGE_SIZE &&
+                                    rawPageWasFull &&
                                         page < MODERN_TMDB_MAX_PAGES,
                                 modernTmdbError = null
                             )
@@ -7163,7 +7172,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val EPISODE_METADATA_VERSION = 4
         private const val SEASON_DISCOVERY_RECHECK_MILLIS = 5 * 60_000L
         private const val WATCHED_SERIES_REFRESH_MILLIS = 15 * 60_000L
-        private const val MODERN_TMDB_MAX_PAGES = 3
+        private const val MODERN_TMDB_MAX_PAGES = 5
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30

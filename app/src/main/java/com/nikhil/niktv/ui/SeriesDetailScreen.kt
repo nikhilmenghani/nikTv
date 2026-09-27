@@ -723,8 +723,10 @@ internal fun ModernEpisodeCard(
     modifier: Modifier = Modifier
 ) {
     var focused by remember { mutableStateOf(false) }
+    var episodeActionsExpanded by remember(episode.id) { mutableStateOf(false) }
+    var descriptionDialogOpen by remember(episode.id) { mutableStateOf(false) }
     val episodeFocusRequester = remember(episode.id) { FocusRequester() }
-    val downloadFocusRequester = remember(episode.id) { FocusRequester() }
+    val episodeInteractionSource = remember(episode.id) { MutableInteractionSource() }
     val episodeContext = LocalContext.current
     val episodeConfiguration = LocalConfiguration.current
     val isTv = episodeContext.isTvLikeDevice(episodeConfiguration)
@@ -770,7 +772,6 @@ internal fun ModernEpisodeCard(
     }
 
     Surface(
-        onClick = onClick,
         shape = RoundedCornerShape(12.dp),
         color = when {
             focused -> Color(0xFF272B33)
@@ -785,8 +786,12 @@ internal fun ModernEpisodeCard(
         shadowElevation = if (focused) 8.dp else 0.dp,
         modifier = modifier
             .focusRequester(episodeFocusRequester)
-            .focusProperties { right = downloadFocusRequester }
             .onFocusChanged { focused = it.isFocused }
+            .remoteCombinedClickable(
+                interactionSource = episodeInteractionSource,
+                onClick = onClick,
+                onLongClick = { episodeActionsExpanded = true }
+            )
     ) {
         Row(
             modifier = Modifier.padding(
@@ -956,42 +961,66 @@ internal fun ModernEpisodeCard(
                 }
             }
 
-            IconButton(
-                onClick = if (offlineDownload == null || displayedOfflineStatus in setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) {
-                    {
-                        downloadRequested = true
-                        onDownload()
-                    }
-                } else {
-                    { confirmRemoval = true }
-                },
-                enabled = !downloadRequested || offlineDownload != null,
-                modifier = Modifier
-                    .focusRequester(downloadFocusRequester)
-                    .focusProperties { left = episodeFocusRequester }
-                    .remoteFocusFrame(CircleShape)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    offlineInfo?.percent?.takeIf { displayedOfflineStatus == OfflineDownloadStatus.DOWNLOADING }?.let {
-                        CircularProgressIndicator(progress = { it / 100f }, Modifier.size(38.dp), strokeWidth = 3.dp)
-                    }
-                    Icon(
-                        when (displayedOfflineStatus) {
-                            OfflineDownloadStatus.COMPLETE -> Icons.Default.DownloadDone
-                            OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED -> Icons.Default.Downloading
-                            else -> Icons.Default.DownloadForOffline
-                        },
-                        contentDescription = when (displayedOfflineStatus) {
-                            OfflineDownloadStatus.COMPLETE -> "Remove offline download"
-                            OfflineDownloadStatus.QUEUED, OfflineDownloadStatus.DOWNLOADING, OfflineDownloadStatus.PAUSED -> "Cancel offline download"
-                            else -> "Download episode for offline playback"
-                        },
-                        modifier = Modifier.size(22.dp),
-                        tint = if (displayedOfflineStatus == OfflineDownloadStatus.COMPLETE) MaterialTheme.colorScheme.primary else Color.White
-                    )
+        }
+    }
+    DropdownMenu(
+        expanded = episodeActionsExpanded,
+        onDismissRequest = { episodeActionsExpanded = false },
+        containerColor = Color(0xFF202020),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        if (offlineDownload == null || displayedOfflineStatus in setOf(
+                OfflineDownloadStatus.FAILED,
+                OfflineDownloadStatus.MISSING
+            )
+        ) {
+            NikDropdownMenuItem(
+                text = { Text("Download episode") },
+                leadingIcon = { Icon(Icons.Default.DownloadForOffline, null) },
+                enabled = !downloadRequested,
+                onClick = {
+                    episodeActionsExpanded = false
+                    downloadRequested = true
+                    onDownload()
                 }
-            }
-
+            )
+        } else {
+            NikDropdownMenuItem(
+                text = {
+                    Text(
+                        if (displayedOfflineStatus == OfflineDownloadStatus.COMPLETE) {
+                            "Delete download"
+                        } else {
+                            "Cancel download"
+                        }
+                    )
+                },
+                leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                onClick = {
+                    episodeActionsExpanded = false
+                    confirmRemoval = true
+                }
+            )
+        }
+        episodeDescription?.takeIf(String::isNotBlank)?.let {
+            NikDropdownMenuItem(
+                text = { Text("View description") },
+                leadingIcon = { Icon(Icons.Default.Info, null) },
+                onClick = {
+                    episodeActionsExpanded = false
+                    descriptionDialogOpen = true
+                }
+            )
+        }
+    }
+    episodeDescription?.takeIf(String::isNotBlank)?.let { description ->
+        if (descriptionDialogOpen) {
+            FullDescriptionDialog(
+                title = episode.displayTitle(series),
+                description = description,
+                cast = episode.cast,
+                dismiss = { descriptionDialogOpen = false }
+            )
         }
     }
     if (confirmRemoval) AlertDialog(

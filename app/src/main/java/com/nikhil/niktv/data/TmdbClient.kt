@@ -45,6 +45,9 @@ data class TmdbMovie(
     )
 }
 
+internal fun TmdbMovie.isReleased(today: String = currentTmdbDate()): Boolean =
+    releaseDate.isNullOrBlank() || releaseDate <= today
+
 data class TmdbSeries(
     val id: Int,
     val name: String,
@@ -68,6 +71,12 @@ data class TmdbSeries(
         cast = cast
     )
 }
+
+internal fun TmdbSeries.isReleased(today: String = currentTmdbDate()): Boolean =
+    firstAirDate.isNullOrBlank() || firstAirDate <= today
+
+private fun currentTmdbDate(): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Calendar.getInstance().time)
 
 data class TrendingMovie(
     val tmdb: TmdbMovie,
@@ -469,7 +478,7 @@ class TmdbClient {
         limit: Int,
         query: Map<String, String> = emptyMap()
     ): List<TmdbMovie> {
-        val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(3)
+        val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(5)
         return (1..pages).flatMap { page ->
             execute(path, query + ("page" to page.toString()))["results"]?.jsonArray.orEmpty()
         }
@@ -513,7 +522,7 @@ class TmdbClient {
         limit: Int,
         query: Map<String, String> = emptyMap()
     ): List<TmdbSeries> {
-        val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(3)
+        val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(5)
         return (1..pages).flatMap { page ->
             execute(path, query + ("page" to page.toString()))["results"]?.jsonArray.orEmpty()
         }
@@ -692,8 +701,7 @@ private fun rankTmdbTitleMatches(
 
             if (titleScore == 0) return@mapNotNull null
 
-            val candidateYear = Regex("\\b(?:19|20)\\d{2}\\b")
-                .find(candidate.title)?.value?.toIntOrNull()
+            val candidateYear = tmdbYearPattern.find(candidate.title)?.value?.toIntOrNull()
             val yearScore = when {
                 year == null || candidateYear == null -> 0
                 candidateYear == year -> 240
@@ -708,30 +716,37 @@ private fun rankTmdbTitleMatches(
         .toList()
 }
 
+private val tmdbDiacriticPattern = Regex("\\p{M}+")
+private val tmdbYearPattern = Regex("\\b(?:19|20)\\d{2}\\b")
+private val tmdbQualifiedLanguagePattern =
+    Regex("\\([^)]*(?:english|hindi|tamil|telugu|season|complete)[^)]*\\)")
+private val tmdbQualityPattern =
+    Regex("\\b(?:4k|uhd|hdr|2160p|1080p|720p|english|multi|dubbed|cam|hdcam|hdts|telesync|dvdscr)\\b")
+private val mediaQualityPattern = Regex(
+    "\\b(?:4k|uhd|hdr10?|2160p|1080p|720p|480p|bluray|blu\\s*ray|webrip|web\\s*dl|x264|x265|h264|h265|hevc|aac|atmos)\\b",
+    RegexOption.IGNORE_CASE
+)
+private val nonAlphaNumericPattern = Regex("[^\\p{L}\\p{N}]+")
+private val repeatedWhitespacePattern = Regex("\\s+")
+
 private fun String.tmdbLookupTitle(): String =
     Normalizer.normalize(lowercase(), Normalizer.Form.NFD)
-        .replace(Regex("\\p{M}+"), "")
-        .replace(Regex("\\b(?:19|20)\\d{2}\\b"), " ")
-        .replace(Regex("\\([^)]*(?:english|hindi|tamil|telugu|season|complete)[^)]*\\)"), " ")
-        .replace(Regex("\\b(?:4k|uhd|hdr|2160p|1080p|720p|english|multi|dubbed|cam|hdcam|hdts|telesync|dvdscr)\\b"), " ")
-        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .replace(tmdbDiacriticPattern, "")
+        .replace(tmdbYearPattern, " ")
+        .replace(tmdbQualifiedLanguagePattern, " ")
+        .replace(tmdbQualityPattern, " ")
+        .replace(nonAlphaNumericPattern, " ")
         .trim()
-        .replace(Regex("\\s+"), " ")
+        .replace(repeatedWhitespacePattern, " ")
 
 private fun String.mediaMatchKey(): String =
     Normalizer.normalize(lowercase(), Normalizer.Form.NFD)
-        .replace(Regex("\\p{M}+"), "")
-        .replace(Regex("\\b(?:19|20)\\d{2}\\b"), " ")
-        .replace(
-            Regex(
-                "\\b(?:4k|uhd|hdr10?|2160p|1080p|720p|480p|bluray|blu\\s*ray|webrip|web\\s*dl|x264|x265|h264|h265|hevc|aac|atmos)\\b",
-                RegexOption.IGNORE_CASE
-            ),
-            " "
-        )
-        .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+        .replace(tmdbDiacriticPattern, "")
+        .replace(tmdbYearPattern, " ")
+        .replace(mediaQualityPattern, " ")
+        .replace(nonAlphaNumericPattern, " ")
         .trim()
-        .replace(Regex("\\s+"), " ")
+        .replace(repeatedWhitespacePattern, " ")
 
 private fun tokenSimilarity(left: String, right: String): Double {
     val a = left.split(' ').filter(String::isNotBlank).toSet()
