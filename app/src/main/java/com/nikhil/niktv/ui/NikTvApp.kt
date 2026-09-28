@@ -630,7 +630,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onRetry = vm::retryPlayback,
                     onRetryAlternateDecoder = { position -> vm.retryPlaybackWithAlternateDecoder(position, playback) },
                     onPlaybackAuthorizationFailure = { position -> vm.retryPlaybackAfterAuthorizationFailure(position, playback) },
-                    onWatchLive = vm::watchLiveDirectly,
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,

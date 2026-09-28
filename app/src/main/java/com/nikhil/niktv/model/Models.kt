@@ -330,10 +330,7 @@ data class PlayingMedia(
     val authorizationRetryCount: Int = 0,
     val directFullscreen: Boolean = false,
     val offlinePlayback: Boolean = false,
-    val playbackFormat: String = "",
-    val originalLiveUrl: String? = null,
-    val originalLiveFormat: String = "",
-    val rewindProfileKey: String = ""
+    val playbackFormat: String = ""
 )
 
 @Serializable

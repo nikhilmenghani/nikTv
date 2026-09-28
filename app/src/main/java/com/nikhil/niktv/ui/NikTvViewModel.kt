@@ -5751,25 +5751,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedLiveGuideTarget: LiveGuideTarget? = null
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
-    fun watchLiveDirectly() {
-        val current = _state.value.nowPlaying ?: return
-        if (current.originalLiveUrl == null || latestPlaybackRequest.isRunning) return
-        val requestId = latestPlaybackRequest.begin()
-        viewModelScope.launch {
-            try {
-                playInternal(current.media, current.catalogType, current.series, current.episodeQueue,
-                    forceFreshUrl = true, directFullscreen = current.directFullscreen,
-                    requestId = requestId, allowLocalRewind = false)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                _state.update { it.copy(error = error.message ?: "Could not return to live playback.") }
-            }
-        }
-    }
-
-    private var localLiveBuffer: com.nikhil.niktv.data.LocalLiveBuffer? = null
-
     private suspend fun playInternal(
         item: MediaItem,
         type: CatalogType,
@@ -5780,8 +5761,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         resumePositionOverride: Long? = null,
         directFullscreen: Boolean = false,
         requestId: Long = latestPlaybackRequest.begin(),
-        reauthenticate: Boolean = false,
-        allowLocalRewind: Boolean = true
+        reauthenticate: Boolean = false
     ) = latestPlaybackRequest.run(requestId) {
         try {
             if (type == CatalogType.LIVE_TV) _state.update { it.copy(liveGuidePriorityId = item.id) }
@@ -5806,11 +5786,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(reauthenticating = false) }
                 }
                 resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, allowLocalRewind)
+                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed)
             } else {
                 withAutomaticSessionRetry(session) { activeSession ->
                     resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, allowLocalRewind)
+                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession)
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -5833,8 +5813,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         authorizationRetryCount: Int = 0,
         resumePositionOverride: Long? = null,
         directFullscreen: Boolean = false,
-        session: PortalSession,
-        allowLocalRewind: Boolean = true
+        session: PortalSession
     ) {
         val playbackStartedAt = SystemClock.elapsedRealtime()
         val offlineEntry = _state.value.offlineDownloads
@@ -6011,25 +5990,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         channelScheduleJob?.cancel()
-        val previousBuffer = localLiveBuffer
-        localLiveBuffer = null
-        withContext(Dispatchers.IO) { previousBuffer?.close() }
-        val rewind = if (allowLocalRewind && type == CatalogType.LIVE_TV && offlineUrl == null &&
-            com.nikhil.niktv.data.LiveRewindPreferences.enabled(getApplication(), session.profile.cacheKey(), item.id))
-            com.nikhil.niktv.data.LocalLiveBuffer.open(getApplication(), url) else null
-        try { kotlinx.coroutines.currentCoroutineContext().ensureActive() }
-        catch (cancelled: kotlinx.coroutines.CancellationException) { rewind?.close(); throw cancelled }
-        localLiveBuffer = rewind
-        if (type == CatalogType.LIVE_TV) Log.i("NikTvLiveRewind", if (rewind != null)
-            "Playing with local rewind" else "Playing provider stream directly")
         _state.update {
             it.copy(
                 nowPlaying = PlayingMedia(
                     media = item,
-                    url = rewind?.url ?: url,
-                    originalLiveUrl = if (rewind != null) url else null,
-                    originalLiveFormat = offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) },
-                    rewindProfileKey = session.profile.cacheKey(),
+                    url = url,
                     catalogType = type,
                     previousEpisode = previousItem,
                     nextEpisode = nextItem,
@@ -6040,7 +6005,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     authorizationRetryCount = authorizationRetryCount,
             directFullscreen = directFullscreen,
             offlinePlayback = offlineUrl != null,
-            playbackFormat = if (rewind != null) "HLS" else offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) }
+            playbackFormat = offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) }
                 ),
                 playbackReturnFocusId =
                     if (
@@ -6423,8 +6388,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlayer() {
-        localLiveBuffer?.close()
-        localLiveBuffer = null
         // A guide can finish into the browse cache after Back; it never starts playback.
         cancelPendingPlayback(cancelGuide = false)
         val snapshot = _state.value
@@ -6527,10 +6490,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
             playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url) return
-        if (playing.originalLiveUrl != null) {
-            watchLiveDirectly()
-            return
-        }
         if (playing.authorizationRetryCount > 0) return
         if (!_state.value.automaticReauthentication) {
             _state.update { it.copy(error = "Authorization failed.") }
@@ -6822,7 +6781,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
-        localLiveBuffer?.close()
         com.nikhil.niktv.data.CatalogPlaybackActivity.playing = false
         super.onCleared()
     }

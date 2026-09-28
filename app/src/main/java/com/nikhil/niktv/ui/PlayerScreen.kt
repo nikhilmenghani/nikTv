@@ -299,7 +299,6 @@ fun PlayerScreen(
     onRetry: () -> Unit,
     onRetryAlternateDecoder: (Long) -> Unit,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
-    onWatchLive: () -> Unit = {},
     onPlayPrevious: () -> Unit,
     onPlayNext: () -> Unit,
     onProgress: (String, Long, Long) -> Unit,
@@ -425,7 +424,7 @@ fun PlayerScreen(
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
         PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
-    val effectiveEngine = if (media.originalLiveUrl != null) PlaybackEngine.MEDIA3 else sessionEngineOverride ?: configuredEngine
+    val effectiveEngine = sessionEngineOverride ?: configuredEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
@@ -452,7 +451,6 @@ fun PlayerScreen(
             initialSubtitleDelayMs = subtitleDelayMs,
             initialExternalSubtitleFile = externalSubtitleFile,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
-            onWatchLive = onWatchLive,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
             onLoadMoreQueue = onLoadMoreQueue,
@@ -471,7 +469,6 @@ fun PlayerScreen(
                 engineSwitchResumePosition = position
                 onPlaybackEngineChanged(selectedEngine)
                 sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
-                if (media.originalLiveUrl != null && sessionEngineOverride == PlaybackEngine.VLC) onWatchLive()
             },
             configuredEngine = selectedPlayerChoice,
             focusPlayerSwitchOnEnter = false,
@@ -515,7 +512,6 @@ fun PlayerScreen(
         }
         previousLiveRecordingActive = liveRecording.active
     }
-    var liveRewindRequested by remember(media.progressKey) { mutableStateOf(false) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
@@ -660,9 +656,9 @@ fun PlayerScreen(
         if (isTvDevice) null
         else runCatching { CastPlayer(CastContext.getSharedInstance(context)) }.getOrNull()
     }
-    val castMediaItem = remember(media.url, media.originalLiveUrl, media.media.title, media.playbackFormat) {
+    val castMediaItem = remember(media.url, media.media.title, media.playbackFormat) {
         MediaItem.Builder()
-            .setUri(media.originalLiveUrl ?: media.url)
+            .setUri(media.url)
             .setMimeType(
                 if (media.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true) ||
                     media.playbackFormat.contains("HLS", ignoreCase = true)
@@ -697,7 +693,6 @@ fun PlayerScreen(
         }
         builder.build().apply {
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url).apply {
-                if (media.originalLiveUrl != null) setMimeType(MimeTypes.APPLICATION_M3U8)
             }
             setMediaItem(mediaItemBuilder.build())
             val startPosition =
@@ -1529,7 +1524,7 @@ fun PlayerScreen(
                                     hasPlaybackQueue
                                 ) {
                                     onPlayNext()
-                                } else {
+                                } else if (media.catalogType != CatalogType.LIVE_TV) {
                                     val maxPosition =
                                         keyPlayer.duration
                                             .takeIf { it > 0L }
@@ -1548,7 +1543,7 @@ fun PlayerScreen(
                                     hasPlaybackQueue
                                 ) {
                                     onPlayPrevious()
-                                } else {
+                                } else if (media.catalogType != CatalogType.LIVE_TV) {
                                     keyPlayer.seekTo(
                                         (keyPlayer.currentPosition - 10_000L)
                                             .coerceAtLeast(0L)
@@ -1831,9 +1826,7 @@ fun PlayerScreen(
         )
         }
         PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
-            val liveSeekable = media.catalogType == CatalogType.LIVE_TV && media.originalLiveUrl != null &&
-                duration > 0L && player.isCurrentMediaItemLive && player.isCurrentMediaItemSeekable
-            val seekable = duration > 0L && (media.catalogType != CatalogType.LIVE_TV || liveSeekable)
+            val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
             val topDownRequester = if (seekable) progressFocusRequester else playPauseFocusRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseFocusRequester
@@ -2029,7 +2022,6 @@ PlayerChromeIconButton(
                                         engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
                                         onPlaybackEngineChanged(selectedEngine)
                                         sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
-                if (media.originalLiveUrl != null && sessionEngineOverride == PlaybackEngine.VLC) onWatchLive()
                                     },
                                     modifier = Modifier
                                         .playerSecondaryFocus(playerSwitchFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
@@ -2144,21 +2136,12 @@ PlayerChromeIconButton(
                         ),
                         verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
                     ) {
-                        if (liveSeekable && liveRewindRequested && duration - position > 5_000L) {
-                            NikTvSecondaryActionButton(onClick = {
-                                if (media.originalLiveUrl != null) onWatchLive() else player.seekToDefaultPosition()
-                                player.play()
-                                playbackRequested = true
-                                liveRewindRequested = false
-                            }) { Text("Watch live") }
-                        }
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = media.progressKey,
                                 position = position,
                                 duration = duration,
                                 onSeek = {
-                                    if (liveSeekable) liveRewindRequested = duration - it > 5_000L
                                     player.seekTo(it)
                                 },
                                 compact = compactMobileControls,
@@ -2247,7 +2230,6 @@ PlayerChromeIconButton(
                                             icon = Icons.Default.Replay10,
                                             contentDescription = "Back 10 seconds",
                                             onClick = {
-                                                if (liveSeekable) liveRewindRequested = true
                                                 player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
                                             },
                                             modifier = Modifier.focusRequester(rewindFocusRequester)
@@ -2425,7 +2407,6 @@ PlayerChromeIconButton(
         }
         PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
-            rewindProfileKey = media.rewindProfileKey,
             items = playerQueueItems,
             pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
@@ -2562,7 +2543,7 @@ PlayerChromeIconButton(
                             engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
                             onPlaybackEngineChanged(selectedEngine)
                             sessionEngineOverride = selectedEngine
-                            if (media.originalLiveUrl != null && selectedEngine == PlaybackEngine.VLC) onWatchLive()                        },
+                        },
                         retryModifier = Modifier.focusRequester(errorRetryFocusRequester)
                             .playerControlFocus(RoundedCornerShape(12.dp)) { controlsFocused = it }
                     )

@@ -650,7 +650,6 @@ private fun QueueArtworkFallback(item: MediaItem) {
 
 @Composable
 internal fun PlayerQueueOverlay(
-    rewindProfileKey: String = "",
     items: List<MediaItem>,
     playingId: String,
     pinnedIds: List<String> = emptyList(),
@@ -1046,7 +1045,6 @@ internal fun PlayerQueueOverlay(
 
         if (liveChannelQueue) {
             ModernLiveChannelTile(
-                rewindProfileKey = rewindProfileKey,
                 item = item,
                 onRefreshProgramme = { onRefreshProgramme?.invoke(item) },
                 xtream = liveXtream,

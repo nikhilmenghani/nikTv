@@ -1101,7 +1101,6 @@ private fun ModernRecentChannelsCollection(
         }
         gridItems(channels, key = { it.key }) { recent ->
             ModernLiveChannelTile(
-                rewindProfileKey = recent.profileKey,
                 item = recent.media,
                 onRefreshProgramme = { refreshLiveProgramme(recent.media) },
                 categoryTitle = category.second,
@@ -2344,9 +2343,7 @@ internal fun ModernTileActionsMenu(
     togglePin: (() -> Unit)? = null,
     refreshProgramme: (() -> Unit)? = null,
     refreshMatches: (() -> Unit)? = null,
-    markWatched: (() -> Unit)? = null,
-    localRewindEnabled: Boolean = false,
-    toggleLocalRewind: (() -> Unit)? = null
+    markWatched: (() -> Unit)? = null
 ) {
     DropdownMenu(
         expanded = expanded,
@@ -2355,13 +2352,6 @@ internal fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
-        toggleLocalRewind?.let { action ->
-            NikDropdownMenuItem(
-                text = { Text(if (localRewindEnabled) "Disable local rewind" else "Enable local rewind (ExoPlayer)") },
-                leadingIcon = { Icon(Icons.Default.Refresh, null) },
-                onClick = { dismiss(); action() }
-            )
-        }
         markWatched?.let { action ->
             NikDropdownMenuItem(
                 text = { Text("Mark as watched") },
@@ -3408,7 +3398,6 @@ private fun ModernIptvCollection(
             }
             if (isLiveTv) {
                 ModernLiveChannelTile(
-                    rewindProfileKey = profileKey,
                     item = media,
                     onRefreshProgramme = { refreshLiveProgramme(media) },
                     categoryTitle = category.title,
@@ -3658,7 +3647,6 @@ internal fun FullDescriptionDialog(
 
 @Composable
 internal fun ModernLiveChannelTile(
-    rewindProfileKey: String = "",
     item: MediaItem,
     onRefreshProgramme: () -> Unit,
     xtream: Boolean = false,
@@ -3679,10 +3667,6 @@ internal fun ModernLiveChannelTile(
     onFocusChange: (Boolean) -> Unit = {},
     onMenuVisibilityChange: (Boolean) -> Unit = {}
 ) {
-    val rewindContext = LocalContext.current
-    var rewindEnabled by remember(rewindProfileKey, item.id) {
-        mutableStateOf(com.nikhil.niktv.data.LiveRewindPreferences.enabled(rewindContext, rewindProfileKey, item.id))
-    }
     val returningTile = rememberReturningTile(onClick)
 
     var focused by remember { mutableStateOf(false) }
@@ -3932,12 +3916,7 @@ internal fun ModernLiveChannelTile(
             clear = onClear,
             isPinned = isPinned,
             togglePin = onTogglePin,
-            refreshProgramme = onRefreshProgramme,
-            localRewindEnabled = rewindEnabled,
-            toggleLocalRewind = if (rewindProfileKey.isBlank()) null else ({
-                rewindEnabled = !rewindEnabled
-                com.nikhil.niktv.data.LiveRewindPreferences.setEnabled(rewindContext, rewindProfileKey, item.id, rewindEnabled)
-            })
+            refreshProgramme = onRefreshProgramme
         )
     }
 }

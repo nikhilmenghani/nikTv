@@ -90,7 +90,6 @@ internal fun VlcPlayerScreen(
     initialSubtitleDelayMs: Long = 0L,
     initialExternalSubtitleFile: File? = null,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
-    onWatchLive: () -> Unit = {},
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
     onLoadMoreQueue: () -> Boolean = { false },
@@ -184,7 +183,6 @@ internal fun VlcPlayerScreen(
         }
         previousLiveRecordingActive = liveRecording.active
     }
-    var liveRewindRequested by remember(media.progressKey) { mutableStateOf(false) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
@@ -321,10 +319,8 @@ internal fun VlcPlayerScreen(
         player.setSpuDelay(subtitleDelayMs * 1_000L)
     }
     // VLC length/isSeekable alone can describe one short live segment, not a DVR window.
-    // Keep the elapsed Live clock until an actual rewind source is available.
-    val liveSeekable = media.catalogType == CatalogType.LIVE_TV && media.originalLiveUrl != null &&
-        duration > 0L && player.isSeekable
-    val seekable = duration > 0L && (media.catalogType != CatalogType.LIVE_TV || liveSeekable)
+    // Live TV uses the elapsed clock and direct playback without seeking.
+    val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
     val tvBackgroundPolicy = rememberPlayerTvDevice()
     val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val activity = remember(context) { context.findActivity() }
@@ -1443,21 +1439,12 @@ PlayerChromeIconButton(
                         ),
                         verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
                     ) {
-                        if (liveSeekable && liveRewindRequested && duration - position > 5_000L) {
-                            NikTvSecondaryActionButton(onClick = {
-                                onWatchLive()
-                                player.play()
-                                playbackRequested = true
-                                liveRewindRequested = false
-                            }) { Text("Watch live") }
-                        }
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = media.progressKey,
                                 position = position,
                                 duration = duration,
                                 onSeek = {
-                                    if (liveSeekable) liveRewindRequested = duration - it > 5_000L
                                     player.time = it
                                 },
                                 compact = compactMobileControls,
@@ -1549,9 +1536,6 @@ PlayerChromeIconButton(
                                         contentDescription = "Back 10 seconds",
                                         onClick = {
                                             val target = (player.time - 10_000L).coerceAtLeast(0L)
-                                            if (liveSeekable) {
-                                                liveRewindRequested = true
-                                            }
                                             player.time = target
                                         },
                                         modifier = Modifier.focusRequester(rewindRequester)
@@ -1728,7 +1712,6 @@ PlayerChromeIconButton(
         }
         PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
-            rewindProfileKey = media.rewindProfileKey,
             items = playerQueueItems,
             pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
