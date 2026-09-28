@@ -591,6 +591,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val requiredUpdate = discoveredUpdate ?: pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     MaterialTheme(colorScheme = profileColors) {
+        ParentalPinPrompt(vm)
         Surface(Modifier.fillMaxSize()) {
           if (updateEnforcementEnabled && (checkingForRequiredUpdate || requiredUpdate != null)) {
             MandatoryNikTvUpdateScreen(

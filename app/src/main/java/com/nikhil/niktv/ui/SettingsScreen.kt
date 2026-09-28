@@ -1397,6 +1397,9 @@ SettingsSwitch(
             )
 
         }
+        SettingsSection("Profiles") {
+            ParentalControlsSettings()
+        }
 SettingsSection("Data and sync") {
             var backupActivityOpen by remember { mutableStateOf(false) }
             val backupEvents by remember(context) { com.nikhil.niktv.data.BackupActivityLog.observe(context) }
@@ -3899,7 +3902,7 @@ private fun SettingsDestinationRail(
 }
 
 @Composable
-private fun CompactSettingsOptionRow(
+internal fun CompactSettingsOptionRow(
     icon: ImageVector,
     title: String,
     subtitle: String,

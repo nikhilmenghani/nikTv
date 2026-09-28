@@ -106,7 +106,7 @@ data class PortalCatalogPage(
 )
 
 @Serializable
-data class Category(val id: String, val title: String, val type: CatalogType)
+data class Category(val id: String, val title: String, val type: CatalogType, val isAdult: Boolean = false)
 @Serializable
 data class MediaItem(
     val id: String,
@@ -132,7 +132,8 @@ data class MediaItem(
     /** TMDB principal cast, populated lazily for focused movie and series titles. */
     val cast: List<String> = emptyList(),
     /** Search-only routing identity; never persisted in favourites or provider caches. */
-    @kotlinx.serialization.Transient val searchResultType: SearchContentType? = null
+    @kotlinx.serialization.Transient val searchResultType: SearchContentType? = null,
+    val isAdult: Boolean = false
 )
 
 @Serializable

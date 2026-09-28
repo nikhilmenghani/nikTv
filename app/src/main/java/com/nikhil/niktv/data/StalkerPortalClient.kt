@@ -142,7 +142,7 @@ class StalkerPortalClient(private val context: Context) {
                 val seriesCategory = isSeriesCategory("$title ${o.string("alias").orEmpty()}")
                 if (type == CatalogType.SERIES && id != "*" && !seriesCategory) return@mapNotNull null
                 if (type == CatalogType.MOVIES && id != "*" && seriesCategory) return@mapNotNull null
-                Category(id, title, type)
+                Category(id, title, type, o.boolish("is_adult") || o.boolish("adult"))
             }
         // This portal shares one VOD category endpoint but uses different listing
         // request shapes. Keep the wildcard only for the Movies request; Series
@@ -209,6 +209,7 @@ class StalkerPortalClient(private val context: Context) {
                     portalAssetUrl(session, o.string("logo") ?: o.string("screenshot_uri") ?: o.string("pic")),
                     o.string("cmd"),
                     o.string("description") ?: o.string("descr") ?: o.string("genres_str"),
+                    isAdult = category.isAdult || adultContentLabel(category.title) || o.boolish("is_adult") || o.boolish("adult"),
                     portalCategoryId = category.id,
                     liveProgramme = if (category.type == CatalogType.LIVE_TV) o.liveProgramme() else null,
                     channelNumber = o.string("number")?.toIntOrNull()
@@ -334,7 +335,8 @@ class StalkerPortalClient(private val context: Context) {
                 portalAssetUrl(session, item.string("logo") ?: item.string("screenshot_uri") ?: item.string("pic")),
                 item.string("cmd"), item.string("description") ?: item.string("genres_str"),
                 item.string("season_number")?.toIntOrNull(), item.string("episode")?.toIntOrNull(),
-                item.string("season_id"), item.string("category_id") ?: item.string("genre_id") ?: categoryId, item.string("episode_id"))
+                item.string("season_id"), item.string("category_id") ?: item.string("genre_id") ?: categoryId, item.string("episode_id"),
+                isAdult = item.boolish("is_adult") || item.boolish("adult"))
         }.filter { it.title.matchesTitleKeywords(query) }.distinctBy { it.id }
             .sortedByDescending { it.title.titleKeywordScore(query) }
         val metadata = payload as? JsonObject
@@ -738,7 +740,7 @@ class StalkerPortalClient(private val context: Context) {
         return xtreamRequest(session.profile, action).array().mapNotNull { node ->
             val o = node as? JsonObject ?: return@mapNotNull null
             val id = o.string("category_id") ?: return@mapNotNull null
-            Category(id, o.string("category_name") ?: "Untitled", type)
+            Category(id, o.string("category_name") ?: "Untitled", type, o.boolish("is_adult") || o.boolish("adult"))
         }
     }
 
@@ -783,6 +785,7 @@ class StalkerPortalClient(private val context: Context) {
                 o.string("stream_icon") ?: o.string("cover"),
                 url,
                 o.string("plot") ?: o.string("description"),
+                isAdult = o.boolish("is_adult") || o.boolish("adult"),
                 portalCategoryId = o.string("category_id") ?: categoryId,
                 liveProgramme = if (type == CatalogType.LIVE_TV) o.liveProgramme() else null,
                 channelNumber = o.string("num")?.toIntOrNull(),

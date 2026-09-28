@@ -47,6 +47,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.NonCancellable
 
 data class NikTvState(
+    val parentalControlsEnabled: Boolean = true,
+    val parentalRelockMinutes: Int = 5,
+    val parentalPrompt: String? = null,
+    val parentalPinError: Boolean = false,
     val profiles: List<PortalProfile> = emptyList(),
     val profileEditorOpen: Boolean = false,
     val savedProfile: PortalProfile? = null,
@@ -182,7 +186,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val tmdbAvailabilityCatalogs = mutableMapOf<Pair<String, CatalogType>, SearchCatalogCache>()
     private val tmdbAvailability = com.nikhil.niktv.data.TmdbAvailabilityRepository(application)
     private var tmdbAvailabilityJob: Job? = null
-    private val _state = MutableStateFlow(NikTvState())
+    private val _state = MutableStateFlow(NikTvState(parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(application), parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(application)))
     val state: StateFlow<NikTvState> = _state.asStateFlow()
     private var allFavorites: List<FavoriteItem> = emptyList()
     private var allRecentlyPlayed: List<RecentItem> = emptyList()
@@ -1290,7 +1294,66 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var parentalRequest: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
+    private var adultUnlockedUntil = 0L
+    fun lockAdultContent() { adultUnlockedUntil = 0L }
+    fun cancelParentalPin() { parentalRequest?.complete(false) }
+    fun submitParentalPin(pin: String) {
+        if (com.nikhil.niktv.data.ParentalControls.accepts(getApplication(), pin)) parentalRequest?.complete(true)
+        else _state.update { it.copy(parentalPinError = true) }
+    }
+    private suspend fun authorizeParental(force: Boolean = false): Boolean {
+        if (!force && (!com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) || SystemClock.elapsedRealtime() < adultUnlockedUntil)) return true
+        parentalRequest?.complete(false)
+        val request = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        parentalRequest = request
+        _state.update { it.copy(parentalPrompt = "Enter parental PIN", parentalPinError = false) }
+        return try {
+            request.await().also { if (it && !force) adultUnlockedUntil = SystemClock.elapsedRealtime() + com.nikhil.niktv.data.ParentalControls.relockMinutes(getApplication()) * 60_000L }
+        } finally {
+            if (parentalRequest === request) {
+                parentalRequest = null
+                _state.update { it.copy(parentalPrompt = null, parentalPinError = false) }
+            }
+        }
+    }
+    private fun isAdultMedia(item: MediaItem, type: CatalogType): Boolean {
+        val snapshot = _state.value
+        val profile = snapshot.session?.profile?.cacheKey() ?: snapshot.savedProfile?.cacheKey().orEmpty()
+        return item.isAdult || com.nikhil.niktv.data.adultContentLabel(item.title) ||
+            com.nikhil.niktv.data.ParentalControls.adultCategory(getApplication(), profile, type, item.portalCategoryId) ||
+            (snapshot.rawCategoriesByType[type].orEmpty() + snapshot.categories).any {
+                it.type == type && it.id == item.portalCategoryId && (it.isAdult || com.nikhil.niktv.data.adultContentLabel(it.title))
+            }
+    }
+    private fun gateAdultAction(item: MediaItem, type: CatalogType, action: () -> Unit): Boolean {
+        if (!isAdultMedia(item, type) || !com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) ||
+            SystemClock.elapsedRealtime() < adultUnlockedUntil) return false
+        viewModelScope.launch { if (authorizeParental()) action() }
+        return true
+    }
+    fun setParentalControlsEnabled(enabled: Boolean) = viewModelScope.launch {
+        if (!authorizeParental(force = true)) return@launch
+        com.nikhil.niktv.data.ParentalControls.setEnabled(getApplication(), enabled)
+        lockAdultContent()
+        _state.update { it.copy(parentalControlsEnabled = enabled) }
+    }
+    fun authorizeParentalSettings(onAuthorized: () -> Unit) = viewModelScope.launch {
+        if (authorizeParental(force = true)) onAuthorized()
+    }
+    fun setParentalRelockMinutes(minutes: Int) = viewModelScope.launch {
+        if (!authorizeParental(force = true)) return@launch
+        com.nikhil.niktv.data.ParentalControls.setRelockMinutes(getApplication(), minutes)
+        lockAdultContent()
+        _state.update { it.copy(parentalRelockMinutes = minutes) }
+    }
+    fun changeParentalPin(pin: String) {
+        com.nikhil.niktv.data.ParentalControls.setPin(getApplication(), pin)
+        lockAdultContent()
+    }
+
     fun loadCategory(category: Category) = task {
+        if ((category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title)) && !authorizeParental()) return@task
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null,
@@ -2978,6 +3041,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun loadSeriesEpisodes(requestedSeries: MediaItem, requestedSeason: Int? = null, forceRefresh: Boolean = false) {
+        if (isAdultMedia(requestedSeries, CatalogType.SERIES) && !authorizeParental()) return
         val session = requireNotNull(_state.value.session)
         val series = resolveSeriesContainer(session, requestedSeries)
         if (series != requestedSeries && _state.value.selectedSeries?.id == requestedSeries.id) {
@@ -3142,6 +3206,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openModernIptvCategory(category: Category) {
+        if (com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) && SystemClock.elapsedRealtime() >= adultUnlockedUntil &&
+            (category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title))) {
+            viewModelScope.launch { if (authorizeParental()) openModernIptvCategory(category) }
+            return
+        }
         tmdbAvailabilityJob?.cancel()
         cancelPendingPlayback()
         val snapshot = _state.value
@@ -3933,6 +4002,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectTmdbSeriesMatch(item: MediaItem) = task {
+        if (isAdultMedia(item, CatalogType.SERIES) && !authorizeParental()) return@task
         val session = requireNotNull(_state.value.session)
         val series = requireNotNull(_state.value.seriesMatchSelection)
         commitTmdbSeriesSelection(session, series, item, confirmedByUser = true)
@@ -4504,6 +4574,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openMedia(item: MediaItem) {
+        if (gateAdultAction(item, _state.value.selectedType) { openMedia(item) }) return
         playbackNavigationIndex = null
         openMediaInternal(item)
     }
@@ -5568,6 +5639,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSearchResult(item: MediaItem) {
+        val type = when (item.searchResultType ?: _state.value.searchType) {
+            SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
+            SearchContentType.MOVIES -> CatalogType.MOVIES
+            else -> CatalogType.SERIES
+        }
+        if (gateAdultAction(item, type) { openSearchResult(item) }) return
         when (item.searchResultType ?: _state.value.searchType) {
             SearchContentType.ALL -> return
             SearchContentType.LIVE_TV -> play(item, CatalogType.LIVE_TV)
@@ -5596,6 +5673,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun downloadForOffline(item: MediaItem, type: CatalogType, series: MediaItem? = null) {
+        if (gateAdultAction(series ?: item, type) { downloadForOffline(item, type, series) }) return
         if (type == CatalogType.LIVE_TV) {
             _state.update { it.copy(error = "Live channels require a timed recording and cannot be saved as an offline download.") }
             return
@@ -5610,7 +5688,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId, it.downloadId) }
                 val url = portal.playableUrl(session, item, type)
                 val handle = OfflineMediaDownloads.enqueue(getApplication(), key, item.title, url)
-                val entry = OfflineMediaDownload(downloadId = handle.downloadId, requestId = handle.requestId, sourceUrl = url, profileKey = session.profile.cacheKey(), catalogType = type, media = item, series = series, fileType = handle.fileType)
+                val entry = OfflineMediaDownload(downloadId = handle.downloadId, requestId = handle.requestId, sourceUrl = url, profileKey = session.profile.cacheKey(), catalogType = type, media = item.copy(isAdult = isAdultMedia(series ?: item, type)), series = series, fileType = handle.fileType)
                 val updated = listOf(entry) + _state.value.offlineDownloads.filterNot { it.key == key }
                 _state.update { it.copy(offlineDownloads = updated, offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
                 store.saveOfflineDownloads(updated)
@@ -5764,6 +5842,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         reauthenticate: Boolean = false
     ) = latestPlaybackRequest.run(requestId) {
         try {
+            if ((isAdultMedia(item, type) || series?.let { isAdultMedia(it, CatalogType.SERIES) } == true) && !authorizeParental()) return@run
             if (type == CatalogType.LIVE_TV) _state.update { it.copy(liveGuidePriorityId = item.id) }
             if (_state.value.categoryFindSearching) cancelCategoryFind()
             liveGuideScheduler.pause()
@@ -6870,6 +6949,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closeOfflineDownloads() = _state.update { it.copy(offlineDownloadsOpen = false) }
 
     fun playOfflineDownload(entry: OfflineMediaDownload) {
+        val protectedMedia = entry.media.copy(isAdult = entry.media.isAdult || entry.series?.isAdult == true ||
+            com.nikhil.niktv.data.ParentalControls.adultCategory(getApplication(), entry.profileKey, entry.catalogType,
+                entry.series?.portalCategoryId ?: entry.media.portalCategoryId))
+        if (gateAdultAction(protectedMedia, entry.catalogType) { playOfflineDownload(entry) }) return
         cancelPendingPlayback()
         val uri = OfflineMediaDownloads.playableUri(getApplication(), entry.requestId, entry.sourceUrl, entry.downloadId)
         if (uri == null) {
@@ -6950,6 +7033,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openFavorite(favorite: FavoriteItem) {
+        val type = when (favorite.kind) {
+            FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
+            FavoriteKind.MOVIE -> CatalogType.MOVIES
+            else -> CatalogType.SERIES
+        }
+        val protectedMedia = favorite.media.copy(isAdult = favorite.media.isAdult ||
+            com.nikhil.niktv.data.adultContentLabel(favorite.categoryTitle.orEmpty()) || favorite.series?.isAdult == true)
+        if (gateAdultAction(protectedMedia, type) { openFavorite(favorite) }) return
         when (favorite.kind) {
             FavoriteKind.CHANNEL -> play(favorite.media, CatalogType.LIVE_TV)
             FavoriteKind.MOVIE -> play(favorite.media, CatalogType.MOVIES)
@@ -6976,6 +7067,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSeriesFromHome(series: MediaItem) = task {
+        if (isAdultMedia(series, CatalogType.SERIES) && !authorizeParental()) return@task
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
         val tmdbId = series.favoriteTmdbSeriesId()
@@ -7035,6 +7127,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openRecent(recent: RecentItem) {
+        val type = when (recent.kind) {
+            FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
+            FavoriteKind.MOVIE -> CatalogType.MOVIES
+            else -> CatalogType.SERIES
+        }
+        if (gateAdultAction(recent.series ?: recent.media, type) { openRecent(recent) }) return
         when (recent.kind) {
             FavoriteKind.CHANNEL -> task {
                 val snapshot = _state.value
@@ -7310,6 +7408,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun filterKey(profileKey: String, type: CatalogType): String = "$profileKey|${type.name}"
     private fun filterCategories(raw: List<Category>, profileKey: String?, type: CatalogType, filters: Map<String, List<String>>): List<Category> {
+        if (profileKey != null) com.nikhil.niktv.data.ParentalControls.rememberCategories(getApplication(), profileKey, type, raw)
         if (profileKey == null) return raw
         val key = filterKey(profileKey, type)
         val enabledIds = filters[key] ?: return raw
