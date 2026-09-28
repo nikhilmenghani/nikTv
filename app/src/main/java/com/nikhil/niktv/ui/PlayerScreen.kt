@@ -1066,6 +1066,11 @@ fun PlayerScreen(
             }
         }
     }
+    PauseTvPlaybackInBackground {
+        playbackRequested = false
+        player.pause()
+        controlsVisible = true
+    }
     DisposableEffect(pipActivity) {
         pipActivity?.setPlayerActiveForPip(true)
         pipActivity?.pipModeListener = { entered ->

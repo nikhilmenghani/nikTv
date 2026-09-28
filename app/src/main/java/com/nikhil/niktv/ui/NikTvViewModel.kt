@@ -117,6 +117,8 @@ data class NikTvState(
     val modernSectionOriginHome: Boolean = false,
     val modernTmdbMovies: List<TrendingMovie> = emptyList(),
     val modernTmdbSeries: List<TrendingSeries> = emptyList(),
+    val modernTmdbMovieMatches: Map<Int, List<MediaItem>> = emptyMap(),
+    val modernTmdbSeriesMatches: Map<Int, List<MediaItem>> = emptyMap(),
     val modernTmdbLoading: Boolean = false,
     val modernTmdbPage: Int = 0,
     val modernTmdbHasMore: Boolean = false,
@@ -177,6 +179,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val store = ProfileStore(application)
     private val portal = StalkerPortalClient(application)
     private val tmdb = TmdbClient()
+    private val tmdbAvailabilityCatalogs = mutableMapOf<Pair<String, CatalogType>, SearchCatalogCache>()
+    private val tmdbAvailability = com.nikhil.niktv.data.TmdbAvailabilityRepository(application)
+    private var tmdbAvailabilityJob: Job? = null
     private val _state = MutableStateFlow(NikTvState())
     val state: StateFlow<NikTvState> = _state.asStateFlow()
     private var allFavorites: List<FavoriteItem> = emptyList()
@@ -683,6 +688,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 modernSectionOriginHome = false,
                 modernTmdbMovies = emptyList(),
                 modernTmdbSeries = emptyList(),
+                modernTmdbMovieMatches = emptyMap(),
+                modernTmdbSeriesMatches = emptyMap(),
                 modernTmdbLoading = false,
                 modernTmdbPage = 0,
                 modernTmdbHasMore = false,
@@ -3088,6 +3095,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun openModernTmdbSection(section: TmdbHomeSection) {
+        tmdbAvailabilityJob?.cancel()
         cancelPendingPlayback()
         val snapshot = _state.value
         if (!snapshot.modernUiEnabled || snapshot.session == null) return
@@ -3099,6 +3107,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 modernSectionOriginHome = current.homeOpen,
                 modernTmdbMovies = emptyList(),
                 modernTmdbSeries = emptyList(),
+                modernTmdbMovieMatches = emptyMap(),
+                modernTmdbSeriesMatches = emptyMap(),
                 modernTmdbLoading = false,
                 modernTmdbPage = 0,
                 modernTmdbHasMore = true,
@@ -3114,6 +3124,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openModernIptvCategory(category: Category) {
+        tmdbAvailabilityJob?.cancel()
         cancelPendingPlayback()
         val snapshot = _state.value
         if (!snapshot.modernUiEnabled) return
@@ -3154,6 +3165,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeModernSection() {
+        tmdbAvailabilityJob?.cancel()
         cancelCategoryFind()
         _state.update { current ->
             current.copy(
@@ -3217,7 +3229,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         .drop((page - 1) * MODERN_TMDB_PAGE_SIZE)
                         .take(MODERN_TMDB_PAGE_SIZE)
                     val pageItems = rawPageItems.filter { it.isReleased() }
-                    val candidates = localSeriesCandidates(_state.value)
+                    val cachedMatches = tmdbAvailability.read(profileKey, CatalogType.SERIES).entries
                     val savedMappings = store.tmdbMappings.first()
                         .filter {
                             it.profileKey == profileKey &&
@@ -3229,7 +3241,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             TrendingSeries(
                                 tmdb = series,
                                 iptv = savedMappings[series.id]?.media
-                                    ?: matchTmdbSeries(series, candidates)
+                                    ?: cachedMatches[series.id]?.matches?.firstOrNull()
                             )
                         }
                     }
@@ -3256,6 +3268,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                     }
+                    updateModernTmdbAvailability(session, CatalogType.SERIES)
                 }.onFailure { error ->
                     _state.update { current ->
                         if (current.modernTmdbSection != section) current
@@ -3274,7 +3287,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         .drop((page - 1) * MODERN_TMDB_PAGE_SIZE)
                         .take(MODERN_TMDB_PAGE_SIZE)
                     val pageItems = rawPageItems.filter { it.isReleased() }
-                    val candidates = localMovieCandidates(_state.value)
+                    val cachedMatches = tmdbAvailability.read(profileKey, CatalogType.MOVIES).entries
                     val savedMappings = store.tmdbMappings.first()
                         .filter {
                             it.profileKey == profileKey &&
@@ -3286,7 +3299,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             TrendingMovie(
                                 tmdb = movie,
                                 iptv = savedMappings[movie.id]?.media
-                                    ?: matchTmdbMovie(movie, candidates)
+                                    ?: cachedMatches[movie.id]?.matches?.firstOrNull()
                             )
                         }
                     }
@@ -3313,6 +3326,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                     }
+                    updateModernTmdbAvailability(session, CatalogType.MOVIES)
                 }.onFailure { error ->
                     _state.update { current ->
                         if (current.modernTmdbSection != section) current
@@ -3324,6 +3338,143 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    fun refreshTmdbMatches(id: Int, type: CatalogType) {
+        val session = _state.value.session ?: return
+        updateModernTmdbAvailability(session, type, forceId = id)
+    }
+
+    private fun updateModernTmdbAvailability(
+        session: PortalSession,
+        type: CatalogType,
+        forceId: Int? = null
+    ) {
+        tmdbAvailabilityJob?.cancel()
+        val profileKey = session.profile.cacheKey()
+        val section = _state.value.modernTmdbSection ?: return
+        tmdbAvailabilityJob = viewModelScope.launch {
+            var forcedId = forceId
+            while (isActive) {
+                val snapshot = _state.value
+                if (snapshot.session?.profile?.cacheKey() != profileKey ||
+                    snapshot.modernTmdbSection != section || snapshot.nowPlaying != null) return@launch
+                val interval = snapshot.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L
+                val now = System.currentTimeMillis()
+                val saved = tmdbAvailability.read(profileKey, type).entries
+                val ids = if (type == CatalogType.MOVIES) snapshot.modernTmdbMovies.map { it.tmdb.id }
+                    else snapshot.modernTmdbSeries.map { it.tmdb.id }
+                val cachedMatches = saved.filterKeys { it in ids }.mapValues { it.value.matches }
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey || current.modernTmdbSection != section) current
+                    else if (type == CatalogType.MOVIES) current.copy(
+                        modernTmdbMovieMatches = current.modernTmdbMovieMatches + cachedMatches)
+                    else current.copy(modernTmdbSeriesMatches = current.modernTmdbSeriesMatches + cachedMatches)
+                }
+                val manualId = forcedId
+                forcedId = null
+                val pending = ids.filter { id ->
+                    if (manualId != null) id == manualId else saved[id]?.isFresh(now, interval) != true
+                }
+                Log.d("NikTvTmdbMatches", "${type.name}: cached=${cachedMatches.size}, refresh=${pending.size}, manual=${manualId != null}")
+                if (pending.isEmpty()) {
+                    val nextCheck = ids.mapNotNull { saved[it]?.checkedAtMillis }
+                        .minOrNull()?.plus(interval)?.minus(now)?.coerceAtLeast(1_000L) ?: interval
+                    delay(nextCheck)
+                    continue
+                }
+                // No full-catalogue decoding or matching is needed while all tile caches are fresh.
+                val catalog = if (session.profile.portalType == PortalType.XTREAM) {
+                    val key = profileKey to type
+                    val memory = tmdbAvailabilityCatalogs[key]
+                    val persisted = memory ?: store.searchCatalog(type, profileKey).first()
+                    val usable = persisted?.takeIf {
+                        manualId == null && now >= it.cachedAtMillis && now - it.cachedAtMillis < interval
+                    }
+                    usable ?: runCatching {
+                        portal.invalidateFullCatalog(session.profile, type)
+                        val items = withAutomaticSessionRetry(session) { activeSession ->
+                            portal.fullCatalog(activeSession, type, emptyList())
+                        }
+                        SearchCatalogCache(profileKey, type, System.currentTimeMillis(), items).also {
+                            store.saveSearchCatalog(it, scheduleMetadataSync = false)
+                        }
+                    }.getOrElse { error ->
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (manualId != null) _state.update { it.copy(error = error.message ?: "Could not refresh IPTV matches") }
+                        delay(60_000L)
+                        continue
+                    }
+                } else null
+                if (catalog != null) tmdbAvailabilityCatalogs[profileKey to type] = catalog
+                for (id in pending) {
+                    val current = _state.value
+                    if (current.session?.profile?.cacheKey() != profileKey ||
+                        current.modernTmdbSection != section || current.nowPlaying != null) return@launch
+                    val title = if (type == CatalogType.MOVIES)
+                        snapshot.modernTmdbMovies.first { it.tmdb.id == id }.tmdb.title
+                        else snapshot.modernTmdbSeries.first { it.tmdb.id == id }.tmdb.name
+                    val matchingSeries = if (type == CatalogType.SERIES) {
+                        val original = snapshot.modernTmdbSeries.first { it.tmdb.id == id }.tmdb
+                        try { tmdb.withSeriesAliases(original) } catch (error: Exception) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            original
+                        }
+                    } else null
+                    val candidates = catalog?.items ?: runCatching {
+                        withAutomaticSessionRetry(session) { activeSession ->
+                            val initial = portal.search(activeSession, searchTypeForCatalog(type), title, 1, "*", background = manualId == null).items
+                            if (type != CatalogType.SERIES) initial else {
+                                val series = requireNotNull(matchingSeries)
+                                if (rankTmdbSeriesMatches(series, initial).isNotEmpty()) initial else {
+                                    // Bounded fallbacks: provider titles may omit articles, and series can live in VOD.
+                                    val queries = (series.alternativeNames + listOf(series.originalName) + tmdbSeriesProviderQueries(series))
+                                        .distinct().filter { it.isNotBlank() && it != title }
+                                        .sortedByDescending { query -> query.any { it in 'a'..'z' || it in 'A'..'Z' } }
+                                        .take(2)
+                                    val collected = initial.toMutableList()
+                                    for (query in queries.ifEmpty { listOf(title) }) {
+                                        delay(2_000L)
+                                        collected += portal.search(activeSession, searchTypeForCatalog(type),
+                                            query, 1, "*", background = manualId == null).items
+                                        if (rankTmdbSeriesMatches(series, collected).isNotEmpty()) break
+                                    }
+                                    if (rankTmdbSeriesMatches(series, collected).isEmpty()) {
+                                        delay(2_000L)
+                                        collected += portal.search(activeSession, searchTypeForCatalog(CatalogType.MOVIES),
+                                            queries.firstOrNull() ?: title, 1, "*", background = manualId == null).items
+                                    }
+                                    collected
+
+                                }
+                            }
+                        }
+                    }.getOrElse { error ->
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (manualId != null) _state.update { it.copy(error = error.message ?: "Could not refresh IPTV matches") }
+                        delay(2_000L)
+                        continue
+                    }
+                    val found = withContext(Dispatchers.Default) {
+                        if (type == CatalogType.MOVIES) rankTmdbMovieMatches(
+                            snapshot.modernTmdbMovies.first { it.tmdb.id == id }.tmdb, candidates)
+                        else rankTmdbSeriesMatches(requireNotNull(matchingSeries), candidates)
+                    }
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    tmdbAvailability.save(profileKey, type, id,
+                        TmdbAvailabilityEntry(System.currentTimeMillis(), found, matchingVersion = 4))
+                    _state.update { latest ->
+                        if (latest.session?.profile?.cacheKey() != profileKey || latest.modernTmdbSection != section) latest
+                        else if (type == CatalogType.MOVIES) latest.copy(
+                            modernTmdbMovieMatches = latest.modernTmdbMovieMatches + (id to found))
+                        else latest.copy(modernTmdbSeriesMatches = latest.modernTmdbSeriesMatches + (id to found))
+                    }
+                    if (catalog == null) delay(2_000L)
+                }
+                // Failed checks remain due, but cannot create a tight retry loop.
+                delay(60_000L)
             }
         }
     }
@@ -3617,6 +3768,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openTrendingMovie(entry: TrendingMovie) = task {
+        tmdbAvailabilityJob?.cancel()
         val session = requireNotNull(_state.value.session)
         val saved = store.tmdbMappings.first().firstOrNull {
             it.profileKey == session.profile.cacheKey() &&
@@ -3630,7 +3782,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return@task
         }
 
-        val lookup = resolveInitialTmdbMovieCandidates(session, entry)
+        val prefetched = _state.value.modernTmdbMovieMatches[entry.tmdb.id]?.takeIf { it.isNotEmpty() }
+        val lookup = if (prefetched != null) MovieMatchLookup(prefetched, prefetched,
+            if (session.profile.portalType == PortalType.XTREAM) emptyList()
+            else listOf(entry.tmdb.title to 1))
+            else resolveInitialTmdbMovieCandidates(session, entry)
         val candidates = lookup.matches
         if (candidates.isEmpty()) {
             error(
@@ -3714,6 +3870,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openTrendingSeries(entry: TrendingSeries) = task {
+        tmdbAvailabilityJob?.cancel()
         val session = requireNotNull(_state.value.session)
         val saved = store.tmdbMappings.first().firstOrNull {
             it.profileKey == session.profile.cacheKey() &&
@@ -3726,7 +3883,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             return@task
         }
 
-        val candidates = resolveInitialTmdbSeriesCandidates(session, entry)
+        val candidates = _state.value.modernTmdbSeriesMatches[entry.tmdb.id]?.takeIf { it.isNotEmpty() }
+            ?: resolveInitialTmdbSeriesCandidates(session, entry)
         if (candidates.isEmpty()) {
             resolveTmdbSeriesMovieFallback(session, entry.tmdb)?.let { movie ->
                 // Wio exposes some series containers in its general VOD/movie
@@ -4116,8 +4274,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         session: PortalSession,
         entry: TrendingSeries
     ): List<MediaItem> {
+        val matchingSeries = try { tmdb.withSeriesAliases(entry.tmdb) } catch (error: Exception) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            entry.tmdb
+        }
         val persisted = store.searchCatalog(CatalogType.SERIES, session.profile.cacheKey()).first()?.items.orEmpty()
-        val localMatches = rankTmdbSeriesMatches(entry.tmdb,
+        val localMatches = rankTmdbSeriesMatches(matchingSeries,
             (persisted + localSeriesCandidates(_state.value)).distinctBy { it.id })
         if (localMatches.isNotEmpty()) return localMatches
         if (session.profile.portalType == PortalType.XTREAM) {
@@ -4129,10 +4291,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-            return rankTmdbSeriesMatches(entry.tmdb, catalog)
+            return rankTmdbSeriesMatches(matchingSeries, catalog)
         }
 
-        val queries = tmdbSeriesProviderQueries(entry.tmdb)
+        val queries = tmdbSeriesProviderQueries(matchingSeries)
 
         val candidates = localSeriesCandidates(_state.value).toMutableList()
         for (query in queries) {
@@ -4144,7 +4306,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 categoryId = "*"
             )
             candidates += page.items
-            rankTmdbSeriesMatches(entry.tmdb, candidates.distinctBy { it.id })
+            rankTmdbSeriesMatches(matchingSeries, candidates.distinctBy { it.id })
                 .takeIf { it.isNotEmpty() }
                 ?.let { return it }
         }
@@ -4159,7 +4321,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     categoryId = category.id
                 )
                 candidates += page.items
-                rankTmdbSeriesMatches(entry.tmdb, candidates.distinctBy { it.id })
+                rankTmdbSeriesMatches(matchingSeries, candidates.distinctBy { it.id })
                     .takeIf { it.isNotEmpty() }
                     ?.let { return it }
             }
@@ -4217,12 +4379,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun tmdbSeriesProviderQueries(series: TmdbSeries): List<String> {
-        val titles = listOf(series.name, series.originalName)
+        val titles = (listOf(series.name, series.originalName) + series.alternativeNames)
             .map(String::trim)
             .filter(String::isNotBlank)
             .flatMap { title ->
                 listOf(
                     title,
+                    title.replace(Regex("^(?:the|a|an)\\s+", RegexOption.IGNORE_CASE), ""),
                     title.replace(Regex("['’]s\\b", RegexOption.IGNORE_CASE), ""),
                     title.replace(Regex("['’]"), "")
                 )

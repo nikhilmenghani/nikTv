@@ -815,6 +815,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,enrichFocusedCatalogMetadata = vm::enrichFocusedCatalogMetadata
                     ,enrichVisibleLiveGuides = vm::enrichVisibleLiveGuides
                     ,refreshLiveProgramme = vm::refreshLiveProgramme
+                    ,refreshTmdbMatches = vm::refreshTmdbMatches
                     ,findChannelsInCategory = vm::findChannelsInCategory
                     ,cancelCategoryFind = vm::cancelCategoryFind
                     ,openOfflineDownloads = vm::openOfflineDownloads
@@ -928,8 +929,6 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                         .fillMaxWidth()
                                         .height(44.dp)
                                         .focusRequester(reauthenticateRequester)
-                                        .remoteFocusFrame(CircleShape),
-                                    shape = CircleShape
                                 ) {
                                     if (state.reauthenticating) {
                                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -939,18 +938,17 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                 }
                                 Row(
                                     Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     NikTvSecondaryActionButton(
                                         onClick = vm::dismissError,
                                         enabled = !state.reauthenticating,
-                                        modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
-                                        shape = CircleShape
+                                        modifier = Modifier.weight(1f)
                                     ) { Text("Close") }
                                     if (showDiagnostics) NikTvPrimaryActionButton(
                                         onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
-                                        modifier = Modifier.height(44.dp).remoteFocusFrame(CircleShape),
-                                        shape = CircleShape
+                                        modifier = Modifier.weight(1f)
                                     ) {
                                         Icon(Icons.Default.ContentCopy, null, Modifier.size(18.dp))
                                         Spacer(Modifier.width(6.dp))

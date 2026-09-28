@@ -318,6 +318,8 @@ internal fun VlcPlayerScreen(
         player.setSpuDelay(subtitleDelayMs * 1_000L)
     }
     val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
+    val tvBackgroundPolicy = rememberPlayerTvDevice()
+    val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val activity = remember(context) { context.findActivity() }
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -382,6 +384,11 @@ internal fun VlcPlayerScreen(
             controller?.show(WindowInsetsCompat.Type.systemBars())
         }
         onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+    PauseTvPlaybackInBackground {
+        playbackRequested = false
+        player.pause()
+        controlsVisible = true
     }
     DisposableEffect(pipActivity) {
         pipActivity?.setPlayerActiveForPip(true)
@@ -590,8 +597,11 @@ internal fun VlcPlayerScreen(
                 } finally {
                     vlcMedia.release()
                 }
-                player.play()
             }
+            // Check on the main thread after asynchronous media preparation.
+            // Home may have been pressed while the stream was opening.
+            if (!tvBackgroundPolicy || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
+                    androidx.lifecycle.Lifecycle.State.STARTED) == true) player.play()
             if (preparedExternalSubtitle) externalSubtitleAttached = true
             awaitCancellation()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {

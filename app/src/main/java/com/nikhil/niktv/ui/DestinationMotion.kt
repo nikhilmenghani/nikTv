@@ -8,7 +8,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.unit.dp
 
 /** Animate the incoming destination only: outgoing grids must release focus and effects. */
 @Composable
@@ -19,6 +18,5 @@ internal fun Modifier.destinationEntrance(key: Any, isTv: Boolean): Modifier {
     }
     return graphicsLayer {
         alpha = progress.value
-        translationY = (1f - progress.value) * (if (isTv) 6.dp else 12.dp).toPx()
     }
 }

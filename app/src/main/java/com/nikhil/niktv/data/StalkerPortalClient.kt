@@ -45,6 +45,10 @@ class StalkerPortalClient(private val context: Context) {
         ttlMillis = 30 * 60_000L
     )
 
+    fun invalidateFullCatalog(profile: PortalProfile, type: CatalogType) {
+        xtreamCatalogCache.invalidate(Triple(profile, type, null))
+    }
+
     fun invalidateCatalog(profile: PortalProfile, category: Category) {
         xtreamCatalogCache.invalidate(Triple(profile, category.type, category.id))
     }
@@ -188,8 +192,7 @@ class StalkerPortalClient(private val context: Context) {
                 // A category page must contain top-level VOD containers. Some
                 // Ministra portals return episode rows when the hierarchy is
                 // ambiguous; never promote those rows into Series tiles.
-                val episodeRow = o.boolish("is_episode") ||
-                    o.string("episode_id")?.toLongOrNull()?.let { it > 0L } == true
+                val episodeRow = isPortalEpisodeRow(o.boolish("is_episode"), o.string("episode_id"))
                 if (category.type == CatalogType.SERIES && episodeRow) return@mapNotNull null
                 // Category selection and request shape are authoritative. This
                 // provider reports both is_movie=true and is_series=1 for Series,
@@ -287,7 +290,7 @@ class StalkerPortalClient(private val context: Context) {
     }
 
     /** One bounded server operation used by the dedicated search screen. */
-    suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int, categoryId: String = "*"): PortalSearchPage = withContext(Dispatchers.IO) {
+    suspend fun search(session: PortalSession, type: SearchContentType, query: String, page: Int, categoryId: String = "*", background: Boolean = false): PortalSearchPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             val catalogType = when (type) {
                 SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
@@ -303,8 +306,9 @@ class StalkerPortalClient(private val context: Context) {
             "type" to if (live) "itv" else "vod", "action" to "get_ordered_list",
             (if (live) "genre" else "category") to categoryId,
             "search" to query.trim(), "p" to page.coerceAtLeast(1).toString(), "fav" to "0", "sortby" to "added",
-            "hd" to "0", "ended" to "0"
-        )))
+            "hd" to "0", "ended" to "0",
+            "movie_id" to "0", "season_id" to "0", "episode_id" to "0"
+        )), background = background)
         val payload = response.payload()
         val data = payload.arrayFromData()
         val items = data.mapNotNull { node ->
@@ -312,7 +316,7 @@ class StalkerPortalClient(private val context: Context) {
             val id = item.string("id") ?: item.string("movie_id") ?: return@mapNotNull null
             val series = item.boolish("is_series") || item.string("series") == "1" ||
                 item.string("type").equals("series", ignoreCase = true) || item.string("name").orEmpty().contains("series", ignoreCase = true)
-            val episode = item.boolish("is_episode") || item.string("episode_id") != null
+            val episode = isPortalEpisodeRow(item.boolish("is_episode"), item.string("episode_id"))
             val matchesType = when (type) {
                 SearchContentType.ALL -> error("Search each provider media type separately")
                 SearchContentType.LIVE_TV -> true
@@ -1335,3 +1339,7 @@ private class PortalHttpException(
 
 private class PortalRateLimitCooldownException(val remainingSeconds: Long) :
     IllegalStateException("Portal requests are paused for $remainingSeconds seconds")
+
+/** Top-level VOD containers often include an episode_id sentinel of zero. */
+internal fun isPortalEpisodeRow(isEpisode: Boolean, episodeId: String?): Boolean =
+    isEpisode || (episodeId?.toLongOrNull()?.let { it > 0L } == true)

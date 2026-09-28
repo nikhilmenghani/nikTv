@@ -57,7 +57,8 @@ data class TmdbSeries(
     val backdropUrl: String?,
     val firstAirDate: String?,
     val voteAverage: Double?,
-    val cast: List<String> = emptyList()
+    val cast: List<String> = emptyList(),
+    val alternativeNames: List<String> = emptyList()
 ) {
     val firstAirYear: Int?
         get() = firstAirDate?.take(4)?.toIntOrNull()
@@ -126,6 +127,22 @@ class TmdbClient {
 
     val configured: Boolean
         get() = readAccessToken.isNotBlank() || apiKey.isNotBlank()
+
+    private val seriesAliases = java.util.concurrent.ConcurrentHashMap<Int, List<String>>()
+
+    suspend fun withSeriesAliases(series: TmdbSeries): TmdbSeries = withContext(Dispatchers.IO) {
+        if (!configured || series.alternativeNames.isNotEmpty()) return@withContext series
+        val aliases = seriesAliases[series.id] ?: run {
+            // A failed lookup must remain retryable rather than being cached as no aliases.
+            val root = execute("/3/tv/${series.id}/alternative_titles", emptyMap())
+            val names = root["results"]?.jsonArray.orEmpty().mapNotNull {
+                it.jsonObject["title"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+            }.distinct()
+            seriesAliases[series.id] = names
+            names
+        }
+        series.copy(alternativeNames = aliases)
+    }
 
     suspend fun artworkFor(item: MediaItem, type: com.nikhil.niktv.model.CatalogType): String? =
         withContext(Dispatchers.IO) {
@@ -657,16 +674,18 @@ fun rankTmdbSeriesMatches(
     candidates: List<MediaItem>
 ): List<MediaItem> = rankTmdbTitleMatches(
     tmdbId = series.id,
-    titles = listOf(series.name, series.originalName),
+    titles = listOf(series.name, series.originalName) + series.alternativeNames,
     year = series.firstAirYear,
-    candidates = candidates
+    candidates = candidates,
+    series = true
 )
 
 private fun rankTmdbTitleMatches(
     tmdbId: Int,
     titles: List<String>,
     year: Int?,
-    candidates: List<MediaItem>
+    candidates: List<MediaItem>,
+    series: Boolean = false
 ): List<MediaItem> {
     if (candidates.isEmpty()) return emptyList()
 
@@ -686,17 +705,19 @@ private fun rankTmdbTitleMatches(
         .asSequence()
         .distinctBy { it.id }
         .mapNotNull { candidate ->
-            val candidateKey = candidate.title.mediaMatchKey()
+            val candidateKeys = listOf(candidate.title, candidate.title.substringAfter(" : ", candidate.title))
+                .map { it.mediaMatchKey() }.distinct()
+            val candidateKey = candidateKeys.first()
             if (candidateKey.isBlank()) return@mapNotNull null
 
             val titleScore = wantedKeys.maxOf { wanted ->
-                when {
+                candidateKeys.maxOf { candidateKey -> when {
                     candidateKey == wanted -> 1000
                     candidateKey.startsWith("$wanted ") ||
                         wanted.startsWith("$candidateKey ") -> 780
                     tokenSimilarity(candidateKey, wanted) >= 0.86 -> 700
                     else -> 0
-                }
+                } }
             }
 
             if (titleScore == 0) return@mapNotNull null
@@ -705,6 +726,7 @@ private fun rankTmdbTitleMatches(
             val yearScore = when {
                 year == null || candidateYear == null -> 0
                 candidateYear == year -> 240
+                series -> 0
                 else -> -300
             }
 
@@ -747,6 +769,7 @@ private fun String.mediaMatchKey(): String =
         .replace(nonAlphaNumericPattern, " ")
         .trim()
         .replace(repeatedWhitespacePattern, " ")
+        .replace(Regex("^(?:the|a|an)\\s+"), "")
 
 private fun tokenSimilarity(left: String, right: String): Double {
     val a = left.split(' ').filter(String::isNotBlank).toSet()

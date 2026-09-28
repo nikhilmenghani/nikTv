@@ -192,6 +192,7 @@ internal fun ModernBrowseScreen(
     enrichFocusedCatalogMetadata: suspend (MediaItem, CatalogType) -> Unit,
     enrichVisibleLiveGuides: (List<MediaItem>) -> Unit,
     refreshLiveProgramme: (MediaItem) -> Unit,
+    refreshTmdbMatches: (Int, CatalogType) -> Unit,
     findChannelsInCategory: (String) -> Unit,
     cancelCategoryFind: () -> Unit
 ) {
@@ -238,6 +239,7 @@ internal fun ModernBrowseScreen(
             enrichFocusedCatalogMetadata = enrichFocusedCatalogMetadata,
             enrichVisibleLiveGuides = enrichVisibleLiveGuides,
             refreshLiveProgramme = refreshLiveProgramme,
+            refreshTmdbMatches = refreshTmdbMatches,
             findChannelsInCategory = findChannelsInCategory,
             cancelCategoryFind = cancelCategoryFind,
             configureTmdb = { tmdbSetupOpen = true },
