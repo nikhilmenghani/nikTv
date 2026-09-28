@@ -37,6 +37,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -647,6 +650,7 @@ private fun QueueArtworkFallback(item: MediaItem) {
 
 @Composable
 internal fun PlayerQueueOverlay(
+    rewindProfileKey: String = "",
     items: List<MediaItem>,
     playingId: String,
     pinnedIds: List<String> = emptyList(),
@@ -654,6 +658,7 @@ internal fun PlayerQueueOverlay(
     onToggleFavorite: ((MediaItem) -> Unit)? = null,
     onTogglePin: ((MediaItem) -> Unit)? = null,
     onRefreshProgramme: ((MediaItem) -> Unit)? = null,
+    onVisibleChannels: (List<MediaItem>) -> Unit = {},
     liveCategoryTitle: String = "",
     liveXtream: Boolean = false,
     hasMore: Boolean = false,
@@ -721,7 +726,8 @@ internal fun PlayerQueueOverlay(
         (
             configuration.screenHeightDp *
                 when {
-                    tvQueueGrid && liveChannelQueue -> .72f
+                    // Keep roughly two channel rows visible, leaving the video above exposed.
+                    tvQueueGrid && liveChannelQueue -> if (liveXtream) .52f else .46f
                     tvQueueGrid -> .48f
                     compactQueueGrid -> .64f
                     else -> .54f
@@ -836,6 +842,25 @@ internal fun PlayerQueueOverlay(
         animationSpec = if (revealDragging) snap() else tween(220),
         label = "playerQueueReveal"
     )
+
+    val currentQueueItems by rememberUpdatedState(uniqueItems)
+    val currentVisibleCallback by rememberUpdatedState(onVisibleChannels)
+    LaunchedEffect(gridState, liveChannelQueue) {
+        if (!liveChannelQueue) return@LaunchedEffect
+        snapshotFlow {
+            Triple(gridState.layoutInfo.visibleItemsInfo.mapNotNull { visible ->
+                currentQueueItems.getOrNull(visible.index - if (leadingLoadPrevious) 1 else 0)
+            }, gridState.isScrollInProgress, guideNow)
+        }.collect { (visible, scrolling, _) ->
+            if (!scrolling) {
+                delay(180L)
+                if (!gridState.isScrollInProgress) currentVisibleCallback(visible)
+            }
+        }
+    }
+    DisposableEffect(liveChannelQueue) {
+        onDispose { if (liveChannelQueue) currentVisibleCallback(emptyList()) }
+    }
 
     val showPaginationTile = showLoadMore || loadMoreRequested
 
@@ -1021,6 +1046,7 @@ internal fun PlayerQueueOverlay(
 
         if (liveChannelQueue) {
             ModernLiveChannelTile(
+                rewindProfileKey = rewindProfileKey,
                 item = item,
                 onRefreshProgramme = { onRefreshProgramme?.invoke(item) },
                 xtream = liveXtream,
@@ -1043,6 +1069,7 @@ internal fun PlayerQueueOverlay(
                             Modifier.fillMaxWidth()
                         }
                     )
+                    .height(queueCardHeight)
                     .focusRequester(requester),
                 isTv = tvQueueGrid,
                 onFocusChange = { isFocused ->
@@ -1056,10 +1083,6 @@ internal fun PlayerQueueOverlay(
             return
         }
 
-        var artworkReady by remember(item.id, item.logo) { mutableStateOf(false) }
-        val artwork = remember(item.id, item.title, item.logo) {
-            artworkRequest(context, item)
-        }
         val cardShape =
             androidx.compose.foundation.shape.RoundedCornerShape(
                 if (touchQueueRail) 14.dp else 12.dp
@@ -1094,9 +1117,7 @@ internal fun PlayerQueueOverlay(
                     )
                     .focusable(),
                 color = when {
-                    focused -> Color(0xFF3B4D68)
-                    current -> Color(0xFF383838)
-                    else -> Color(0xFF242424)
+                    else -> Color(0xFF171A20)
                 },
                 border = if (focused) {
                     androidx.compose.foundation.BorderStroke(
@@ -1104,326 +1125,12 @@ internal fun PlayerQueueOverlay(
                         Color.White
                     )
                 } else {
-                    null
+                    androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF35383F))
                 },
                 shape = cardShape
             ) {
-                if (touchQueueRail || tvQueueGrid) {
-                    /*
-                     * Match the Home media-card visual language on phones:
-                     * artwork is the card, while title/subtitle sit over a
-                     * bottom readability gradient instead of consuming a
-                     * separate strip below the image.
-                     */
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(Color(0xFF111111)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (item.logo.isNullOrBlank()) {
-                            QueueArtworkFallback(item)
-                        } else {
-                            SubcomposeAsyncImage(
-                                model = artwork,
-                                contentDescription = item.title,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            ) {
-                                val loaded = painter.state.value is AsyncImagePainter.State.Success
-                                LaunchedEffect(loaded) { artworkReady = loaded }
-                                if (loaded) SubcomposeAsyncImageContent()
-                                else QueueArtworkFallback(item)
-                            }
-                        }
+                PlayerMediaTileContent(item = item, current = current, isTv = tvQueueGrid)
 
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        colors = listOf(
-                                            Color.Transparent,
-                                            Color.Black.copy(alpha = 0.05f),
-                                            Color.Black.copy(alpha = 0.50f),
-                                            Color.Black.copy(alpha = 0.96f)
-                                        )
-                                    )
-                                )
-                        )
-
-                        if (current) {
-                            Surface(
-                                Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(6.dp),
-                                color = Color.Black.copy(alpha = .78f),
-                                shape =
-                                    androidx.compose.foundation.shape
-                                        .RoundedCornerShape(6.dp)
-                            ) {
-                                Row(
-                                    Modifier.padding(
-                                        horizontal = 6.dp,
-                                        vertical = 2.dp
-                                    ),
-                                    verticalAlignment =
-                                        Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        Icons.Default.PlayArrow,
-                                        null,
-                                        Modifier.size(12.dp),
-                                        tint = Color.White
-                                    )
-                                    Spacer(Modifier.width(3.dp))
-                                    Text(
-                                        "PLAYING",
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontSize = 9.sp,
-                                            lineHeight = 10.sp
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
-                        if (item.id in pinnedIds) {
-                            Icon(
-                                Icons.Default.PushPin,
-                                contentDescription = "Pinned channel",
-                                modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(17.dp),
-                                tint = Color.White
-                            )
-                        }
-
-                        val episodeLabel = listOfNotNull(
-                            item.seasonNumber?.let { "Season $it" },
-                            item.episodeNumber?.let { "Episode $it" }
-                        ).joinToString(" · ")
-                        val description =
-                            item.description
-                                ?.trim()
-                                ?.takeIf {
-                                    it.isNotBlank() &&
-                                        !it.equals(
-                                            item.title.trim(),
-                                            ignoreCase = true
-                                        )
-                                }
-                        val subtitle =
-                            listOfNotNull(
-                                episodeLabel.takeIf { it.isNotBlank() },
-                                description.takeUnless { compactQueueGrid }
-                            ).joinToString(" · ")
-
-                        if (!artworkReady) {
-                            Text(
-                                item.title,
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .fillMaxWidth()
-                                    .padding(start = 12.dp, end = 10.dp, bottom = 10.dp),
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    fontSize = if (item.title.length > 32) 10.sp else 11.sp,
-                                    lineHeight = 12.sp,
-                                    shadow = Shadow(Color.Black, Offset(0f, 2f), blurRadius = 8f)
-                                ),
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                                maxLines = 6,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        } else Column(
-                            Modifier
-                                .align(Alignment.BottomStart)
-                                .fillMaxWidth()
-                                .padding(
-                                    start = 10.dp,
-                                    end = 10.dp,
-                                    bottom = 7.dp
-                                ),
-                            verticalArrangement =
-                                Arrangement.spacedBy(3.dp)
-                        ) {
-                            Text(
-                                item.title,
-                                color = Color.White,
-                                style =
-                                    MaterialTheme.typography.labelLarge.copy(
-                                        fontSize = 11.sp,
-                                        lineHeight = 13.sp,
-                                        shadow = Shadow(Color.Black, Offset(0f, 2f), blurRadius = 8f)
-                                    ),
-                                fontWeight =
-                                    androidx.compose.ui.text.font
-                                        .FontWeight.SemiBold,
-                                maxLines = 5,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (subtitle.isNotBlank()) {
-                                Text(
-                                    subtitle,
-                                    color = Color.White.copy(alpha = .80f),
-                                    style =
-                                        MaterialTheme.typography.labelSmall.copy(
-                                            fontSize = 10.sp,
-                                            lineHeight = 12.sp,
-                                            shadow = Shadow(Color.Black, Offset(0f, 2f), blurRadius = 7f)
-                                        ),
-                                    maxLines = if (compactQueueGrid) 1 else 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Column(
-                        Modifier.padding(if (tvQueueGrid) 5.dp else 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(
-                            if (tvQueueGrid) 4.dp else 8.dp
-                        )
-                    ) {
-                        Surface(
-                            Modifier
-                                .fillMaxWidth()
-                                .then(
-                                    if (tvQueueGrid) {
-                                        Modifier.height(45.dp)
-                                    } else {
-                                        Modifier.weight(1f)
-                                    }
-                                ),
-                            shape =
-                                androidx.compose.foundation.shape
-                                    .RoundedCornerShape(8.dp),
-                            color = Color(0xFF111111)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                if (item.logo.isNullOrBlank()) {
-                                    Icon(
-                                        Icons.Default.Movie,
-                                        null,
-                                        tint = Color.LightGray
-                                    )
-                                } else {
-                                    SubcomposeAsyncImage(
-                                        model = artwork,
-                                        contentDescription = item.title,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    ) {
-                                        when (painter.state.value) {
-                                            is AsyncImagePainter.State.Success ->
-                                                SubcomposeAsyncImageContent()
-                                            else -> Icon(
-                                                Icons.Default.Movie,
-                                                null,
-                                                tint = Color.LightGray
-                                            )
-                                        }
-                                    }
-                                }
-
-                                if (current) {
-                                    Surface(
-                                        Modifier
-                                            .align(Alignment.BottomStart)
-                                            .padding(5.dp),
-                                        color = Color.Black.copy(alpha = .78f),
-                                        shape =
-                                            androidx.compose.foundation.shape
-                                                .RoundedCornerShape(5.dp)
-                                    ) {
-                                        Row(
-                                            Modifier.padding(
-                                                horizontal = 6.dp,
-                                                vertical = 3.dp
-                                            ),
-                                            verticalAlignment =
-                                                Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                Icons.Default.PlayArrow,
-                                                null,
-                                                Modifier.size(14.dp),
-                                                tint = Color.White
-                                            )
-                                            Text(
-                                                "PLAYING",
-                                                color = Color.White,
-                                                style =
-                                                    MaterialTheme.typography
-                                                        .labelSmall
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Column(
-                            Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(
-                                if (tvQueueGrid) 1.dp else 4.dp
-                            )
-                        ) {
-                            Text(
-                                item.title,
-                                color = Color.White,
-                                style = if (tvQueueGrid) {
-                                    MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        lineHeight = 11.sp
-                                    )
-                                } else {
-                                    MaterialTheme.typography.titleSmall
-                                },
-                                maxLines = if (tvQueueGrid) 3 else 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-
-                            val episodeLabel = listOfNotNull(
-                                item.seasonNumber?.let { "Season $it" },
-                                item.episodeNumber?.let { "Episode $it" }
-                            ).joinToString(" · ")
-
-                            if (
-                                episodeLabel.isNotBlank() &&
-                                !tvQueueGrid
-                            ) {
-                                Text(
-                                    episodeLabel,
-                                    color = Color.White.copy(alpha = .76f),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            item.description
-                                ?.trim()
-                                ?.takeIf {
-                                    it.isNotBlank() &&
-                                        !it.equals(
-                                            item.title.trim(),
-                                            ignoreCase = true
-                                        )
-                                }
-                                ?.takeUnless { tvQueueGrid }
-                                ?.let {
-                                    Text(
-                                        it,
-                                        color = Color.White.copy(alpha = .68f),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                        }
-                    }
-                }
             }
 
             if (
@@ -1586,7 +1293,7 @@ internal fun PlayerQueueOverlay(
             .background(
                 Color.Black.copy(
                     alpha =
-                        (if (tvQueueGrid) .24f else .30f) *
+                        (if (tvQueueGrid) .08f else .30f) *
                             renderedReveal
                 )
             )

@@ -77,6 +77,11 @@ class StalkerPortalClient(private val context: Context) {
                     null
                 } else endpoint to response
             }.getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                if (it is java.net.UnknownHostException) {
+                    // All candidate paths share a host; probing others cannot fix DNS.
+                    throw java.io.IOException("Could not resolve the provider hostname. Check your internet connection or DNS, then retry. (${it.message})", it)
+                }
                 if (it is PortalRateLimitCooldownException) {
                     error("Portal protection is active. Wait ${it.remainingSeconds} seconds before making another server request.")
                 }

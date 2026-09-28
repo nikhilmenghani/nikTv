@@ -78,6 +78,7 @@ internal fun VlcPlayerScreen(
     onToggleQueueFavorite: ((MediaItem) -> Unit)? = null,
     onToggleQueuePin: ((MediaItem) -> Unit)? = null,
     onRefreshQueueProgramme: ((MediaItem) -> Unit)? = null,
+    onVisibleQueueChannels: (List<MediaItem>) -> Unit = {},
     liveQueueCategoryTitle: String = "",
     liveQueueXtream: Boolean = false,
     onProgress: (String, Long, Long) -> Unit,
@@ -89,6 +90,7 @@ internal fun VlcPlayerScreen(
     initialSubtitleDelayMs: Long = 0L,
     initialExternalSubtitleFile: File? = null,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
+    onWatchLive: () -> Unit = {},
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
     onLoadMoreQueue: () -> Boolean = { false },
@@ -182,6 +184,7 @@ internal fun VlcPlayerScreen(
         }
         previousLiveRecordingActive = liveRecording.active
     }
+    var liveRewindRequested by remember(media.progressKey) { mutableStateOf(false) }
     var queueVisible by remember(media.progressKey) { mutableStateOf(false) }
     var programmeGuideOpen by remember(media.progressKey) { mutableStateOf(false) }
     var queueRevealProgress by remember(media.progressKey) { mutableFloatStateOf(0f) }
@@ -317,7 +320,11 @@ internal fun VlcPlayerScreen(
     LaunchedEffect(player, subtitleDelayMs) {
         player.setSpuDelay(subtitleDelayMs * 1_000L)
     }
-    val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
+    // VLC length/isSeekable alone can describe one short live segment, not a DVR window.
+    // Keep the elapsed Live clock until an actual rewind source is available.
+    val liveSeekable = media.catalogType == CatalogType.LIVE_TV && media.originalLiveUrl != null &&
+        duration > 0L && player.isSeekable
+    val seekable = duration > 0L && (media.catalogType != CatalogType.LIVE_TV || liveSeekable)
     val tvBackgroundPolicy = rememberPlayerTvDevice()
     val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val activity = remember(context) { context.findActivity() }
@@ -1436,12 +1443,23 @@ PlayerChromeIconButton(
                         ),
                         verticalArrangement = Arrangement.spacedBy(if (compactMobileControls) 3.dp else 8.dp)
                     ) {
+                        if (liveSeekable && liveRewindRequested && duration - position > 5_000L) {
+                            NikTvSecondaryActionButton(onClick = {
+                                onWatchLive()
+                                player.play()
+                                playbackRequested = true
+                                liveRewindRequested = false
+                            }) { Text("Watch live") }
+                        }
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = media.progressKey,
                                 position = position,
                                 duration = duration,
-                                onSeek = { player.time = it },
+                                onSeek = {
+                                    if (liveSeekable) liveRewindRequested = duration - it > 5_000L
+                                    player.time = it
+                                },
                                 compact = compactMobileControls,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1529,7 +1547,13 @@ PlayerChromeIconButton(
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.Replay10,
                                         contentDescription = "Back 10 seconds",
-                                        onClick = { player.time = (player.time - 10_000L).coerceAtLeast(0L) },
+                                        onClick = {
+                                            val target = (player.time - 10_000L).coerceAtLeast(0L)
+                                            if (liveSeekable) {
+                                                liveRewindRequested = true
+                                            }
+                                            player.time = target
+                                        },
                                         modifier = Modifier.focusRequester(rewindRequester)
                                             .focusProperties {
                                                 up = progressRequester
@@ -1704,6 +1728,7 @@ PlayerChromeIconButton(
         }
         PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
+            rewindProfileKey = media.rewindProfileKey,
             items = playerQueueItems,
             pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
@@ -1715,6 +1740,7 @@ PlayerChromeIconButton(
             },
             onTogglePin = if (media.catalogType == CatalogType.LIVE_TV) onToggleQueuePin else null,
             onRefreshProgramme = if (media.catalogType == CatalogType.LIVE_TV) onRefreshQueueProgramme else null,
+            onVisibleChannels = onVisibleQueueChannels,
             liveCategoryTitle = liveQueueCategoryTitle,
             liveXtream = liveQueueXtream,
             hasMore = queueHasMore,

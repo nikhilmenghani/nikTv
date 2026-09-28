@@ -771,20 +771,22 @@ internal fun ModernEpisodeCard(
         } else 0f
     }
 
+    // Anchor the menu to this row, rather than the enclosing episode list.
+    Box(modifier = modifier) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = when {
-            focused -> Color(0xFF272B33)
+            focused || episodeActionsExpanded -> Color(0xFF272B33)
             isCurrentResume -> Color(0xFF1B1E24)
             else -> Color(0xFF14171D)
         },
         border = when {
-            focused -> BorderStroke(2.dp, Color(0xFFF1F3F5))
+            focused || episodeActionsExpanded -> BorderStroke(2.dp, Color(0xFFF1F3F5))
             isCurrentResume -> BorderStroke(1.dp, Color(0xFF6E3036))
             else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.06f))
         },
         shadowElevation = if (focused) 8.dp else 0.dp,
-        modifier = modifier
+        modifier = Modifier.fillMaxWidth()
             .focusRequester(episodeFocusRequester)
             .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(
@@ -1013,6 +1015,7 @@ internal fun ModernEpisodeCard(
             )
         }
     }
+    } // Episode row and menu share a fixed overlay anchor.
     episodeDescription?.takeIf(String::isNotBlank)?.let { description ->
         if (descriptionDialogOpen) {
             FullDescriptionDialog(

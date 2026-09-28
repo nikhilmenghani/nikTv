@@ -630,6 +630,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     onRetry = vm::retryPlayback,
                     onRetryAlternateDecoder = { position -> vm.retryPlaybackWithAlternateDecoder(position, playback) },
                     onPlaybackAuthorizationFailure = { position -> vm.retryPlaybackAfterAuthorizationFailure(position, playback) },
+                    onWatchLive = vm::watchLiveDirectly,
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
@@ -693,6 +694,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         }
                     },
                     onRefreshQueueProgramme = vm::refreshLiveProgramme,
+                    onVisibleQueueChannels = vm::enrichPlayerLiveGuides,
                     liveQueueCategoryTitle = channelCategoryTitle,
                     liveQueueXtream = state.session?.profile?.portalType == PortalType.XTREAM,
                     queueHasMore = state.playbackQueueHasMore,
@@ -757,6 +759,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     openSeriesFromHome = vm::openSeriesFromHome,
                     removeRecent = vm::removeRecent,
                     dismissWatchedEpisode = vm::dismissWatchedEpisode,
+                    markEpisodeWatched = vm::markEpisodeWatched,
                     clearRecent = vm::clearRecent,
                     openFavorite = vm::openFavorite,
                     toggleFavorite = vm::toggleFavorite,
@@ -886,9 +889,12 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 LaunchedEffect(error, authorizationExpired) {
                     if (authorizationExpired) reauthenticateRequester.requestFocus()
                 }
-                Dialog(onDismissRequest = { if (!state.reauthenticating) vm.dismissError() }) {
+                Dialog(
+                    onDismissRequest = { if (!state.reauthenticating) vm.dismissError() },
+                    properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+                ) {
                     Surface(
-                        modifier = Modifier.fillMaxWidth().widthIn(max = 620.dp),
+                        modifier = Modifier.padding(horizontal = 20.dp).widthIn(max = 620.dp).fillMaxWidth(),
                         shape = RoundedCornerShape(18.dp),
                         color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
                         tonalElevation = 2.dp,
@@ -944,15 +950,16 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                     NikTvSecondaryActionButton(
                                         onClick = vm::dismissError,
                                         enabled = !state.reauthenticating,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.weight(1f).height(48.dp)
                                     ) { Text("Close") }
                                     if (showDiagnostics) NikTvPrimaryActionButton(
                                         onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.weight(1f).height(48.dp)
                                     ) {
                                         Icon(Icons.Default.ContentCopy, null, Modifier.size(18.dp))
                                         Spacer(Modifier.width(6.dp))
-                                        Text("Copy diagnostics")
+                                        Text("Copy diagnostics", maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelLarge)
                                     }
                                 }
                             }

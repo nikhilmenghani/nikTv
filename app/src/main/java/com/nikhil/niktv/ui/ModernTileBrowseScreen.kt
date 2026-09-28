@@ -58,6 +58,7 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -247,6 +248,7 @@ internal fun ModernTileBrowseScreen(
     clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    markEpisodeWatched: (WatchedSeries, MediaItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
     closeSection: () -> Unit,
@@ -344,6 +346,7 @@ internal fun ModernTileBrowseScreen(
                             clearRecentChannels = clearRecentChannels,
                             openWatchedEpisode = openWatchedEpisode,
                             dismissWatchedEpisode = dismissWatchedEpisode,
+                            markEpisodeWatched = markEpisodeWatched,
                             toggleFavorite = toggleFavorite,
                             openTmdbSection = openTmdbSection,
                             openIptvCategory = openIptvCategory,
@@ -552,6 +555,7 @@ private fun ModernDestinationHub(
     clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    markEpisodeWatched: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
     openIptvCategory: (Category) -> Unit,
@@ -831,6 +835,7 @@ private fun ModernDestinationHub(
                         favorites = state.favorites,
                         open = openWatchedEpisode,
                         clear = dismissWatchedEpisode,
+                        markWatched = markEpisodeWatched,
                         openSeries = openSeries,
                         toggleFavorite = toggleFavorite
                     )
@@ -1096,6 +1101,7 @@ private fun ModernRecentChannelsCollection(
         }
         gridItems(channels, key = { it.key }) { recent ->
             ModernLiveChannelTile(
+                rewindProfileKey = recent.profileKey,
                 item = recent.media,
                 onRefreshProgramme = { refreshLiveProgramme(recent.media) },
                 categoryTitle = category.second,
@@ -1130,6 +1136,7 @@ private fun ModernNewEpisodesRow(
     favorites: List<FavoriteItem>,
     open: (WatchedSeries, MediaItem) -> Unit,
     clear: (WatchedSeries, MediaItem) -> Unit,
+    markWatched: (WatchedSeries, MediaItem) -> Unit,
     openSeries: (MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit
 ) {
@@ -1180,6 +1187,7 @@ private fun ModernNewEpisodesRow(
                 onFavorite = { toggleFavorite(favorite) },
                 onOpenSeries = { openSeries(watched.series) },
                 onClear = { clear(watched, episode) },
+                onMarkWatched = { markWatched(watched, episode) },
                 homeCardScale = 0.82f
             )
         }
@@ -2036,6 +2044,7 @@ internal fun ModernCompactMediaCard(
     isFavorite: Boolean,
     onFavorite: () -> Unit,
     onClear: (() -> Unit)? = null,
+    onMarkWatched: (() -> Unit)? = null,
     onOpenSeries: (() -> Unit)? = null,
     progress: PlaybackProgress? = null,
     sourceLabel: String? = null,
@@ -2313,6 +2322,7 @@ internal fun ModernCompactMediaCard(
             dismiss = { menuOpen = false },
             toggleFavorite = onFavorite,
             openSeries = onOpenSeries,
+            markWatched = onMarkWatched,
             clear = onClear
         )
     }
@@ -2333,7 +2343,10 @@ internal fun ModernTileActionsMenu(
     isPinned: Boolean = false,
     togglePin: (() -> Unit)? = null,
     refreshProgramme: (() -> Unit)? = null,
-    refreshMatches: (() -> Unit)? = null
+    refreshMatches: (() -> Unit)? = null,
+    markWatched: (() -> Unit)? = null,
+    localRewindEnabled: Boolean = false,
+    toggleLocalRewind: (() -> Unit)? = null
 ) {
     DropdownMenu(
         expanded = expanded,
@@ -2342,6 +2355,20 @@ internal fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        toggleLocalRewind?.let { action ->
+            NikDropdownMenuItem(
+                text = { Text(if (localRewindEnabled) "Disable local rewind" else "Enable local rewind (ExoPlayer)") },
+                leadingIcon = { Icon(Icons.Default.Refresh, null) },
+                onClick = { dismiss(); action() }
+            )
+        }
+        markWatched?.let { action ->
+            NikDropdownMenuItem(
+                text = { Text("Mark as watched") },
+                leadingIcon = { Icon(Icons.Default.Check, null) },
+                onClick = { dismiss(); action() }
+            )
+        }
         refreshMatches?.let { refresh ->
             NikDropdownMenuItem(
                 text = { Text("Refresh IPTV matches") },
@@ -3083,6 +3110,9 @@ private fun ModernIptvCollection(
             mutableMapOf<String, FocusRequester>()
         }
 
+    val gridFocusParking = remember(category.id) { FocusRequester() }
+    var focusMoveInProgress by remember(category.id) { mutableStateOf(false) }
+    var focusMoveGeneration by remember(category.id) { mutableIntStateOf(0) }
     val focusScope = rememberCoroutineScope()
     var focusMoveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val moveFocusToIndex: (Int) -> Unit = { targetIndex ->
@@ -3091,8 +3121,17 @@ private fun ModernIptvCollection(
                 itemFocusRequesters.getOrPut(targetId) {
                     FocusRequester()
                 }
+            focusMoveGeneration++
+            val generation = focusMoveGeneration
+            focusMoveInProgress = true
+            focusedPosterIndex = targetIndex
             focusMoveJob?.cancel()
             focusMoveJob = focusScope.launch {
+                try {
+                // Hold focus inside this grid while its lazy rows are recycled.
+                // Otherwise removal of the source tile sends focus to Profile.
+                runCatching { gridFocusParking.requestFocus() }
+
                 val targetGridIndex = targetIndex
                 val targetInfo = gridState.layoutInfo.visibleItemsInfo
                     .firstOrNull { it.index == targetGridIndex }
@@ -3138,6 +3177,9 @@ private fun ModernIptvCollection(
                         return@launch
                     }
                     delay(40L * (attempt + 1))
+                }
+                } finally {
+                    if (focusMoveGeneration == generation) focusMoveInProgress = false
                 }
             }
         }
@@ -3304,13 +3346,15 @@ private fun ModernIptvCollection(
         modifier = Modifier
             .weight(1f)
             .fillMaxWidth()
+            .focusRequester(gridFocusParking)
             .modernGridVerticalFocus(
                 enabled = focusedPosterIndex >= 0,
                 index = focusedPosterIndex,
                 columns = columns,
                 itemCount = focusIds.size,
                 moveFocus = moveFocusToIndex
-            ),
+            )
+            .focusable(isTv),
         contentPadding = PaddingValues(
             start = if (isTv) 24.dp else 18.dp,
             end = if (isTv) 24.dp else 18.dp,
@@ -3340,7 +3384,7 @@ private fun ModernIptvCollection(
                     if (it.hasFocus) {
                         focusedPosterIndex = index
                         lastFocusedMediaId = media.id
-                    } else if (focusedPosterIndex == index) {
+                    } else if (focusedPosterIndex == index && !focusMoveInProgress) {
                         focusedPosterIndex = -1
                     }
                 }
@@ -3364,6 +3408,7 @@ private fun ModernIptvCollection(
             }
             if (isLiveTv) {
                 ModernLiveChannelTile(
+                    rewindProfileKey = profileKey,
                     item = media,
                     onRefreshProgramme = { refreshLiveProgramme(media) },
                     categoryTitle = category.title,
@@ -3613,6 +3658,7 @@ internal fun FullDescriptionDialog(
 
 @Composable
 internal fun ModernLiveChannelTile(
+    rewindProfileKey: String = "",
     item: MediaItem,
     onRefreshProgramme: () -> Unit,
     xtream: Boolean = false,
@@ -3633,6 +3679,10 @@ internal fun ModernLiveChannelTile(
     onFocusChange: (Boolean) -> Unit = {},
     onMenuVisibilityChange: (Boolean) -> Unit = {}
 ) {
+    val rewindContext = LocalContext.current
+    var rewindEnabled by remember(rewindProfileKey, item.id) {
+        mutableStateOf(com.nikhil.niktv.data.LiveRewindPreferences.enabled(rewindContext, rewindProfileKey, item.id))
+    }
     val returningTile = rememberReturningTile(onClick)
 
     var focused by remember { mutableStateOf(false) }
@@ -3684,7 +3734,7 @@ internal fun ModernLiveChannelTile(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
                 .then(
-                    if (isPhone) Modifier.heightIn(min = if (currentProgrammeTitle == null) 60.dp else 88.dp)
+                    if (isPhone) Modifier.height(104.dp)
                     else Modifier.height(if (xtream) { if (isTv) 116.dp else 124.dp } else if (isTv) 96.dp else 104.dp)
                 )
                 .onFocusChanged {
@@ -3734,12 +3784,12 @@ internal fun ModernLiveChannelTile(
                         style = Stroke(width = 1.dp.toPx()))
                 }
                 Row(
-                    (if (isPhone) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
+                    Modifier.fillMaxSize()
                         .align(Alignment.Center).padding(
                         start = 12.dp,
                         end = 12.dp,
                         top = 10.dp,
-                        bottom = if (currentProgrammeTitle == null) 10.dp else 22.dp
+                        bottom = 22.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -3882,7 +3932,12 @@ internal fun ModernLiveChannelTile(
             clear = onClear,
             isPinned = isPinned,
             togglePin = onTogglePin,
-            refreshProgramme = onRefreshProgramme
+            refreshProgramme = onRefreshProgramme,
+            localRewindEnabled = rewindEnabled,
+            toggleLocalRewind = if (rewindProfileKey.isBlank()) null else ({
+                rewindEnabled = !rewindEnabled
+                com.nikhil.niktv.data.LiveRewindPreferences.setEnabled(rewindContext, rewindProfileKey, item.id, rewindEnabled)
+            })
         )
     }
 }

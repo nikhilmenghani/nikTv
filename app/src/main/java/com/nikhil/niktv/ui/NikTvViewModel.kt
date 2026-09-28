@@ -1042,9 +1042,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Fill missing guide entries only for channels visible in the browse grid. */
-    fun enrichVisibleLiveGuides(visible: List<MediaItem>) =
+    private var playerGuideViewportActive = false
+
+    fun enrichPlayerLiveGuides(visible: List<MediaItem>) {
+        playerGuideViewportActive = visible.isNotEmpty() && _state.value.nowPlaying?.catalogType == CatalogType.LIVE_TV
         loadVisibleLiveGuides(visible, force = false)
+    }
+
+    /** Fill missing guide entries only for channels visible in the browse grid. */
+    fun enrichVisibleLiveGuides(visible: List<MediaItem>) {
+        // Disposing browse UI must not clear an already visible player queue.
+        if (_state.value.nowPlaying != null && playerGuideViewportActive) return
+        playerGuideViewportActive = false
+        loadVisibleLiveGuides(visible, force = false)
+    }
 
     private fun loadVisibleLiveGuides(visible: List<MediaItem>, force: Boolean) {
         if (visible.isEmpty()) {
@@ -1057,7 +1068,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val snapshot = _state.value
         val session = snapshot.session ?: return
-        val category = snapshot.modernIptvCategory?.takeIf { it.type == CatalogType.LIVE_TV } ?: return
+        val category = (if (playerGuideViewportActive) snapshot.selectedCategory else snapshot.modernIptvCategory)
+            ?.takeIf { it.type == CatalogType.LIVE_TV } ?: return
         val profileKey = session.profile.cacheKey()
         lastVisibleLiveGuideIds = categoryRefreshKey(session, category) to
             visible.map { it.id }.distinct()
@@ -1067,7 +1079,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val visibleKeys = targets.map { it.key }.toSet()
         liveGuideForcedKeys.retainAll(visibleKeys)
         if (force) liveGuideForcedKeys.addAll(visibleKeys)
-        val paused = manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
+        val paused = manualLiveGuideTarget != null || (snapshot.nowPlaying != null && !playerGuideViewportActive) || snapshot.loading ||
             snapshot.categoryFindSearching || snapshot.catalogLoadingMore
         liveGuideScheduler.update(targets, paused = paused)
         scheduleVisibleLiveGuideExpiry(targets, paused)
@@ -1086,7 +1098,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         liveGuideExpiryJob = viewModelScope.launch {
             delay((refreshAt - System.currentTimeMillis()).coerceAtLeast(0L) + 1_000L)
             val snapshot = _state.value
-            val stillPaused = manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
+            val stillPaused = manualLiveGuideTarget != null || (snapshot.nowPlaying != null && !playerGuideViewportActive) || snapshot.loading ||
                 snapshot.categoryFindSearching || snapshot.catalogLoadingMore
             liveGuideScheduler.update(targets, paused = stillPaused)
             if (!stillPaused) scheduleVisibleLiveGuideExpiry(targets, paused = false)
@@ -1095,11 +1107,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun visibleLiveGuideItem(target: LiveGuideTarget): MediaItem? {
         val snapshot = _state.value
-        if (snapshot.session?.profile?.cacheKey() != target.profileKey ||
-            snapshot.modernIptvCategory?.id != target.categoryId ||
-            snapshot.selectedCategory?.id != target.categoryId ||
-            snapshot.nowPlaying != null || snapshot.loading ||
+        if (snapshot.session?.profile?.cacheKey() != target.profileKey || snapshot.loading ||
             snapshot.categoryFindSearching || snapshot.catalogLoadingMore) return null
+        val playing = snapshot.nowPlaying
+        if (playing != null) {
+            if (!playerGuideViewportActive || playing.catalogType != CatalogType.LIVE_TV) return null
+            return (playing.episodeQueue + playing.media).firstOrNull {
+                it.id == target.itemId && (it.portalCategoryId == target.categoryId || it.portalCategoryId == null)
+            }
+        }
+        if (snapshot.modernIptvCategory?.id != target.categoryId ||
+            snapshot.selectedCategory?.id != target.categoryId) return null
         return snapshot.items.firstOrNull { it.id == target.itemId && it.portalCategoryId == target.categoryId }
     }
 
@@ -1173,12 +1191,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val visible = lastVisibleLiveGuideIds
         if (visible?.first?.startsWith(profileKey) == true) {
             val snapshot = _state.value
-            val categoryId = snapshot.modernIptvCategory?.id
+            val categoryId = (if (playerGuideViewportActive) snapshot.selectedCategory else snapshot.modernIptvCategory)?.id
             if (categoryId != null) {
                 val targets = visible.second.map { LiveGuideTarget(profileKey, categoryId, it) }
                 scheduleVisibleLiveGuideExpiry(
                     targets,
-                    manualLiveGuideTarget != null || snapshot.nowPlaying != null || snapshot.loading ||
+                    manualLiveGuideTarget != null || (snapshot.nowPlaying != null && !playerGuideViewportActive) || snapshot.loading ||
                         snapshot.categoryFindSearching || snapshot.catalogLoadingMore
                 )
             }
@@ -5733,6 +5751,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var selectedLiveGuideTarget: LiveGuideTarget? = null
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
+    fun watchLiveDirectly() {
+        val current = _state.value.nowPlaying ?: return
+        if (current.originalLiveUrl == null || latestPlaybackRequest.isRunning) return
+        val requestId = latestPlaybackRequest.begin()
+        viewModelScope.launch {
+            try {
+                playInternal(current.media, current.catalogType, current.series, current.episodeQueue,
+                    forceFreshUrl = true, directFullscreen = current.directFullscreen,
+                    requestId = requestId, allowLocalRewind = false)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _state.update { it.copy(error = error.message ?: "Could not return to live playback.") }
+            }
+        }
+    }
+
+    private var localLiveBuffer: com.nikhil.niktv.data.LocalLiveBuffer? = null
+
     private suspend fun playInternal(
         item: MediaItem,
         type: CatalogType,
@@ -5743,7 +5780,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         resumePositionOverride: Long? = null,
         directFullscreen: Boolean = false,
         requestId: Long = latestPlaybackRequest.begin(),
-        reauthenticate: Boolean = false
+        reauthenticate: Boolean = false,
+        allowLocalRewind: Boolean = true
     ) = latestPlaybackRequest.run(requestId) {
         try {
             if (type == CatalogType.LIVE_TV) _state.update { it.copy(liveGuidePriorityId = item.id) }
@@ -5768,11 +5806,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(reauthenticating = false) }
                 }
                 resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed)
+                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, allowLocalRewind)
             } else {
                 withAutomaticSessionRetry(session) { activeSession ->
                     resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession)
+                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, allowLocalRewind)
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -5795,7 +5833,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         authorizationRetryCount: Int = 0,
         resumePositionOverride: Long? = null,
         directFullscreen: Boolean = false,
-        session: PortalSession
+        session: PortalSession,
+        allowLocalRewind: Boolean = true
     ) {
         val playbackStartedAt = SystemClock.elapsedRealtime()
         val offlineEntry = _state.value.offlineDownloads
@@ -5972,11 +6011,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         channelScheduleJob?.cancel()
+        val previousBuffer = localLiveBuffer
+        localLiveBuffer = null
+        withContext(Dispatchers.IO) { previousBuffer?.close() }
+        val rewind = if (allowLocalRewind && type == CatalogType.LIVE_TV && offlineUrl == null &&
+            com.nikhil.niktv.data.LiveRewindPreferences.enabled(getApplication(), session.profile.cacheKey(), item.id))
+            com.nikhil.niktv.data.LocalLiveBuffer.open(getApplication(), url) else null
+        try { kotlinx.coroutines.currentCoroutineContext().ensureActive() }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { rewind?.close(); throw cancelled }
+        localLiveBuffer = rewind
+        if (type == CatalogType.LIVE_TV) Log.i("NikTvLiveRewind", if (rewind != null)
+            "Playing with local rewind" else "Playing provider stream directly")
         _state.update {
             it.copy(
                 nowPlaying = PlayingMedia(
                     media = item,
-                    url = url,
+                    url = rewind?.url ?: url,
+                    originalLiveUrl = if (rewind != null) url else null,
+                    originalLiveFormat = offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) },
+                    rewindProfileKey = session.profile.cacheKey(),
                     catalogType = type,
                     previousEpisode = previousItem,
                     nextEpisode = nextItem,
@@ -5987,7 +6040,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     authorizationRetryCount = authorizationRetryCount,
             directFullscreen = directFullscreen,
             offlinePlayback = offlineUrl != null,
-            playbackFormat = offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) }
+            playbackFormat = if (rewind != null) "HLS" else offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) }
                 ),
                 playbackReturnFocusId =
                     if (
@@ -6370,6 +6423,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlayer() {
+        localLiveBuffer?.close()
+        localLiveBuffer = null
         // A guide can finish into the browse cache after Back; it never starts playback.
         cancelPendingPlayback(cancelGuide = false)
         val snapshot = _state.value
@@ -6472,6 +6527,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
             playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url) return
+        if (playing.originalLiveUrl != null) {
+            watchLiveDirectly()
+            return
+        }
         if (playing.authorizationRetryCount > 0) return
         if (!_state.value.automaticReauthentication) {
             _state.update { it.copy(error = "Authorization failed.") }
@@ -6763,6 +6822,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        localLiveBuffer?.close()
         com.nikhil.niktv.data.CatalogPlaybackActivity.playing = false
         super.onCleared()
     }
@@ -7202,6 +7262,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(watchedSeries = updated) }
         store.saveWatchedSeries(allWatchedSeries)
         playInternal(episode, CatalogType.SERIES, watched.series, queue)
+    }
+
+    fun markEpisodeWatched(watched: WatchedSeries, episode: MediaItem) = viewModelScope.launch {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
+        if (watched.profileKey != profileKey) return@launch
+        val updated = _state.value.watchedSeries.map {
+            if (it.key == watched.key) it.copy(
+                knownEpisodeIds = it.knownEpisodeIds + episode.id,
+                newEpisodes = it.newEpisodes.filterNot { candidate -> candidate.id == episode.id }
+            ) else it
+        }
+        allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
+        _state.update { it.copy(watchedSeries = updated) }
+        store.saveWatchedSeries(allWatchedSeries)
     }
 
     fun dismissWatchedEpisode(watched: WatchedSeries, episode: MediaItem) =
