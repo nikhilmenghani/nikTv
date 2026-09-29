@@ -654,9 +654,12 @@ private fun ModernDestinationHub(
      * restrained press lift instead of the persistent TV focus treatment.
      */
     val isTablet = !isTv && configuration.screenWidthDp >= 600
+    val compactPhoneGrid = !isTv && configuration.smallestScreenWidthDp < 600 &&
+        configuration.screenWidthDp >= 340 &&
+        androidx.compose.ui.platform.LocalDensity.current.fontScale < 1.4f
     val destinationColumns = when {
         isTv -> 3
-        configuration.smallestScreenWidthDp < 600 -> 1
+        configuration.smallestScreenWidthDp < 600 -> if (compactPhoneGrid) 2 else 1
         configuration.screenWidthDp >= 1200 -> 4
         configuration.screenWidthDp >= 720 -> 3
         else -> 2
@@ -824,6 +827,14 @@ private fun ModernDestinationHub(
             }
         }
 
+        // Captions are popups below the focused header controls. Keep the first
+        // content row clear on tablet and TV, including Live TV, Movies and Series.
+        if (isTv || isTablet) {
+            item("hub-header-caption-clearance", span = fullSpan) {
+                Spacer(Modifier.height(38.dp))
+            }
+        }
+
         if (dashboardSurface == DashboardSurface.HOME) {
             if (recents.isNotEmpty()) {
                 item("continue-header", span = fullSpan) {
@@ -847,16 +858,42 @@ private fun ModernDestinationHub(
                 item("new-episodes-header", span = fullSpan) {
                     ModernHubSectionHeading("New Episodes")
                 }
-                item("new-episodes-row", span = fullSpan) {
-                    ModernNewEpisodesRow(
-                        entries = newEpisodes,
-                        favorites = state.favorites,
-                        open = openWatchedEpisode,
-                        clear = dismissWatchedEpisode,
-                        markWatched = markEpisodeWatched,
-                        openSeries = openSeries,
-                        toggleFavorite = toggleFavorite
-                    )
+                if (compactPhoneGrid || (!isTv && configuration.smallestScreenWidthDp < 600)) {
+                    gridItems(
+                        items = newEpisodes,
+                        key = { (watched, episode) -> "new-episode-${watched.series.id}-${episode.id}" },
+                        span = { GridItemSpan(maxLineSpan) }
+                    ) { (watched, episode) ->
+                        val favorite = FavoriteItem(
+                            kind = FavoriteKind.EPISODE,
+                            media = episode,
+                            series = watched.series,
+                            profileKey = watched.profileKey,
+                            categoryTitle = watched.categoryTitle
+                        )
+                        ModernNewEpisodeListItem(
+                            watched = watched,
+                            episode = episode,
+                            isFavorite = state.favorites.any { it.key == favorite.key },
+                            onClick = { openWatchedEpisode(watched, episode) },
+                            onFavorite = { toggleFavorite(favorite) },
+                            onOpenSeries = { openSeries(watched.series) },
+                            onClear = { dismissWatchedEpisode(watched, episode) },
+                            onMarkWatched = { markEpisodeWatched(watched, episode) }
+                        )
+                    }
+                } else {
+                    item("new-episodes-row", span = fullSpan) {
+                        ModernNewEpisodesRow(
+                            entries = newEpisodes,
+                            favorites = state.favorites,
+                            open = openWatchedEpisode,
+                            clear = dismissWatchedEpisode,
+                            markWatched = markEpisodeWatched,
+                            openSeries = openSeries,
+                            toggleFavorite = toggleFavorite
+                        )
+                    }
                 }
             }
 
@@ -870,6 +907,9 @@ private fun ModernDestinationHub(
                 items = tmdbSections,
                 key = {
                     "tmdb-${dashboardSurface.name}-${it.name}"
+                },
+                span = { section ->
+                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(section.title)) 2 else 1)
                 }
             ) { section ->
                 ModernDestinationTile(
@@ -895,7 +935,10 @@ private fun ModernDestinationHub(
             }
             gridItems(
                 items = liveCategories,
-                key = { "iptv-live-${it.id}" }
+                key = { "iptv-live-${it.id}" },
+                span = { category ->
+                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(category.title)) 2 else 1)
+                }
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
@@ -925,7 +968,10 @@ private fun ModernDestinationHub(
             }
             gridItems(
                 items = movieCategories,
-                key = { "iptv-movie-${it.id}" }
+                key = { "iptv-movie-${it.id}" },
+                span = { category ->
+                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(category.title)) 2 else 1)
+                }
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
@@ -955,7 +1001,10 @@ private fun ModernDestinationHub(
             }
             gridItems(
                 items = seriesCategories,
-                key = { "iptv-series-${it.id}" }
+                key = { "iptv-series-${it.id}" },
+                span = { category ->
+                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(category.title)) 2 else 1)
+                }
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
@@ -1266,6 +1315,93 @@ private fun ModernNewEpisodesRow(
     }
     }
 
+}
+
+@Composable
+private fun ModernNewEpisodeListItem(
+    watched: WatchedSeries,
+    episode: MediaItem,
+    isFavorite: Boolean,
+    onClick: () -> Unit,
+    onFavorite: () -> Unit,
+    onOpenSeries: () -> Unit,
+    onClear: () -> Unit,
+    onMarkWatched: () -> Unit
+) {
+    val context = LocalContext.current
+    val artwork = if (episode.logo.isNullOrBlank()) watched.series else episode
+    var menuOpen by remember { mutableStateOf(false) }
+    val returningTile = rememberReturningTile(onClick)
+    val episodeNumber = listOfNotNull(
+        episode.seasonNumber?.let { "S$it" },
+        episode.episodeNumber?.let { "E$it" },
+        episode.episodeAirDate?.takeIf { it.isNotBlank() }
+    ).joinToString(" · ")
+    Box(Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier.fillMaxWidth()
+                .then(returningTile.modifier)
+                .remoteCombinedClickable(
+                    onClick = returningTile.open,
+                    onLongClick = { menuOpen = true }
+                ),
+            shape = RoundedCornerShape(14.dp),
+            color = ModernCardSurface,
+            border = BorderStroke(1.dp, ModernOutline)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(width = 86.dp, height = 90.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(Color(0xFF282A30))
+                ) {
+                    ModernPosterImage(
+                        item = artwork,
+                        context = context,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        watched.series.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (episodeNumber.isNotBlank()) Text(
+                        episodeNumber,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFAFB5C0),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val title = episode.compactEpisodeTitle()
+                    if (title.isNotBlank()) Text(
+                        title,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFE3E5EA),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        ModernTileActionsMenu(
+            expanded = menuOpen,
+            isFavorite = isFavorite,
+            dismiss = { menuOpen = false },
+            toggleFavorite = onFavorite,
+            openSeries = onOpenSeries,
+            markWatched = onMarkWatched,
+            clear = onClear
+        )
+    }
 }
 
 private fun NikTvState.modernVisibleIptvCategories(
@@ -1824,7 +1960,7 @@ private fun ModernDestinationTile(
                         )
                     )
                 )
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(horizontal = if (isPhone) 9.dp else 12.dp, vertical = 10.dp)
         ) {
             if (subtitle == null) {
                 Box(Modifier.align(Alignment.CenterStart)) {
@@ -1971,9 +2107,10 @@ private fun ModernProviderCategoryLabel(
     isTv: Boolean
 ) {
     val parts = remember(title) { liveCategoryLabelParts(title) }
+    val compactPhone = !isTv && LocalConfiguration.current.smallestScreenWidthDp < 600
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Icon(icon, null, Modifier.size(22.dp), tint = Color(0xFFB9BDD0))
+        horizontalArrangement = Arrangement.spacedBy(if (compactPhone) 7.dp else 10.dp)) {
+        Icon(icon, null, Modifier.size(if (compactPhone) 18.dp else 22.dp), tint = Color(0xFFB9BDD0))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (parts != null) {
                 Text(parts.first(),
@@ -1986,13 +2123,19 @@ private fun ModernProviderCategoryLabel(
                 fontSize = if (isTv) 12.sp else 14.sp,
                 lineHeight = if (isTv) 16.sp else 18.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFFF2F3F7), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                color = Color(0xFFF2F3F7), maxLines = if (compactPhone) 5 else 3,
+                overflow = TextOverflow.Ellipsis)
         }
         if (pinned) {
             Icon(Icons.Default.PushPin, "Pinned $title", Modifier.size(15.dp),
                 tint = ModernBrandAccent)
         }
     }
+}
+
+private fun compactCategoryNeedsFullWidth(title: String): Boolean {
+    val displayTitle = liveCategoryLabelParts(title)?.last() ?: title
+    return displayTitle.length > 24 || displayTitle.split(' ').any { it.length > 16 }
 }
 
 private fun destinationPalette(
