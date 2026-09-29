@@ -3996,7 +3996,7 @@ private fun CompactOrientationSetting(
         icon = Icons.Default.ScreenRotation,
         title = "Screen orientation",
         subtitle =
-            "Auto uses portrait on phones and landscape on tablets and TVs.",
+            "Auto follows device rotation settings on phones and tablets. TVs stay landscape.",
         belowContent = {
             Spacer(Modifier.height(8.dp))
             SettingsChoiceRow(

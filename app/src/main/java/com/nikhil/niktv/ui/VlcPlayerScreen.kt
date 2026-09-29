@@ -139,7 +139,6 @@ internal fun VlcPlayerScreen(
     }
     var error by remember(media.progressKey) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
-    ApplyMobileFullscreenOrientation(focusMode)
     var controlsVisible by remember(media.progressKey) {
         mutableStateOf(
             moreOptionsOpen ||

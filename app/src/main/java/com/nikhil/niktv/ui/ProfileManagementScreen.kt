@@ -133,10 +133,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
         val chooserContext = LocalContext.current
         val isTv = chooserContext.isTvLikeDevice(configuration)
 
-        val compactLandscape =
-            configuration.orientation == Configuration.ORIENTATION_LANDSCAPE &&
-                    configuration.screenHeightDp < 500
-
+        val compactChooser = isTv || configuration.smallestScreenWidthDp < 600
         val scrollState = rememberScrollState()
 
         val preferredProfileKey =
@@ -177,41 +174,37 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                 )
                 .safeDrawingPadding()
                 .then(
-                    if (compactLandscape) {
+                    if (!isTv) {
                         Modifier.verticalScroll(scrollState)
                     } else {
                         Modifier
                     }
                 )
                 .padding(
-                    horizontal = if (compactLandscape) 12.dp else 24.dp,
-                    vertical = if (compactLandscape) 8.dp else 24.dp
+                    horizontal = if (compactChooser) 12.dp else 24.dp,
+                    vertical = if (compactChooser) 8.dp else 24.dp
                 ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement =
-                if (compactLandscape) Arrangement.Top
+                if (compactChooser && !isTv) Arrangement.Top
                 else Arrangement.Center
         ) {
-            Text(
-                "N",
-                style = if (compactLandscape) {
-                    MaterialTheme.typography.headlineLarge
-                } else {
-                    MaterialTheme.typography.displayLarge
-                },
-                fontWeight = FontWeight.Black,
-                color = Color(0xFFE50914)
+            Image(
+                painter = painterResource(R.drawable.niktv_logo_foreground),
+                contentDescription = "NikTV",
+                modifier = Modifier.size(if (isTv) 64.dp else if (compactChooser) 40.dp else 120.dp),
+                contentScale = ContentScale.Fit
             )
 
             Spacer(
                 Modifier.height(
-                    if (compactLandscape) 4.dp else 20.dp
+                    if (compactChooser) 4.dp else 20.dp
                 )
             )
 
             Text(
                 "Who's watching?",
-                style = if (compactLandscape) {
+                style = if (compactChooser) {
                     MaterialTheme.typography.headlineMedium
                 } else {
                     MaterialTheme.typography.displaySmall
@@ -223,25 +216,33 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             Text(
                 "Choose an IPTV profile",
                 color = Color(0xFF9B9FA8),
-                style = if (compactLandscape) {
+                style = if (compactChooser) {
                     MaterialTheme.typography.bodySmall
                 } else {
                     MaterialTheme.typography.bodyMedium
                 }
             )
 
+            BoxWithConstraints(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
+                val gap = if (compactChooser) 12.dp else 24.dp
+                val tileCount = profiles.size + 4
+                val capacity = ((maxWidth + gap) / (if (compactChooser) 164.dp else 156.dp) ).toInt().coerceIn(1, 5)
+                val rowCount = (tileCount + capacity - 1) / capacity
+                val columns = (tileCount + rowCount - 1) / rowCount
+                val chooserTileWidth = ((maxWidth - gap * (columns - 1)) / columns).coerceAtMost(220.dp)
             FlowRow(
+                maxItemsInEachRow = columns,
                 modifier = Modifier
-                    .widthIn(max = 900.dp)
+                    .fillMaxWidth()
                     .padding(
-                        top = if (compactLandscape) 10.dp else 30.dp
+                        top = if (compactChooser) 10.dp else 30.dp
                     ),
                 horizontalArrangement = Arrangement.spacedBy(
-                    if (compactLandscape) 12.dp else 24.dp,
+                    if (compactChooser) 12.dp else 24.dp,
                     Alignment.CenterHorizontally
                 ),
                 verticalArrangement = Arrangement.spacedBy(
-                    if (compactLandscape) 12.dp else 24.dp
+                    if (compactChooser) 12.dp else 24.dp
                 )
             ) {
                 profiles.forEach { profile ->
@@ -257,7 +258,8 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                         } else {
                             Icons.Default.Key
                         },
-                        compact = compactLandscape,
+                        tileWidth = chooserTileWidth,
+                        compact = compactChooser,
                         selected = lastUsed,
                         modifier =
                             if (
@@ -279,14 +281,16 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     title = "Offline",
                     subtitle = "Downloaded movies & episodes",
                     icon = Icons.Default.DownloadDone,
-                    compact = compactLandscape
+                    tileWidth = chooserTileWidth,
+                        compact = compactChooser
                 ) { openOfflineDownloads() }
 
                 ProfileChooserTile(
                     title = "Settings",
                     subtitle = "Playback, display & orientation",
                     icon = Icons.Default.Settings,
-                    compact = compactLandscape
+                    tileWidth = chooserTileWidth,
+                        compact = compactChooser
                 ) {
                     openSettings(saved ?: profiles.firstOrNull())
                 }
@@ -295,7 +299,8 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     title = "Add profile",
                     subtitle = "New connection",
                     icon = Icons.Default.Add,
-                    compact = compactLandscape,
+                    tileWidth = chooserTileWidth,
+                        compact = compactChooser,
                     onClick = addProfile
                 )
 
@@ -303,7 +308,8 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     title = "Import backup",
                     subtitle = "Restore NikTV setup",
                     icon = Icons.Default.FileDownload,
-                    compact = compactLandscape
+                    tileWidth = chooserTileWidth,
+                        compact = compactChooser
                 ) {
                     importLauncher.launch(
                         arrayOf(
@@ -315,10 +321,11 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                 }
             }
 
+            }
             if (isTv) {
                 Spacer(
                     Modifier.height(
-                        if (compactLandscape) 8.dp else 20.dp
+                        if (compactChooser) 8.dp else 20.dp
                     )
                 )
                 Text(
@@ -425,6 +432,7 @@ internal fun ProfileChooserTile(
     subtitle: String,
     icon: ImageVector,
     compact: Boolean = false,
+    tileWidth: Dp = if (compact) 128.dp else 156.dp,
     selected: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
@@ -444,11 +452,10 @@ internal fun ProfileChooserTile(
         label = "profileChooserTileFocus"
     )
 
-    val tileWidth = if (compact) 128.dp else 156.dp
-    val tileHeight = if (compact) 148.dp else 190.dp
-    val iconPlateSize = if (compact) 58.dp else 74.dp
-    val iconSize = if (compact) 30.dp else 38.dp
-    val outerPadding = if (compact) 10.dp else 14.dp
+    val tileHeight = if (compact && remoteNavigationActive) 140.dp else if (compact) 104.dp else 190.dp
+    val iconPlateSize = if (compact && remoteNavigationActive) 48.dp else if (compact) 32.dp else 74.dp
+    val iconSize = if (compact) 24.dp else 38.dp
+    val outerPadding = if (compact) 8.dp else 14.dp
     val shape =
         RoundedCornerShape(
             if (compact) 14.dp else 18.dp
@@ -505,7 +512,7 @@ internal fun ProfileChooserTile(
     Column(
         modifier
             .width(tileWidth)
-            .height(tileHeight)
+            .heightIn(min = tileHeight)
             .zIndex(focusProgress)
             .then(
                 if (remoteNavigationActive) {
@@ -606,8 +613,7 @@ internal fun ProfileChooserTile(
         Text(
             title,
             color = titleColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             style = if (compact) {
                 MaterialTheme.typography.titleSmall
             } else {
@@ -630,14 +636,12 @@ internal fun ProfileChooserTile(
         Text(
             subtitle,
             color = subtitleColor,
-            maxLines = if (compact) 1 else 2,
-            overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.labelSmall,
             textAlign =
                 androidx.compose.ui.text.style.TextAlign.Center
         )
 
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(if (compact) 4.dp else 10.dp))
 
         Box(
             Modifier

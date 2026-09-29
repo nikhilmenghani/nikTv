@@ -490,7 +490,6 @@ fun PlayerScreen(
     // Fullscreen belongs to the player session, not to an individual queue item.
     // Preserve it while changing channels/episodes/titles.
     var focusMode by remember { mutableStateOf(startFullscreen) }
-    ApplyMobileFullscreenOrientation(focusMode)
     LaunchedEffect(fullscreenOverride) {
         fullscreenOverride?.let { focusMode = it }
     }

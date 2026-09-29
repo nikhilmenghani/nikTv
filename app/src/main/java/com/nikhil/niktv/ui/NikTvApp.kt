@@ -522,11 +522,11 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val catalogStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val orientationMode by rememberUiOrientationMode()
 
-    // APP_WIDE_ORIENTATION_OWNER_V12
-    ApplyUiOrientation(orientationMode)
+    val state by vm.state.collectAsStateWithLifecycle()
+    // One owner restores browsing orientation when the player closes.
+    ApplyUiOrientation(orientationMode, playingVideo = state.nowPlaying != null)
     ApplyAppBrightness()
 
-    val state by vm.state.collectAsStateWithLifecycle()
     var confirmPlayerDownloadRemoval by remember { mutableStateOf(false) }
     val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
     val updateDownloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()

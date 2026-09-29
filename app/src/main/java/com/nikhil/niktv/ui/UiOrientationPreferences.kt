@@ -32,16 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/*
- * NIKTV_GLOBAL_ORIENTATION_PREFERENCE_V12
- *
- * Auto:
- * - phone -> portrait
- * - tablet -> landscape
- * - TV -> landscape
- *
- * This is application-wide so it is available before profile selection.
- */
+/** App-wide orientation preference; Auto follows Android rotation settings. */
 enum class UiOrientationMode(val title: String) {
     DEVICE_DEFAULT("Auto"),
     PORTRAIT("Portrait"),
@@ -104,20 +95,15 @@ private fun Context.isOrientationTv(configuration: Configuration): Boolean =
             Configuration.UI_MODE_TYPE_TELEVISION ||
         !packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
 
-private fun defaultLandscape(
-    context: Context,
-    configuration: Configuration
-): Boolean =
-    context.isOrientationTv(configuration) ||
-        configuration.smallestScreenWidthDp >= 600
-
 @Composable
-fun ApplyUiOrientation(mode: UiOrientationMode) {
+fun ApplyUiOrientation(mode: UiOrientationMode, playingVideo: Boolean = false) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findOrientationActivity() }
 
-    val requestedOrientation = when (mode) {
+    val requestedOrientation = if (playingVideo) {
+        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    } else when (mode) {
         UiOrientationMode.PORTRAIT ->
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
 
@@ -125,11 +111,8 @@ fun ApplyUiOrientation(mode: UiOrientationMode) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
         UiOrientationMode.DEVICE_DEFAULT ->
-            if (defaultLandscape(context, configuration)) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-            }
+            if (context.isOrientationTv(configuration)) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_USER
     }
 
     LaunchedEffect(activity, requestedOrientation) {
@@ -138,30 +121,6 @@ fun ApplyUiOrientation(mode: UiOrientationMode) {
             activity.requestedOrientation != requestedOrientation
         ) {
             activity.requestedOrientation = requestedOrientation
-        }
-    }
-}
-
-/** Temporarily rotates phone playback to landscape without changing the saved app preference. */
-@Composable
-fun ApplyMobileFullscreenOrientation(fullscreen: Boolean) {
-    val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val activity = remember(context) { context.findOrientationActivity() }
-    val isPhone = configuration.smallestScreenWidthDp < 600 &&
-        !context.isOrientationTv(configuration)
-
-    DisposableEffect(activity, fullscreen, isPhone) {
-        if (activity == null || !fullscreen || !isPhone) {
-            onDispose { }
-        } else {
-            val previous = activity.requestedOrientation
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            onDispose {
-                if (activity.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
-                    activity.requestedOrientation = previous
-                }
-            }
         }
     }
 }
@@ -189,7 +148,7 @@ fun OrientationSettingsSection(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "Auto uses portrait on phones and landscape on tablets and TVs.",
+                "Auto follows device rotation settings on phones and tablets. TVs stay landscape.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -225,11 +184,8 @@ fun OrientationSettingsSection(
                 UiOrientationMode.PORTRAIT -> "Portrait"
                 UiOrientationMode.LANDSCAPE -> "Landscape"
                 UiOrientationMode.DEVICE_DEFAULT ->
-                    if (defaultLandscape(context, configuration)) {
-                        "Auto · Landscape on this device"
-                    } else {
-                        "Auto · Portrait on this device"
-                    }
+                    if (context.isOrientationTv(configuration)) "Auto - Landscape on TV"
+                    else "Auto - Follow device rotation settings"
             }
 
             Text(
