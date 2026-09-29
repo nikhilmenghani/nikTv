@@ -95,6 +95,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -786,23 +787,40 @@ private fun ModernDestinationHub(
                     color = Color.White,
                     modifier = Modifier.weight(1f)
                 )
-                NikTvSecondaryActionButton(
-                    onClick = { customizeHomeOpen = true },
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Icon(Icons.Default.DashboardCustomize, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        when {
-                            dashboardSurface == DashboardSurface.HOME ->
-                                if (isTv || isTablet) "Customize Home" else "Customize"
-                            isTv || isTablet -> "Browse options"
-                            else -> "Browse"
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1
-                    )
+                if (isTv || isTablet) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val catalogType = when (dashboardSurface) {
+                            DashboardSurface.MOVIES -> CatalogType.MOVIES
+                            DashboardSurface.SERIES -> CatalogType.SERIES
+                            else -> CatalogType.LIVE_TV
+                        }
+                        if (dashboardSurface != DashboardSurface.HOME) {
+                            ModernHeaderOptionsIcon("Search", Icons.Default.Search, openSearch)
+                        }
+                        if (dashboardSurface == DashboardSurface.LIVE_TV) {
+                            ModernHeaderOptionsIcon("Recently played (" + recentChannels.size + ")", Icons.Default.History) { recentChannelsOpen = true }
+                        } else {
+                            ModernHeaderOptionsIcon("TMDB sections", Icons.Default.DashboardCustomize, configureTmdb)
+                        }
+                        if (dashboardSurface == DashboardSurface.HOME) {
+                            ModernHeaderOptionsIcon("Live TV categories", Icons.Default.LiveTv) { configureIptv(CatalogType.LIVE_TV) }
+                            ModernHeaderOptionsIcon("Movie categories", Icons.Default.SmartDisplay) { configureIptv(CatalogType.MOVIES) }
+                            ModernHeaderOptionsIcon("Series categories", Icons.Default.Tv) { configureIptv(CatalogType.SERIES) }
+                        } else {
+                            ModernHeaderOptionsIcon("IPTV categories", Icons.Default.Tv) { configureIptv(catalogType) }
+                        }
+                        if (dashboardSurface == DashboardSurface.LIVE_TV && recentChannels.isNotEmpty()) {
+                            ModernHeaderOptionsIcon("Clear recently played channels", Icons.Default.DeleteOutline) { confirmClearChannels = true }
+                        }
+                        ModernHeaderOptionsIcon("Restore $screenTitle defaults", Icons.Default.RestartAlt, resetSurface)
+                    }
                 }
+                ModernHeaderOptionsIcon(
+                    label = if (dashboardSurface == DashboardSurface.HOME) "Customize Home" else "Browse options",
+                    icon = if (dashboardSurface == DashboardSurface.HOME) Icons.Default.DashboardCustomize else Icons.Default.Tune,
+                    onClick = { customizeHomeOpen = true }
+                )
+
             }
         }
 
@@ -1006,6 +1024,61 @@ private fun ModernDestinationHub(
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ModernHeaderOptionsIcon(label: String, icon: ImageVector, onClick: () -> Unit) {
+    val tooltip = androidx.compose.material3.rememberTooltipState()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val windowWidth = LocalConfiguration.current.screenWidthDp.dp
+    val captionPosition = remember(density) {
+        val gap = with(density) { 12.dp.roundToPx() }
+        val margin = with(density) { 16.dp.roundToPx() }
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: androidx.compose.ui.unit.IntRect,
+                windowSize: androidx.compose.ui.unit.IntSize,
+                layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                popupContentSize: androidx.compose.ui.unit.IntSize
+            ): androidx.compose.ui.unit.IntOffset {
+                val centeredX = anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2
+                val x = centeredX.coerceIn(margin,
+                    (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin))
+                val y = (anchorBounds.bottom + gap).coerceAtMost(
+                    (windowSize.height - popupContentSize.height - margin).coerceAtLeast(0))
+                return androidx.compose.ui.unit.IntOffset(x, y)
+            }
+        }
+    }
+    var focused by remember { mutableStateOf(false) }
+    val focusScale by animateFloatAsState(
+        targetValue = if (focused) 1.08f else 1f,
+        animationSpec = tween(durationMillis = 100),
+        label = "headerActionFocus"
+    )
+    LaunchedEffect(focused) {
+        if (focused) tooltip.show() else tooltip.dismiss()
+    }
+    androidx.compose.material3.TooltipBox(
+        positionProvider = captionPosition,
+        tooltip = {
+            PlainTooltip(modifier = Modifier.widthIn(max = minOf(320.dp, windowWidth - 32.dp))) {
+                Text(label, softWrap = true)
+            }
+        },
+        state = tooltip
+    ) {
+        NikTvSecondaryActionButton(
+            onClick = onClick,
+            modifier = Modifier.size(48.dp)
+                .graphicsLayer { scaleX = focusScale; scaleY = focusScale }
+                .onFocusChanged { focused = it.isFocused },
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
         }
     }
 }
