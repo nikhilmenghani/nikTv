@@ -173,26 +173,20 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     )
                 )
                 .safeDrawingPadding()
-                .then(
-                    if (!isTv) {
-                        Modifier.verticalScroll(scrollState)
-                    } else {
-                        Modifier
-                    }
-                )
+                .verticalScroll(scrollState)
                 .padding(
                     horizontal = if (compactChooser) 12.dp else 24.dp,
                     vertical = if (compactChooser) 8.dp else 24.dp
                 ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement =
-                if (compactChooser && !isTv) Arrangement.Top
+                if (compactChooser && !isTv && configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) Arrangement.Top
                 else Arrangement.Center
         ) {
             Image(
                 painter = painterResource(R.drawable.niktv_logo_foreground),
                 contentDescription = "NikTV",
-                modifier = Modifier.size(if (isTv) 64.dp else if (compactChooser) 40.dp else 120.dp),
+                modifier = Modifier.size(if (isTv) 64.dp else if (compactChooser && configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 56.dp else if (compactChooser) 80.dp else 140.dp),
                 contentScale = ContentScale.Fit
             )
 
@@ -226,24 +220,19 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             BoxWithConstraints(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
                 val gap = if (compactChooser) 12.dp else 24.dp
                 val tileCount = profiles.size + 4
-                val capacity = ((maxWidth + gap) / (if (compactChooser) 164.dp else 156.dp) ).toInt().coerceIn(1, 5)
+                val capacity = ((maxWidth + gap) / ((if (compactChooser) 148.dp else 180.dp) + gap)).toInt().coerceIn(1, 5)
                 val rowCount = (tileCount + capacity - 1) / capacity
                 val columns = (tileCount + rowCount - 1) / rowCount
+                val portraitPhone = !isTv && compactChooser && configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+                val portraitCardHeight = if (portraitPhone) {
+                    ((configuration.screenHeightDp.dp - 260.dp - gap * (rowCount - 1)) / rowCount)
+                        .coerceIn(140.dp, 260.dp)
+                } else null
                 val chooserTileWidth = ((maxWidth - gap * (columns - 1)) / columns).coerceAtMost(220.dp)
-            FlowRow(
-                maxItemsInEachRow = columns,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        top = if (compactChooser) 10.dp else 30.dp
-                    ),
-                horizontalArrangement = Arrangement.spacedBy(
-                    if (compactChooser) 12.dp else 24.dp,
-                    Alignment.CenterHorizontally
-                ),
-                verticalArrangement = Arrangement.spacedBy(
-                    if (compactChooser) 12.dp else 24.dp
-                )
+            BalancedProfileGrid(
+                columns = columns,
+                gap = gap,
+                modifier = Modifier.fillMaxWidth().padding(top = if (compactChooser) 10.dp else 30.dp)
             ) {
                 profiles.forEach { profile ->
                     val profileKey = profile.cacheKey()
@@ -259,6 +248,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                             Icons.Default.Key
                         },
                         tileWidth = chooserTileWidth,
+                        portraitCardHeight = portraitCardHeight,
                         compact = compactChooser,
                         selected = lastUsed,
                         modifier =
@@ -282,6 +272,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     subtitle = "Downloaded movies & episodes",
                     icon = Icons.Default.DownloadDone,
                     tileWidth = chooserTileWidth,
+                        portraitCardHeight = portraitCardHeight,
                         compact = compactChooser
                 ) { openOfflineDownloads() }
 
@@ -290,6 +281,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     subtitle = "Playback, display & orientation",
                     icon = Icons.Default.Settings,
                     tileWidth = chooserTileWidth,
+                        portraitCardHeight = portraitCardHeight,
                         compact = compactChooser
                 ) {
                     openSettings(saved ?: profiles.firstOrNull())
@@ -300,6 +292,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     subtitle = "New connection",
                     icon = Icons.Default.Add,
                     tileWidth = chooserTileWidth,
+                        portraitCardHeight = portraitCardHeight,
                         compact = compactChooser,
                     onClick = addProfile
                 )
@@ -309,6 +302,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     subtitle = "Restore NikTV setup",
                     icon = Icons.Default.FileDownload,
                     tileWidth = chooserTileWidth,
+                        portraitCardHeight = portraitCardHeight,
                         compact = compactChooser
                 ) {
                     importLauncher.launch(
@@ -426,6 +420,37 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
     }
 }
 
+/**
+ * Measure explicit rows in pixels: dp rounding cannot push a tile onto another row,
+ * and every row is measured even when it extends beyond the viewport.
+ */
+@Composable
+private fun BalancedProfileGrid(columns: Int, gap: Dp, modifier: Modifier, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val spacing = gap.roundToPx()
+        val width = ((constraints.maxWidth - spacing * (columns - 1)) / columns)
+            .coerceAtMost(220.dp.roundToPx()).coerceAtLeast(1)
+        val uniformHeight = measurables.maxOfOrNull { it.maxIntrinsicHeight(width) } ?: 0
+        val children = measurables.map {
+            it.measure(androidx.compose.ui.unit.Constraints.fixed(width, uniformHeight))
+        }
+        val rows = children.chunked(columns)
+        val heights = rows.map { row -> row.maxOf { it.height } }
+        val height = heights.sum() + spacing * (rows.size - 1).coerceAtLeast(0)
+        layout(constraints.maxWidth, height) {
+            var y = 0
+            rows.forEachIndexed { index, row ->
+                var x = (constraints.maxWidth - (row.size * width + spacing * (row.size - 1))) / 2
+                row.forEach { child ->
+                    child.placeRelative(x, y)
+                    x += width + spacing
+                }
+                y += heights[index] + spacing
+            }
+        }
+    }
+}
+
 @Composable
 internal fun ProfileChooserTile(
     title: String,
@@ -434,6 +459,7 @@ internal fun ProfileChooserTile(
     compact: Boolean = false,
     tileWidth: Dp = if (compact) 128.dp else 156.dp,
     selected: Boolean = false,
+    portraitCardHeight: Dp? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -452,10 +478,12 @@ internal fun ProfileChooserTile(
         label = "profileChooserTileFocus"
     )
 
-    val tileHeight = if (compact && remoteNavigationActive) 140.dp else if (compact) 104.dp else 190.dp
-    val iconPlateSize = if (compact && remoteNavigationActive) 48.dp else if (compact) 32.dp else 74.dp
-    val iconSize = if (compact) 24.dp else 38.dp
-    val outerPadding = if (compact) 8.dp else 14.dp
+    val portraitScale = if (portraitCardHeight != null)
+        (profileConfiguration.screenWidthDp / 384f).coerceIn(1f, 1.3f) else 1f
+    val tileHeight = portraitCardHeight ?: if (compact && remoteNavigationActive) 140.dp else if (compact) 104.dp else 190.dp
+    val iconPlateSize = if (portraitCardHeight != null) (portraitCardHeight * 0.35f * portraitScale).coerceIn(48.dp, 74.dp * portraitScale) else if (compact && remoteNavigationActive) 48.dp else if (compact) 32.dp else 74.dp
+    val iconSize = if (portraitCardHeight != null) 36.dp * portraitScale else if (compact) 24.dp else 38.dp
+    val outerPadding = if (portraitCardHeight != null) 14.dp * portraitScale else if (compact) 8.dp else 14.dp
     val shape =
         RoundedCornerShape(
             if (compact) 14.dp else 18.dp
@@ -548,7 +576,8 @@ internal fun ProfileChooserTile(
             }
             .clickable(onClick = onClick)
             .padding(outerPadding),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = if (portraitCardHeight != null) Arrangement.Center else Arrangement.Top
     ) {
         Box(
             Modifier.fillMaxWidth(),
@@ -614,7 +643,12 @@ internal fun ProfileChooserTile(
             title,
             color = titleColor,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            style = if (compact) {
+            style = if (portraitCardHeight != null) {
+                MaterialTheme.typography.titleSmall.copy(
+                    fontSize = MaterialTheme.typography.titleSmall.fontSize * portraitScale,
+                    lineHeight = MaterialTheme.typography.titleSmall.lineHeight * portraitScale
+                )
+            } else if (compact) {
                 MaterialTheme.typography.titleSmall
             } else {
                 MaterialTheme.typography.titleMedium
@@ -636,7 +670,10 @@ internal fun ProfileChooserTile(
         Text(
             subtitle,
             color = subtitleColor,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = MaterialTheme.typography.labelSmall.fontSize * portraitScale,
+                lineHeight = MaterialTheme.typography.labelSmall.lineHeight * portraitScale
+            ),
             textAlign =
                 androidx.compose.ui.text.style.TextAlign.Center
         )
