@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Key
 import com.nikhil.niktv.data.ParentalControls
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
@@ -36,12 +37,21 @@ internal fun ParentalPinPrompt(vm: NikTvViewModel) {
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
     if (state.parentalPrompt != null) {
+        val context = LocalContext.current
         var pin by remember { mutableStateOf("") }
         ParentalPinDialog(
             title = state.parentalPrompt!!,
             pin = pin,
-            onPin = { pin = it },
-            error = if (state.parentalPinError) "Incorrect PIN. Try again." else null,
+            onPin = { entered ->
+                pin = entered
+                if (validParentalPin(entered) && ParentalControls.accepts(context, entered)) {
+                    vm.submitParentalPin(entered)
+                }
+            },
+            error = if (validParentalPin(pin) &&
+                (state.parentalPinError || !ParentalControls.accepts(context, pin))) {
+                "Incorrect PIN. Try again."
+            } else null,
             dismiss = vm::cancelParentalPin,
             confirm = { vm.submitParentalPin(pin) }
         )
