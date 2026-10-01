@@ -4159,11 +4159,7 @@ private fun ModernCollectionPoster(
     var menuOpen by remember { mutableStateOf(false) }
     var descriptionDialogOpen by remember(item.id) { mutableStateOf(false) }
     val context = LocalContext.current
-    val offlineInfo = remember(offlineDownload, offlineRevision) {
-        offlineDownload?.let {
-            OfflineMediaDownloads.info(context, it.requestId, it.downloadId)
-        }
-    }
+    val offlineInfo = observedOfflineDownloadInfo(offlineDownload)
     val downloadActive = offlineInfo?.status in setOf(
         OfflineDownloadStatus.QUEUED,
         OfflineDownloadStatus.DOWNLOADING,

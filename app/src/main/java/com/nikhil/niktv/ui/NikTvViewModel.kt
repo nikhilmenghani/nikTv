@@ -292,16 +292,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            while (isActive) {
-                delay(2_000L)
-                if (_state.value.offlineDownloads.any {
-                        OfflineMediaDownloads.status(getApplication(), it.requestId, it.downloadId) in setOf(
-                            OfflineDownloadStatus.QUEUED,
-                            OfflineDownloadStatus.DOWNLOADING,
-                            OfflineDownloadStatus.PAUSED
-                        )
-                    }) {
-                    _state.update { it.copy(offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
+            _state.map { it.offlineDownloads }.distinctUntilChanged().collectLatest { downloads ->
+                while (isActive) {
+                    val infos = queryOfflineDownloadSnapshot(downloads) {
+                        OfflineMediaDownloads.info(getApplication(), it.requestId, it.downloadId)
+                    }
+                    if (infos != OfflineDownloadSnapshots.state.value) {
+                        OfflineDownloadSnapshots.publish(infos)
+                        _state.update { it.copy(offlineDownloadRevision = it.offlineDownloadRevision + 1L) }
+                    }
+                    delay(2_000L)
                 }
             }
         }
@@ -5683,7 +5683,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val session = requireNotNull(_state.value.session)
                 val key = "${session.profile.cacheKey()}:${type.name}:${item.id}"
                 val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
-                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) !in
+                if (existing != null && withContext(Dispatchers.IO) { OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) } !in
                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
                 existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId, it.downloadId) }
                 val url = portal.playableUrl(session, item, type)
@@ -5706,20 +5706,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val profileKey = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey() ?: return
         val existingKey = "$profileKey:${playing.catalogType.name}:${playing.media.id}"
-        _state.value.offlineDownloads.firstOrNull { it.key == existingKey }?.let { existing ->
-            if (OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) !in
-                setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)
-            ) {
-                removeOfflineDownload(playing.media, playing.catalogType)
-                return
-            }
-        }
-        val session = _state.value.session ?: return
         viewModelScope.launch {
+            _state.value.offlineDownloads.firstOrNull { it.key == existingKey }?.let { existing ->
+                if (withContext(Dispatchers.IO) { OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) } !in
+                    setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)
+                ) {
+                    removeOfflineDownload(playing.media, playing.catalogType)
+                    return@launch
+                }
+            }
+            val session = _state.value.session ?: return@launch
             runCatching {
                 val key = existingKey
                 val existing = _state.value.offlineDownloads.firstOrNull { it.key == key }
-                if (existing != null && OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) !in
+                if (existing != null && withContext(Dispatchers.IO) { OfflineMediaDownloads.status(getApplication(), existing.requestId, existing.downloadId) } !in
                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)) return@runCatching
                 existing?.let { OfflineMediaDownloads.remove(getApplication(), it.requestId, it.downloadId) }
                 val handle = OfflineMediaDownloads.enqueue(getApplication(), key, playing.media.title, playing.url)

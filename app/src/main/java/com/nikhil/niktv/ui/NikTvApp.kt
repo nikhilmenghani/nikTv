@@ -523,6 +523,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val orientationMode by rememberUiOrientationMode()
 
     val state by vm.state.collectAsStateWithLifecycle()
+    val downloadInfos by OfflineDownloadSnapshots.state.collectAsStateWithLifecycle()
     // One owner restores browsing orientation when the player closes.
     ApplyUiOrientation(orientationMode, playingVideo = state.nowPlaying != null)
     ApplyAppBrightness()
@@ -639,7 +640,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                             download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                                 download.catalogType == state.nowPlaying?.catalogType &&
                                 download.media.id == state.nowPlaying?.media?.id &&
-                                OfflineMediaDownloads.status(appContext, download.requestId, download.downloadId) !in
+                                downloadInfos[download.key]?.status !in
                                     setOf(OfflineDownloadStatus.FAILED, OfflineDownloadStatus.MISSING)
                         }
                         if (present) confirmPlayerDownloadRemoval = true else vm.downloadNowPlaying()
@@ -648,26 +649,26 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id &&
-                            OfflineMediaDownloads.status(appContext, download.requestId, download.downloadId) == OfflineDownloadStatus.COMPLETE
+                            downloadInfos[download.key]?.status == OfflineDownloadStatus.COMPLETE
                     },
                     offlineDownloadInProgress = state.offlineDownloads.firstOrNull { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
-                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId, it.downloadId).status }
+                    }?.let { observedOfflineDownloadInfo(it)?.status }
                         ?.let { it == OfflineDownloadStatus.DOWNLOADING || it == OfflineDownloadStatus.QUEUED } == true,
                     offlineDownloadProgress = state.offlineDownloads.firstOrNull { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
-                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId, it.downloadId) }
+                    }?.let { observedOfflineDownloadInfo(it) }
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.percent?.div(100f),
                     offlineDownloadProgressText = state.offlineDownloads.firstOrNull { download ->
                         download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
                             download.catalogType == state.nowPlaying?.catalogType &&
                             download.media.id == state.nowPlaying?.media?.id
-                    }?.let { OfflineMediaDownloads.info(appContext, it.requestId, it.downloadId) }
+                    }?.let { observedOfflineDownloadInfo(it) }
                         ?.takeIf { it.status == OfflineDownloadStatus.DOWNLOADING || it.status == OfflineDownloadStatus.QUEUED }
                         ?.progressLabel(),
                     onPlayItem = vm::openMedia,

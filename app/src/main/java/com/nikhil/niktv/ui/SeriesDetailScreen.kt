@@ -731,9 +731,7 @@ internal fun ModernEpisodeCard(
     val episodeConfiguration = LocalConfiguration.current
     val isTv = episodeContext.isTvLikeDevice(episodeConfiguration)
     var confirmRemoval by remember { mutableStateOf(false) }
-    val offlineInfo = remember(offlineDownload, offlineRevision) {
-        offlineDownload?.let { OfflineMediaDownloads.info(episodeContext, it.requestId, it.downloadId) }
-    }
+    val offlineInfo = observedOfflineDownloadInfo(offlineDownload)
     val offlineStatus = offlineInfo?.status
     var downloadRequested by remember(episode.id) { mutableStateOf(false) }
     LaunchedEffect(downloadRequested, offlineDownload?.requestId) {

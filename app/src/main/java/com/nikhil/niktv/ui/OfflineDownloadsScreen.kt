@@ -261,9 +261,8 @@ internal fun OfflineDownloadsScreen(
                         }
                     }
                     items(group, key = { it.key }) { entry ->
-                        val info = remember(entry.requestId, state.offlineDownloadRevision) {
-                            OfflineMediaDownloads.info(context, entry.requestId, entry.downloadId)
-                        }
+                        val info = observedOfflineDownloadInfo(entry)
+                            ?: com.nikhil.niktv.data.OfflineDownloadInfo(OfflineDownloadStatus.QUEUED)
                         val rowRequester = remember(entry.key) { FocusRequester() }
                         val shareRequester = remember(entry.key) { FocusRequester() }
                         val deleteRequester = remember(entry.key) { FocusRequester() }
@@ -428,7 +427,7 @@ internal fun OfflineDownloadsScreen(
     pendingRemoval?.let { entry ->
         AlertDialog(
             onDismissRequest = { pendingRemoval = null },
-            title = { Text(if (OfflineMediaDownloads.status(context, entry.requestId, entry.downloadId) == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
+            title = { Text(if (observedOfflineDownloadInfo(entry)?.status == OfflineDownloadStatus.COMPLETE) "Delete download?" else "Cancel download?") },
             text = { Text("Remove “${entry.media.title}” from offline downloads?") },
             dismissButton = { NikTvTextActionButton(onClick = { pendingRemoval = null }) { Text("Keep") } },
             confirmButton = { NikTvPrimaryActionButton(onClick = { remove(entry.media, entry.catalogType); pendingRemoval = null }) { Text("Remove") } }
