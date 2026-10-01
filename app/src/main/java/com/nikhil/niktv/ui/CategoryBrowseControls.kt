@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -34,7 +35,9 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import com.nikhil.niktv.data.adultContentLabel
 import com.nikhil.niktv.model.Category
 import com.nikhil.niktv.model.CategoryBrowseMode
@@ -106,31 +109,51 @@ internal fun CategoryBrowseControls(
 
 @Composable
 private fun BrowseModeDialog(mode: CategoryBrowseMode, dismiss: () -> Unit, select: (CategoryBrowseMode) -> Unit) {
+    val configuration = LocalConfiguration.current
+    val largeDevice = LocalContext.current.isModernTileTv(configuration) ||
+        configuration.smallestScreenWidthDp >= 600
+    val dialogWidth = minOf(680, configuration.screenWidthDp - if (largeDevice) 48 else 32)
+    // Account for dialog padding, list padding, column gap, and compact icon/button padding.
+    // Leave enough text width for the longest labels to wrap naturally without tiny tap targets.
+    val phoneLabelWidth = (dialogWidth - 48 - 4 - 12) / 2f - 48
+    val columns = if (largeDevice || (configuration.screenWidthDp >= 360 &&
+        phoneLabelWidth >= 80 * configuration.fontScale.coerceAtLeast(1f))) 2 else 1
     val options = CategoryBrowseMode.entries
     val selectedIndex = options.indexOf(mode).coerceAtLeast(0)
-    val selectedFocus = remember { FocusRequester() }
-    var initialFocusRequested by remember { mutableStateOf(false) }
+    val selectedRow = selectedIndex / columns
+    val selectedFocus = remember(columns) { FocusRequester() }
+    var initialFocusRequested by remember(columns) { mutableStateOf(false) }
     // The description occupies item zero. Compose an offscreen selection before requesting focus.
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = if (selectedIndex == 0) 0 else selectedIndex + 1)
+    val listState = key(columns) {
+        rememberLazyListState(initialFirstVisibleItemIndex = if (selectedRow == 0) 0 else selectedRow + 1)
+    }
     CollectionDialog(
         title = "Browse by", subtitle = "Choose how to organize your IPTV categories.",
         icon = Icons.Default.Tune, dismiss = dismiss, listState = listState,
+        dialogWidth = if (columns == 2) dialogWidth.dp else null,
         actions = { NikTvSecondaryActionButton(onClick = dismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") } }
     ) {
-        items(options, key = { it.name }) { option ->
-            CollectionChoice(option.label, option == mode, onClick = { select(option) },
-                modifier = if (option == options[selectedIndex]) Modifier.focusRequester(selectedFocus) else Modifier)
-            if (option == options[selectedIndex]) {
-                // Read the dialog's window/input mode, not the underlying screen's window.
-                // Also restore the starting point when a touch user switches to a D-pad.
-                val windowFocused = LocalWindowInfo.current.isWindowFocused
-                val inputMode = LocalInputModeManager.current.inputMode
-                LaunchedEffect(windowFocused, inputMode) {
-                    if (!initialFocusRequested && windowFocused && inputMode == InputMode.Keyboard) {
-                        withFrameNanos { }
-                        initialFocusRequested = selectedFocus.requestFocus()
+        items(options.chunked(columns), key = { it.first().name }) { row ->
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { option ->
+                    CollectionChoice(option.label, option == mode, onClick = { select(option) },
+                        compact = !largeDevice && columns == 2,
+                        modifier = Modifier.weight(1f).fillMaxHeight().then(
+                            if (option == options[selectedIndex]) Modifier.focusRequester(selectedFocus) else Modifier))
+                    if (option == options[selectedIndex]) {
+                        // Read the dialog's window/input mode, not the underlying screen's window.
+                        // Also restore the starting point when a touch user switches to a D-pad.
+                        val windowFocused = LocalWindowInfo.current.isWindowFocused
+                        val inputMode = LocalInputModeManager.current.inputMode
+                        LaunchedEffect(windowFocused, inputMode) {
+                            if (!initialFocusRequested && windowFocused && inputMode == InputMode.Keyboard) {
+                                withFrameNanos { }
+                                initialFocusRequested = selectedFocus.requestFocus()
+                            }
+                        }
                     }
                 }
+                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -141,11 +164,14 @@ private fun BrowseModeDialog(mode: CategoryBrowseMode, dismiss: () -> Unit, sele
 private fun CollectionDialog(
     title: String, subtitle: String, icon: ImageVector, dismiss: () -> Unit,
     actions: @Composable () -> Unit, listState: LazyListState = rememberLazyListState(),
+    dialogWidth: Dp? = null,
     content: LazyListScope.() -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val bodyHeight = (configuration.screenHeightDp * .52f).dp
     AlertDialog(
+        modifier = if (dialogWidth != null) Modifier.width(dialogWidth) else Modifier,
+        properties = DialogProperties(usePlatformDefaultWidth = dialogWidth == null),
         onDismissRequest = dismiss, shape = RoundedCornerShape(24.dp),
         containerColor = Color(0xFF181818), titleContentColor = Color.White,
         textContentColor = Color.LightGray,
@@ -168,16 +194,16 @@ private fun CollectionDialog(
 
 @Composable
 private fun CollectionChoice(label: String, chosen: Boolean, onClick: () -> Unit, multiple: Boolean = false,
-    modifier: Modifier = Modifier) {
+    modifier: Modifier = Modifier, compact: Boolean = false) {
     NikTvSecondaryActionButton(onClick = onClick,
         modifier = modifier.fillMaxWidth().semantics {
             role = if (multiple) Role.Checkbox else Role.RadioButton
             selected = chosen
-        }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
+        }, contentPadding = PaddingValues(horizontal = if (compact) 10.dp else 14.dp, vertical = 12.dp)) {
         Icon(if (chosen) Icons.Default.CheckCircle else Icons.Default.FolderOpen,
             if (chosen) "Selected" else null, Modifier.size(20.dp),
             tint = if (chosen) MaterialTheme.colorScheme.primary else SettingsMuted)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
             fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal)
     }

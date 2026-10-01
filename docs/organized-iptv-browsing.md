@@ -20,6 +20,10 @@ every channel's country or audio language. `INDIAN` is not treated as `Hindi`.
 
 - Xtream tabs offer Collections, My collections, Language, Region, Genre & theme,
   Service & network, Quality, and Provider categories.
+- The Browse by popup uses two equal-width columns on tablets and TVs, and on
+  phones with enough room for readable labels. Phone labels wrap naturally;
+  narrow screens or larger text use one column. D-pad focus starts on the saved
+  selection (Collections by default), including when switching from touch input.
 - Collection membership comes from category labels and original category IDs.
   Unknown labels remain reachable through All titles and Provider categories.
 - The `+` control creates a named collection from multiple provider categories.
