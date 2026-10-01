@@ -2699,6 +2699,7 @@ private fun updateCheckFailureMessage(error: Throwable): String {
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun LiveTvPlaybackScreen(
     state: NikTvState,

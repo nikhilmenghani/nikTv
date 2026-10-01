@@ -121,7 +121,7 @@ internal fun ParentalControlsSettings(vm: NikTvViewModel = viewModel()) {
 }
 
 @Composable
-private fun ParentalPinDialog(
+internal fun ParentalPinDialog(
     title: String, pin: String, onPin: (String) -> Unit,
     error: String?, dismiss: () -> Unit, confirm: () -> Unit,
     confirmation: String? = null, onConfirmation: ((String) -> Unit)? = null

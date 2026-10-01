@@ -179,6 +179,7 @@ data class NikTvState(
     ,val playbackQueueLoadingMore: Boolean = false
 )
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val store = ProfileStore(application)
     private val portal = StalkerPortalClient(application)
@@ -5672,6 +5673,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         task { playInternal(item, type, series, episodes, requestId = requestId) }
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun downloadForOffline(item: MediaItem, type: CatalogType, series: MediaItem? = null) {
         if (gateAdultAction(series ?: item, type) { downloadForOffline(item, type, series) }) return
         if (type == CatalogType.LIVE_TV) {
@@ -5698,6 +5700,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun downloadNowPlaying() {
         val playing = _state.value.nowPlaying ?: return
         if (playing.catalogType == CatalogType.LIVE_TV) {
@@ -5733,6 +5736,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun removeOfflineDownload(item: MediaItem, type: CatalogType) {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey() ?: return
         val key = "$profileKey:${type.name}:${item.id}"
@@ -5783,6 +5787,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun removeAllOfflineDownloads() {
         val downloads = _state.value.offlineDownloads
         if (downloads.isEmpty()) return
@@ -5883,6 +5888,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private suspend fun resolvePlayback(
         requestedItem: MediaItem,
         type: CatalogType,
@@ -6953,6 +6959,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun closeOfflineDownloads() = _state.update { it.copy(offlineDownloadsOpen = false) }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun playOfflineDownload(entry: OfflineMediaDownload) {
         val protectedMedia = entry.media.copy(isAdult = entry.media.isAdult || entry.series?.isAdult == true ||
             com.nikhil.niktv.data.ParentalControls.adultCategory(getApplication(), entry.profileKey, entry.catalogType,

@@ -2,7 +2,7 @@
 
 The recorder validates complete manifests before appending segments. It rejects byte ranges, encryption, initialization maps/fragments, partial segment formats and malformed segment durations. METHOD=NONE remains supported. Each segment's EXTINF duration drives recorded-media accounting and pacing; TARGETDURATION only controls playlist polling. Unsupported manifests delete the recorder's own output instead of publishing a corrupt pending file.
 
-Normal checks: `gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug -PskipLocalGithubToken=true --offline` passed. 237 unit tests, no failures; lint has no errors.
+Normal checks: `gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug -PskipLocalGithubToken=true --offline` passed. 237 unit tests, no failures; lint task completed with non-gating abortOnError=false; see ci-device-regressions.md for the strict lint gate.
 
 Device: authorized Xiaomi 21051182G, API 36. Isolated package build: `gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true -PskipLocalGithubToken=true --offline`. Instrumentation: `adb -s <tablet> shell am instrument -w -e class com.nikhil.niktv.data.HlsRecordingRegressionTest com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner`: OK (3 tests).
 

@@ -1801,7 +1801,8 @@ private fun ModernSearchLiveResultRow(
                                 Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Fit
                             ) {
-                                when (painter.state.value) {
+                                val artworkState by painter.state.collectAsState()
+                                when (artworkState) {
                                     is coil3.compose.AsyncImagePainter.State.Success ->
                                         SubcomposeAsyncImageContent()
 
@@ -1954,7 +1955,8 @@ private fun ModernSearchMediaResultRow(
                             Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
                         ) {
-                            when (painter.state.value) {
+                            val artworkState by painter.state.collectAsState()
+                            when (artworkState) {
                                 is coil3.compose.AsyncImagePainter.State.Success ->
                                     SubcomposeAsyncImageContent()
 

@@ -326,6 +326,7 @@ fun MovieBrowseHeaderPlaceholder(categoryTitle: String?) {
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun ShowcasePlaybackScreen(
     state: NikTvState,
@@ -693,6 +694,7 @@ fun ShowcasePlaybackScreen(
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun YouTubeMobileShowcase(
     state: NikTvState,
@@ -913,7 +915,8 @@ private fun YouTubeMobileQueueItem(
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
                         ) {
-                            when (painter.state.value) {
+                            val artworkState by painter.state.collectAsState()
+                            when (artworkState) {
                                 is coil3.compose.AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
                                 else -> ShowcaseArtworkFallback(item.title, true, Modifier.fillMaxSize())
                             }
@@ -1698,7 +1701,8 @@ private fun ShowcasePosterCard(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     ) {
-                        when (painter.state.value) {
+                        val artworkState by painter.state.collectAsState()
+                        when (artworkState) {
                             is coil3.compose.AsyncImagePainter.State.Success ->
                                 SubcomposeAsyncImageContent()
                             else ->

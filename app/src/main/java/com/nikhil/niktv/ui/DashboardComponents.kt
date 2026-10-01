@@ -715,7 +715,8 @@ internal fun ModernPosterCard(
                         Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     ) {
-                        when (painter.state.value) {
+                        val artworkState by painter.state.collectAsState()
+                        when (artworkState) {
                             is coil3.compose.AsyncImagePainter.State.Success ->
                                 SubcomposeAsyncImageContent()
                             else ->
@@ -1003,7 +1004,8 @@ internal fun ModernMediaListCard(
                                 ContentScale.Crop
                             }
                     ) {
-                        when (painter.state.value) {
+                        val artworkState by painter.state.collectAsState()
+                        when (artworkState) {
                             is coil3.compose.AsyncImagePainter.State.Success ->
                                 SubcomposeAsyncImageContent()
 

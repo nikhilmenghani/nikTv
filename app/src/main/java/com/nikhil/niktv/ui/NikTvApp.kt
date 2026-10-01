@@ -513,6 +513,7 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
     else -> null
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     val pairingInvite = com.nikhil.niktv.data.PairingInvites.pending

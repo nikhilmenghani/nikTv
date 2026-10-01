@@ -8,7 +8,7 @@ Connected and authorized ADB devices:
 - Amazon Fire TV AFTKRT, API 30 (network): earlier fixture tests failed; not counted as passing.
 
 Checks:
-- `gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug -PskipLocalGithubToken=true --offline`: passed. 230 unit tests, no failures; lint report contains warnings, no errors.
+- `gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug -PskipLocalGithubToken=true --offline`: passed. 230 unit tests, no failures; lint task completed with non-gating abortOnError=false; see ci-device-regressions.md for the strict lint gate.
 - `gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true -PskipLocalGithubToken=true --offline`: passed.
 - `adb -s <tablet> shell am instrument -w -e class com.nikhil.niktv.ui.PlaybackRegressionTest com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner`: OK (2 tests).
 

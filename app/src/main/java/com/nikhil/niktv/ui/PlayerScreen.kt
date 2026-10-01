@@ -2759,6 +2759,7 @@ private object FailedDecoderRegistry {
             )
     }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun selector(
         context: Context,
         playbackScope: String

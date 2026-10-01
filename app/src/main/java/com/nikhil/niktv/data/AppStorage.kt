@@ -18,6 +18,7 @@ data class AppStorageSnapshot(
     val temporaryCacheBytes: Long
 )
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 suspend fun appStorageSnapshot(
     context: Context,
     offlineDownloads: List<OfflineMediaDownload>

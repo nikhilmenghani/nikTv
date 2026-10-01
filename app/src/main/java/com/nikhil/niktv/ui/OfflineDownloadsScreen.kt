@@ -128,6 +128,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun OfflineDownloadsScreen(
     state: NikTvState,
@@ -471,6 +472,7 @@ internal fun OfflineDownloadsScreen(
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun OfflineStorageScreen(
     state: NikTvState,

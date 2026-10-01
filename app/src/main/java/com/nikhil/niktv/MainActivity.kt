@@ -23,11 +23,6 @@ class MainActivity : ComponentActivity() {
     var pipModeListener: ((Boolean) -> Unit)? = null
     var playerTransportKeyHandler: ((KeyEvent) -> Boolean)? = null
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (playerTransportKeyHandler?.invoke(event) == true) return true
-        return super.dispatchKeyEvent(event)
-    }
-
     private val pipSupported: Boolean
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
@@ -51,12 +46,15 @@ class MainActivity : ComponentActivity() {
     }
 
     fun enterPlayerPictureInPicture(): Boolean {
-        if (!pipSupported || !playerActive) return false
-        return playerPipParams()?.let(::enterPictureInPictureMode) ?: false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !pipSupported || !playerActive) return false
+        return playerPipParams()?.let { enterPictureInPictureMode(it) } ?: false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.callback = com.nikhil.niktv.ui.PlayerTransportWindowCallback(window.callback) { event ->
+            playerTransportKeyHandler?.invoke(event) == true
+        }
         PairingInvites.accept(intent?.data)
         AppUpdates.initialize(applicationContext)
         GitHubBackupScheduler.initialize(applicationContext)

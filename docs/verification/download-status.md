@@ -2,7 +2,7 @@
 
 Status queries now run through an IO snapshot function. One ViewModel poll publishes shared observable snapshots, including completed/failed transitions, and all Compose status consumers read those snapshots. Download-action status checks also dispatch to IO. Duplicate entries query once per snapshot, and removed entries disappear.
 
-Normal checks: `gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug -PskipLocalGithubToken=true --offline` passed (232 unit tests, no failures; lint has no errors).
+Normal checks: `gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug -PskipLocalGithubToken=true --offline` passed (232 unit tests, no failures; lint task completed with non-gating abortOnError=false; see ci-device-regressions.md for the strict lint gate).
 
 Device: authorized Xiaomi 21051182G, API 36, separate regression package. `gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true -PskipLocalGithubToken=true --offline`, then `adb -s <tablet> shell am instrument -w -e class com.nikhil.niktv.ui.DownloadSnapshotRegressionTest,com.nikhil.niktv.ui.PlaybackRegressionTest com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner`: OK (4 tests).
 
