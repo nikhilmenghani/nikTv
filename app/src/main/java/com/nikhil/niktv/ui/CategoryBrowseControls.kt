@@ -35,6 +35,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -85,17 +86,18 @@ internal fun CategoryBrowseControls(
                     fontWeight = FontWeight.SemiBold)
                 Text("IPTV categories", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
             }
-            ModernHeaderOptionsIcon("Find a category", Icons.Default.Search) {
+            ModernHeaderOptionsIcon("Find a category", Icons.Default.FilterList) {
                 searchOpen = !searchOpen
                 if (!searchOpen) { onQuery(""); keyboard?.hide() }
             }
-            ModernHeaderOptionsIcon("Browse by", Icons.Default.Tune) { menu = true }
+            ModernHeaderOptionsIcon("Browse by", Icons.Default.Category) { menu = true }
             ModernHeaderOptionsIcon("Create collection", Icons.Default.Add) { create() }
         }
         // Match the existing header's reserved space for captions below focused icons.
         Spacer(Modifier.height(38.dp))
         AnimatedVisibility(searchOpen, enter = fadeIn(), exit = fadeOut()) {
-            CollectionField(query, onQuery, "Find a category or collection", Modifier.focusRequester(searchFocus))
+            CollectionField(query, onQuery, "Find a category or collection", Modifier.focusRequester(searchFocus),
+                icon = Icons.Default.FilterList)
         }
     }
     LaunchedEffect(searchOpen) {
@@ -113,11 +115,8 @@ private fun BrowseModeDialog(mode: CategoryBrowseMode, dismiss: () -> Unit, sele
     val largeDevice = LocalContext.current.isModernTileTv(configuration) ||
         configuration.smallestScreenWidthDp >= 600
     val dialogWidth = minOf(680, configuration.screenWidthDp - if (largeDevice) 48 else 32)
-    // Account for dialog padding, list padding, column gap, and compact icon/button padding.
-    // Leave enough text width for the longest labels to wrap naturally without tiny tap targets.
-    val phoneLabelWidth = (dialogWidth - 48 - 4 - 12) / 2f - 48
-    val columns = if (largeDevice || (configuration.screenWidthDp >= 360 &&
-        phoneLabelWidth >= 80 * configuration.fontScale.coerceAtLeast(1f))) 2 else 1
+    // Phones need a full row for readable, single-line option labels.
+    val columns = if (largeDevice) 2 else 1
     val options = CategoryBrowseMode.entries
     val selectedIndex = options.indexOf(mode).coerceAtLeast(0)
     val selectedRow = selectedIndex / columns
@@ -129,15 +128,15 @@ private fun BrowseModeDialog(mode: CategoryBrowseMode, dismiss: () -> Unit, sele
     }
     CollectionDialog(
         title = "Browse by", subtitle = "Choose how to organize your IPTV categories.",
-        icon = Icons.Default.Tune, dismiss = dismiss, listState = listState,
-        dialogWidth = if (columns == 2) dialogWidth.dp else null,
+        icon = Icons.Default.Category, dismiss = dismiss, listState = listState,
+        dialogWidth = dialogWidth.dp,
         actions = { NikTvSecondaryActionButton(onClick = dismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") } }
     ) {
         items(options.chunked(columns), key = { it.first().name }) { row ->
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { option ->
                     CollectionChoice(option.label, option == mode, onClick = { select(option) },
-                        compact = !largeDevice && columns == 2,
+                        singleLine = true,
                         modifier = Modifier.weight(1f).fillMaxHeight().then(
                             if (option == options[selectedIndex]) Modifier.focusRequester(selectedFocus) else Modifier))
                     if (option == options[selectedIndex]) {
@@ -194,17 +193,19 @@ private fun CollectionDialog(
 
 @Composable
 private fun CollectionChoice(label: String, chosen: Boolean, onClick: () -> Unit, multiple: Boolean = false,
-    modifier: Modifier = Modifier, compact: Boolean = false) {
+    modifier: Modifier = Modifier, singleLine: Boolean = false) {
     NikTvSecondaryActionButton(onClick = onClick,
         modifier = modifier.fillMaxWidth().semantics {
             role = if (multiple) Role.Checkbox else Role.RadioButton
             selected = chosen
-        }, contentPadding = PaddingValues(horizontal = if (compact) 10.dp else 14.dp, vertical = 12.dp)) {
+        }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
         Icon(if (chosen) Icons.Default.CheckCircle else Icons.Default.FolderOpen,
             if (chosen) "Selected" else null, Modifier.size(20.dp),
             tint = if (chosen) MaterialTheme.colorScheme.primary else SettingsMuted)
-        Spacer(Modifier.width(if (compact) 8.dp else 12.dp))
+        Spacer(Modifier.width(12.dp))
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+            maxLines = if (singleLine) 1 else Int.MAX_VALUE,
+            overflow = if (singleLine) TextOverflow.Ellipsis else TextOverflow.Clip,
             fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal)
     }
 }
