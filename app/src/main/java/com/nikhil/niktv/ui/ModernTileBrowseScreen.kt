@@ -3463,12 +3463,22 @@ private fun ModernIptvCollection(
                     modifier = Modifier.fillMaxWidth()
                         .focusRequester(channelSearchRequester)
                         .onPreviewKeyEvent { event ->
-                            if (remoteNavigationActive && !channelSearchEditing &&
-                                event.type == KeyEventType.KeyDown &&
-                                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
-                                channelSearchEditing = true
-                                true
-                            } else false
+                            if (!remoteNavigationActive || channelSearchEditing ||
+                                event.type != KeyEventType.KeyDown) {
+                                false
+                            } else when (event.key) {
+                                Key.DirectionDown -> {
+                                    if (focusIds.isNotEmpty()) {
+                                        moveFocusToIndex(0)
+                                        true
+                                    } else false
+                                }
+                                Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                    channelSearchEditing = true
+                                    true
+                                }
+                                else -> false
+                            }
                         }
                         .then(if (!channelSearchEditing) {
                             Modifier.pointerInput(Unit) {
