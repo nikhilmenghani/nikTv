@@ -106,7 +106,11 @@ data class PortalCatalogPage(
 )
 
 @Serializable
-data class Category(val id: String, val title: String, val type: CatalogType, val isAdult: Boolean = false)
+data class Category(
+    val id: String, val title: String, val type: CatalogType, val isAdult: Boolean = false,
+    /** Local collection membership; provider IDs on media are never rewritten. */
+    val sourceCategoryIds: List<String> = emptyList()
+)
 @Serializable
 data class MediaItem(
     val id: String,

@@ -167,6 +167,11 @@ import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.FavoriteItem
 import com.nikhil.niktv.model.FavoriteSource
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.CategoryOrganization
+import com.nikhil.niktv.model.CategoryBrowseMode
+import com.nikhil.niktv.data.CategoryCollectionPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.nikhil.niktv.model.PortalType
 import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
 import com.nikhil.niktv.model.matchesLiveChannelQuery
@@ -681,7 +686,7 @@ private fun ModernDestinationHub(
             }
         }
 
-    val liveCategories =
+    val rawLiveCategories =
         if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.LIVE_TV)) {
             state.modernVisibleIptvCategories(
                 CatalogType.LIVE_TV,
@@ -690,7 +695,7 @@ private fun ModernDestinationHub(
         } else {
             emptyList()
         }
-    val movieCategories =
+    val rawMovieCategories =
         if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.MOVIES)) {
             state.modernVisibleIptvCategories(
                 CatalogType.MOVIES,
@@ -699,7 +704,7 @@ private fun ModernDestinationHub(
         } else {
             emptyList()
         }
-    val seriesCategories =
+    val rawSeriesCategories =
         if (dashboardSurface in setOf(DashboardSurface.HOME, DashboardSurface.SERIES)) {
             state.modernVisibleIptvCategories(
                 CatalogType.SERIES,
@@ -708,6 +713,57 @@ private fun ModernDestinationHub(
         } else {
             emptyList()
         }
+
+    val organizedBrowse = state.savedProfile?.portalType == PortalType.XTREAM && dashboardSurface != DashboardSurface.HOME
+    val browseType = when (dashboardSurface) {
+        DashboardSurface.MOVIES -> CatalogType.MOVIES
+        DashboardSurface.SERIES -> CatalogType.SERIES
+        else -> CatalogType.LIVE_TV
+    }
+    var categoryBrowseMode by rememberSaveable(profileKey, dashboardSurface) {
+        mutableStateOf(CategoryCollectionPreferences.browseMode(context, profileKey, browseType))
+    }
+    var categoryQuery by rememberSaveable(profileKey, dashboardSurface) { mutableStateOf("") }
+    var createCollection by remember { mutableStateOf(false) }
+    var customCollections by remember(profileKey, browseType) {
+        mutableStateOf(CategoryCollectionPreferences.read(context, profileKey, browseType))
+    }
+    val providerCategories = rawLiveCategories + rawMovieCategories + rawSeriesCategories
+    val organizedCategories by produceState(if (organizedBrowse) emptyList<Category>() else providerCategories,
+        providerCategories, categoryBrowseMode, customCollections, organizedBrowse) {
+        value = if (!organizedBrowse) providerCategories else withContext(Dispatchers.Default) {
+            if (categoryBrowseMode == CategoryBrowseMode.CUSTOM) {
+                CategoryCollectionPreferences.visible(customCollections, providerCategories)
+            } else CategoryOrganization.organize(providerCategories, categoryBrowseMode)
+        }
+    }
+    val matchingCategories = remember(organizedCategories, categoryQuery, pinnedLiveCategories, pinnedMovieCategories, pinnedSeriesCategories) {
+        organizedCategories.filter { CategoryOrganization.matchesTitle(it.title, categoryQuery) }
+            .sortedBy { category -> category.id !in when (category.type) {
+                CatalogType.LIVE_TV -> pinnedLiveCategories
+                CatalogType.MOVIES -> pinnedMovieCategories
+                else -> pinnedSeriesCategories
+            } }
+    }
+    val liveCategories = matchingCategories.filter { it.type == CatalogType.LIVE_TV }
+    val movieCategories = matchingCategories.filter { it.type == CatalogType.MOVIES }
+    val seriesCategories = matchingCategories.filter { it.type == CatalogType.SERIES }
+    fun removeVisibleCategory(category: Category) {
+        if (category.id.startsWith("@custom:")) {
+            customCollections = customCollections.filterNot { category.id.startsWith(it.id + ":") }
+            CategoryCollectionPreferences.save(context, profileKey, browseType, customCollections)
+        } else if (category.sourceCategoryIds.isEmpty()) removeIptvCategory(category.type, category.id)
+    }
+    if (createCollection) {
+        CreateCategoryCollectionDialog(providerCategories, { createCollection = false }) { name, ids ->
+            customCollections = customCollections + CategoryCollectionPreferences.create(name, browseType, ids)
+            CategoryCollectionPreferences.save(context, profileKey, browseType, customCollections)
+            categoryBrowseMode = CategoryBrowseMode.CUSTOM
+            CategoryCollectionPreferences.saveBrowseMode(context, profileKey, browseType, categoryBrowseMode)
+            categoryQuery = ""
+            createCollection = false
+        }
+    }
 
     val newEpisodes = if (dashboardSurface == DashboardSurface.HOME) {
         state.watchedSeries.flatMap { watched ->
@@ -835,6 +891,25 @@ private fun ModernDestinationHub(
             }
         }
 
+        if (organizedBrowse) {
+            item("category-browse-controls", span = fullSpan) {
+                CategoryBrowseControls(categoryBrowseMode, categoryQuery,
+                    onMode = {
+                        categoryBrowseMode = it
+                        CategoryCollectionPreferences.saveBrowseMode(context, profileKey, browseType, it)
+                        hubGridState.requestScrollToItem(0)
+                    }, onQuery = { categoryQuery = it; hubGridState.requestScrollToItem(0) },
+                    create = { createCollection = true })
+            }
+            if (matchingCategories.isEmpty()) {
+                item("no-matching-categories", span = fullSpan) {
+                    Text(if (categoryBrowseMode == CategoryBrowseMode.CUSTOM && categoryQuery.isBlank())
+                        "Create a collection with + to combine your provider categories."
+                    else "No matching categories. Try another browse option or Provider categories.")
+                }
+            }
+        }
+
         if (dashboardSurface == DashboardSurface.HOME) {
             if (recents.isNotEmpty()) {
                 item("continue-header", span = fullSpan) {
@@ -942,7 +1017,7 @@ private fun ModernDestinationHub(
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
-                    subtitle = null,
+                    subtitle = if (category.sourceCategoryIds.isNotEmpty()) "${category.sourceCategoryIds.size} ${if (category.sourceCategoryIds.size == 1) "category" else "categories"}" else null,
                     icon = Icons.Default.LiveTv,
                     seed = "live:${category.id}:${category.title}",
                     isTv = isTv,
@@ -952,7 +1027,7 @@ private fun ModernDestinationHub(
                             context, profileKey, CatalogType.LIVE_TV, category.id
                         )
                     },
-                    onRemove = { removeIptvCategory(CatalogType.LIVE_TV, category.id) },
+                    onRemove = if (category.sourceCategoryIds.isEmpty() || category.id.startsWith("@custom:")) { { removeVisibleCategory(category) } } else null,
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -975,7 +1050,7 @@ private fun ModernDestinationHub(
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
-                    subtitle = null,
+                    subtitle = if (category.sourceCategoryIds.isNotEmpty()) "${category.sourceCategoryIds.size} ${if (category.sourceCategoryIds.size == 1) "category" else "categories"}" else null,
                     icon = Icons.Default.SmartDisplay,
                     seed = "movie:${category.id}:${category.title}",
                     isTv = isTv,
@@ -985,7 +1060,7 @@ private fun ModernDestinationHub(
                             context, profileKey, CatalogType.MOVIES, category.id
                         )
                     },
-                    onRemove = { removeIptvCategory(CatalogType.MOVIES, category.id) },
+                    onRemove = if (category.sourceCategoryIds.isEmpty() || category.id.startsWith("@custom:")) { { removeVisibleCategory(category) } } else null,
                     onClick = { openIptvCategory(category) }
                 )
             }
@@ -1008,7 +1083,7 @@ private fun ModernDestinationHub(
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
-                    subtitle = null,
+                    subtitle = if (category.sourceCategoryIds.isNotEmpty()) "${category.sourceCategoryIds.size} ${if (category.sourceCategoryIds.size == 1) "category" else "categories"}" else null,
                     icon = Icons.Default.Tv,
                     seed = "series:${category.id}:${category.title}",
                     isTv = isTv,
@@ -1018,14 +1093,14 @@ private fun ModernDestinationHub(
                             context, profileKey, CatalogType.SERIES, category.id
                         )
                     },
-                    onRemove = { removeIptvCategory(CatalogType.SERIES, category.id) },
+                    onRemove = if (category.sourceCategoryIds.isEmpty() || category.id.startsWith("@custom:")) { { removeVisibleCategory(category) } } else null,
                     onClick = { openIptvCategory(category) }
                 )
             }
         }
 
         if (
-            tmdbSections.isEmpty() &&
+            !organizedBrowse && tmdbSections.isEmpty() &&
             liveCategories.isEmpty() &&
             movieCategories.isEmpty() &&
             seriesCategories.isEmpty()
@@ -1079,7 +1154,7 @@ private fun ModernDestinationHub(
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun ModernHeaderOptionsIcon(label: String, icon: ImageVector, onClick: () -> Unit) {
+internal fun ModernHeaderOptionsIcon(label: String, icon: ImageVector, onClick: () -> Unit) {
     val tooltip = androidx.compose.material3.rememberTooltipState()
     val density = androidx.compose.ui.platform.LocalDensity.current
     val windowWidth = LocalConfiguration.current.screenWidthDp.dp
@@ -3142,9 +3217,23 @@ private fun ModernIptvCollection(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isLiveTv = category.type == CatalogType.LIVE_TV
+    val localTitleSearch = state.savedProfile?.portalType == PortalType.XTREAM
+    val canSearchCollection = isLiveTv || localTitleSearch
     val profileKey = state.savedProfile?.cacheKey().orEmpty()
     var channelQuery by rememberSaveable(category.id) { mutableStateOf("") }
     val trimmedChannelQuery = channelQuery.trim()
+    var sourceFilter by rememberSaveable(profileKey, category.id) { mutableStateOf<String?>(null) }
+    val sources = remember(state.rawCategoriesByType, category) {
+        val ids = category.sourceCategoryIds.toSet()
+        state.rawCategoriesByType[category.type].orEmpty().filter { it.id in ids }
+    }
+    val filteredSourceIds = remember(sourceFilter, sources) {
+        sourceFilter?.let { filter ->
+            if (filter.startsWith("@quality:")) sources.filter {
+                filter.substringAfter(':') in CategoryOrganization.labels(it, CategoryBrowseMode.QUALITY)
+            }.map { it.id }.toSet() else setOf(filter)
+        }
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val remoteNavigationActive = isTv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     var channelSearchEditing by rememberSaveable(category.id) { mutableStateOf(false) }
@@ -3197,15 +3286,31 @@ private fun ModernIptvCollection(
     val pinnedItems = remember(state.items, pinnedChannelIds) {
         pinnedChannelIds.mapNotNull { id -> state.items.firstOrNull { it.id == id } }
     }
-    val displayedItems = remember(state.items, pinnedItems, trimmedChannelQuery, if (trimmedChannelQuery.isEmpty()) 0L else guideClock.value) {
-        if (isLiveTv && trimmedChannelQuery.isNotEmpty()) {
-            val now = System.currentTimeMillis()
-            state.items.filter { it.matchesLiveChannelQuery(trimmedChannelQuery, now) }
-        } else pinnedItems + state.items
+    val matchingItems by produceState(state.items, state.items, pinnedItems, trimmedChannelQuery, sourceFilter,
+        if (trimmedChannelQuery.isEmpty() || !isLiveTv) 0L else guideClock.value) {
+        value = withContext(Dispatchers.Default) {
+            val candidates = if (sourceFilter == null) state.items else state.items.filter { it.portalCategoryId in filteredSourceIds.orEmpty() }
+            if (trimmedChannelQuery.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                val matchesTitle = CategoryOrganization.titleMatcher(trimmedChannelQuery)
+                candidates.filter {
+                    if (isLiveTv) it.matchesLiveChannelQuery(trimmedChannelQuery, now)
+                    else matchesTitle(it.title)
+                }
+            } else pinnedItems.filter { sourceFilter == null || it.portalCategoryId in filteredSourceIds.orEmpty() } + candidates
+        }
+    }
+    var localVisibleCount by rememberSaveable(profileKey, category.id, trimmedChannelQuery, sourceFilter) { mutableIntStateOf(120) }
+    val displayedItems = remember(matchingItems, localVisibleCount) {
+        if (localTitleSearch) matchingItems.take(localVisibleCount) else matchingItems
+    }
+    val hasLocalMore = displayedItems.size < matchingItems.size
+    val loadMoreVisible: () -> Unit = {
+        if (hasLocalMore) localVisibleCount += 120 else loadMore()
     }
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
-    val showQualityBadge = remember(state.items) {
-        state.items.map { item ->
+    val showQualityBadge = remember(state.items, category) {
+        if (!isLiveTv) false else if (category.sourceCategoryIds.isNotEmpty()) true else state.items.map { item ->
             Regex("\\((4K|8K|UHD|FHD|HD)\\)\\s*$", RegexOption.IGNORE_CASE)
                 .find(item.title)?.groupValues?.get(1)?.uppercase()
         }.distinct().size > 1
@@ -3262,8 +3367,8 @@ private fun ModernIptvCollection(
             ?: 0,
         initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
     )
-    LaunchedEffect(trimmedChannelQuery) {
-        if (isLiveTv && trimmedChannelQuery.isNotEmpty()) gridState.scrollToItem(0)
+    LaunchedEffect(trimmedChannelQuery, sourceFilter) {
+        if (trimmedChannelQuery.isNotEmpty() || sourceFilter != null) gridState.scrollToItem(0)
     }
     LaunchedEffect(viewportKey, gridState) {
         snapshotFlow {
@@ -3406,17 +3511,17 @@ private fun ModernIptvCollection(
     PrefetchCatalogPage(
         scope = "${state.session?.profile?.cacheKey()}:${category.type}:${category.id}",
         ids = displayedItems.map { it.id },
-        enabled = trimmedChannelQuery.isEmpty() && state.catalogHasMore &&
+        enabled = (hasLocalMore || (trimmedChannelQuery.isEmpty() && state.catalogHasMore)) &&
             !state.loading && !state.categoryRefreshing && !state.categoryFindSearching,
         loading = state.catalogLoadingMore,
         grid = gridState,
-        loadMore = loadMore
+        loadMore = loadMoreVisible
     )
 
-    val appendPage = if (trimmedChannelQuery.isEmpty()) {
+    val appendPage = if (trimmedChannelQuery.isEmpty() || hasLocalMore) {
         rememberCollectionPagination(
             displayedItems.map { it.id }, state.catalogLoadingMore, gridState,
-            itemFocusRequesters, loadMore
+            itemFocusRequesters, loadMoreVisible
         )
     } else CollectionPagination(false) {}
 
@@ -3445,7 +3550,7 @@ private fun ModernIptvCollection(
             )
         )
 
-        if (isLiveTv) {
+        if (canSearchCollection) {
             Column(
                 Modifier.fillMaxWidth().padding(
                     start = if (isTv) 24.dp else 18.dp,
@@ -3454,6 +3559,7 @@ private fun ModernIptvCollection(
                 ),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                if (sources.isNotEmpty()) CollectionSourceFilter(sources, sourceFilter) { sourceFilter = it }
                 OutlinedTextField(
                     value = channelQuery,
                     onValueChange = { value ->
@@ -3487,8 +3593,9 @@ private fun ModernIptvCollection(
                         } else Modifier),
                     singleLine = true,
                     readOnly = remoteNavigationActive && !channelSearchEditing,
-                    shape = RoundedCornerShape(12.dp),
-                    label = { Text("Find channel or programme") },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = collectionFieldColors(),
+                    label = { Text(if (isLiveTv) "Find channel or programme" else "Find a title in this collection") },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = if (channelQuery.isNotEmpty()) {{
                         IconButton(onClick = {
@@ -3500,13 +3607,15 @@ private fun ModernIptvCollection(
                     keyboardActions = KeyboardActions(onSearch = {
                         channelSearchEditing = false
                         keyboard?.hide()
-                        if (trimmedChannelQuery.isNotEmpty()) findChannelsInCategory(trimmedChannelQuery)
+                        if (isLiveTv && category.sourceCategoryIds.isEmpty() && trimmedChannelQuery.isNotEmpty()) findChannelsInCategory(trimmedChannelQuery)
                     })
                 )
                 if (trimmedChannelQuery.isNotEmpty()) {
-                    val matchCount = displayedItems.size
+                    val matchCount = matchingItems.size
                     val searchIsCurrent = state.categoryFindQuery.equals(trimmedChannelQuery, ignoreCase = true)
                     val status = when {
+                        !isLiveTv -> "$matchCount titles found · This collection only"
+                        category.sourceCategoryIds.isNotEmpty() -> "$matchCount channels found · Titles and cached programmes"
                         state.categoryFindSearching && searchIsCurrent && state.categoryFindCheckingGuides ->
                             "Checking programme guides ${state.categoryFindGuideChecked} of ${state.categoryFindGuideTotal} · $matchCount found"
                         state.categoryFindSearching && searchIsCurrent ->
@@ -3541,7 +3650,7 @@ private fun ModernIptvCollection(
                                 containerColor = Color(0xFF282B34), contentColor = Color.White
                             )
                         ) { Text("Stop search") }
-                    } else if (!state.loading && !state.catalogLoadingMore) {
+                    } else if (isLiveTv && category.sourceCategoryIds.isEmpty() && !state.loading && !state.catalogLoadingMore) {
                         Button(
                             onClick = { findChannelsInCategory(trimmedChannelQuery) },
                             shape = RoundedCornerShape(8.dp),
@@ -3680,8 +3789,8 @@ private fun ModernIptvCollection(
             }
         }
 
-        if (!(state.loading && state.items.isEmpty()) && trimmedChannelQuery.isEmpty() &&
-            (state.catalogHasMore || state.catalogLoadingMore || appendPage.pending)) {
+        if (!(state.loading && state.items.isEmpty()) && (trimmedChannelQuery.isEmpty() || hasLocalMore) &&
+            (hasLocalMore || state.catalogHasMore || state.catalogLoadingMore || appendPage.pending)) {
             item("iptv-load-more", span = fullSpan) {
                 ModernLoadMoreButton(
                     label = "Load more",
@@ -3697,7 +3806,7 @@ private fun ModernIptvCollection(
             item("iptv-empty", span = fullSpan) {
                 if (trimmedChannelQuery.isNotEmpty()) {
                     Text(
-                        "No matches in the channels checked.",
+                        if (isLiveTv) "No matches in the channels checked." else "No matching titles in this collection.",
                         modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = .68f)

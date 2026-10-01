@@ -1118,12 +1118,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (playing != null) {
             if (!playerGuideViewportActive || playing.catalogType != CatalogType.LIVE_TV) return null
             return (playing.episodeQueue + playing.media).firstOrNull {
-                it.id == target.itemId && (it.portalCategoryId == target.categoryId || it.portalCategoryId == null)
+                it.id == target.itemId && (it.portalCategoryId == target.categoryId || it.portalCategoryId == null ||
+                    (snapshot.selectedCategory?.id == target.categoryId &&
+                        it.portalCategoryId in snapshot.selectedCategory.sourceCategoryIds))
             }
         }
         if (snapshot.modernIptvCategory?.id != target.categoryId ||
             snapshot.selectedCategory?.id != target.categoryId) return null
-        return snapshot.items.firstOrNull { it.id == target.itemId && it.portalCategoryId == target.categoryId }
+        return snapshot.items.firstOrNull { it.id == target.itemId && (it.portalCategoryId == target.categoryId ||
+            it.portalCategoryId in snapshot.selectedCategory.sourceCategoryIds) }
     }
 
     private fun isVisibleLiveGuideDue(target: LiveGuideTarget): Boolean {
@@ -1192,6 +1195,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private fun publishLiveChannelGuide(profileKey: String, enriched: MediaItem) {
         if (enriched.liveSchedule.isEmpty() && enriched.liveProgramme == null) return
         if (_state.value.session?.profile?.cacheKey() != profileKey) return
+        collectionCatalogMemory?.takeIf { it.profileKey == profileKey && it.type == CatalogType.LIVE_TV }?.let { cache ->
+            collectionCatalogMemory = cache.copy(items = cache.items.map { if (it.id == enriched.id) enriched else it })
+        }
         _state.update { it.withLiveChannelGuide(profileKey, enriched) }
         val visible = lastVisibleLiveGuideIds
         if (visible?.first?.startsWith(profileKey) == true) {
@@ -1358,7 +1364,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
         _state.update { it.copy(selectedCategory = category, items = emptyList(), selectedSeries = null,
-            catalogLoadingMore = false) }
+            catalogLoadingMore = false, catalogHasMore = false) }
+        if (category.sourceCategoryIds.isNotEmpty()) {
+            val page = fetchInitialCatalogPage(session, category)
+            _state.update { current ->
+                if (current.session?.profile?.cacheKey() != profileKey || current.selectedCategory?.id != category.id) current
+                else current.copy(items = page.items, catalogPage = 1, catalogHasMore = false)
+            }
+            return@task
+        }
 
         // The per-type disk cache can contain tens of megabytes of catalogue
         // data. It is already loaded while entering the tab, so do not parse
@@ -1366,7 +1380,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val memoryCache = _state.value.browseCachesByType[category.type]
             ?.takeIf { it.profileKey == profileKey }
         val categoryCache = (memoryCache
-            ?: store.browseCatalog(category.type, profileKey).first())?.validateCategory(category.id)
+            ?: store.browseCatalog(category.type, profileKey).first())?.validateCategory(category.id, category.sourceCategoryIds)
         if (_state.value.session?.profile?.cacheKey() != profileKey ||
             _state.value.selectedType != category.type ||
             _state.value.selectedCategory?.id != category.id) return@task
@@ -1374,7 +1388,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             browseCachesByType = it.browseCachesByType + (category.type to categoryCache)) }
         val cached = categoryCache?.itemsByCategory?.get(category.id)?.takeIf {
             categoryCache.pagesByCategory.containsKey(category.id) &&
-                categoryCache.hasMoreByCategory.containsKey(category.id)
+                categoryCache.hasMoreByCategory.containsKey(category.id) &&
+                !(session.profile.portalType == PortalType.XTREAM && category.type != CatalogType.LIVE_TV &&
+                    categoryCache.hasMoreByCategory[category.id] == true)
         }
 
         if (cached != null) {
@@ -1445,10 +1461,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (userRequested) _state.update { it.copy(categoryRefreshing = true, error = null) }
             try {
                 val page = withAutomaticSessionRetry(session) { activeSession ->
-                    fetchInitialCatalogPage(activeSession, category)
+                    fetchInitialCatalogPage(activeSession, category, forceRefresh = true)
                 }
                 val profileKey = session.profile.cacheKey()
                 if (_state.value.session?.profile?.cacheKey() != profileKey) return@launch
+                if (category.sourceCategoryIds.isNotEmpty()) {
+                    _state.update { current ->
+                        if (current.selectedCategory?.id != category.id) current
+                        else current.copy(items = page.items, catalogPage = 1, catalogHasMore = false)
+                    }
+                    return@launch
+                }
                 val currentCache = _state.value.browseCachesByType[category.type]
                     ?.takeIf { it.profileKey == profileKey }
                     ?: return@launch
@@ -1892,7 +1915,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     val items = state.items.map { byId[it.id] ?: it }
                     val cache = state.browseCachesByType[CatalogType.LIVE_TV]
                         ?.takeIf { it.profileKey == profileKey }
-                    val updated = cache?.copy(itemsByCategory = cache.itemsByCategory + (category.id to items))
+                    val updated = cache?.takeIf { category.sourceCategoryIds.isEmpty() }
+                        ?.copy(itemsByCategory = cache.itemsByCategory + (category.id to items))
                     state.copy(items = items, browseCache = updated ?: state.browseCache,
                         browseCachesByType = if (updated == null) state.browseCachesByType
                             else state.browseCachesByType + (CatalogType.LIVE_TV to updated))
@@ -2567,10 +2591,49 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
      * returns a full category and is sliced locally; WIO/Ministra fixes remote
      * responses at 14 rows, so complete pages are combined up to the target.
      */
+    private val collectionCatalogMutex = Mutex()
+    private var collectionCatalogMemory: SearchCatalogCache? = null
+
+    private suspend fun collectionCatalog(
+        session: PortalSession, type: CatalogType, force: Boolean
+    ): SearchCatalogCache = collectionCatalogMutex.withLock {
+        val profile = session.profile.cacheKey()
+        val now = System.currentTimeMillis()
+        val ttl = _state.value.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L
+        val memory = collectionCatalogMemory?.takeIf { it.profileKey == profile && it.type == type }
+        val cached = memory ?: store.searchCatalog(type, profile).first()
+        if (!force && cached != null && "*" in cached.completedCategoryIds &&
+            now >= cached.cachedAtMillis && now - cached.cachedAtMillis < ttl) {
+            collectionCatalogMemory = cached
+            Log.i("NikTvCollections", "$type: local catalogue hit (${cached.items.size} titles)")
+            return@withLock cached
+        }
+        if (force || cached != null) withContext(Dispatchers.IO) { portal.invalidateFullCatalog(session.profile, type) }
+        val started = SystemClock.elapsedRealtime()
+        val items = portal.fullCatalog(session, type, emptyList())
+        Log.i("NikTvCollections", "$type: full catalogue ready (${items.size} titles) in ${SystemClock.elapsedRealtime() - started} ms")
+        SearchCatalogCache(profile, type, System.currentTimeMillis(), items, setOf("*")).also {
+            collectionCatalogMemory = it
+            // This is the existing file search cache, not the experimental Room catalogue.
+            store.saveSearchCatalog(it, scheduleMetadataSync = false)
+        }
+    }
+
     private suspend fun fetchInitialCatalogPage(
         session: PortalSession,
-        category: Category
+        category: Category,
+        forceRefresh: Boolean = false
     ): PortalCatalogPage {
+        if (session.profile.portalType == PortalType.XTREAM && category.sourceCategoryIds.isNotEmpty()) {
+            val catalog = collectionCatalog(session, category.type, forceRefresh)
+            val items = withContext(Dispatchers.Default) { CategoryOrganization.select(catalog.items, category) }
+            return PortalCatalogPage(items, 1, false, totalPages = 1, totalItems = items.size)
+        }
+        // Xtream already returns the entire category in one response. Publish it
+        // once so local filtering can search every title, not just the first UI page.
+        if (session.profile.portalType == PortalType.XTREAM && category.type != CatalogType.LIVE_TV) {
+            return portal.catalogPage(session, category, 1)
+        }
         val target = _state.value.initialCatalogItems
         val firstPage = portal.catalogPage(
             session = session,
@@ -4795,7 +4858,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
         val effectiveCategoryId = when {
-            contextualCategory != null -> contextualCategory.id
+            contextualCategory != null && contextualCategory.sourceCategoryIds.isEmpty() -> contextualCategory.id
+            contextualCategory != null -> "*"
             tabType != null -> "*"
             snapshot.searchType == effectiveType -> snapshot.searchCategoryId
             else -> "*"
