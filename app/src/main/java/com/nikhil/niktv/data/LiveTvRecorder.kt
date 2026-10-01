@@ -283,7 +283,11 @@ class LiveTvRecordingService : Service() {
                 outputUri?.let(::finishOutput)
                 LiveTvRecorder.update(LiveRecordingState())
             } catch (error: Throwable) {
-                outputUri?.let(::finishOutput)
+                if (error is UnsupportedHlsRecordingException) {
+                    outputUri?.let { uri -> runCatching { contentResolver.delete(uri, null, null) } }
+                } else {
+                    outputUri?.let(::finishOutput)
+                }
                 if (LiveTvRecorder.state.value.active) {
                     LiveTvRecorder.update(LiveRecordingState(error = error.message ?: "Recording failed"))
                 }
@@ -372,17 +376,12 @@ class LiveTvRecordingService : Service() {
             }
             failures = 0
             val lines = playlist.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
-            val mapUri = lines.firstOrNull { it.startsWith("#EXT-X-MAP:") }
-                ?.substringAfter("URI=", "")?.trim()?.trim('"')
-            val mediaSegments = lines.filterNot { it.startsWith("#") }
-                .map { resolve(playlistUrl, it) }
-            val segments = buildList {
-                mapUri?.let { add(resolve(playlistUrl, it)) }
-                addAll(mediaSegments)
-            }
-            val isFinishedPlaylist = lines.any { it == "#EXT-X-ENDLIST" }
-            val targetDurationMillis = (lines.firstOrNull { it.startsWith("#EXT-X-TARGETDURATION:") }
-                ?.substringAfter(':')?.toLongOrNull()?.coerceIn(1, 10) ?: 3L) * 1_000L
+            // Validate the whole playlist before appending any media bytes.
+            val parsed = parseHlsRecordingPlaylist(playlist)
+            val mediaSegments = parsed.segments.map { resolve(playlistUrl, it.uri) }
+            val durations = parsed.segments.associate { resolve(playlistUrl, it.uri) to it.durationMillis }
+            val segments = mediaSegments
+            val isFinishedPlaylist = parsed.finished
             var continueTimelineAtNextSegment = hlsRebaseRequested && !isFinishedPlaylist
             if (continueTimelineAtNextSegment) {
                 // Start at the segment matching what the player is showing.
@@ -403,7 +402,7 @@ class LiveTvRecordingService : Service() {
                     // A live manifest can expose many seconds of future content. Do not
                     // download it faster than the viewer's active recording time.
                     while (!paused && !stopRequested &&
-                        recordedMediaDurationMillis > recordedDurationMillis() + targetDurationMillis) {
+                        recordedMediaDurationMillis > recordedDurationMillis() + durations.getValue(segment)) {
                         delay(200L)
                     }
                     if (paused || stopRequested) continue@playlistLoop
@@ -434,20 +433,21 @@ class LiveTvRecordingService : Service() {
                 bytes += appended
                 written.add(segment)
                 if (segment in mediaSegments) {
-                    recordedMediaDurationMillis += targetDurationMillis
+                    recordedMediaDurationMillis += durations.getValue(segment)
                     continueTimelineAtNextSegment = false
                 }
                 failures = 0
                 publishProgress(bytes)
             }
             if (isFinishedPlaylist) return
-            delay(targetDurationMillis / 2L)
+            delay(parsed.pollingIntervalMillis)
         }
     }
 
     private suspend fun resolveMediaPlaylist(url: String): String {
         val text = getText(url)
         val lines = text.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
+        validateHlsRecordingFeatures(lines)
         val variants = lines.mapIndexedNotNull { index, line ->
             if (line.startsWith("#EXT-X-STREAM-INF")) lines.getOrNull(index + 1)?.takeUnless { it.startsWith("#") } else null
         }
