@@ -89,6 +89,7 @@ internal fun VlcPlayerScreen(
     offlineDownloadProgressText: String? = null,
     initialSubtitleDelayMs: Long = 0L,
     initialExternalSubtitleFile: File? = null,
+    onRetry: (Long) -> Unit,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
@@ -134,10 +135,10 @@ internal fun VlcPlayerScreen(
     var buffering by remember(media.progressKey) { mutableStateOf(true) }
     var position by remember(media.progressKey) { mutableLongStateOf(initialResumePosition) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
-    var pendingInitialResumePosition by remember(media.progressKey) {
+    var pendingInitialResumePosition by remember(media.progressKey, media.playbackAttemptId, media.url) {
         mutableLongStateOf(initialResumePosition.coerceAtLeast(0L))
     }
-    var error by remember(media.progressKey) { mutableStateOf<String?>(null) }
+    var error by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
     var controlsVisible by remember(media.progressKey) {
         mutableStateOf(
@@ -162,7 +163,7 @@ internal fun VlcPlayerScreen(
     var advancing by remember(media.progressKey) { mutableStateOf(false) }
     var remainingSeconds by remember(media.progressKey) { mutableStateOf<Int?>(null) }
     var autoPlayCancelled by remember(media.progressKey) { mutableStateOf(false) }
-    var authorizationRecoveryRequested by remember(media.progressKey) { mutableStateOf(false) }
+    var authorizationRecoveryRequested by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
     var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
@@ -287,7 +288,7 @@ internal fun VlcPlayerScreen(
         }
     }
 
-    val libVlc = remember(media.progressKey, media.url) {
+    val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId) {
         LibVLC(context, arrayListOf("--network-caching=1500", "--clock-jitter=0"))
     }
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
@@ -520,6 +521,7 @@ internal fun VlcPlayerScreen(
                     buffering = event.buffering < 100f && !player.isPlaying
                 }
                 MediaPlayer.Event.Playing -> {
+                    error = null
                     playbackRequested = true
                     playing = true
                     buffering = false
@@ -1800,7 +1802,10 @@ PlayerChromeIconButton(
                         canNavigate = hasPlaybackQueue,
                         onPrevious = onPlayPrevious,
                         onBack = onBack,
-                        onRetry = { onPlaybackAuthorizationFailure(player.time.coerceAtLeast(0L)) },
+                        onRetry = {
+                            onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
+                                else player.time).coerceAtLeast(0L))
+                        },
                         onNext = onPlayNext,
                         alternatePlayerLabel = "ExoPlayer",
                         onSwitchPlayer = {

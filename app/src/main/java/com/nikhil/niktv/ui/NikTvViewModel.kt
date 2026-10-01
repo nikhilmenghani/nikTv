@@ -6496,7 +6496,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun retryPlayback() {
+    fun retryPlayback(positionMillis: Long) {
         val playing = _state.value.nowPlaying ?: return
         val requestId = latestPlaybackRequest.begin()
         viewModelScope.launch {
@@ -6508,6 +6508,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     playing.series,
                     playing.episodeQueue,
                     forceFreshUrl = true,
+                    resumePositionOverride = positionMillis.coerceAtLeast(0L),
+                    reauthenticate = true,
                     directFullscreen = playing.directFullscreen,
                     requestId = requestId
                 )
@@ -6527,7 +6529,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 ?: return
 
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
-            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url) return
+            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url ||
+            playing.playbackAttemptId != failedPlayback.playbackAttemptId) return
 
         val requestId = latestPlaybackRequest.begin()
         viewModelScope.launch {
@@ -6556,6 +6559,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         nowPlaying =
                             playing.copy(
+                                playbackAttemptId = java.util.UUID.randomUUID().toString(),
                                 resumePositionMillis =
                                     positionMillis
                                         .coerceAtLeast(0L)
@@ -6568,7 +6572,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun retryPlaybackAfterAuthorizationFailure(positionMillis: Long, failedPlayback: PlayingMedia) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
-            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url) return
+            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url ||
+            playing.playbackAttemptId != failedPlayback.playbackAttemptId) return
         if (playing.authorizationRetryCount > 0) return
         if (!_state.value.automaticReauthentication) {
             _state.update { it.copy(error = "Authorization failed.") }

@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+ <application android:name="android.app.Application" tools:replace="android:name">
+  <activity android:name="com.nikhil.niktv.ui.PlaybackRegressionActivity" android:exported="false" />
+ </application>
+</manifest>

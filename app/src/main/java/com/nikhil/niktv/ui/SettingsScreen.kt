@@ -2704,7 +2704,7 @@ internal fun LiveTvPlaybackScreen(
     state: NikTvState,
     play: (MediaItem) -> Unit,
     onBack: () -> Unit,
-    onRetry: () -> Unit,
+    onRetry: (Long) -> Unit,
     onRetryAlternateDecoder: (Long) -> Unit,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     onPlayPrevious: () -> Unit,

@@ -296,7 +296,7 @@ private fun PlaybackEngine.resolvePlayerEngine(
 fun PlayerScreen(
     media: PlayingMedia,
     onBack: () -> Unit,
-    onRetry: () -> Unit,
+    onRetry: (Long) -> Unit,
     onRetryAlternateDecoder: (Long) -> Unit,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     onPlayPrevious: () -> Unit,
@@ -407,7 +407,7 @@ fun PlayerScreen(
             episodeSubtitleFile?.delete()
         }
     }
-    var engineSwitchResumePosition by remember(media.progressKey) {
+    var engineSwitchResumePosition by remember(media.progressKey, media.playbackAttemptId) {
         mutableLongStateOf(media.resumePositionMillis)
     }
     var restorePlayerSwitchFocus by remember(media.progressKey) {
@@ -450,6 +450,7 @@ fun PlayerScreen(
             offlineDownloadProgressText = offlineDownloadProgressText,
             initialSubtitleDelayMs = subtitleDelayMs,
             initialExternalSubtitleFile = externalSubtitleFile,
+            onRetry = onRetry,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
@@ -589,7 +590,7 @@ fun PlayerScreen(
     var position by remember(media.progressKey) { mutableLongStateOf(0L) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var videoDetails by remember(media.progressKey) { mutableStateOf("") }
-    var playbackError by remember(media.progressKey) { mutableStateOf<String?>(null) }
+    var playbackError by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<String?>(null) }
     var subtitleDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
     var subtitleTracks by remember(media.progressKey) { mutableStateOf<List<Media3SubtitleTrack>>(emptyList()) }
     var audioDialogOpen by remember(media.progressKey) { mutableStateOf(false) }
@@ -606,7 +607,7 @@ fun PlayerScreen(
         mutableStateOf(false)
     }
 
-    var startupTimedOut by remember(media.progressKey) { mutableStateOf(false) }
+    var startupTimedOut by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf(false) }
     var playerViewRef by remember(media.progressKey) { mutableStateOf<PlayerView?>(null) }
     var inPictureInPicture by remember { mutableStateOf(false) }
     val playNextFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -715,6 +716,7 @@ fun PlayerScreen(
         media.progressKey,
         effectiveEngine,
         media.url,
+        media.playbackAttemptId,
         castSessionActive
     ) {
         if (castSessionActive) {
@@ -812,7 +814,8 @@ fun PlayerScreen(
      * only for a fresh connection/position transfer or when the current media
      * URL changes.
      */
-    LaunchedEffect(castSessionActive, castMediaItem) {
+    var preparedCastAttempt by remember(castPlayer) { mutableStateOf<String?>(null) }
+    LaunchedEffect(castSessionActive, castMediaItem, media.playbackAttemptId) {
         if (!castSessionActive || castPlayer == null) return@LaunchedEffect
 
         val requestedPosition = pendingCastStartPosition
@@ -824,13 +827,15 @@ fun PlayerScreen(
             castMediaItem.localConfiguration
                 ?.uri
 
-        if (requestedPosition != null || currentUri != requestedUri) {
+        if (requestedPosition != null || currentUri != requestedUri ||
+            preparedCastAttempt != media.playbackAttemptId) {
             castPlayer.setMediaItem(
                 castMediaItem,
-                requestedPosition ?: 0L
+                requestedPosition ?: media.resumePositionMillis.coerceAtLeast(0L)
             )
             castPlayer.prepare()
             castPlayer.play()
+            preparedCastAttempt = media.playbackAttemptId
         }
 
         pendingCastStartPosition = null
@@ -861,6 +866,7 @@ fun PlayerScreen(
                 .takeIf { it != C.TIME_UNSET && it > 0L }
                 ?: 0L
         if (playbackState == Player.STATE_READY) {
+            playbackError = null
             startupTimedOut = false
             playbackHasBeenReady = true
         }
@@ -869,6 +875,7 @@ fun PlayerScreen(
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 if (state == Player.STATE_READY) {
+                    playbackError = null
                     startupTimedOut = false
                     playbackHasBeenReady = true
                 }
@@ -2533,7 +2540,7 @@ PlayerChromeIconButton(
                         canNavigate = hasPlaybackQueue,
                         onPrevious = onPlayPrevious,
                         onBack = onBack,
-                        onRetry = onRetry,
+                        onRetry = { onRetry(player.currentPosition.coerceAtLeast(0L)) },
                         onNext = onPlayNext,
                         alternatePlayerLabel = "VLC",
                         onSwitchPlayer = {

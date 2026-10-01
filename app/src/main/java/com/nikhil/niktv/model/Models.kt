@@ -328,6 +328,8 @@ data class PlayingMedia(
     val episodeQueue: List<MediaItem> = emptyList(),
     val resumePositionMillis: Long = 0L,
     val progressKey: String = "",
+    // Changes even when resolving a provider returns the same URL.
+    val playbackAttemptId: String = java.util.UUID.randomUUID().toString(),
     val authorizationRetryCount: Int = 0,
     val directFullscreen: Boolean = false,
     val offlinePlayback: Boolean = false,

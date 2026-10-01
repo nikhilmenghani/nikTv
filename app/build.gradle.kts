@@ -30,6 +30,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.nikhil.niktv"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -74,7 +75,7 @@ android {
                     ?: ""
             } else ""
             buildConfigField("String", "LOCAL_GITHUB_TOKEN", localToken.asBuildConfigString())
-            applicationIdSuffix = ".debug"
+            applicationIdSuffix = if (providers.gradleProperty("regressionBuild").orNull == "true") ".regression" else ".debug"
             versionNameSuffix = "-dev"
             manifestPlaceholders["appLabel"] = "NikTV Dev"
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_debug"
@@ -86,6 +87,11 @@ android {
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
             manifestPlaceholders["appBanner"] = "@drawable/tv_banner"
             if (providers.environmentVariable("RELEASE_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")
+        }
+    }
+    if (providers.gradleProperty("regressionBuild").orNull == "true") {
+        sourceSets.getByName("debug") {
+            manifest.srcFile("src/regression/AndroidManifest.xml")
         }
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -138,6 +144,8 @@ dependencies {
     implementation("androidx.media3:media3-transformer:1.8.0")
     implementation("org.videolan.android:libvlc-all:3.6.5")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("junit:junit:4.13.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }
