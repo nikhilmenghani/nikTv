@@ -838,26 +838,17 @@ internal fun ModernBrowseScreen(
                 val recents = state.recentlyPlayed.filter {
                     it.kind == FavoriteKind.MOVIE || it.kind == FavoriteKind.SERIES
                 }
-                val newEpisodes = state.watchedSeries.flatMap { watched -> watched.newEpisodes.map { watched to it } }
-                if (newEpisodes.isNotEmpty()) item("watch-list-updates", span = gridSpan) {
-                    ModernRail(
-                        "New Episodes",
-                        newEpisodes,
-                        media = { (watched, episode) ->
-                            if (episode.logo.isNullOrBlank() && !watched.series.logo.isNullOrBlank()) episode.copy(logo = watched.series.logo)
-                            else episode
-                        },
-                        open = { (watched, episode) -> openWatchedEpisode(watched, episode) },
-                        aspectRatio = { 2f / 3f },
-                        progress = { (_, episode) -> state.playbackProgress.progressFor(episode) },
-                        subtitle = { (watched, episode) ->
-                            listOfNotNull(
-                                watched.series.title,
-                                episode.seasonNumber?.let { season -> episode.episodeNumber?.let { ep -> "S${season} · E${ep}" } }
-                            ).joinToString(" · ")
-                        },
-                        titleMaxLines = 2,
-                        subtitleMaxLines = 2
+                item("watch-list-updates", span = gridSpan) {
+                    NewEpisodesSection(
+                        watchedSeries = state.watchedSeries,
+                        profileKey = state.savedProfile?.cacheKey().orEmpty(),
+                        favorites = state.favorites,
+                        horizontal = isTv || configuration.smallestScreenWidthDp >= 600,
+                        open = openWatchedEpisode,
+                        clear = dismissWatchedEpisode,
+                        markWatched = markEpisodeWatched,
+                        openSeries = openSeriesFromHome,
+                        toggleFavorite = toggleFavoriteEntry
                     )
                 }
                 if (recents.isNotEmpty()) item("continue", span = gridSpan) {

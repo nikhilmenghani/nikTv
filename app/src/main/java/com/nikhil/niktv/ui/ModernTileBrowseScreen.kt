@@ -765,13 +765,6 @@ private fun ModernDestinationHub(
         }
     }
 
-    val newEpisodes = if (dashboardSurface == DashboardSurface.HOME) {
-        state.watchedSeries.flatMap { watched ->
-            watched.newEpisodes.map { episode -> watched to episode }
-        }
-    } else {
-        emptyList()
-    }
     val recents = if (dashboardSurface == DashboardSurface.HOME) {
         state.recentlyPlayed
             .filter {
@@ -929,47 +922,18 @@ private fun ModernDestinationHub(
                 }
             }
 
-            if (newEpisodes.isNotEmpty()) {
-                item("new-episodes-header", span = fullSpan) {
-                    ModernHubSectionHeading("New Episodes")
-                }
-                if (compactPhoneGrid || (!isTv && configuration.smallestScreenWidthDp < 600)) {
-                    gridItems(
-                        items = newEpisodes,
-                        key = { (watched, episode) -> "new-episode-${watched.series.id}-${episode.id}" },
-                        span = { GridItemSpan(maxLineSpan) }
-                    ) { (watched, episode) ->
-                        val favorite = FavoriteItem(
-                            kind = FavoriteKind.EPISODE,
-                            media = episode,
-                            series = watched.series,
-                            profileKey = watched.profileKey,
-                            categoryTitle = watched.categoryTitle
-                        )
-                        ModernNewEpisodeListItem(
-                            watched = watched,
-                            episode = episode,
-                            isFavorite = state.favorites.any { it.key == favorite.key },
-                            onClick = { openWatchedEpisode(watched, episode) },
-                            onFavorite = { toggleFavorite(favorite) },
-                            onOpenSeries = { openSeries(watched.series) },
-                            onClear = { dismissWatchedEpisode(watched, episode) },
-                            onMarkWatched = { markEpisodeWatched(watched, episode) }
-                        )
-                    }
-                } else {
-                    item("new-episodes-row", span = fullSpan) {
-                        ModernNewEpisodesRow(
-                            entries = newEpisodes,
-                            favorites = state.favorites,
-                            open = openWatchedEpisode,
-                            clear = dismissWatchedEpisode,
-                            markWatched = markEpisodeWatched,
-                            openSeries = openSeries,
-                            toggleFavorite = toggleFavorite
-                        )
-                    }
-                }
+            item("new-episodes", span = fullSpan) {
+                NewEpisodesSection(
+                    watchedSeries = state.watchedSeries,
+                    profileKey = profileKey,
+                    favorites = state.favorites,
+                    horizontal = isTv || configuration.smallestScreenWidthDp >= 600,
+                    open = openWatchedEpisode,
+                    clear = dismissWatchedEpisode,
+                    markWatched = markEpisodeWatched,
+                    openSeries = openSeries,
+                    toggleFavorite = toggleFavorite
+                )
             }
 
         }
@@ -1323,159 +1287,6 @@ private fun ModernRecentChannelsCollection(
             )
         }
         }
-    }
-}
-
-@Composable
-private fun ModernNewEpisodesRow(
-    entries: List<Pair<WatchedSeries, MediaItem>>,
-    favorites: List<FavoriteItem>,
-    open: (WatchedSeries, MediaItem) -> Unit,
-    clear: (WatchedSeries, MediaItem) -> Unit,
-    markWatched: (WatchedSeries, MediaItem) -> Unit,
-    openSeries: (MediaItem) -> Unit,
-    toggleFavorite: (FavoriteItem) -> Unit
-) {
-    Column(Modifier.fillMaxWidth()) {
-    LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        // This row already inherits the dashboard grid's leading inset. Adding
-        // another horizontal inset made it start farther right than Live TV.
-        // Keep trailing scroll room and extra bottom clearance for focused cards.
-        contentPadding = PaddingValues(start = 0.dp, top = 18.dp, end = 18.dp, bottom = 26.dp)
-    ) {
-        items(
-            items = entries,
-            key = { (watched, episode) ->
-                "modern-new-episode-${watched.series.id}-${episode.id}"
-            }
-        ) { (watched, episode) ->
-            // HOME_OFFLINE_CONSISTENCY_V46: New Episodes uses the same series-first card identity
-            // as Continue Watching, while preserving the episode action targets.
-            val displayMedia = if (
-                watched.series.logo.isNullOrBlank() &&
-                !episode.logo.isNullOrBlank()
-            ) {
-                watched.series.copy(logo = episode.logo)
-            } else {
-                watched.series
-            }
-            val episodeDetails = listOfNotNull(
-                episode.seasonNumber?.let { season ->
-                    episode.episodeNumber?.let { ep -> "S$season:E$ep" }
-                },
-                episode.compactEpisodeTitle().takeIf { it.isNotBlank() }
-            ).joinToString(" · ")
-            val favorite = FavoriteItem(
-                kind = FavoriteKind.EPISODE,
-                media = episode,
-                series = watched.series,
-                profileKey = watched.profileKey,
-                categoryTitle = watched.categoryTitle
-            )
-
-            ModernCompactMediaCard(
-                item = displayMedia,
-                subtitle = episodeDetails,
-                onClick = { open(watched, episode) },
-                isFavorite = favorites.any { it.key == favorite.key },
-                onFavorite = { toggleFavorite(favorite) },
-                onOpenSeries = { openSeries(watched.series) },
-                onClear = { clear(watched, episode) },
-                onMarkWatched = { markWatched(watched, episode) },
-                homeCardScale = 0.82f
-            )
-        }
-    }
-    }
-
-}
-
-@Composable
-private fun ModernNewEpisodeListItem(
-    watched: WatchedSeries,
-    episode: MediaItem,
-    isFavorite: Boolean,
-    onClick: () -> Unit,
-    onFavorite: () -> Unit,
-    onOpenSeries: () -> Unit,
-    onClear: () -> Unit,
-    onMarkWatched: () -> Unit
-) {
-    val context = LocalContext.current
-    val artwork = if (episode.logo.isNullOrBlank()) watched.series else episode
-    var menuOpen by remember { mutableStateOf(false) }
-    val returningTile = rememberReturningTile(onClick)
-    val episodeNumber = listOfNotNull(
-        episode.seasonNumber?.let { "S$it" },
-        episode.episodeNumber?.let { "E$it" },
-        episode.episodeAirDate?.takeIf { it.isNotBlank() }
-    ).joinToString(" · ")
-    Box(Modifier.fillMaxWidth()) {
-        Surface(
-            modifier = Modifier.fillMaxWidth()
-                .then(returningTile.modifier)
-                .remoteCombinedClickable(
-                    onClick = returningTile.open,
-                    onLongClick = { menuOpen = true }
-                ),
-            shape = RoundedCornerShape(14.dp),
-            color = ModernCardSurface,
-            border = BorderStroke(1.dp, ModernOutline)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    Modifier.size(width = 86.dp, height = 90.dp)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(Color(0xFF282A30))
-                ) {
-                    ModernPosterImage(
-                        item = artwork,
-                        context = context,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        watched.series.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (episodeNumber.isNotBlank()) Text(
-                        episodeNumber,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFFAFB5C0),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    val title = episode.compactEpisodeTitle()
-                    if (title.isNotBlank()) Text(
-                        title,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFE3E5EA),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-        ModernTileActionsMenu(
-            expanded = menuOpen,
-            isFavorite = isFavorite,
-            dismiss = { menuOpen = false },
-            toggleFavorite = onFavorite,
-            openSeries = onOpenSeries,
-            markWatched = onMarkWatched,
-            clear = onClear
-        )
     }
 }
 
@@ -2617,7 +2428,7 @@ internal fun ModernCompactMediaCard(
         )
     }
 }
-private fun MediaItem.compactEpisodeTitle(): String = title
+internal fun MediaItem.compactEpisodeTitle(): String = title
     .replaceFirst(Regex("^\\s*(?:S\\d+\\s*[:._-]?\\s*E(?:P(?:ISODE)?)?\\s*\\d+|(?:EPISODE|EP|E)\\s*#?\\s*\\d+)\\s*[. :|\\-–—]*\\s*", RegexOption.IGNORE_CASE), "")
     .trim()
 
@@ -4571,7 +4382,7 @@ private fun ModernCollectionPoster(
 }
 
 @Composable
-private fun ModernPosterImage(
+internal fun ModernPosterImage(
     item: MediaItem,
     context: Context,
     modifier: Modifier
