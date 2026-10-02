@@ -2,6 +2,17 @@ package com.nikhil.niktv.model
 
 private const val UNTIMED_PROGRAMME_FRESHNESS_MS = 5 * 60_000L
 
+/** A successful guide response replaces the previous guide, including an empty response. */
+fun MediaItem.withFreshLiveSchedule(schedule: List<LiveProgramme>, now: Long): MediaItem {
+    val updated = copy(
+        liveProgramme = null,
+        liveSchedule = schedule.filter {
+            !isMissingLiveProgrammeTitle(it.title) && (it.endTimeMillis == null || it.endTimeMillis > now)
+        }.distinct().sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
+    )
+    return updated.copy(liveProgramme = updated.currentLiveProgramme(now))
+}
+
 /** Do not match tomorrow's schedule or stale "now playing" text from disk. */
 fun MediaItem.currentLiveProgramme(now: Long): LiveProgramme? {
     fun LiveProgramme.isAiring(): Boolean {

@@ -61,6 +61,15 @@ their existing explicit whole-category programme search.
 
 No Room storage or playback-engine changes were introduced.
 
+The main search screen checks device caches first. When there are no matches,
+submitting a search continues to the provider automatically. While typing, the
+same fallback waits for a pause and at least two characters; changing the query,
+scope, or closing search cancels the old lookup. Cached hits remain local unless
+Search provider is explicitly selected. Xtream fallback refreshes the full
+catalogue for the requested media type, saves it to the existing file cache, and
+filters within the selected category. Stalker retains its provider search and
+pagination. Collection/category name filters remain local navigation filters.
+
 ## Tablet observations
 
 Measured catalogue preparation in this session, not a network-speed guarantee:

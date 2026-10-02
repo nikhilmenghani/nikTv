@@ -75,4 +75,17 @@ class LiveChannelGuideUpdateTest {
         assertSame(first.items, second.items)
         assertSame(first.browseCache, second.browseCache)
     }
+
+    @Test fun successfulEmptyRefreshClearsBrowseCachePlayerAndQueueWithoutStoppingPlayback() {
+        val playing = PlayingMedia(channel, "current-stream", CatalogType.LIVE_TV, episodeQueue = listOf(channel))
+        val populated = state().copy(nowPlaying = playing).withLiveChannelGuide(profile.cacheKey(), enriched)
+        val cleared = populated.withLiveChannelGuide(profile.cacheKey(), channel)
+        assertNull(cleared.items.single().liveProgramme)
+        assertTrue(cleared.items.single().liveSchedule.isEmpty())
+        assertNull(cleared.browseCache!!.itemsByCategory["actors"]!!.single().liveProgramme)
+        assertTrue(cleared.browseCachesByType[CatalogType.LIVE_TV]!!.itemsByCategory["actors"]!!.single().liveSchedule.isEmpty())
+        assertNull(cleared.nowPlaying!!.media.liveProgramme)
+        assertTrue(cleared.nowPlaying!!.episodeQueue.single().liveSchedule.isEmpty())
+        assertEquals("current-stream", cleared.nowPlaying!!.url)
+    }
 }

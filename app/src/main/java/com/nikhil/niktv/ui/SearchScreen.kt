@@ -386,8 +386,7 @@ internal fun ModernSearchScreen(
                             keyboard?.hide()
                             restoreQueryFocus = true
                             if (state.searchQuery.isNotBlank()) {
-                                // Show cached/indexed matches immediately. A
-                                // provider-wide search remains an explicit action.
+                                // Use cached matches first, then fall back to the provider on a miss.
                                 search(false)
                             }
                         }
@@ -1749,8 +1748,7 @@ private fun ModernSearchLiveResultRow(
     }
     val compact = LocalConfiguration.current.screenWidthDp < 600
     val shape = RoundedCornerShape(14.dp)
-    val programme =
-        item.liveProgramme?.title?.takeIf { it.isNotBlank() }
+    val programme = rememberCurrentLiveProgramme(item).value?.title
 
     Box {
         Surface(

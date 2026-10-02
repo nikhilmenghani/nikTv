@@ -121,9 +121,10 @@ internal fun liveProgrammeDisplayTitle(title: String): String =
     title.replace(Regex("^\\s*H:i\\s+", RegexOption.IGNORE_CASE), "").trim()
 
 internal fun liveChannelSupportingText(
-    item: MediaItem
+    item: MediaItem,
+    programme: LiveProgramme? = item.currentLiveProgramme(System.currentTimeMillis())
 ): String? {
-    item.liveProgramme?.takeUnless { isMissingLiveProgrammeTitle(it.title) }?.let { programme ->
+    programme?.let { programme ->
         val cleanProgramme =
             if (
                 programme.title.trim().equals(
@@ -273,7 +274,7 @@ internal fun LiveTvChannelCard(
         onClick = onPlay,
         isFavorite = isFavorite,
         toggleFavorite = onToggleFavorite,
-        supportingText = liveChannelSupportingText(item),
+        supportingText = liveChannelSupportingText(item, rememberCurrentLiveProgramme(item).value),
         compact = true,
         channelStyle = true
     )

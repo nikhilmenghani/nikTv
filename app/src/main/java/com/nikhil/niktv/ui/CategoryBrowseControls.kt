@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -86,18 +87,18 @@ internal fun CategoryBrowseControls(
                     fontWeight = FontWeight.SemiBold)
                 Text("IPTV categories", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
             }
-            ModernHeaderOptionsIcon("Find a category", Icons.Default.FilterList) {
+            ModernHeaderOptionsIcon("Find a category", Icons.AutoMirrored.Filled.ManageSearch) {
                 searchOpen = !searchOpen
                 if (!searchOpen) { onQuery(""); keyboard?.hide() }
             }
-            ModernHeaderOptionsIcon("Browse by", Icons.Default.Category) { menu = true }
+            ModernHeaderOptionsIcon("Browse by", Icons.Default.AccountTree) { menu = true }
             ModernHeaderOptionsIcon("Create collection", Icons.Default.Add) { create() }
         }
         // Match the existing header's reserved space for captions below focused icons.
         Spacer(Modifier.height(38.dp))
         AnimatedVisibility(searchOpen, enter = fadeIn(), exit = fadeOut()) {
             CollectionField(query, onQuery, "Find a category or collection", Modifier.focusRequester(searchFocus),
-                icon = Icons.Default.FilterList)
+                icon = Icons.AutoMirrored.Filled.ManageSearch)
         }
     }
     LaunchedEffect(searchOpen) {
@@ -128,7 +129,7 @@ private fun BrowseModeDialog(mode: CategoryBrowseMode, dismiss: () -> Unit, sele
     }
     CollectionDialog(
         title = "Browse by", subtitle = "Choose how to organize your IPTV categories.",
-        icon = Icons.Default.Category, dismiss = dismiss, listState = listState,
+        icon = Icons.Default.AccountTree, dismiss = dismiss, listState = listState,
         dialogWidth = dialogWidth.dp,
         actions = { NikTvSecondaryActionButton(onClick = dismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") } }
     ) {

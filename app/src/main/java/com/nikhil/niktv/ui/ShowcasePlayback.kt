@@ -1027,6 +1027,7 @@ private fun ShowcaseDetailsPanel(
     modifier: Modifier,
     onToggleFavorite: () -> Unit
 ) {
+    val currentProgramme by rememberCurrentLiveProgramme(item)
     val favoriteKind = showcaseFavoriteKind(type, state.selectedSeries != null)
     val favorite = state.favorites.any { it.kind == favoriteKind && it.media.id == item.id }
     val description = item.description?.trim()?.takeIf {
@@ -1082,7 +1083,7 @@ private fun ShowcaseDetailsPanel(
             ShowcaseInfoBadge(showcaseCategoryTitle(state, type))
         }
 
-        item.liveProgramme?.let { programme ->
+        currentProgramme?.let { programme ->
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     "ON NOW",
@@ -1104,7 +1105,7 @@ private fun ShowcaseDetailsPanel(
             val upcoming = remember(item.liveSchedule, now / 60_000L) {
                 item.liveSchedule
                     .filter { (it.endTimeMillis ?: Long.MAX_VALUE) > now }
-                    .filterNot { it == item.liveProgramme }
+                    .filter { (it.startTimeMillis ?: Long.MIN_VALUE) > now }
                     .take(3)
             }
             if (upcoming.isNotEmpty()) {

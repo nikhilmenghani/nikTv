@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.DialogProperties
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.model.currentLiveProgramme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -41,11 +42,7 @@ internal fun PlayerLiveScheduleSummary(
             delay(30_000L)
         }
     }
-    val current = item.liveSchedule.firstOrNull { programme ->
-        val start = programme.startTimeMillis
-        val end = programme.endTimeMillis
-        start != null && end != null && now in start until end
-    } ?: item.liveProgramme
+    val current = item.currentLiveProgramme(now)
     val next = item.liveSchedule.filter { (it.startTimeMillis ?: Long.MIN_VALUE) > now }.take(2)
     val time = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
     val entries = listOfNotNull(current?.let { "NOW" to it }) + next.map { "NEXT" to it }
@@ -127,11 +124,7 @@ internal fun PlayerLiveScheduleOverlay(item: MediaItem, onDismiss: () -> Unit) {
             delay(30_000L)
         }
     }
-    val current = item.liveSchedule.firstOrNull { programme ->
-        val start = programme.startTimeMillis
-        val end = programme.endTimeMillis
-        start != null && end != null && now in start until end
-    } ?: item.liveProgramme
+    val current = item.currentLiveProgramme(now)
     val programmes = item.liveSchedule.filter { (it.endTimeMillis ?: Long.MAX_VALUE) > now }
     val dateTimeFormatter = SimpleDateFormat("EEE, MMM d · h:mm a", Locale.getDefault())
     val timeFormatter = SimpleDateFormat("h:mm a", Locale.getDefault())

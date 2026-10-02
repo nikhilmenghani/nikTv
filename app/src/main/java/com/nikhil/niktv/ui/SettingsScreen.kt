@@ -3207,8 +3207,7 @@ internal fun LiveTvPlaybackScreen(
 
                     Text(
                         text =
-                            playing.media
-                                .liveProgramme
+                            rememberCurrentLiveProgramme(playing.media).value
                                 ?.title
                                 ?: "${channels.size} channels",
 
@@ -3309,7 +3308,7 @@ internal fun LiveTvPlaybackScreen(
 
                             supportingText =
                                 liveChannelSupportingText(
-                                    item
+                                    item, rememberCurrentLiveProgramme(item).value
                                 ),
 
                             compact =

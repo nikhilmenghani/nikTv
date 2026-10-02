@@ -53,9 +53,7 @@ class StalkerPortalClient(private val context: Context) {
         xtreamCatalogCache.invalidate(Triple(profile, category.type, category.id))
     }
     private val trafficPrefs = context.getSharedPreferences("portal_traffic_guard", Context.MODE_PRIVATE)
-    @Volatile private var epgCacheKey: String? = null
-    @Volatile private var epgCacheAtMillis: Long = 0L
-    @Volatile private var epgCache: Map<String, List<LiveProgramme>> = emptyMap()
+    @Volatile private var epgCache: PortalGuideCache? = null
 
     suspend fun authenticate(profile: PortalProfile): PortalSession = authMutex.withLock { withContext(Dispatchers.IO) {
         if (profile.portalType == PortalType.XTREAM) return@withContext authenticateXtream(profile)
@@ -248,9 +246,8 @@ class StalkerPortalClient(private val context: Context) {
         if (items.isEmpty()) return items
         val cacheKey = "${session.endpointUrl}|${session.token.take(12)}"
         val now = System.currentTimeMillis()
-        val schedules = if (
-            epgCacheKey == cacheKey && now - epgCacheAtMillis < EPG_CACHE_MILLIS && epgCache.isNotEmpty()
-        ) epgCache else {
+        val cached = epgCache
+        val schedules = if (cached?.reusableFor(cacheKey, now) == true) cached.schedules else {
             val response = runCatching {
                 request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
                     "type" to "itv", "action" to "get_epg_info", "period" to "24"
@@ -260,26 +257,15 @@ class StalkerPortalClient(private val context: Context) {
                 return items
             }
             response.epgSchedulesByChannel().also { fresh ->
-                if (fresh.isNotEmpty()) {
-                    epgCacheKey = cacheKey
-                    epgCacheAtMillis = now
-                    epgCache = fresh
-                }
+                epgCache = PortalGuideCache(cacheKey, System.currentTimeMillis(), fresh)
             }
         }
-        if (schedules.isEmpty()) return items
         return items.map { item ->
             val schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
-                .filter { it.endTimeMillis == null || it.endTimeMillis > now }
-                .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
-            if (schedule.isEmpty()) item else item.copy(
-                liveProgramme = schedule.firstOrNull { programme ->
-                    val start = programme.startTimeMillis
-                    val end = programme.endTimeMillis
-                    start != null && end != null && now in start until end
-                } ?: item.liveProgramme,
-                liveSchedule = schedule
-            )
+            // The channel listing can itself supply valid now-playing text even
+            // when the separate shared guide is unavailable. Keep that bounded
+            // fallback here; an explicit channel lookup below is authoritative.
+            if (schedule.isEmpty()) item else item.withFreshLiveSchedule(schedule, System.currentTimeMillis())
         }
     }
 
@@ -575,6 +561,7 @@ class StalkerPortalClient(private val context: Context) {
         session: PortalSession,
         item: MediaItem,
         userSelected: Boolean = false,
+        forceRefresh: Boolean = false,
         onProviderWait: (Long) -> Unit = {},
         onRequestStarted: () -> Unit = {}
     ): MediaItem = withContext(Dispatchers.IO) {
@@ -609,8 +596,7 @@ class StalkerPortalClient(private val context: Context) {
                     }
                     LiveProgramme(title, time("start_timestamp"), time("stop_timestamp"), now)
                 }.filter { it.endTimeMillis == null || it.endTimeMillis > now }
-            val updated = item.copy(liveSchedule = schedule)
-            return@withContext updated.copy(liveProgramme = updated.currentLiveProgramme(now))
+            return@withContext item.withFreshLiveSchedule(schedule, now)
         }
         val response = request(
             session.profile,
@@ -648,12 +634,10 @@ class StalkerPortalClient(private val context: Context) {
          */
         if (schedule.isEmpty()) {
             val cacheKey = "${session.endpointUrl}|${session.token.take(12)}"
-            val fullSchedules = if (
-                epgCacheKey == cacheKey &&
-                now - epgCacheAtMillis < EPG_CACHE_MILLIS &&
-                epgCache.isNotEmpty()
-            ) {
-                epgCache
+            val cached = epgCache
+            val useCache = cached?.reusableFor(cacheKey, now, forceRefresh) == true
+            val fullSchedules = if (useCache) {
+                cached!!.schedules
             } else {
                 request(
                     session.profile,
@@ -668,11 +652,7 @@ class StalkerPortalClient(private val context: Context) {
                     onProviderWait = onProviderWait,
                     onRequestStarted = onRequestStarted
                 ).epgSchedulesByChannel().also { fresh ->
-                    if (fresh.isNotEmpty()) {
-                        epgCacheKey = cacheKey
-                        epgCacheAtMillis = now
-                        epgCache = fresh
-                    }
+                    epgCache = PortalGuideCache(cacheKey, System.currentTimeMillis(), fresh)
                 }
             }
             schedules = fullSchedules
@@ -681,18 +661,11 @@ class StalkerPortalClient(private val context: Context) {
                 .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
             Log.i(
                 "NikTvLiveGuide",
-                "Channel ${item.id}: short EPG empty, full guide supplied ${schedule.size} entries"
+                "Channel ${item.id}: short EPG has no usable entries; " +
+                    "full guide cached=$useCache, usable entries=${schedule.size}"
             )
         }
-        if (schedule.isEmpty()) return@withContext item
-        item.copy(
-            liveProgramme = schedule.firstOrNull { programme ->
-                val start = programme.startTimeMillis
-                val end = programme.endTimeMillis
-                start != null && end != null && now in start until end
-            } ?: item.liveProgramme,
-            liveSchedule = schedule
-        )
+        item.withFreshLiveSchedule(schedule, System.currentTimeMillis())
     }
 
     private fun JsonObject.providerEpisodeAirDate(): String? =
@@ -1232,7 +1205,6 @@ class StalkerPortalClient(private val context: Context) {
     companion object {
         private const val MAX_DIAGNOSTIC_BODY_CHARS = 16_384
         private const val MAX_PORTAL_JSON_BYTES = 32L * 1024L * 1024L
-        private const val EPG_CACHE_MILLIS = 5 * 60 * 1000L
         internal fun rankMovieDetailCommands(
             selectedId: String,
             selectedTitle: String,
