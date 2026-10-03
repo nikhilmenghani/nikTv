@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
         AppUpdates.initialize(applicationContext)
         GitHubBackupScheduler.initialize(applicationContext)
         SearchMetadataSyncScheduler.initialize(applicationContext)
+        com.nikhil.niktv.data.NewEpisodeNotificationScheduler.initialize(applicationContext)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)

@@ -302,6 +302,19 @@ class ProfileStore(private val context: Context) {
     suspend fun saveWatchedSeries(items: List<WatchedSeries>) = context.dataStore.edit {
         it[watchedSeriesKey] = Json.encodeToString(items)
     }
+    // Merge into the latest persisted subscription, preserving concurrent watched/
+    // dismissed actions and never reviving an unsubscribed series.
+    internal suspend fun recordEpisodeDiscovery(seriesKey: String, episodes: List<com.nikhil.niktv.model.MediaItem>, now: Long): EpisodeDiscovery? {
+        var result: EpisodeDiscovery? = null
+        context.dataStore.edit { prefs ->
+            val current = prefs[watchedSeriesKey]?.let { Json.decodeFromString<List<WatchedSeries>>(it) }.orEmpty()
+            val watched = current.firstOrNull { it.key == seriesKey } ?: return@edit
+            val discovery = discoverNewEpisodes(watched, episodes, now)
+            prefs[watchedSeriesKey] = Json.encodeToString(current.map { if (it.key == seriesKey) discovery.updated else it })
+            result = discovery
+        }
+        return result
+    }
     suspend fun rememberSeriesSeason(profileKey: String, seriesId: String, season: Int) = context.dataStore.edit { prefs ->
         val current = prefs[rememberedSeriesSeasonsKey]?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
         prefs[rememberedSeriesSeasonsKey] = Json.encodeToString(current + ("$profileKey|$seriesId" to season))

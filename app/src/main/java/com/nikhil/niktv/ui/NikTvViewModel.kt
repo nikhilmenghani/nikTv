@@ -118,6 +118,7 @@ data class NikTvState(
     val modernUiEnabled: Boolean = true,
     val modernTmdbSection: TmdbHomeSection? = null,
     val modernIptvCategory: Category? = null,
+    val modernIptvCategoryOpenId: Long = 0,
     val modernSectionOriginHome: Boolean = false,
     val modernTmdbMovies: List<TrendingMovie> = emptyList(),
     val modernTmdbSeries: List<TrendingSeries> = emptyList(),
@@ -197,7 +198,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
     private var browseLayouts: Map<String, BrowseLayout> = emptyMap()
     private var tmdbDashboardConfigs: Map<String, List<TmdbHomeSection>> = emptyMap()
-    private val watchRefreshMutex = Mutex()
+    private val watchRefreshMutex = com.nikhil.niktv.data.NewEpisodeNotifications.refreshMutex
     private val favoriteSeriesMetadataMutex = Mutex()
     private val favoriteEpisodeCacheRefreshMutex = Mutex()
     private val sessionRefreshMutex = Mutex()
@@ -3296,6 +3297,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             current.copy(
                 modernTmdbSection = null,
                 modernIptvCategory = category,
+                modernIptvCategoryOpenId = current.modernIptvCategoryOpenId + 1,
                 categoryFindQuery = "",
                 categoryFindPage = 0,
                 categoryFindTotalPages = null,
@@ -7356,8 +7358,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             WATCHED_SERIES_REFRESH_MILLIS
         )
         val now = System.currentTimeMillis()
-        var scoped = allWatchedSeries.filter { it.profileKey == profileKey }
-        var changed = false
+        val scoped = allWatchedSeries.filter { it.profileKey == profileKey }
         scoped.forEachIndexed { index, watched ->
             if (!force && now - watched.checkedAtMillis < interval) return@forEachIndexed
             val latest = runCatching {
@@ -7373,25 +7374,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }.getOrNull()
                 ?: return@forEachIndexed
-            val discovered = latest.episodes.filterNot { it.id in watched.knownEpisodeIds }
+            val discovery = store.recordEpisodeDiscovery(watched.key, latest.episodes, now)
+                ?: return@forEachIndexed
+            val discovered = discovery.added
             Log.i(
                 "NikTvWatchedSeries",
                 "Checked ${watched.series.id}: latest=${latest.episodes.size} new=${discovered.size} forced=$force"
             )
-            val replacement = watched.copy(
-                knownEpisodeIds = watched.knownEpisodeIds + latest.episodes.map { it.id },
-                newEpisodes = (discovered + watched.newEpisodes).distinctBy { it.id }
-                    .sortedWith(compareByDescending<MediaItem> { it.seasonNumber ?: 0 }.thenByDescending { it.episodeNumber ?: 0 }),
-                checkedAtMillis = now
-            )
-            scoped = scoped.map { if (it.key == watched.key) replacement else it }
-            changed = true
+            com.nikhil.niktv.data.NewEpisodeNotifications.post(getApplication(), session.profile.name, discovery)
             if (index < scoped.lastIndex) delay(1_200L)
-        }
-        if (changed) {
-            allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + scoped
-            _state.update { it.copy(watchedSeries = scoped) }
-            store.saveWatchedSeries(allWatchedSeries)
         }
         } finally {
             watchRefreshMutex.unlock()

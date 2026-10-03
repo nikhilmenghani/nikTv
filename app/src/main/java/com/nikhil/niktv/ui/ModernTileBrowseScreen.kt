@@ -309,6 +309,7 @@ internal fun ModernTileBrowseScreen(
                 }
 
                 activeIptv != null -> {
+                    androidx.compose.runtime.key(state.modernIptvCategoryOpenId) {
                     ModernIptvCollection(
                         state = state,
                         category = activeIptv,
@@ -324,6 +325,7 @@ internal fun ModernTileBrowseScreen(
                         cancelCategoryFind = cancelCategoryFind,
                         isTv = isTv
                     )
+                    }
                 }
 
                 else -> {
@@ -3147,7 +3149,7 @@ private fun ModernIptvCollection(
     val focusIds = remember(displayedItems) {
         displayedItems.mapIndexed { index, media -> "$index:${media.id}" }
     }
-    var lastFocusedMediaId by rememberSaveable(profileKey, category.id) {
+    var lastFocusedMediaId by rememberSaveable(profileKey, category.id, state.modernIptvCategoryOpenId) {
         mutableStateOf<String?>(null)
     }
     var focusedPosterIndex by remember(category.id) {
@@ -3164,20 +3166,29 @@ private fun ModernIptvCollection(
         }
     }
     val viewportKey = "$profileKey:${category.type.name}:${category.id}"
-    val restoredViewport = remember(viewportKey) {
-        ModernCollectionViewportMemory.get(viewportKey)
+    // Opening from the category hub is a new visit. Returning from playback keeps
+    // the same visit, so its position must survive without restoring a loading row.
+    val visitId = state.modernIptvCategoryOpenId
+    var initialTilesPositioned by rememberSaveable(viewportKey, visitId) { mutableStateOf(false) }
+    val restoredViewport = remember(viewportKey, visitId) {
+        if (initialTilesPositioned) ModernCollectionViewportMemory.get(viewportKey) else null
     }
     // Compose nearby rows during idle time; retain half a viewport for reverse scrolling.
     // This only caches UI rows, never fetches additional provider pages.
-    val gridState = rememberLazyGridState(
+    val gridState = androidx.compose.runtime.key(viewportKey, visitId) { rememberLazyGridState(
         cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(
             aheadFraction = 1f, behindFraction = .5f
         ),
         initialFirstVisibleItemIndex = restoredViewport?.index
-            ?.coerceAtMost(displayedItems.size)
             ?: 0,
         initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
-    )
+    ) }
+    LaunchedEffect(viewportKey, visitId, displayedItems.isNotEmpty(), state.loading) {
+        if (!initialTilesPositioned && displayedItems.isNotEmpty() && !state.loading) {
+            gridState.scrollToItem(0, 0)
+            initialTilesPositioned = true
+        }
+    }
     LaunchedEffect(trimmedChannelQuery, sourceFilter) {
         if (trimmedChannelQuery.isNotEmpty() || sourceFilter != null) gridState.scrollToItem(0)
     }
@@ -3233,6 +3244,7 @@ private fun ModernIptvCollection(
         }
 
     val gridFocusParking = remember(category.id) { FocusRequester() }
+    var gridOwnsFocus by remember(category.id) { mutableStateOf(false) }
     var focusMoveInProgress by remember(category.id) { mutableStateOf(false) }
     var focusMoveGeneration by remember(category.id) { mutableIntStateOf(0) }
     val focusScope = rememberCoroutineScope()
@@ -3307,8 +3319,16 @@ private fun ModernIptvCollection(
         }
     }
 
+    LaunchedEffect(gridOwnsFocus, initialTilesPositioned, focusIds.isNotEmpty()) {
+        if (isTv && gridOwnsFocus && initialTilesPositioned && !focusMoveInProgress) {
+            val targetIndex = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
+                .takeIf { it >= 0 } ?: gridState.firstVisibleItemIndex
+            moveFocusToIndex(targetIndex)
+        }
+    }
+
     TvCollectionInitialFocus(
-        enabled = isTv,
+        enabled = isTv && initialTilesPositioned,
         focusKey = "${category.type.name}:${category.id}",
         hasItems = focusIds.isNotEmpty(),
         focusedIndex = { focusedPosterIndex },
@@ -3483,6 +3503,18 @@ private fun ModernIptvCollection(
             .weight(1f)
             .fillMaxWidth()
             .focusRequester(gridFocusParking)
+            .onFocusChanged { focusState ->
+                gridOwnsFocus = focusState.isFocused
+                // The rail can enter the focusable parking container directly.
+                // Parking is only an intermediate stop during lazy-row moves;
+                // an ordinary entry must hand focus to an actual media tile.
+                if (isTv && initialTilesPositioned && focusState.isFocused && !focusMoveInProgress) {
+                    val targetIndex = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
+                        .takeIf { it >= 0 }
+                        ?: gridState.firstVisibleItemIndex
+                    moveFocusToIndex(targetIndex.coerceIn(0, (focusIds.size - 1).coerceAtLeast(0)))
+                }
+            }
             .modernGridVerticalFocus(
                 enabled = focusedPosterIndex >= 0,
                 index = focusedPosterIndex,
