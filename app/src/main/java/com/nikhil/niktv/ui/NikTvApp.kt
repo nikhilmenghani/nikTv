@@ -952,8 +952,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                     NikTvSecondaryActionButton(
                                         onClick = vm::dismissError,
                                         enabled = !state.reauthenticating,
-                                        modifier = Modifier.weight(1f).height(48.dp)
-                                    ) { Text("Close") }
+                                        modifier = Modifier.size(48.dp),
+                                        contentPadding = PaddingValues(0.dp)
+                                    ) { Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(24.dp)) }
                                     if (showDiagnostics) NikTvPrimaryActionButton(
                                         onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
                                         modifier = Modifier.weight(1f).height(48.dp)
