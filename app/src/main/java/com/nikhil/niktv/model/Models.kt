@@ -51,17 +51,32 @@ fun String.canonicalSearchQuery(): String = trim().replace(searchWhitespace, " "
 
 fun String.normalizedSearchQuery(): String = canonicalSearchQuery().lowercase()
 
+private val titleAccentMarks = Regex("\\p{M}+")
+private val titleWordSeparators = Regex("[^\\p{L}\\p{N}]+")
 private fun String.titleSearchTokens(): List<String> =
     Normalizer.normalize(lowercase(), Normalizer.Form.NFD)
-        .replace(Regex("\\p{M}+"), "")
-        .split(Regex("[^\\p{L}\\p{N}]+"))
+        .replace(titleAccentMarks, "")
+        .split(titleWordSeparators)
         .filter(String::isNotBlank)
 
 /** Case-insensitive title matching where every query word may be separated by punctuation. */
 fun String.matchesTitleKeywords(query: String): Boolean {
-    val titleTokens = titleSearchTokens()
+    return titleKeywordMatcher(query)(this)
+}
+
+/** Compile the query once when scanning a catalogue, rather than once per title. */
+fun titleKeywordMatcher(query: String): (String) -> Boolean {
     val queryTokens = query.titleSearchTokens()
-    return queryTokens.isNotEmpty() && queryTokens.all { key -> titleTokens.any { word -> word.contains(key) } }
+    return { title ->
+        val titleTokens = title.titleSearchTokens()
+        queryTokens.isNotEmpty() && queryTokens.all { key -> titleTokens.any { word -> word.contains(key) } }
+    }
+}
+
+internal fun String.normalizedTitleKeywords(): String = titleSearchTokens().joinToString(" ")
+internal fun normalizedTitleKeywordMatcher(query: String): (String) -> Boolean {
+    val words = query.titleSearchTokens()
+    return { title -> words.isNotEmpty() && words.all(title::contains) }
 }
 
 fun String.titleKeywordScore(query: String): Int {

@@ -2668,6 +2668,9 @@ private fun ModernTmdbCollection(
 ) {
     val configuration = LocalConfiguration.current
     val remoteNavigationActive = isTv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    // Own Back in the visible destination, including after its saved state is
+    // restored on older TV Android versions. Popup handlers still take priority.
+    BackHandler(onBack = close)
     val columns = modernCollectionPosterColumns(configuration, isTv)
     val fullSpan:
         androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() ->
@@ -3099,9 +3102,13 @@ private fun ModernIptvCollection(
             keyboard?.show()
         }
     }
-    BackHandler(enabled = channelSearchEditing) {
-        channelSearchEditing = false
-        keyboard?.hide()
+    BackHandler {
+        if (channelSearchEditing) {
+            channelSearchEditing = false
+            keyboard?.hide()
+        } else {
+            close()
+        }
     }
     val imeVisible = WindowInsets.isImeVisible
     LaunchedEffect(channelSearchEditing, imeVisible) {

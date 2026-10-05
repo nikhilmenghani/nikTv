@@ -185,6 +185,7 @@ data class NikTvState(
 class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val store = ProfileStore(application)
     private val portal = StalkerPortalClient(application)
+    @Volatile private var catalogueTitleIndex: CatalogueTitleIndex? = null
     private val tmdb = TmdbClient()
     private val tmdbAvailabilityCatalogs = mutableMapOf<Pair<String, CatalogType>, SearchCatalogCache>()
     private val tmdbAvailability = com.nikhil.niktv.data.TmdbAvailabilityRepository(application)
@@ -357,6 +358,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connect(profile: PortalProfile) = task {
         profilePreparationJob?.cancel()
+        searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
+        catalogueTitleIndex = null
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
         val session = authenticateProfileForOpening(profile)
@@ -366,6 +370,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 session = session,
                 savedProfile = session.profile,
+                homeOpen = true,
+                items = emptyList(),
+                categories = emptyList(),
+                rawCategoriesByType = emptyMap(),
+                browseCache = null,
+                browseCachesByType = emptyMap(),
+                fullSearchItems = null,
+                selectedCategory = null,
+                selectedSeries = null,
+                modernIptvCategory = null,
+                modernTmdbSection = null,
                 profileEditorOpen = false,
                 searchOpen = false,
                 searchScopeLocked = false,
@@ -406,6 +421,32 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 catch (_: Exception) { /* Optional preparation retries when its destination opens. */ }
             }
             step { store.discardLegacyBrowseCatalogs() }
+            if (session.profile.portalType == PortalType.XTREAM) launch {
+                // Xtream supplies each complete media listing in one request.
+                // Warm the established profile-scoped file cache off the UI path;
+                // collectionCatalog reuses fresh data and obeys refresh intervals.
+                for (type in listOf(CatalogType.MOVIES, CatalogType.SERIES, CatalogType.LIVE_TV)) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    try { collectionCatalog(session, type, force = false) }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* A destination/search retries when needed. */ }
+                }
+                // Leave the active type decoded and its normalized titles ready,
+                // rather than making the first query build the index on demand.
+                if (_state.value.session?.profile?.cacheKey() == profileKey) {
+                    val primeType = if (_state.value.searchOpen && _state.value.searchType != SearchContentType.ALL)
+                        catalogTypeForSearch(_state.value.searchType) else _state.value.selectedType
+                    try {
+                        val cache = collectionCatalog(session, primeType, force = false)
+                        if (_state.value.session?.profile?.cacheKey() == profileKey &&
+                            cache.items.sumOf { it.title.length.toLong() } <= Runtime.getRuntime().maxMemory() / 64 &&
+                            catalogueTitleIndex?.isFor(cache.items) != true) {
+                            catalogueTitleIndex = withContext(Dispatchers.Default) { CatalogueTitleIndex(cache.items, profileKey, primeType) }
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* Search can prime it on demand. */ }
+                }
+            }
             // Live TV is the most latency-sensitive destination and is commonly
             // opened immediately after profile selection. Warm its lightweight
             // category metadata before the larger VOD catalogues.
@@ -5546,6 +5587,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         categoryId: String,
         onPartial: (List<MediaItem>) -> Unit = {}
     ): List<MediaItem> = withContext(Dispatchers.Default) {
+        val selectedProfile = _state.value
+        if (selectedProfile.savedProfile?.cacheKey() != selectedProfile.session?.profile?.cacheKey()) {
+            throw kotlinx.coroutines.CancellationException("Profile is changing")
+        }
         if (type == SearchContentType.ALL) {
             val profileKey = _state.value.session?.profile?.cacheKey()
             val saved = store.pagedSearches.first().filter {
@@ -5565,18 +5610,28 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val profileKey = snapshot.session?.profile?.cacheKey()
 
         fun scopedItems(cache: BrowseCatalogCache?): List<MediaItem> {
-            val itemsByCategory = cache?.itemsByCategory.orEmpty()
-            return if (categoryId == "*") {
-                itemsByCategory.values.flatten()
-            } else {
-                itemsByCategory[categoryId].orEmpty()
-            }
+            return cache.searchItemsForProfile(profileKey, categoryId)
         }
 
         val memoryBrowse =
             scopedItems(snapshot.browseCachesByType[catalogType])
 
+        val startedAt = SystemClock.elapsedRealtime()
+        val matchesTitle = titleKeywordMatcher(query)
+        // Already-loaded matches are usable immediately while the larger saved
+        // index is read. Continue below so partial caches never hide other matches.
+        val earlyCandidates = (memoryBrowse + snapshot.items.takeIf {
+            snapshot.selectedType == catalogType && snapshot.selectedSeries == null
+        }.orEmpty().filter { categoryId == "*" || it.portalCategoryId == categoryId })
+            .distinctBy { it.id }
+        val early = if (type == SearchContentType.EPISODES) emptyList() else
+            (catalogueTitleIndex?.takeIf { it.isScopedTo(profileKey, catalogType) }?.findCandidates(earlyCandidates, query)
+                ?: earlyCandidates.filter { matchesTitle(it.title) }).rankSearchResults(query, type)
+        if (early.isNotEmpty()) onPartial(early)
+
         val indexCache = store.searchCatalog(catalogType, profileKey).first()
+            ?.takeIf { it.profileKey == profileKey && it.type == catalogType }
+        val cacheReadyAt = SystemClock.elapsedRealtime()
         // Both established disk caches can contain the same full catalogue.
         // Decode the browse cache only when the dedicated search cache is not
         // available, rather than parsing the catalogue twice per keystroke.
@@ -5587,13 +5642,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val previousSearchItems = store.pagedSearches.first()
             .cachedSearchItems(profileKey, type, categoryId)
-        val indexed =
-            indexCache?.items
-                .orEmpty()
-                .filter {
-                    categoryId == "*" ||
-                        it.portalCategoryId == categoryId
-                }
+        val indexed = indexCache?.items.orEmpty()
+        val titleIndex = catalogueTitleIndex?.takeIf { it.isFor(indexed) } ?: if (
+            indexed.isNotEmpty() && indexed.sumOf { it.title.length.toLong() } <= Runtime.getRuntime().maxMemory() / 64
+        ) CatalogueTitleIndex(indexed, profileKey, catalogType).also { catalogueTitleIndex = it } else null
+        val indexedMatches = titleIndex?.find(indexed, query, categoryId) ?: indexed.filter {
+            (categoryId == "*" || it.portalCategoryId == categoryId) && matchesTitle(it.title)
+        }
 
         val visible =
             if (
@@ -5633,17 +5688,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (type == SearchContentType.EPISODES) {
                 episodes
             } else {
-                memoryBrowse +
-                    visible +
-                    indexed +
-                    persistedBrowse +
-                    previousSearchItems
+                early +
+                    visible.filter { matchesTitle(it.title) } +
+                    indexedMatches +
+                    persistedBrowse.filter { matchesTitle(it.title) } +
+                    previousSearchItems.filter { matchesTitle(it.title) }
             }
 
-        source
+        val results = source
             .distinctBy { it.id }
-            .filter { it.title.matchesTitleKeywords(query) }
+            .filter { matchesTitle(it.title) }
             .rankSearchResults(query, type)
+        Log.i("NikTvSearchTiming", "$type local: memory=${memoryBrowse.size}, index=${indexed.size}, cache=${cacheReadyAt - startedAt}ms, match=${SystemClock.elapsedRealtime() - cacheReadyAt}ms, results=${results.size}")
+        results
     }
 
     private suspend fun rememberSearch(
@@ -6985,6 +7042,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun switchProfile(profile: PortalProfile) = task {
         profilePreparationJob?.cancel()
+        searchPreviewJob?.cancel()
+        searchServerJob?.cancel()
+        catalogueTitleIndex = null
         _state.update { it.copy(savedProfile = profile) }
         updateProfileLoad(0.04f, "Loading ${profile.name}…")
         store.activate(profile)
@@ -6993,6 +7053,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = localFirstSession(profile)
         updateProfileLoad(0.24f, "Authentication complete")
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
+            modernIptvCategory = null, modernTmdbSection = null, selectedCategory = null, playbackReturnFocusId = null,
+            searchQuery = "", searchResults = emptyList(), searchLocalLoading = false, searchServerLoading = false,
             searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList(),

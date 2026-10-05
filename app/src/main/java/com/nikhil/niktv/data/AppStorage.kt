@@ -49,6 +49,7 @@ suspend fun appStorageSnapshot(
     val namedCacheBytes = directorySize(artworkDirectory) + directorySize(subtitleDirectory)
     val allCacheBytes = directorySize(appContext.cacheDir) +
         (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
+    android.util.Log.i("NikTvStorage", "catalogues=${directorySize(File(appContext.cacheDir, "catalogues-v1"))}, artwork=${directorySize(artworkDirectory)}, other=${(allCacheBytes - namedCacheBytes - directorySize(File(appContext.cacheDir, "catalogues-v1"))).coerceAtLeast(0L)} bytes")
 
     AppStorageSnapshot(
         totalBytes = stats.totalBytes,
