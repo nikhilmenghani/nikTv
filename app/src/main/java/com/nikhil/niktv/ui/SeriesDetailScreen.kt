@@ -67,7 +67,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -140,17 +142,25 @@ internal fun ModernSeriesDetailScreen(
     var searchQuery by rememberSaveable(series.id) { mutableStateOf("") }
     var episodeSearchEditing by rememberSaveable(series.id) { mutableStateOf(false) }
     var episodeTextEditing by rememberSaveable(series.id) { mutableStateOf(false) }
+    var initialEpisodeFocusComplete by rememberSaveable(series.id) { mutableStateOf(false) }
+    var focusedEpisodeId by remember(series.id) { mutableStateOf<String?>(null) }
     var handledPlaybackReturnFocusId by remember(series.id) { mutableStateOf<String?>(null) }
+    // Playback return is an entry event. Keep its target even if a background
+    // state update clears the shared marker before the episode list is ready.
+    val entryPlaybackReturnFocusId = remember(series.id) { state.playbackReturnFocusId }
     var moreActionsExpanded by remember { mutableStateOf(false) }
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
     val episodeSearchCloseRequester = remember(series.id) { FocusRequester() }
-    val returningEpisodeRequester = remember(series.id) { FocusRequester() }
+    val entryEpisodeRequester = remember(series.id) { FocusRequester() }
+    val episodeFocusParkingRequester = remember(series.id) { FocusRequester() }
     val heroActionRequesters = remember(series.id) { List(3) { FocusRequester() } }
-    val episodeListState = rememberLazyListState()
+    val episodeListState = key(series.id) { rememberLazyListState() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val episodeContext = LocalContext.current
     val episodeConfiguration = LocalConfiguration.current
     val episodeIsTv = episodeContext.isTvLikeDevice(episodeConfiguration)
+    val remoteNavigationActive = episodeContext.usesRemoteNavigation(episodeConfiguration) ||
+        LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val compactPortrait = episodeConfiguration.screenWidthDp < 600 &&
         episodeConfiguration.orientation == Configuration.ORIENTATION_PORTRAIT
     val mobileEpisodeLayout =
@@ -250,23 +260,71 @@ internal fun ModernSeriesDetailScreen(
     val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) latestEpisode ?: state.items.firstOrNull()
         else state.items.firstOrNull()
 
-    LaunchedEffect(state.playbackReturnFocusId, filteredEpisodes) {
-        val returningId = state.playbackReturnFocusId ?: return@LaunchedEffect
-        if (handledPlaybackReturnFocusId == returningId) return@LaunchedEffect
-        // Keep the filter and result position, but do not reopen the search editor or
-        // keyboard after returning from playback.
-        episodeSearchEditing = false
-        keyboardController?.hide()
-        val episodeIndex = filteredEpisodes.indexOfFirst { it.id == returningId }
-        if (episodeIndex >= 0) {
-            episodeListState.scrollToItem(episodeIndex + 2)
-            delay(120L)
-            runCatching { returningEpisodeRequester.requestFocus() }
-            handledPlaybackReturnFocusId = returningId
+    val episodeIds = remember(filteredEpisodes) { filteredEpisodes.map { it.id } }
+    val pendingPlaybackReturnId = entryPlaybackReturnFocusId?.takeUnless {
+        it == handledPlaybackReturnFocusId
+    }
+    val entryFocusTarget = seriesEpisodeEntryFocusTarget(
+        episodeIds = episodeIds,
+        loading = state.loading,
+        returningEpisodeId = pendingPlaybackReturnId,
+        initialEntryPending = !initialEpisodeFocusComplete
+    )
+
+    LaunchedEffect(remoteNavigationActive, series.id, episodeIds, state.loading, entryPlaybackReturnFocusId) {
+        if (!remoteNavigationActive && pendingPlaybackReturnId == null) return@LaunchedEffect
+        val target = entryFocusTarget ?: return@LaunchedEffect
+        if (target is SeriesEpisodeEntryFocus.Episode && pendingPlaybackReturnId == null && focusedEpisodeId != null) {
+            // Do not steal a selection the user reached before the entry effect ran.
+            initialEpisodeFocusComplete = true
+            return@LaunchedEffect
+        }
+        if (pendingPlaybackReturnId != null) {
+            // Returning to an episode keeps its position without reopening the IME.
+            episodeSearchEditing = false
+            keyboardController?.hide()
+        }
+        val requester = when (target) {
+            SeriesEpisodeEntryFocus.Loading -> {
+                if (!remoteNavigationActive) return@LaunchedEffect
+                episodeFocusParkingRequester
+            }
+            SeriesEpisodeEntryFocus.Back -> {
+                if (!remoteNavigationActive) return@LaunchedEffect
+                heroActionRequesters[0]
+            }
+            is SeriesEpisodeEntryFocus.Episode -> {
+                val listIndex = target.index + 2 // The hero and toolbar precede the episodes.
+                if (episodeListState.layoutInfo.visibleItemsInfo.none { it.index == listIndex }) {
+                    episodeListState.scrollToItem(listIndex)
+                }
+                entryEpisodeRequester
+            }
+        }
+        repeat(6) { attempt ->
+            withFrameNanos { }
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
+                if (target != SeriesEpisodeEntryFocus.Loading) {
+                    initialEpisodeFocusComplete = true
+                    handledPlaybackReturnFocusId = pendingPlaybackReturnId
+                }
+                return@LaunchedEffect
+            }
+            delay(40L * (attempt + 1))
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF090909))) {
+    Box(
+        Modifier.fillMaxSize().background(Color(0xFF090909))
+            .focusRequester(episodeFocusParkingRequester)
+            .onPreviewKeyEvent { event ->
+                // Hold the entry cursor inside this screen while there is no episode
+                // to select. Back continues through the normal navigation handler.
+                remoteNavigationActive && entryFocusTarget == SeriesEpisodeEntryFocus.Loading &&
+                    event.key in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)
+            }
+            .focusable(remoteNavigationActive)
+    ) {
         LazyColumn(
             Modifier.fillMaxSize(),
             state = episodeListState,
@@ -599,7 +657,10 @@ internal fun ModernSeriesDetailScreen(
                         onRemoveDownload = { removeOfflineDownload(episode, CatalogType.SERIES) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(if (state.playbackReturnFocusId == episode.id) Modifier.focusRequester(returningEpisodeRequester) else Modifier)
+                            .then(if ((entryFocusTarget as? SeriesEpisodeEntryFocus.Episode)?.id == episode.id) {
+                                Modifier.focusRequester(entryEpisodeRequester)
+                            } else Modifier)
+                            .onFocusChanged { if (it.hasFocus) focusedEpisodeId = episode.id }
                             .padding(
                                 horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp,
                                 vertical = if (mobileEpisodeLayout) 4.dp else 6.dp

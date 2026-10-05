@@ -66,7 +66,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -128,21 +130,43 @@ internal fun ModernFavoritesScreen(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isModernTileTv(configuration)
+    val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
+        LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val entryFocusRequester = remember(profileKey) { FocusRequester() }
+    var entryFocusComplete by rememberSaveable(profileKey) { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
     val posterColumns = modernPosterColumns(configuration, isTv)
     val groups = FavoriteKind.entries.mapNotNull { kind ->
         state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
+    }
+    val firstFavoriteKey = groups.firstOrNull()?.second?.firstOrNull()?.key
+    LaunchedEffect(remoteNavigationActive, firstFavoriteKey) {
+        if (!remoteNavigationActive || entryFocusComplete) return@LaunchedEffect
+        // The top bar and first group heading precede the first media tile.
+        gridState.scrollToItem(if (firstFavoriteKey == null) 0 else 2)
+        repeat(6) { attempt ->
+            withFrameNanos { }
+            if (runCatching { entryFocusRequester.requestFocus() }.getOrDefault(false)) {
+                entryFocusComplete = true
+                return@LaunchedEffect
+            }
+            delay(40L * (attempt + 1))
+        }
     }
     LazyVerticalGrid(
         // Match the dashboard's Continue Watching geometry. The old adaptive
         // 180dp rule collapsed compact phones to one nearly full-width poster.
         columns = GridCells.Fixed(posterColumns),
+        state = gridState,
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
-            ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings)
+            ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings,
+                backModifier = if (firstFavoriteKey == null) Modifier.focusRequester(entryFocusRequester) else Modifier)
         }
         if (groups.isEmpty()) item("favorites-empty", span = { GridItemSpan(maxLineSpan) }) {
             Box(Modifier.fillMaxWidth().height(360.dp), contentAlignment = Alignment.Center) {
@@ -165,7 +189,8 @@ internal fun ModernFavoritesScreen(
                         favorite = favorite,
                         aspectRatio = 16f / 9f,
                         open = { openFavorite(favorite) },
-                        remove = { toggleFavorite(favorite) }
+                        remove = { toggleFavorite(favorite) },
+                        modifier = if (favorite.key == firstFavoriteKey) Modifier.focusRequester(entryFocusRequester) else Modifier
                     )
                 }
             }
@@ -178,7 +203,8 @@ internal fun ModernFavoriteCard(
     favorite: FavoriteItem,
     aspectRatio: Float,
     open: () -> Unit,
-    remove: () -> Unit
+    remove: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var removalConfirmationOpen by rememberSaveable(favorite.key) {
         mutableStateOf(false)
@@ -203,12 +229,12 @@ internal fun ModernFavoriteCard(
             isFavorite = true,
             onFavorite = { removalConfirmationOpen = true },
             sourceLabel = favorite.source.takeIf { it == FavoriteSource.TMDB }?.name,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
+            modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
         )
     } else ModernPosterCard(
         item = favorite.media,
         aspectRatio = aspectRatio,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
         onClick = open,
         onLongClick = { removalConfirmationOpen = true },
         titleMaxLines = Int.MAX_VALUE,
@@ -273,12 +299,13 @@ internal fun ModernFavoriteCard(
 }
 
 @Composable
-internal fun ModernScreenTopBar(title: String, close: () -> Unit, openSearch: (() -> Unit)? = null, openSettings: (() -> Unit)? = null) {
+internal fun ModernScreenTopBar(title: String, close: () -> Unit, openSearch: (() -> Unit)? = null, openSettings: (() -> Unit)? = null,
+    backModifier: Modifier = Modifier) {
     Row(
         Modifier.fillMaxWidth().background(Color(0xFF090909)).statusBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = close, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+        IconButton(onClick = close, modifier = backModifier.remoteFocusFrame(CircleShape)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
         openSearch?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Search, "Search", tint = Color.White) } }
         openSettings?.let { IconButton(onClick = it, modifier = Modifier.remoteFocusFrame(CircleShape)) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) } }

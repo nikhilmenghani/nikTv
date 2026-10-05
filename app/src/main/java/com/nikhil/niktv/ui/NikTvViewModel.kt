@@ -117,6 +117,7 @@ data class NikTvState(
     val automaticReauthentication: Boolean = true,
     val modernUiEnabled: Boolean = true,
     val modernTmdbSection: TmdbHomeSection? = null,
+    val modernTmdbSectionOpenId: Long = 0,
     val modernIptvCategory: Category? = null,
     val modernIptvCategoryOpenId: Long = 0,
     val modernSectionOriginHome: Boolean = false,
@@ -3252,6 +3253,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { current ->
             current.copy(
                 modernTmdbSection = section,
+                modernTmdbSectionOpenId = current.modernTmdbSectionOpenId + 1,
                 modernIptvCategory = null,
                 modernSectionOriginHome = current.homeOpen,
                 modernTmdbMovies = emptyList(),
@@ -4116,6 +4118,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 searchOpen = false,
                 selectedType = CatalogType.SERIES,
                 selectedSeries = displaySeries,
+                playbackReturnFocusId = null,
                 seriesOpenedFromHome = !openedFromModernSection,
                 seriesOpenedFromModernSection = openedFromModernSection,
                 seriesOpenedFromFavorites = false,
@@ -4715,6 +4718,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update {
                     it.copy(
                         selectedSeries = item,
+                        playbackReturnFocusId = null,
                         items = emptyList(),
                         availableSeriesSeasons = emptyList(),
                         selectedSeriesSeason = null,
@@ -5738,6 +5742,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         homeOpen = false,
                         selectedType = CatalogType.SERIES,
                         selectedSeries = item,
+                        playbackReturnFocusId = null,
                         items = emptyList(),
                         availableSeriesSeasons = emptyList(),
                         selectedSeriesSeason = null
@@ -7153,7 +7158,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val providerSeries = (mapping?.media ?: favorite.media)
                     .withFavoriteSeriesPresentation(favorite.media)
-                _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = providerSeries, seriesOpenedFromFavorites = true, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null) }
+                _state.update { it.copy(favoritesOpen = false, selectedType = CatalogType.SERIES, selectedSeries = providerSeries, playbackReturnFocusId = null, seriesOpenedFromFavorites = true, items = emptyList(), availableSeriesSeasons = emptyList(), selectedSeriesSeason = null) }
                 loadSeriesEpisodes(providerSeries)
             }
         }
@@ -7178,6 +7183,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 favoritesOpen = false,
                 selectedType = CatalogType.SERIES,
                 selectedSeries = providerSeries,
+                playbackReturnFocusId = null,
                 seriesOpenedFromHome = true,
                 seriesOpenedFromFavorites = false,
                 items = emptyList(),
@@ -7273,7 +7279,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 val resumeEpisode = savedEpisode?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
                 if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes)
                 else {
-                    _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = episodes) }
+                    _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, playbackReturnFocusId = null, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = episodes) }
                 }
             }
         }

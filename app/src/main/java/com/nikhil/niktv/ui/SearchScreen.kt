@@ -155,7 +155,8 @@ internal fun ModernSearchScreen(
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val isTv = context.isSearchTvLikeDevice(configuration)
-    val remoteNavigationActive = context.usesRemoteNavigation(configuration)
+    val remoteNavigationActive = context.usesRemoteNavigation(configuration) ||
+        androidx.compose.ui.platform.LocalInputModeManager.current.inputMode == androidx.compose.ui.input.InputMode.Keyboard
     var resultsFocused by remember(state.searchQuery, state.searchType, state.searchCategoryId) { mutableStateOf(false) }
 
     LaunchedEffect(state.searchLocalLoading, state.searchServerLoading) {

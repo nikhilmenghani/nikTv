@@ -294,6 +294,7 @@ internal fun ModernTileBrowseScreen(
         ) {
             when {
                 activeTmdb != null -> {
+                    androidx.compose.runtime.key(state.modernTmdbSectionOpenId) {
                     ModernTmdbCollection(
                         state = state,
                         section = activeTmdb,
@@ -306,6 +307,7 @@ internal fun ModernTileBrowseScreen(
                         enrichFocusedMetadata = enrichFocusedCatalogMetadata,
                         isTv = isTv
                     )
+                    }
                 }
 
                 activeIptv != null -> {
@@ -785,6 +787,34 @@ private fun ModernDestinationHub(
         initialFirstVisibleItemIndex = restoredHubViewport?.index ?: 0,
         initialFirstVisibleItemScrollOffset = restoredHubViewport?.offset ?: 0
     )
+    val hubRemoteNavigation = isTv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    var hubReturnTile by rememberSaveable(hubViewportKey) { mutableStateOf<String?>(null) }
+    var hubEntryFocusComplete by remember(hubViewportKey) { mutableStateOf(false) }
+    val hubEntryRequester = remember(hubViewportKey) { FocusRequester() }
+    val firstHubTile = tmdbSections.firstOrNull()?.let { "tmdb:${it.name}" }
+        ?: liveCategories.firstOrNull()?.let { "live:${it.id}" }
+        ?: movieCategories.firstOrNull()?.let { "movie:${it.id}" }
+        ?: seriesCategories.firstOrNull()?.let { "series:${it.id}" }
+    val hubEntryTile = hubReturnTile ?: firstHubTile
+    val availableHubTiles = tmdbSections.map { "tmdb:${it.name}" } +
+        liveCategories.map { "live:${it.id}" } + movieCategories.map { "movie:${it.id}" } +
+        seriesCategories.map { "series:${it.id}" }
+    fun hubEntryModifier(key: String) = if (hubEntryTile == key) Modifier.focusRequester(hubEntryRequester) else Modifier
+    LaunchedEffect(hubViewportKey, hubRemoteNavigation, hubEntryTile, availableHubTiles) {
+        if (!hubRemoteNavigation || (dashboardSurface == DashboardSurface.HOME && recents.isNotEmpty()) || hubEntryFocusComplete || hubEntryTile == null) return@LaunchedEffect
+        if (hubEntryTile !in availableHubTiles) return@LaunchedEffect
+        if (hubReturnTile == null) hubGridState.scrollToItem(0)
+        else restoredHubViewport?.let { hubGridState.scrollToItem(it.index, it.offset) }
+        repeat(8) { attempt ->
+            withFrameNanos { }
+            if (runCatching { hubEntryRequester.requestFocus() }.getOrDefault(false)) {
+                hubEntryFocusComplete = true
+                hubReturnTile = null
+                return@LaunchedEffect
+            }
+            delay(40L * (attempt + 1))
+        }
+    }
     LaunchedEffect(hubViewportKey, hubGridState) {
         snapshotFlow { hubGridState.firstVisibleItemIndex to hubGridState.firstVisibleItemScrollOffset }
             .collect { (index, offset) -> ModernCollectionViewportMemory.put(hubViewportKey, index, offset) }
@@ -958,7 +988,8 @@ private fun ModernDestinationHub(
                         else Icons.Default.SmartDisplay,
                     seed = "tmdb:${section.name}",
                     isTv = isTv,
-                    onClick = { openTmdbSection(section) }
+                    modifier = hubEntryModifier("tmdb:${section.name}"),
+                    onClick = { hubReturnTile = "tmdb:${section.name}"; openTmdbSection(section) }
                 )
             }
         }
@@ -980,6 +1011,7 @@ private fun ModernDestinationHub(
                     icon = Icons.Default.LiveTv,
                     seed = "live:${category.id}:${category.title}",
                     isTv = isTv,
+                    modifier = hubEntryModifier("live:${category.id}"),
                     pinned = category.id in pinnedLiveCategories,
                     onTogglePin = {
                         pinnedLiveCategories = IptvPinPreferences.toggleCategory(
@@ -987,7 +1019,7 @@ private fun ModernDestinationHub(
                         )
                     },
                     onRemove = if (category.sourceCategoryIds.isEmpty() || category.id.startsWith("@custom:")) { { removeVisibleCategory(category) } } else null,
-                    onClick = { openIptvCategory(category) }
+                    onClick = { hubReturnTile = "live:${category.id}"; openIptvCategory(category) }
                 )
             }
         }
@@ -1011,6 +1043,7 @@ private fun ModernDestinationHub(
                     icon = Icons.Default.SmartDisplay,
                     seed = "movie:${category.id}:${category.title}",
                     isTv = isTv,
+                    modifier = hubEntryModifier("movie:${category.id}"),
                     pinned = category.id in pinnedMovieCategories,
                     onTogglePin = {
                         pinnedMovieCategories = IptvPinPreferences.toggleCategory(
@@ -1018,7 +1051,7 @@ private fun ModernDestinationHub(
                         )
                     },
                     onRemove = if (category.sourceCategoryIds.isEmpty() || category.id.startsWith("@custom:")) { { removeVisibleCategory(category) } } else null,
-                    onClick = { openIptvCategory(category) }
+                    onClick = { hubReturnTile = "movie:${category.id}"; openIptvCategory(category) }
                 )
             }
         }
@@ -1042,6 +1075,7 @@ private fun ModernDestinationHub(
                     icon = Icons.Default.Tv,
                     seed = "series:${category.id}:${category.title}",
                     isTv = isTv,
+                    modifier = hubEntryModifier("series:${category.id}"),
                     pinned = category.id in pinnedSeriesCategories,
                     onTogglePin = {
                         pinnedSeriesCategories = IptvPinPreferences.toggleCategory(
@@ -1049,7 +1083,7 @@ private fun ModernDestinationHub(
                         )
                     },
                     onRemove = if (category.sourceCategoryIds.isEmpty() || category.id.startsWith("@custom:")) { { removeVisibleCategory(category) } } else null,
-                    onClick = { openIptvCategory(category) }
+                    onClick = { hubReturnTile = "series:${category.id}"; openIptvCategory(category) }
                 )
             }
         }
@@ -1719,6 +1753,7 @@ private fun ModernDestinationTile(
     icon: ImageVector,
     seed: String,
     isTv: Boolean,
+    modifier: Modifier = Modifier,
     pinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
@@ -1778,7 +1813,7 @@ private fun ModernDestinationTile(
 
     Box(Modifier.fillMaxWidth()) {
         Surface(
-            modifier = returningTile.modifier
+            modifier = returningTile.modifier.then(modifier)
                 .fillMaxWidth()
             .zIndex(visualProgress)
             .graphicsLayer {
@@ -2054,9 +2089,23 @@ private fun ModernContinueRow(
             }
         }
     }
-
-
-
+    val context = LocalContext.current
+    val remoteNavigationActive = context.usesRemoteNavigation(LocalConfiguration.current) ||
+        LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    var initialFocusApplied by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(remoteNavigationActive, focusIds) {
+        if (!remoteNavigationActive || initialFocusApplied || focusIds.isEmpty()) return@LaunchedEffect
+        val target = focusIds.indexOf(returnFocusId).takeIf { it >= 0 } ?: 0
+        listState.scrollToItem(target)
+        repeat(6) { attempt ->
+            withFrameNanos { }
+            if (runCatching { requesters.getOrPut(focusIds[target]) { FocusRequester() }.requestFocus() }.getOrDefault(false)) {
+                initialFocusApplied = true
+                return@LaunchedEffect
+            }
+            delay(40L * (attempt + 1))
+        }
+    }
     Column(Modifier.fillMaxWidth()) {
     LazyRow(
         state = listState,
@@ -2618,6 +2667,7 @@ private fun ModernTmdbCollection(
     isTv: Boolean
 ) {
     val configuration = LocalConfiguration.current
+    val remoteNavigationActive = isTv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val columns = modernCollectionPosterColumns(configuration, isTv)
     val fullSpan:
         androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() ->
@@ -2757,7 +2807,7 @@ private fun ModernTmdbCollection(
     }
 
     TvCollectionInitialFocus(
-        enabled = isTv,
+        enabled = remoteNavigationActive,
         focusKey = "tmdb:${section.name}",
         hasItems = focusIds.isNotEmpty(),
         focusedIndex = { focusedPosterIndex },
@@ -3308,8 +3358,27 @@ private fun ModernIptvCollection(
         }
     }
 
-    LaunchedEffect(gridOwnsFocus, initialTilesPositioned, focusIds.isNotEmpty()) {
-        if (isTv && gridOwnsFocus && initialTilesPositioned && !focusMoveInProgress) {
+    val retainFocusAfterItemChange = remember(focusIds) { focusedPosterIndex >= 0 }
+    LaunchedEffect(focusIds, remoteNavigationActive) {
+        if (remoteNavigationActive && initialTilesPositioned && retainFocusAfterItemChange && focusIds.isNotEmpty()) {
+            withFrameNanos { }
+            if (focusedPosterIndex < 0 && !focusMoveInProgress) {
+                val target = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
+                    .takeIf { it >= 0 } ?: gridState.firstVisibleItemIndex.coerceAtMost(displayedItems.lastIndex)
+                moveFocusToIndex(target)
+            }
+        }
+    }
+    LaunchedEffect(remoteNavigationActive, initialTilesPositioned, state.loading) {
+        if (remoteNavigationActive && !initialTilesPositioned && state.loading) {
+            // Keep the incoming screen's cursor out of the sidebar until its
+            // first media row is ready. Back still bubbles to the catalog route.
+            withFrameNanos { }
+            runCatching { gridFocusParking.requestFocus() }
+        }
+    }
+    LaunchedEffect(remoteNavigationActive, gridOwnsFocus, initialTilesPositioned, focusIds.isNotEmpty()) {
+        if (remoteNavigationActive && gridOwnsFocus && initialTilesPositioned && !focusMoveInProgress) {
             val targetIndex = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
                 .takeIf { it >= 0 } ?: gridState.firstVisibleItemIndex
             moveFocusToIndex(targetIndex)
@@ -3317,7 +3386,7 @@ private fun ModernIptvCollection(
     }
 
     TvCollectionInitialFocus(
-        enabled = isTv && initialTilesPositioned,
+        enabled = remoteNavigationActive && initialTilesPositioned,
         focusKey = "${category.type.name}:${category.id}",
         hasItems = focusIds.isNotEmpty(),
         focusedIndex = { focusedPosterIndex },
@@ -3341,7 +3410,7 @@ private fun ModernIptvCollection(
     val appendPage = if (trimmedChannelQuery.isEmpty() || hasLocalMore) {
         rememberCollectionPagination(
             displayedItems.map { it.id }, state.catalogLoadingMore, gridState,
-            itemFocusRequesters, loadMoreVisible
+            itemFocusRequesters, loadMoreVisible, itemOffset = 0, focusKeys = focusIds
         )
     } else CollectionPagination(false) {}
 
@@ -3497,7 +3566,7 @@ private fun ModernIptvCollection(
                 // The rail can enter the focusable parking container directly.
                 // Parking is only an intermediate stop during lazy-row moves;
                 // an ordinary entry must hand focus to an actual media tile.
-                if (isTv && initialTilesPositioned && focusState.isFocused && !focusMoveInProgress) {
+                if (remoteNavigationActive && initialTilesPositioned && focusState.isFocused && !focusMoveInProgress) {
                     val targetIndex = displayedItems.indexOfFirst { it.id == lastFocusedMediaId }
                         .takeIf { it >= 0 }
                         ?: gridState.firstVisibleItemIndex
@@ -3511,7 +3580,7 @@ private fun ModernIptvCollection(
                 itemCount = focusIds.size,
                 moveFocus = moveFocusToIndex
             )
-            .focusable(isTv),
+            .focusable(remoteNavigationActive),
         contentPadding = PaddingValues(
             start = if (isTv) 24.dp else 18.dp,
             end = if (isTv) 24.dp else 18.dp,

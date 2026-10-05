@@ -18,7 +18,8 @@ internal fun rememberCollectionPagination(
     grid: LazyGridState,
     requesters: MutableMap<String, FocusRequester>,
     loadMore: () -> Unit,
-    itemOffset: Int = 1
+    itemOffset: Int = 1,
+    focusKeys: List<String> = ids
 ): CollectionPagination {
     var startIds by remember { mutableStateOf<List<String>?>(null) }
     var observedLoading by remember { mutableStateOf(false) }
@@ -47,7 +48,8 @@ internal fun rememberCollectionPagination(
                 val height = grid.layoutInfo.viewportSize.height
                 grid.scrollToItem(gridIndex, -(height * 2 / 3))
             }
-            val requester = requesters.getOrPut(ids[target]) { FocusRequester() }
+            val focusKey = appendedFocusRequesterKey(previous, ids, focusKeys) ?: ids[target]
+            val requester = requesters.getOrPut(focusKey) { FocusRequester() }
             for (attempt in 0 until 6) {
                 withFrameNanos { }
                 if (runCatching { requester.requestFocus() }.getOrDefault(false)) break
@@ -95,6 +97,9 @@ internal fun appendedFocusIndex(previous: List<String>, current: List<String>): 
     val firstNew = current.indexOfFirst { it !in existing }
     return if (firstNew >= 0) firstNew else current.lastIndex
 }
+
+internal fun appendedFocusRequesterKey(previous: List<String>, current: List<String>, focusKeys: List<String>): String? =
+    focusKeys.getOrNull(appendedFocusIndex(previous, current))
 
 /** Fetch once per loaded batch; a failure leaves the explicit retry available. */
 @Composable

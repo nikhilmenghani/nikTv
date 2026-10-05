@@ -244,37 +244,32 @@ internal fun CatalogScreen(
         if (state.favoritesOpen) libraryPane = LibraryPane.MY_LIST
     }
 
-    BackHandler(enabled = state.settingsOpen, onBack = closeSettings)
-    BackHandler(enabled = state.movieMatchSelection != null, onBack = closeTmdbMovieMatches)
-    BackHandler(enabled = state.seriesMatchSelection != null, onBack = closeTmdbSeriesMatches)
-    BackHandler(enabled = !state.settingsOpen && state.searchOpen, onBack = closeSearch)
-    BackHandler(enabled = !state.settingsOpen && !state.searchOpen && state.favoritesOpen, onBack = closeFavorites)
-    BackHandler(enabled = !state.settingsOpen && state.offlineDownloadsOpen, onBack = closeOfflineDownloads)
-    BackHandler(
-        enabled = !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && state.selectedSeries != null,
-        onBack = closeSeries
+    // One owner follows MainContent's visible-screen precedence. Editors and
+    // dialogs composed below keep their own Back override before this handler.
+    val backAction = catalogBackAction(
+        movieMatchesOpen = state.movieMatchSelection != null,
+        seriesMatchesOpen = state.seriesMatchSelection != null,
+        downloadsOpen = state.offlineDownloadsOpen,
+        settingsOpen = state.settingsOpen,
+        searchOpen = state.searchOpen,
+        favoritesOpen = state.favoritesOpen,
+        seriesOpen = state.selectedSeries != null,
+        modernSectionOpen = modernSectionOpen,
+        homeOpen = state.homeOpen
     )
-    BackHandler(
-        enabled =
-            !state.settingsOpen &&
-                !state.searchOpen &&
-                !state.favoritesOpen &&
-                state.selectedSeries == null &&
-                modernSectionOpen,
-        onBack = closeModernSection
-    )
-    BackHandler(
-        enabled =
-            !exitConfirmationOpen &&
-                state.movieMatchSelection == null &&
-                state.seriesMatchSelection == null &&
-                !state.settingsOpen &&
-                !state.searchOpen &&
-                !state.favoritesOpen &&
-                state.selectedSeries == null &&
-                !modernSectionOpen
-    ) {
-        if (state.homeOpen) exitConfirmationOpen = true else openHome()
+    BackHandler(enabled = !exitConfirmationOpen) {
+        when (backAction) {
+            CatalogBackAction.CLOSE_MOVIE_MATCHES -> closeTmdbMovieMatches()
+            CatalogBackAction.CLOSE_SERIES_MATCHES -> closeTmdbSeriesMatches()
+            CatalogBackAction.CLOSE_DOWNLOADS -> closeOfflineDownloads()
+            CatalogBackAction.CLOSE_SETTINGS -> closeSettings()
+            CatalogBackAction.CLOSE_SEARCH -> closeSearch()
+            CatalogBackAction.CLOSE_FAVORITES -> closeFavorites()
+            CatalogBackAction.CLOSE_SERIES -> closeSeries()
+            CatalogBackAction.CLOSE_MODERN_SECTION -> closeModernSection()
+            CatalogBackAction.OPEN_HOME -> openHome()
+            CatalogBackAction.SHOW_EXIT_CONFIRMATION -> exitConfirmationOpen = true
+        }
     }
 
     LaunchedEffect(exitConfirmationOpen) {

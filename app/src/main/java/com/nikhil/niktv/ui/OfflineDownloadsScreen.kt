@@ -68,7 +68,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -139,16 +141,42 @@ internal fun OfflineDownloadsScreen(
     val context = LocalContext.current
     val profileKey = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()
     val entries = state.offlineDownloads.filter { it.profileKey == profileKey }
+    val remoteNavigationActive = context.usesRemoteNavigation(LocalConfiguration.current) ||
+        LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val entryFocusRequester = remember(profileKey) { FocusRequester() }
+    var entryFocusComplete by rememberSaveable(profileKey) { mutableStateOf(false) }
+    val listState = rememberLazyListState()
     var pendingRemoval by remember { mutableStateOf<OfflineMediaDownload?>(null) }
     var pendingRecordingRemoval by remember { mutableStateOf<RecordedLiveTvMedia?>(null) }
     var recordings by remember { mutableStateOf<List<RecordedLiveTvMedia>>(emptyList()) }
+    var recordingsLoaded by remember { mutableStateOf(false) }
     val liveRecording by LiveTvRecorder.state.collectAsState()
     var storageRevision by remember { mutableLongStateOf(0L) }
     LaunchedEffect(storageRevision, liveRecording.active) {
         recordings = withContext(Dispatchers.IO) { LiveTvRecorder.recordings(context) }
+        recordingsLoaded = true
+    }
+    val firstRecordingUri = recordings.firstOrNull()?.uri
+    val firstEntryKey = if (recordings.isEmpty()) {
+        listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
+            .firstNotNullOfOrNull { type -> entries.firstOrNull { it.catalogType == type }?.key }
+    } else null
+    val hasEntryMedia = firstRecordingUri != null || firstEntryKey != null
+    LaunchedEffect(remoteNavigationActive, recordingsLoaded, firstRecordingUri, firstEntryKey) {
+        if (!remoteNavigationActive || !recordingsLoaded || entryFocusComplete) return@LaunchedEffect
+        if (hasEntryMedia) listState.scrollToItem(1) // The media group heading comes first.
+        repeat(6) { attempt ->
+            withFrameNanos { }
+            if (runCatching { entryFocusRequester.requestFocus() }.getOrDefault(false)) {
+                entryFocusComplete = true
+                return@LaunchedEffect
+            }
+            delay(40L * (attempt + 1))
+        }
     }
     Column(Modifier.fillMaxSize().background(Color(0xFF090909))) {
-        ModernScreenTopBar("Offline downloads", close)
+        ModernScreenTopBar("Offline downloads", close,
+            backModifier = if (!hasEntryMedia) Modifier.focusRequester(entryFocusRequester) else Modifier)
         if (entries.isEmpty() && recordings.isEmpty()) {
             Box(
                 Modifier.weight(1f).fillMaxWidth(),
@@ -167,6 +195,7 @@ internal fun OfflineDownloadsScreen(
         } else {
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
+                state = listState,
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -192,6 +221,7 @@ internal fun OfflineDownloadsScreen(
                             color = Color(0xFF151820),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .then(if (recording.uri == firstRecordingUri) Modifier.focusRequester(entryFocusRequester) else Modifier)
                                 .focusProperties { right = shareRequester }
                                 .focusRequester(rowRequester)
                                 .remoteFocusFrame(RoundedCornerShape(14.dp))
@@ -262,6 +292,7 @@ internal fun OfflineDownloadsScreen(
                         }
                     }
                     items(group, key = { it.key }) { entry ->
+                        val returningTile = rememberReturningTile { play(entry) }
                         val info = observedOfflineDownloadInfo(entry)
                             ?: com.nikhil.niktv.data.OfflineDownloadInfo(OfflineDownloadStatus.QUEUED)
                         val rowRequester = remember(entry.key) { FocusRequester() }
@@ -269,11 +300,13 @@ internal fun OfflineDownloadsScreen(
                         val deleteRequester = remember(entry.key) { FocusRequester() }
                         val shareAvailable = info.status == OfflineDownloadStatus.COMPLETE
                         Surface(
-                            onClick = { play(entry) },
+                            onClick = returningTile.open,
                             shape = RoundedCornerShape(14.dp),
                             color = Color(0xFF151820),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .then(returningTile.modifier)
+                                .then(if (entry.key == firstEntryKey) Modifier.focusRequester(entryFocusRequester) else Modifier)
                                 .focusProperties {
                                     right = if (shareAvailable) shareRequester else deleteRequester
                                 }
