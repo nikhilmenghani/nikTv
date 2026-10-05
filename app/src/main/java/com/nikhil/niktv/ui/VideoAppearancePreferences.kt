@@ -672,7 +672,6 @@ internal fun PlayerQueueOverlay(
 
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val focusManager = LocalFocusManager.current
     /*
      * PLAYER_QUEUE_LAYOUT_V41
      *
@@ -811,6 +810,7 @@ internal fun PlayerQueueOverlay(
     )
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val loadMoreRequester = remember { FocusRequester() }
+    val queueFocusParking = remember { FocusRequester() }
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
     val initialVisibleItem =
@@ -835,6 +835,9 @@ internal fun PlayerQueueOverlay(
     var focusFirstLoadedItem by remember { mutableStateOf(false) }
     var favoriteMenuItemId by remember { mutableStateOf<String?>(null) }
     var observedLoading by remember { mutableStateOf(false) }
+    var autoAppendPending by remember(playingId) { mutableStateOf(false) }
+    var autoAppendRetry by remember(playingId) { mutableStateOf(false) }
+    var autoAppendBatch by remember(playingId) { mutableStateOf<List<String>?>(null) }
     var guideNow by remember { mutableStateOf(System.currentTimeMillis()) }
     val renderedReveal by animateFloatAsState(
         targetValue = if (gridReady) revealProgress.coerceIn(0f, 1f) else 0f,
@@ -861,7 +864,37 @@ internal fun PlayerQueueOverlay(
         onDispose { if (liveChannelQueue) currentVisibleCallback(emptyList()) }
     }
 
-    val showPaginationTile = showLoadMore || loadMoreRequested
+    // Movie/channel pages append before the user reaches the end. Keep the
+    // pagination control out of the grid unless an automatic attempt failed:
+    // replacing a focused footer with media otherwise moves the viewport.
+    val queueIds = remember(uniqueItems) { uniqueItems.map { it.id } }
+    val showPaginationTile = if (isEpisodeQueue) showLoadMore || loadMoreRequested
+        else autoAppendRetry && (showLoadMore || loadMoreRequested)
+    PrefetchCatalogPage(
+        scope = "player-queue:$playingId",
+        ids = queueIds,
+        enabled = !isEpisodeQueue && gridReady && effectiveHasMore &&
+            !autoAppendRetry && favoriteMenuItemId == null,
+        loading = loadingMore || autoAppendPending || loadMoreRequested,
+        grid = gridState,
+        loadMore = {
+            autoAppendBatch = queueIds
+            autoAppendPending = true
+            if (!onLoadMore()) {
+                autoAppendPending = false
+                autoAppendRetry = true
+            }
+        }
+    )
+    LaunchedEffect(autoAppendPending, loadingMore, queueIds) {
+        if (autoAppendPending && !loadingMore) {
+            // Also handles a page served from memory before a loading frame,
+            // or a provider response which contains no additional media IDs.
+            delay(180L)
+            autoAppendRetry = queueIds == autoAppendBatch
+            autoAppendPending = false
+        }
+    }
 
     LaunchedEffect(liveChannelQueue) {
         while (liveChannelQueue) {
@@ -1000,6 +1033,7 @@ internal fun PlayerQueueOverlay(
         previousItemIds = uniqueItems.mapTo(linkedSetOf()) { it.id }
 
         if (focusFirstLoadedItem && firstNewIndex >= 0) {
+            autoAppendRetry = false
             focusFirstLoadedItem = false
             loadMoreRequested = false
             observedLoading = false
@@ -1244,6 +1278,8 @@ internal fun PlayerQueueOverlay(
                     }
                 }
             }
+            .focusRequester(queueFocusParking)
+            .focusable()
             .pointerInput(onDismiss, gridState) {
                 awaitPointerEventScope {
                     var start = Offset.Zero
@@ -1350,6 +1386,9 @@ internal fun PlayerQueueOverlay(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (!isEpisodeQueue && (loadingMore || autoAppendPending)) {
+                        CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                    }
                 }
                 Spacer(Modifier.height(queueHeaderSpacer))
 
@@ -1378,7 +1417,7 @@ internal fun PlayerQueueOverlay(
                                     .remoteCombinedClickable(
                                         enabled = effectiveHasMore && !loadingMore && !loadMoreRequested,
                                         onClick = {
-                                            focusManager.clearFocus(force = true)
+                                            runCatching { queueFocusParking.requestFocus() }
                                             focusFirstLoadedItem = true
                                             loadMoreRequested = onLoadMore()
                                             if (!loadMoreRequested) focusFirstLoadedItem = false
@@ -1464,7 +1503,7 @@ internal fun PlayerQueueOverlay(
                                                 !loadingMore &&
                                                 !loadMoreRequested,
                                         onClick = {
-                                            focusManager.clearFocus(force = true)
+                                            runCatching { queueFocusParking.requestFocus() }
                                             focusFirstLoadedItem = true
                                             loadMoreRequested =
                                                 onLoadMore()
@@ -1512,7 +1551,7 @@ internal fun PlayerQueueOverlay(
                                         ) {
                                             "Loading more…"
                                         } else {
-                                            "Load more"
+                                            if (isEpisodeQueue) "Load more" else "Retry loading"
                                         },
                                         color = Color.White,
                                         style =

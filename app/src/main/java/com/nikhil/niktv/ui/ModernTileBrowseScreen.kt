@@ -661,12 +661,9 @@ private fun ModernDestinationHub(
      * restrained press lift instead of the persistent TV focus treatment.
      */
     val isTablet = !isTv && configuration.screenWidthDp >= 600
-    val compactPhoneGrid = !isTv && configuration.smallestScreenWidthDp < 600 &&
-        configuration.screenWidthDp >= 340 &&
-        androidx.compose.ui.platform.LocalDensity.current.fontScale < 1.4f
     val destinationColumns = when {
         isTv -> 3
-        configuration.smallestScreenWidthDp < 600 -> if (compactPhoneGrid) 2 else 1
+        configuration.smallestScreenWidthDp < 600 -> 1
         configuration.screenWidthDp >= 1200 -> 4
         configuration.screenWidthDp >= 720 -> 3
         else -> 2
@@ -949,9 +946,7 @@ private fun ModernDestinationHub(
                 key = {
                     "tmdb-${dashboardSurface.name}-${it.name}"
                 },
-                span = { section ->
-                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(section.title)) 2 else 1)
-                }
+                span = { GridItemSpan(1) }
             ) { section ->
                 ModernDestinationTile(
                     title = section.title,
@@ -977,9 +972,7 @@ private fun ModernDestinationHub(
             gridItems(
                 items = liveCategories,
                 key = { "iptv-live-${it.id}" },
-                span = { category ->
-                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(category.title)) 2 else 1)
-                }
+                span = { GridItemSpan(1) }
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
@@ -1010,9 +1003,7 @@ private fun ModernDestinationHub(
             gridItems(
                 items = movieCategories,
                 key = { "iptv-movie-${it.id}" },
-                span = { category ->
-                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(category.title)) 2 else 1)
-                }
+                span = { GridItemSpan(1) }
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
@@ -1043,9 +1034,7 @@ private fun ModernDestinationHub(
             gridItems(
                 items = seriesCategories,
                 key = { "iptv-series-${it.id}" },
-                span = { category ->
-                    GridItemSpan(if (compactPhoneGrid && compactCategoryNeedsFullWidth(category.title)) 2 else 1)
-                }
+                span = { GridItemSpan(1) }
             ) { category ->
                 ModernDestinationTile(
                     title = category.title,
