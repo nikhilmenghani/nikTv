@@ -487,7 +487,7 @@ internal fun VlcPlayerScreen(
                 extraControlsOpen = false
                 extraControlsRequester.requestFocus()
             }
-            controlsVisible && !startFullscreen -> {
+            controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
                 if (embeddedMode && videoView != null) {
@@ -497,7 +497,7 @@ internal fun VlcPlayerScreen(
                     runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
             }
-            // Match Media3/ExoPlayer: Back leaves direct playback.
+            // Match Media3/ExoPlayer: hide controls before leaving playback.
             startFullscreen -> onBack()
             focusMode -> {
                 focusMode = false

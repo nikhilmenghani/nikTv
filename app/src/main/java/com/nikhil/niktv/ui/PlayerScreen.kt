@@ -1329,7 +1329,7 @@ fun PlayerScreen(
                 extraControlsOpen = false
                 extraControlsRequester.requestFocus()
             }
-            controlsVisible && !startFullscreen -> {
+            controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
                 if (embeddedMode && playerViewRef != null) {
@@ -1339,7 +1339,7 @@ fun PlayerScreen(
                     runCatching { videoSurfaceFocusRequester.requestFocus() }
                 }
             }
-            // Controls belong to this screen; Back leaves direct playback.
+            // Hide visible controls first; the next Back leaves playback.
             startFullscreen -> onBack()
             focusMode -> {
                 focusMode = false

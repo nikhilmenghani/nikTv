@@ -21,9 +21,9 @@ key events.
 - Back follows the visible pane rather than overlapping handlers. Match lists,
   downloads, settings, search, favorites, series details, and collections each
   close before their underlying destination.
-- Direct fullscreen playback leaves on one Back press, including when ordinary
-  controls are visible. Menus, programme guides, and the media overlay close
-  before leaving the player. Embedded playback keeps its existing controls flow.
+- Back hides ordinary playback controls first; a subsequent Back with controls
+  hidden leaves direct fullscreen playback. Menus, programme guides, and the
+  media overlay close first. Embedded playback keeps its existing controls flow.
 - Search focuses its query control. My List and Downloads focus their first
   media item, or Back when empty. Home focuses Continue Watching when available.
 - Manual collection pagination uses the same focus keys and grid indices as its
@@ -57,6 +57,11 @@ key events.
 | Populated My List | A temporary Cillian favorite was focused on entry and removed after testing. |
 | Home → Back → Back | Exit confirmation opened and was dismissed without closing the app. |
 | VLC playback failure → Back | Returned to the Seinfeld tile. |
+
+Player Back was subsequently restored to two steps at the user's request:
+on the tablet, Drishyam playback remained open after Back hid visible controls;
+the next Back returned to Search. That build was installed on the tablet,
+Samsung, and Poco only.
 
 ## Validation and limits
 
