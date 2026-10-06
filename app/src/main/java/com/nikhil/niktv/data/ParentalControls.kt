@@ -1,5 +1,7 @@
 package com.nikhil.niktv.data
 import android.content.Context
+import android.os.SystemClock
+import android.provider.Settings
 import com.nikhil.niktv.model.*
 import java.security.MessageDigest
 
@@ -21,12 +23,31 @@ internal object ParentalControls {
     fun setRelockMinutes(context: Context, minutes: Int) {
         require(relockOptions.any { it.first == minutes })
         prefs(context).edit().putInt("relock_minutes", minutes).apply()
+        if (unlocked(context)) unlock(context)
+    }
+    private fun bootCount(context: Context) = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
+    fun unlocked(context: Context): Boolean {
+        val saved = prefs(context)
+        val now = SystemClock.elapsedRealtime()
+        return saved.getInt("unlock_boot", -2) == bootCount(context) &&
+            now >= saved.getLong("unlock_started", Long.MAX_VALUE) &&
+            now < saved.getLong("unlock_until", 0L)
+    }
+    fun unlock(context: Context) {
+        val now = SystemClock.elapsedRealtime()
+        prefs(context).edit().putLong("unlock_started", now)
+            .putLong("unlock_until", now + relockMinutes(context) * 60_000L)
+            .putInt("unlock_boot", bootCount(context)).apply()
+    }
+    fun lock(context: Context) {
+        prefs(context).edit().remove("unlock_started").remove("unlock_until").remove("unlock_boot").apply()
     }
     fun accepts(context: Context, pin: String) = acceptsParentalPin(pin, prefs(context).getString("pin_hash", null))
-    fun setEnabled(context: Context, enabled: Boolean) { prefs(context).edit().putBoolean("enabled", enabled).apply() }
+    fun setEnabled(context: Context, enabled: Boolean) { prefs(context).edit().putBoolean("enabled", enabled).apply(); lock(context) }
     fun setPin(context: Context, pin: String) {
         require(validParentalPin(pin))
         prefs(context).edit().putString("pin_hash", parentalPinHash(pin)).apply()
+        lock(context)
     }
     fun rememberCategories(context: Context, profile: String, type: CatalogType, categories: List<Category>) {
         if (categories.isEmpty()) return

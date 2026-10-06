@@ -31,7 +31,7 @@ internal fun ParentalPinPrompt(vm: NikTvViewModel) {
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner, vm) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) { vm.lockAdultContent(); vm.cancelParentalPin() }
+            if (event == Lifecycle.Event.ON_STOP) { vm.cancelParentalPin() }
         }
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }

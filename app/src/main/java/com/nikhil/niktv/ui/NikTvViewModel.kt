@@ -1346,21 +1346,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var parentalRequest: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
-    private var adultUnlockedUntil = 0L
-    fun lockAdultContent() { adultUnlockedUntil = 0L }
+    fun lockAdultContent() { com.nikhil.niktv.data.ParentalControls.lock(getApplication()) }
     fun cancelParentalPin() { parentalRequest?.complete(false) }
     fun submitParentalPin(pin: String) {
         if (com.nikhil.niktv.data.ParentalControls.accepts(getApplication(), pin)) parentalRequest?.complete(true)
         else _state.update { it.copy(parentalPinError = true) }
     }
     private suspend fun authorizeParental(force: Boolean = false): Boolean {
-        if (!force && (!com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) || SystemClock.elapsedRealtime() < adultUnlockedUntil)) return true
+        if (!force && (!com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) || com.nikhil.niktv.data.ParentalControls.unlocked(getApplication()))) return true
         parentalRequest?.complete(false)
         val request = kotlinx.coroutines.CompletableDeferred<Boolean>()
         parentalRequest = request
         _state.update { it.copy(parentalPrompt = "Enter parental PIN", parentalPinError = false) }
         return try {
-            request.await().also { if (it && !force) adultUnlockedUntil = SystemClock.elapsedRealtime() + com.nikhil.niktv.data.ParentalControls.relockMinutes(getApplication()) * 60_000L }
+            request.await().also { if (it) com.nikhil.niktv.data.ParentalControls.unlock(getApplication()) }
         } finally {
             if (parentalRequest === request) {
                 parentalRequest = null
@@ -1379,7 +1378,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun gateAdultAction(item: MediaItem, type: CatalogType, action: () -> Unit): Boolean {
         if (!isAdultMedia(item, type) || !com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) ||
-            SystemClock.elapsedRealtime() < adultUnlockedUntil) return false
+            com.nikhil.niktv.data.ParentalControls.unlocked(getApplication())) return false
         viewModelScope.launch { if (authorizeParental()) action() }
         return true
     }
@@ -1395,7 +1394,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun setParentalRelockMinutes(minutes: Int) = viewModelScope.launch {
         if (!authorizeParental(force = true)) return@launch
         com.nikhil.niktv.data.ParentalControls.setRelockMinutes(getApplication(), minutes)
-        lockAdultContent()
         _state.update { it.copy(parentalRelockMinutes = minutes) }
     }
     fun changeParentalPin(pin: String) {
@@ -3316,7 +3314,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openModernIptvCategory(category: Category) {
-        if (com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) && SystemClock.elapsedRealtime() >= adultUnlockedUntil &&
+        if (com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) && !com.nikhil.niktv.data.ParentalControls.unlocked(getApplication()) &&
             (category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title))) {
             viewModelScope.launch { if (authorizeParental()) openModernIptvCategory(category) }
             return
