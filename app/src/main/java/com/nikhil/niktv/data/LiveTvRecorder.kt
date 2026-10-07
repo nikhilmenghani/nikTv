@@ -126,7 +126,7 @@ object LiveTvRecorder {
     fun statusText(value: LiveRecordingState): String = if (!value.active) "" else
         "${if (value.paused) "Paused" else "REC"} · ${formatDuration(value.recordedDurationMillis)} · ${formatBytes(value.bytesWritten)}"
 
-    fun recordings(context: Context): List<RecordedLiveTvMedia> {
+    fun recordings(context: Context, includeDuration: Boolean = true): List<RecordedLiveTvMedia> {
         val collection = recordingCollectionUri()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
@@ -165,7 +165,7 @@ object LiveTvRecorder {
                                 title = cursor.getString(nameIndex).substringBeforeLast('.'),
                                 sizeBytes = cursor.getLong(sizeIndex).coerceAtLeast(0L),
                                 createdAtMillis = cursor.getLong(dateIndex).coerceAtLeast(0L) * 1000L,
-                                durationMillis = readMediaDuration(context, uri)
+                                durationMillis = if (includeDuration) readMediaDuration(context, uri) else 0L
                             )
                         )
                     }

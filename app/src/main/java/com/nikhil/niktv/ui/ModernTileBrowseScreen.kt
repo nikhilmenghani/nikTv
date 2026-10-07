@@ -3219,12 +3219,8 @@ private fun ModernIptvCollection(
     val restoredViewport = remember(viewportKey, visitId) {
         if (initialTilesPositioned) ModernCollectionViewportMemory.get(viewportKey) else null
     }
-    // Compose nearby rows during idle time; retain half a viewport for reverse scrolling.
-    // This only caches UI rows, never fetches additional provider pages.
+    // Use standard prefetching: the cache-window strategy crashes when visible rows become empty.
     val gridState = androidx.compose.runtime.key(viewportKey, visitId) { rememberLazyGridState(
-        cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(
-            aheadFraction = 1f, behindFraction = .5f
-        ),
         initialFirstVisibleItemIndex = restoredViewport?.index
             ?: 0,
         initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0

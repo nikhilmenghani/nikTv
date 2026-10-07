@@ -826,6 +826,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     ,openOfflineDownloads = vm::openOfflineDownloads
                     ,closeOfflineDownloads = vm::closeOfflineDownloads
                     ,playOfflineDownload = vm::playOfflineDownload
+                    ,playRecording = vm::playRecording
                 )
             }
             }

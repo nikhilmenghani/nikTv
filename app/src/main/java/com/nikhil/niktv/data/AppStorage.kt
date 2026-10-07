@@ -15,7 +15,9 @@ data class AppStorageSnapshot(
     val artworkCacheBytes: Long,
     val subtitleCacheBytes: Long,
     val hlsWorkingBytes: Long,
-    val temporaryCacheBytes: Long
+    val temporaryCacheBytes: Long,
+    val recordingBytes: Long = 0L,
+    val mediaCacheBytes: Long = 0L
 )
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -54,12 +56,14 @@ suspend fun appStorageSnapshot(
     AppStorageSnapshot(
         totalBytes = stats.totalBytes,
         availableBytes = stats.availableBytes,
-        offlineDownloadBytes =
-            OfflineMediaDownloads.cachedMediaBytes(appContext) + trackedPublicBytes + directorySize(hlsDirectory),
+        offlineDownloadBytes = trackedPublicBytes,
+        mediaCacheBytes = OfflineMediaDownloads.cachedMediaBytes(appContext) + directorySize(hlsDirectory),
         artworkCacheBytes = directorySize(artworkDirectory),
         subtitleCacheBytes = directorySize(subtitleDirectory),
         hlsWorkingBytes = 0L,
-        temporaryCacheBytes = (allCacheBytes - namedCacheBytes - directorySize(hlsDirectory)).coerceAtLeast(0L)
+        temporaryCacheBytes = (allCacheBytes - namedCacheBytes - directorySize(hlsDirectory)).coerceAtLeast(0L),
+        recordingBytes = LiveTvRecorder.recordings(appContext, includeDuration = false)
+            .distinctBy { it.uri }.sumOf { it.sizeBytes.coerceAtLeast(0L) }
     )
 }
 

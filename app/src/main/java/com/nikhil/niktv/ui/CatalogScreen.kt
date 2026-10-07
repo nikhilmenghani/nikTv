@@ -109,6 +109,7 @@ import com.nikhil.niktv.update.UpdateInfo
 import com.nikhil.niktv.update.DownloadedApkCleanup
 import com.nikhil.niktv.update.formatDownloadBytes
 import com.nikhil.niktv.data.OfflineMediaDownloads
+import com.nikhil.niktv.data.RecordedLiveTvMedia
 import com.nikhil.niktv.data.OfflineDownloadStatus
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -203,7 +204,8 @@ internal fun CatalogScreen(
     cancelCategoryFind: () -> Unit,
     openOfflineDownloads: () -> Unit,
     closeOfflineDownloads: () -> Unit,
-    playOfflineDownload: (OfflineMediaDownload) -> Unit
+    playOfflineDownload: (OfflineMediaDownload) -> Unit,
+    playRecording: (RecordedLiveTvMedia) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -320,6 +322,7 @@ internal fun CatalogScreen(
                     OfflineDownloadsScreen(
                         state = state,
                         play = playOfflineDownload,
+                        playRecording = playRecording,
                         remove = removeOfflineDownload,
                         close = closeOfflineDownloads
                     )

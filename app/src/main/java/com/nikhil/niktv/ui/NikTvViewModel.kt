@@ -7135,6 +7135,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
     }
+    fun playRecording(recording: com.nikhil.niktv.data.RecordedLiveTvMedia) {
+        val media = MediaItem("recording:${recording.uri}", recording.title, null, null,
+            isAdult = com.nikhil.niktv.data.adultContentLabel(recording.title))
+        if (gateAdultAction(media, CatalogType.MOVIES) { playRecording(recording) }) return
+        cancelPendingPlayback()
+        _state.update { it.copy(nowPlaying = PlayingMedia(
+            media = media, url = recording.uri.toString(), catalogType = CatalogType.MOVIES,
+            directFullscreen = true, offlinePlayback = true, playbackFormat = "MPEG-TS"
+        )) }
+    }
     fun openHome() {
         cancelPendingPlayback()
         _state.update { it.copy(

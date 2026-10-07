@@ -81,6 +81,8 @@ object OfflineMediaDownloads {
 
     fun cacheDataSourceFactory(context: Context): CacheDataSource.Factory = CacheDataSource.Factory()
         .setCache(cache(context))
+        // Playback may read legacy downloads, but local files must not be copied into this cache.
+        .setCacheWriteDataSinkFactory(null)
         .setUpstreamDataSourceFactory(
             DefaultDataSource.Factory(
                 context.applicationContext,
