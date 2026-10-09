@@ -256,6 +256,7 @@ internal fun VlcPlayerScreen(
     val audioRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
+    val refreshRequester = remember(media.progressKey) { FocusRequester() }
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeRequester = remember(media.progressKey) { FocusRequester() }
     val programmeGuideRequester = remember(media.progressKey) { FocusRequester() }
@@ -296,8 +297,32 @@ internal fun VlcPlayerScreen(
     val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId, networkCacheMillis) {
         LibVLC(context, arrayListOf("--network-caching=$networkCacheMillis"))
     }
-    var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     val player = remember(libVlc) { MediaPlayer(libVlc) }
+    var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
+    val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
+    var streamTerminated by remember(player) { mutableStateOf(false) }
+    var streamWasPlaying by remember(player) { mutableStateOf(false) }
+    var refreshPending by remember(player) { mutableStateOf(false) }
+    val currentRetry by rememberUpdatedState(onRetry)
+    fun refreshLiveStream() {
+        if (refreshPending) return
+        refreshPending = true
+        modeFeedback = "Refreshing stream..."
+        currentRetry(0L)
+    }
+    fun requestPlayback(requested: Boolean) {
+        playbackRequested = requested
+        if (requested && media.catalogType == CatalogType.LIVE_TV &&
+            (streamTerminated || error != null)) {
+            refreshLiveStream()
+        } else if (requested) player.play() else player.pause()
+    }
+    LaunchedEffect(player, refreshPending) {
+        if (refreshPending) {
+            delay(10_000L)
+            refreshPending = false
+        }
+    }
     val surfacePlayer = remember { arrayOfNulls<MediaPlayer>(1) }
     fun refreshSubtitleTracks() {
         subtitleTracks = player.spuTracks.orEmpty()
@@ -527,6 +552,8 @@ internal fun VlcPlayerScreen(
                 MediaPlayer.Event.Playing -> {
                     error = null
                     playbackRequested = true
+                    streamWasPlaying = true
+                    streamTerminated = false
                     playing = true
                     buffering = false
                     advancing = false
@@ -543,11 +570,17 @@ internal fun VlcPlayerScreen(
                         selectDownloadedSubtitleWhenReady()
                     }
                 }
-                MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> {
+                MediaPlayer.Event.Paused -> {
                     playbackRequested = false
                     playing = false
                 }
+                MediaPlayer.Event.Stopped -> {
+                    streamTerminated = true
+                    playing = false
+                    buffering = false
+                }
                 MediaPlayer.Event.EndReached -> {
+                    streamTerminated = true
                     playing = false
                     if (
                         media.catalogType == CatalogType.SERIES &&
@@ -561,6 +594,7 @@ internal fun VlcPlayerScreen(
                     }
                 }
                 MediaPlayer.Event.EncounteredError -> {
+                    streamTerminated = true
                     buffering = false
                     if (media.authorizationRetryCount == 0 && !authorizationRecoveryRequested) {
                         authorizationRecoveryRequested = true
@@ -713,6 +747,30 @@ internal fun VlcPlayerScreen(
         }
     }
 
+    // Recover only after successful live playback; startup/auth failures use the
+    // existing error path. The budget survives player recreation for this channel.
+    LaunchedEffect(player) {
+        if (media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) return@LaunchedEffect
+        while (true) {
+            delay(1_000L)
+            val active = playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
+                androidx.lifecycle.Lifecycle.State.STARTED)
+            if (liveRecovery.shouldRecover(
+                    android.os.SystemClock.elapsedRealtime(), player.time,
+                    active && playbackRequested && streamWasPlaying && error == null &&
+                        !authorizationRecoveryRequested && !refreshPending,
+                    streamTerminated
+                )) {
+                android.util.Log.w("NikTvPlayback", "VLC live stream stopped/stalled; requesting fresh stream")
+                streamTerminated = true
+                refreshLiveStream()
+            } else if (liveRecovery.exhausted && streamTerminated && !refreshPending && error == null) {
+                error = "The live stream stopped. Retry to refresh the stream, or choose another player."
+                controlsVisible = true
+            }
+        }
+    }
+
     LaunchedEffect(player, media.nextEpisode, autoPlayCancelled) {
         if (media.catalogType != CatalogType.SERIES || media.nextEpisode == null || autoPlayCancelled) {
             remainingSeconds = null
@@ -758,9 +816,8 @@ internal fun VlcPlayerScreen(
             .playerActivityObserver {
                 dpadInteraction++
             }
-            .playerMediaKeys(playbackRequested) { requested ->
-                playbackRequested = requested
-                if (requested) player.play() else player.pause()
+            .playerMediaKeys(playbackRequested && !streamTerminated) { requested ->
+                requestPlayback(requested)
                 showControls()
                 dpadInteraction++
             }
@@ -1159,6 +1216,7 @@ internal fun VlcPlayerScreen(
                     if (audioTracks.size > 1) add(audioRequester)
                     add(downloadRequester)
                 }
+                if (media.catalogType == CatalogType.LIVE_TV) add(refreshRequester)
                 add(resizeRequester)
                 add(pictureModeRequester)
                 add(playerSwitchRequester)
@@ -1260,6 +1318,16 @@ internal fun VlcPlayerScreen(
                 }
 
                 val quickActions: @Composable RowScope.() -> Unit = {
+                        if (media.catalogType == CatalogType.LIVE_TV) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.Refresh,
+                                contentDescription = "Refresh stream",
+                                onClick = { refreshLiveStream() },
+                                modifier = Modifier.playerSecondaryFocus(refreshRequester, secondaryActionRequesters,
+                                    extraControlsRequester, lastPlaybackActionRequester, backRequester),
+                                onFocused = { controlsFocused = it }
+                            )
+                        }
                         if (media.catalogType != CatalogType.LIVE_TV) {
 PlayerChromeIconButton(
                             icon = Icons.Default.Subtitles,
@@ -1559,11 +1627,10 @@ PlayerChromeIconButton(
                                     )
                                 }
                                 PlayerChromeIconButton(
-                                    icon = if (playbackRequested) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (playbackRequested) "Pause" else "Play",
+                                    icon = if (playbackRequested && !streamTerminated) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (playbackRequested && !streamTerminated) "Pause" else "Play",
                                     onClick = {
-                                        playbackRequested = !playbackRequested
-                                        if (playbackRequested) player.play() else player.pause()
+                                        requestPlayback(streamTerminated || !playbackRequested)
                                     },
                                     modifier = Modifier
                                         .focusRequester(playRequester)

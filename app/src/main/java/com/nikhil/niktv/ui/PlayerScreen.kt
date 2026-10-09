@@ -618,6 +618,7 @@ fun PlayerScreen(
     val audioFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val refreshFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val programmeGuideFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1887,6 +1888,7 @@ fun PlayerScreen(
                     if (audioTracks.size > 1) add(audioFocusRequester)
                     add(downloadFocusRequester)
                 }
+                if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) add(refreshFocusRequester)
                 add(resizeFocusRequester)
                 add(pictureModeFocusRequester)
                 add(playerSwitchFocusRequester)
@@ -1988,6 +1990,16 @@ fun PlayerScreen(
                 }
 
                 val quickActions: @Composable RowScope.() -> Unit = {
+                        if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.Refresh,
+                                contentDescription = "Refresh stream",
+                                onClick = { onRetry(0L) },
+                                modifier = Modifier.playerSecondaryFocus(refreshFocusRequester, secondaryActionRequesters,
+                                    extraControlsRequester, lastPlaybackActionRequester, backFocusRequester),
+                                onFocused = { controlsFocused = it }
+                            )
+                        }
                         if (media.catalogType != CatalogType.LIVE_TV) {
 PlayerChromeIconButton(
                             icon = Icons.Default.Subtitles,
