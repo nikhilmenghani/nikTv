@@ -1519,6 +1519,16 @@ private fun SearchResultsContent(
         SearchContentType.MOVIES -> moviesGridState
         else -> channelsGridState
     }
+    PrefetchCatalogPage(
+        scope = "search:${state.session?.profile?.cacheKey()}:${state.searchQuery}:${state.searchType}:${state.searchCategoryId}:$resultTab",
+        ids = keys,
+        enabled = state.searchHasMore && !state.searchLocalLoading,
+        loading = state.searchServerLoading,
+        grid = gridState,
+        // Automatic appends leave the currently focused result in place. Only
+        // explicit footer activation moves focus to the first new result.
+        loadMore = loadMore
+    )
     val scope = rememberCoroutineScope()
     val requesters = remember(state.searchType, state.searchQuery, state.searchCategoryId) { mutableMapOf<String, FocusRequester>() }
     val footerRequester = remember { FocusRequester() }

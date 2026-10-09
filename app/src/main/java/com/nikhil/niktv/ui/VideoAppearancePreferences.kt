@@ -1189,6 +1189,12 @@ internal fun PlayerQueueOverlay(
             .fillMaxSize()
             .focusGroup()
             .onPreviewKeyEvent { event ->
+                if (event.key == Key.Back && favoriteMenuItemId == null) {
+                    // Dismiss on release so the same key-up cannot reach the
+                    // underlying player's Back handler and leave playback.
+                    if (event.type == KeyEventType.KeyUp) onDismiss()
+                    return@onPreviewKeyEvent true
+                }
                 if (
                     event.type != KeyEventType.KeyDown ||
                     favoriteMenuItemId != null

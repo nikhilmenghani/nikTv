@@ -2817,7 +2817,7 @@ private fun ModernTmdbCollection(
         restoreIndex = { gridState.firstVisibleItemIndex },
         moveFocus = moveFocusToIndex
     )
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().collectionRemoteBack(close)) {
         ModernCollectionHeader(
             title = section.title,
             subtitle =
@@ -3102,7 +3102,7 @@ private fun ModernIptvCollection(
             keyboard?.show()
         }
     }
-    BackHandler {
+    val backFromCollection: () -> Unit = {
         if (channelSearchEditing) {
             channelSearchEditing = false
             keyboard?.hide()
@@ -3231,6 +3231,7 @@ private fun ModernIptvCollection(
             initialTilesPositioned = true
         }
     }
+    BackHandler(onBack = backFromCollection)
     LaunchedEffect(trimmedChannelQuery, sourceFilter) {
         if (trimmedChannelQuery.isNotEmpty() || sourceFilter != null) gridState.scrollToItem(0)
     }
@@ -3417,7 +3418,7 @@ private fun ModernIptvCollection(
         )
     } else CollectionPagination(false) {}
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().collectionRemoteBack(backFromCollection)) {
         ModernCollectionHeader(
             title = category.title,
             subtitle = "IPTV · ${category.type.title} · ${state.items.size} loaded",
@@ -4635,5 +4636,14 @@ private fun ModernEmptyCollection(
                 style = MaterialTheme.typography.bodyLarge
             )
         }
+    }
+}
+
+/** Handle physical Back at the focused collection before TV key dispatch swallows it. */
+private fun Modifier.collectionRemoteBack(close: () -> Unit): Modifier = onPreviewKeyEvent { event ->
+    if (event.key != Key.Back) false else {
+        // Consume down and dismiss on up to prevent the same press reaching the parent.
+        if (event.type == KeyEventType.KeyUp) close()
+        true
     }
 }

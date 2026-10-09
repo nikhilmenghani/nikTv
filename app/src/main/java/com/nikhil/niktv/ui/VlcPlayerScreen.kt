@@ -288,8 +288,13 @@ internal fun VlcPlayerScreen(
         }
     }
 
-    val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId) {
-        LibVLC(context, arrayListOf("--network-caching=1500", "--clock-jitter=0"))
+    // Allow VLC's normal clock correction for uneven transport-stream timestamps.
+    // Disabling jitter compensation causes live streams to lose their clock reference.
+    // VLC has one cache threshold; its clock-jitter compensation can expand
+    // the timing cushion when needed rather than imposing a large startup cache.
+    val networkCacheMillis = if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) 1000 else 1500
+    val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId, networkCacheMillis) {
+        LibVLC(context, arrayListOf("--network-caching=$networkCacheMillis"))
     }
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     val player = remember(libVlc) { MediaPlayer(libVlc) }
@@ -583,7 +588,7 @@ internal fun VlcPlayerScreen(
                     // Prefer device-supported hardware decoders. With force=false,
                     // VLC retains its software decoder fallback and device exclusions.
                     setHWDecoderEnabled(true, false)
-                    addOption(":network-caching=1500")
+                    addOption(":network-caching=$networkCacheMillis")
                     externalSubtitleFile?.takeIf(File::exists)?.let { file ->
                         addSlave(
                             IMedia.Slave(
@@ -1736,7 +1741,9 @@ PlayerChromeIconButton(
                 queueRevealProgress = 0f
                 queueRevealDragging = false
                 dpadInteraction++
-                showControls()
+                controlsVisible = false
+                controlsFocused = false
+                runCatching { videoSurfaceFocusRequester.requestFocus() }
             },
             onSelect = { item, index ->
                 queueVisible = false

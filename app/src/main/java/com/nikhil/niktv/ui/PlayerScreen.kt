@@ -686,6 +686,14 @@ fun PlayerScreen(
             }
         }
         val builder = ExoPlayer.Builder(context, renderersFactory)
+        if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
+            // Startup and recovery thresholds are independent of the buffer we
+            // accumulate while playing. Keep memory bounded on TV devices.
+            builder.setLoadControl(androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(15_000, 30_000, 750, 3_000)
+                .setTargetBufferBytes(16 * 1024 * 1024)
+                .build())
+        }
         if (media.offlinePlayback) {
             builder.setMediaSourceFactory(
                 DefaultMediaSourceFactory(OfflineMediaDownloads.cacheDataSourceFactory(context))
@@ -693,6 +701,15 @@ fun PlayerScreen(
         }
         builder.build().apply {
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url).apply {
+                if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
+                    setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
+                        .setTargetOffsetMs(6_000)
+                        .setMinOffsetMs(1_500)
+                        .setMaxOffsetMs(15_000)
+                        .setMinPlaybackSpeed(0.97f)
+                        .setMaxPlaybackSpeed(1.03f)
+                        .build())
+                }
             }
             setMediaItem(mediaItemBuilder.build())
             val startPosition =
@@ -729,6 +746,31 @@ fun PlayerScreen(
         }
     }
     val localPlayer = localLease?.player
+    DisposableEffect(localPlayer, media.playbackAttemptId) {
+        if (localPlayer == null || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) {
+            return@DisposableEffect onDispose { }
+        }
+        val diagnostics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onLoadCompleted(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                loadEventInfo: androidx.media3.exoplayer.source.LoadEventInfo,
+                mediaLoadData: androidx.media3.exoplayer.source.MediaLoadData
+            ) {
+                android.util.Log.i("NikTvStreamLoad", "type=${mediaLoadData.dataType} bytes=${loadEventInfo.bytesLoaded} elapsedMs=${loadEventInfo.loadDurationMs}")
+            }
+            override fun onLoadError(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                loadEventInfo: androidx.media3.exoplayer.source.LoadEventInfo,
+                mediaLoadData: androidx.media3.exoplayer.source.MediaLoadData,
+                error: java.io.IOException,
+                wasCanceled: Boolean
+            ) {
+                android.util.Log.w("NikTvStreamLoad", "type=${mediaLoadData.dataType} elapsedMs=${loadEventInfo.loadDurationMs} error=${error.javaClass.simpleName} canceled=$wasCanceled")
+            }
+        }
+        localPlayer.addAnalyticsListener(diagnostics)
+        onDispose { localPlayer.removeAnalyticsListener(diagnostics) }
+    }
     val audioFailureFallbackEnabled = remember(context) { AudioFailurePreferences.enabled(context) }
     var audioDisabledAfterFailure by remember(localPlayer) { mutableStateOf(false) }
 
@@ -2436,7 +2478,9 @@ PlayerChromeIconButton(
                 queueRevealProgress = 0f
                 queueRevealDragging = false
                 dpadInteraction++
-                showControlsAndFocusPlayPause()
+                controlsVisible = false
+                controlsFocused = false
+                runCatching { videoSurfaceFocusRequester.requestFocus() }
             },
             onSelect = { item, index ->
                 queueVisible = false
