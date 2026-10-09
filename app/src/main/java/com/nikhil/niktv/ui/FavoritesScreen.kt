@@ -259,7 +259,7 @@ internal fun ModernFavoriteCard(
                 Icon(
                     Icons.Default.DeleteOutline,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
+                    tint = Color(0xFFE50914)
                 )
             },
             title = { Text("Remove from My List?") },
@@ -269,31 +269,30 @@ internal fun ModernFavoriteCard(
                         "You can add it again later."
                 )
             },
-            dismissButton = {
-                NikTvTextActionButton(
-                    onClick = { removalConfirmationOpen = false },
-                    modifier = Modifier
-                        .focusRequester(cancelRemovalRequester)
-                        .remoteFocusFrame(CircleShape)
+            confirmButton = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Cancel")
+                    NikTvSecondaryActionButton(
+                        onClick = { removalConfirmationOpen = false },
+                        modifier = Modifier.weight(1f).focusRequester(cancelRemovalRequester)
+                    ) {
+                        Text("Cancel", style = MaterialTheme.typography.labelLarge)
+                    }
+                    NikTvPrimaryActionButton(
+                        onClick = { removalConfirmationOpen = false; remove() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Remove", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    }
                 }
             },
-            confirmButton = {
-                NikTvPrimaryActionButton(
-                    onClick = {
-                        removalConfirmationOpen = false
-                        remove()
-                    },
-                    modifier = Modifier.remoteFocusFrame(CircleShape),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    )
-                ) {
-                    Text("Remove")
-                }
-            }
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color(0xFF181818),
+            titleContentColor = Color.White,
+            textContentColor = Color.LightGray
         )
     }
 }
