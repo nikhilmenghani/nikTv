@@ -561,7 +561,7 @@ internal fun ModernSearchScreen(
                                 .focusProperties {
                                     up = searchRequester
                                     down = categoryRequester
-                                    left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: FocusRequester.Cancel
+                                    left = typeRequesters[searchVisibleTypes.getOrNull(index - 1)] ?: FocusRequester.Default
                                     right = typeRequesters[searchVisibleTypes.getOrNull(index + 1)] ?: FocusRequester.Cancel
                                 }
                         )
@@ -1565,9 +1565,12 @@ private fun SearchResultsContent(
                 true
             }
             Key.DirectionLeft -> {
-                if (all) moveTo(-1)
-                else if (index < results.size && index % columns > 0) moveTo(index - 1)
-                true
+                when {
+                    all -> { moveTo(-1); true }
+                    index < results.size && index % columns > 0 -> { moveTo(index - 1); true }
+                    // Allow focus to leave the first column for the sidebar.
+                    else -> false
+                }
             }
             Key.DirectionRight -> {
                 if (index < results.size && index % columns < columns - 1 && index + 1 < results.size) {
@@ -1607,10 +1610,11 @@ private fun SearchResultsContent(
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                                 Key.DirectionLeft, Key.DirectionRight -> {
-                                    val target = (index + if (event.key == Key.DirectionLeft) -1 else 1)
-                                        .coerceIn(globalSearchTypes.indices)
-                                    tabRequesters.getValue(globalSearchTypes[target]).requestFocus()
-                                    true
+                                    val target = index + if (event.key == Key.DirectionLeft) -1 else 1
+                                    if (target in globalSearchTypes.indices) {
+                                        tabRequesters.getValue(globalSearchTypes[target]).requestFocus()
+                                        true
+                                    } else event.key == Key.DirectionRight
                                 }
                                 Key.DirectionDown -> { moveTo(0); true }
                                 Key.DirectionUp -> { topRequester.requestFocus(); true }
