@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -825,39 +826,13 @@ private fun ModernDestinationHub(
                 hubGridState.firstVisibleItemIndex, hubGridState.firstVisibleItemScrollOffset)
         }
     }
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(destinationColumns),
-        state = hubGridState,
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(
-            start =
-                if (isTv) 32.dp
-                else if (isTablet) 24.dp
-                else 14.dp,
-            end =
-                if (isTv) 32.dp
-                else if (isTablet) 24.dp
-                else 14.dp,
-            top =
-                if (isTv) 28.dp
-                else if (isTablet) 22.dp
-                else 16.dp,
-            bottom = 72.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(
-            if (isTv) 16.dp
-            else if (isTablet) 12.dp
-            else 8.dp
-        ),
-        horizontalArrangement = Arrangement.spacedBy(
-            if (isTv) 16.dp
-            else if (isTablet) 12.dp
-            else 12.dp
-        )
-    ) {
-        item("hub-header", span = fullSpan) {
+    Column(modifier.fillMaxSize()) {
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().padding(
+                    start = if (isTv) 32.dp else if (isTablet) 24.dp else 14.dp,
+                    end = if (isTv) 32.dp else if (isTablet) 24.dp else 14.dp,
+                    top = if (isTv) 28.dp else if (isTablet) 22.dp else 16.dp
+                ),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -903,16 +878,34 @@ private fun ModernDestinationHub(
                 )
 
             }
-        }
-
-        // Captions are popups below the focused header controls. Keep the first
-        // content row clear on tablet and TV, including Live TV, Movies and Series.
-        if (isTv || isTablet) {
-            item("hub-header-caption-clearance", span = fullSpan) {
-                Spacer(Modifier.height(38.dp))
-            }
-        }
-
+        Spacer(Modifier.height(if (isTv || isTablet) 38.dp else 12.dp))
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(destinationColumns),
+        state = hubGridState,
+        modifier = Modifier.fillMaxWidth().weight(1f),
+        contentPadding = PaddingValues(
+            start =
+                if (isTv) 32.dp
+                else if (isTablet) 24.dp
+                else 14.dp,
+            end =
+                if (isTv) 32.dp
+                else if (isTablet) 24.dp
+                else 14.dp,
+            top = 0.dp,
+            bottom = 72.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(
+            if (isTv) 16.dp
+            else if (isTablet) 12.dp
+            else 8.dp
+        ),
+        horizontalArrangement = Arrangement.spacedBy(
+            if (isTv) 16.dp
+            else if (isTablet) 12.dp
+            else 12.dp
+        )
+    ) {
         if (organizedBrowse) {
             item("category-browse-controls", span = fullSpan) {
                 CategoryBrowseControls(categoryBrowseMode, categoryQuery,
@@ -943,6 +936,7 @@ private fun ModernDestinationHub(
                         playbackProgress = state.playbackProgress,
                         favorites = state.favorites,
                         returnFocusId = state.playbackReturnFocusId,
+                        onRowFocused = { hubGridState.requestScrollToItem(0) },
                         open = openRecent,
                         clear = removeRecent,
                         openSeries = openSeries,
@@ -1138,6 +1132,7 @@ private fun ModernDestinationHub(
                 }
             }
         }
+    }
     }
 }
 
@@ -2073,6 +2068,7 @@ private fun ModernContinueRow(
     playbackProgress: List<PlaybackProgress>,
     favorites: List<FavoriteItem>,
     returnFocusId: String?,
+    onRowFocused: () -> Unit,
     open: (RecentItem) -> Unit,
     clear: (RecentItem) -> Unit,
     openSeries: (MediaItem) -> Unit,
@@ -2106,7 +2102,9 @@ private fun ModernContinueRow(
             delay(40L * (attempt + 1))
         }
     }
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth()
+        .onFocusChanged { if (it.hasFocus) onRowFocused() }
+        .focusGroup()) {
     LazyRow(
         state = listState,
         modifier = Modifier.fillMaxWidth(),
