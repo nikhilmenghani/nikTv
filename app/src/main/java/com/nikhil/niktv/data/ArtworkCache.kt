@@ -10,14 +10,17 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
-fun artworkRequest(context: Context, item: MediaItem): ImageRequest =
+fun artworkRequest(context: Context, item: MediaItem, widthPixels: Int = 0, heightPixels: Int = 0): ImageRequest =
     ImageRequest.Builder(context)
         .data(item.logo)
-        .memoryCacheKey(item.artworkCacheKey())
+        .memoryCacheKey(item.artworkCacheKey() + if (widthPixels > 0 && heightPixels > 0) ":${widthPixels}x$heightPixels" else "")
         .diskCacheKey(item.artworkCacheKey())
         .memoryCachePolicy(CachePolicy.ENABLED)
         .diskCachePolicy(CachePolicy.ENABLED)
         .networkCachePolicy(CachePolicy.ENABLED)
+        .apply {
+            if (widthPixels > 0 && heightPixels > 0) size(widthPixels, heightPixels)
+        }
         .build()
 
 suspend fun prefetchArtwork(context: Context, items: List<MediaItem>, limit: Int = 8) = coroutineScope {

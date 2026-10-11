@@ -23,6 +23,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -4479,6 +4482,17 @@ internal fun ModernPosterImage(
     context: Context,
     modifier: Modifier
 ) {
+    var artworkSize by remember { mutableStateOf(IntSize.Zero) }
+    // Decode for the physical tile size with room for its focused enlargement.
+    // Bound large previews without changing the provider's URL or artwork source.
+    val artworkScale = if (artworkSize.width > 0) {
+        minOf(1.1f, 780f / artworkSize.width, 1170f / artworkSize.height.coerceAtLeast(1))
+    } else 1f
+    val imageRequest = remember(context, item, artworkSize) {
+        artworkRequest(context, item,
+            kotlin.math.ceil(artworkSize.width * artworkScale).toInt(),
+            kotlin.math.ceil(artworkSize.height * artworkScale).toInt())
+    }
     val palette = remember(
         item.id,
         item.title
@@ -4489,7 +4503,7 @@ internal fun ModernPosterImage(
     }
 
     Box(
-        modifier.background(
+        modifier.onSizeChanged { artworkSize = it }.background(
             Brush.linearGradient(
                 listOf(
                     palette.first,
@@ -4505,15 +4519,13 @@ internal fun ModernPosterImage(
             style = MaterialTheme.typography.displayMedium,
             fontWeight = FontWeight.Black
         )
-        if (!item.logo.isNullOrBlank()) {
+        if (!item.logo.isNullOrBlank() && artworkSize.width > 0 && artworkSize.height > 0) {
             AsyncImage(
-                model = artworkRequest(
-                    context,
-                    item
-                ),
+                model = imageRequest,
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+                contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.High
             )
         }
     }
