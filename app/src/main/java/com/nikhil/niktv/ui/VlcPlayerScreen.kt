@@ -323,6 +323,18 @@ internal fun VlcPlayerScreen(
             refreshPending = false
         }
     }
+    val seekTarget = remember(player) { PlaybackSeekTarget() }
+    fun seekMovieTo(target: Long) {
+        val bounded = seekTarget.absolute(target, duration, android.os.SystemClock.elapsedRealtime())
+        android.util.Log.i("NikTvSeek", "VLC requestedMs=$bounded actualMs=${player.time}")
+        player.setTime(bounded, false)
+        position = bounded
+    }
+    fun skipMovie(delta: Long) {
+        val target = seekTarget.target(player.time.coerceAtLeast(0L), duration, delta,
+            android.os.SystemClock.elapsedRealtime())
+        seekMovieTo(target)
+    }
     val surfacePlayer = remember { arrayOfNulls<MediaPlayer>(1) }
     fun refreshSubtitleTracks() {
         subtitleTracks = player.spuTracks.orEmpty()
@@ -457,7 +469,10 @@ internal fun VlcPlayerScreen(
             delay(controlsTimeoutSeconds.coerceIn(1, 30) * 1_000L)
             controlsVisible = false
             controlsFocused = false
-            if (!embeddedMode) {
+            if (embeddedMode) {
+                suppressNextEmbeddedPlayerFocusHandoff = true
+                videoView?.requestFocus()
+            } else {
                 runCatching { videoSurfaceFocusRequester.requestFocus() }
             }
         }
@@ -731,6 +746,7 @@ internal fun VlcPlayerScreen(
                 position = pendingResume
             } else {
                 position = player.time.coerceAtLeast(0L)
+                seekTarget.acknowledge(position)
             }
 
             if (
@@ -1515,10 +1531,11 @@ PlayerChromeIconButton(
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = media.progressKey,
+                                active = controlsVisible || (!focusMode && !embeddedMode),
                                 position = position,
                                 duration = duration,
                                 onSeek = {
-                                    player.time = it
+                                    seekMovieTo(it)
                                 },
                                 compact = compactMobileControls,
                                 modifier = Modifier
@@ -1608,8 +1625,7 @@ PlayerChromeIconButton(
                                         icon = Icons.Default.Replay10,
                                         contentDescription = "Back 10 seconds",
                                         onClick = {
-                                            val target = (player.time - 10_000L).coerceAtLeast(0L)
-                                            player.time = target
+                                            skipMovie(-10_000L)
                                         },
                                         modifier = Modifier.focusRequester(rewindRequester)
                                             .focusProperties {
@@ -1669,7 +1685,7 @@ PlayerChromeIconButton(
                                     PlayerChromeIconButton(
                                         icon = Icons.Default.Forward10,
                                         contentDescription = "Forward 10 seconds",
-                                        onClick = { player.time = (player.time + 10_000L).coerceAtMost(duration) },
+                                        onClick = { skipMovie(10_000L) },
                                         modifier = Modifier.focusRequester(forwardRequester)
                                             .focusProperties {
                                                 up = progressRequester

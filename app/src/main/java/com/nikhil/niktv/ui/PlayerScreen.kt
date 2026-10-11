@@ -1271,7 +1271,10 @@ fun PlayerScreen(
              * focus again would trigger its focus listener and immediately
              * show the controls again.
              */
-            if (!embeddedMode) {
+            if (embeddedMode) {
+                suppressNextEmbeddedPlayerFocusHandoff = true
+                playerViewRef?.requestFocus()
+            } else {
                 runCatching { videoSurfaceFocusRequester.requestFocus() }
             }
         }
@@ -2198,6 +2201,7 @@ PlayerChromeIconButton(
                         if (seekable) {
                             PlaybackProgressBar(
                                 mediaKey = media.progressKey,
+                                active = controlsVisible || (!focusMode && !embeddedMode),
                                 position = position,
                                 duration = duration,
                                 onSeek = {
@@ -3499,6 +3503,7 @@ internal fun PlaybackProgressBar(
     onSeek: (Long) -> Unit,
     mediaKey: String,
     compact: Boolean = false,
+    active: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val safeDuration = duration.coerceAtLeast(0L)
@@ -3507,7 +3512,8 @@ internal fun PlaybackProgressBar(
     var directionHeld by remember(mediaKey) { mutableStateOf(false) }
     var dragging by remember(mediaKey) { mutableStateOf(false) }
     val seek by rememberUpdatedState(onSeek)
-    LaunchedEffect(mediaKey, revision, directionHeld, dragging) {
+    LaunchedEffect(mediaKey, revision, directionHeld, dragging, active) {
+        if (!active) { preview = null; directionHeld = false; dragging = false; return@LaunchedEffect }
         val target = preview ?: return@LaunchedEffect
         if (directionHeld || dragging) return@LaunchedEffect
         delay(450L)
@@ -3525,6 +3531,7 @@ internal fun PlaybackProgressBar(
             .height(if (compact) 40.dp else 58.dp)
             .padding(horizontal = if (compact) 5.dp else 7.dp, vertical = 3.dp)
             .onPreviewKeyEvent { event ->
+                if (!active) return@onPreviewKeyEvent true
                 val direction = when (event.key) {
                     ComposeKey.DirectionLeft, ComposeKey.MediaRewind -> -1
                     ComposeKey.DirectionRight, ComposeKey.MediaFastForward -> 1
@@ -3541,6 +3548,7 @@ internal fun PlaybackProgressBar(
                 true
             }
             .onFocusChanged { if (!it.hasFocus) directionHeld = false }
+            .focusProperties { canFocus = active }
             .focusable(),
         verticalArrangement = Arrangement.Center
     ) {
@@ -3568,9 +3576,10 @@ internal fun PlaybackProgressBar(
                 revision++
             },
             onValueChangeFinished = { dragging = false; revision++ },
-            enabled = safeDuration > 0L,
+            enabled = active && safeDuration > 0L,
             valueRange = 0f..safeDuration.coerceAtLeast(1L).toFloat(),
-            modifier = Modifier.fillMaxWidth().height(if (compact) 20.dp else 28.dp),
+            modifier = Modifier.fillMaxWidth().height(if (compact) 20.dp else 28.dp)
+                .focusProperties { canFocus = false },
             thumb = {
                 Box(
                     Modifier
