@@ -1,7 +1,6 @@
 name: Android validation
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
 

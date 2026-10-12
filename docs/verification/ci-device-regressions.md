@@ -1,6 +1,6 @@
 # CI and full device regression verification
 
-The new Android validation workflow runs unit tests, lint and debug assembly on pushes, pull requests and manual runs. It has read-only repository permissions and does not publish artifacts. Lint now uses abortOnError=true. Workflow YAML was parsed using cached SnakeYAML and required triggers, permissions and Gradle tasks were checked; GitHub Actions itself was not triggered because no push is authorized.
+The Android validation workflow runs unit tests, lint and debug assembly on pull requests and manual runs. Ordinary pushes do not trigger it. It has read-only repository permissions and does not publish artifacts. Lint uses abortOnError=true. The local and device verification results below describe the original verification at introduction; validation has subsequently also passed on GitHub.
 
 ## Strict lint correction
 
