@@ -352,7 +352,10 @@ data class PlayingMedia(
     val authorizationRetryCount: Int = 0,
     val directFullscreen: Boolean = false,
     val offlinePlayback: Boolean = false,
-    val playbackFormat: String = ""
+    val playbackFormat: String = "",
+    val separateAudioUrl: String? = null,
+    val streamRequestHeaders: Map<String, String> = emptyMap(),
+    val nativeSabr: com.newtube.sabr.SabrStreamInfo? = null
 )
 
 @Serializable

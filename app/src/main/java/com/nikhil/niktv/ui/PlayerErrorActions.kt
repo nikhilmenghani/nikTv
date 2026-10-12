@@ -29,7 +29,8 @@ internal fun PlayerErrorActions(
     onNext: () -> Unit,
     alternatePlayerLabel: String,
     onSwitchPlayer: () -> Unit,
-    retryModifier: Modifier = Modifier
+    retryModifier: Modifier = Modifier,
+    showAlternatePlayer: Boolean = true
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -74,7 +75,7 @@ internal fun PlayerErrorActions(
                 }
             }
         }
-        NikTvSecondaryActionButton(
+        if (showAlternatePlayer) NikTvSecondaryActionButton(
             onClick = onSwitchPlayer,
             modifier = Modifier.fillMaxWidth()
         ) {

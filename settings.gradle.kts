@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "nikTv"
 include(":app")
+include(":niktube-sabr")

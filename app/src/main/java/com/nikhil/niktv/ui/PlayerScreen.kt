@@ -329,7 +329,9 @@ fun PlayerScreen(
     embeddedControlsDismissRequest: Int = 0,
     startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
-    onFullscreenChanged: ((Boolean) -> Unit)? = null
+    onFullscreenChanged: ((Boolean) -> Unit)? = null,
+    onVideoFrameRendered: () -> Unit = {},
+    onVideoFramesRendered: ((Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
@@ -424,7 +426,7 @@ fun PlayerScreen(
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
         PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
-    val effectiveEngine = sessionEngineOverride ?: configuredEngine
+    val effectiveEngine = if (media.nativeSabr != null) PlaybackEngine.MEDIA3 else sessionEngineOverride ?: configuredEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
@@ -653,8 +655,8 @@ fun PlayerScreen(
     }
     val isTvDevice = rememberPlayerTvDevice()
     // Fire TV has no Google Cast module. Local playback must not depend on it.
-    val castPlayer = remember(context, isTvDevice) {
-        if (isTvDevice) null
+    val castPlayer = remember(context, isTvDevice, media.nativeSabr) {
+        if (isTvDevice || media.nativeSabr != null) null
         else runCatching { CastPlayer(CastContext.getSharedInstance(context)) }.getOrNull()
     }
     val castMediaItem = remember(media.url, media.media.title, media.playbackFormat) {
@@ -700,6 +702,11 @@ fun PlayerScreen(
                 DefaultMediaSourceFactory(OfflineMediaDownloads.cacheDataSourceFactory(context))
             )
         }
+        val signedStreamSources = if (media.streamRequestHeaders.isNotEmpty()) {
+            DefaultMediaSourceFactory(androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(media.streamRequestHeaders))
+        } else null
+        if (signedStreamSources != null) builder.setMediaSourceFactory(signedStreamSources)
         builder.build().apply {
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url).apply {
                 if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
@@ -712,7 +719,22 @@ fun PlayerScreen(
                         .build())
                 }
             }
-            setMediaItem(mediaItemBuilder.build())
+            if (media.nativeSabr != null) {
+                val transport = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                    .setDefaultRequestProperties(media.streamRequestHeaders)
+                    .setKeepPostFor302Redirects(true)
+                    .setConnectTimeoutMs(15_000).setReadTimeoutMs(15_000)
+                setMediaSource(com.newtube.sabr.SabrMediaSource(media.nativeSabr, transport,
+                    androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(context)))
+            } else if (media.separateAudioUrl != null) {
+                val sources = signedStreamSources ?: DefaultMediaSourceFactory(context)
+                setMediaSource(androidx.media3.exoplayer.source.MergingMediaSource(
+                    sources.createMediaSource(mediaItemBuilder.build()),
+                    sources.createMediaSource(MediaItem.fromUri(media.separateAudioUrl))
+                ))
+            } else {
+                setMediaItem(mediaItemBuilder.build())
+            }
             val startPosition =
                 resumePosition ?: engineSwitchResumePosition
             if (startPosition > 0L) seekTo(startPosition)
@@ -915,6 +937,7 @@ fun PlayerScreen(
         }
 
         val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() { onVideoFrameRendered() }
             override fun onPlaybackStateChanged(state: Int) {
                 playbackState = state
                 if (state == Player.STATE_READY) {
@@ -1197,6 +1220,12 @@ fun PlayerScreen(
             }
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+            if (onVideoFramesRendered != null) {
+                (player as? androidx.media3.exoplayer.ExoPlayer)?.videoDecoderCounters?.let { counters ->
+                    counters.ensureUpdated()
+                    onVideoFramesRendered(counters.renderedOutputBufferCount)
+                }
+            }
             videoDetails = (player as? androidx.media3.exoplayer.ExoPlayer)?.videoFormat?.let { format ->
                 buildList {
                     if (format.width > 0 && format.height > 0) add("${format.width}×${format.height}")
@@ -1889,12 +1918,12 @@ fun PlayerScreen(
                 if (media.catalogType != CatalogType.LIVE_TV) {
                     add(subtitleFocusRequester)
                     if (audioTracks.size > 1) add(audioFocusRequester)
-                    add(downloadFocusRequester)
+                    if (media.nativeSabr == null) add(downloadFocusRequester)
                 }
                 if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) add(refreshFocusRequester)
                 add(resizeFocusRequester)
                 add(pictureModeFocusRequester)
-                add(playerSwitchFocusRequester)
+                if (media.nativeSabr == null) add(playerSwitchFocusRequester)
                 add(controlsTimeoutFocusRequester)
                 add(moreFocusRequester)
                 if (pipAvailable) add(pipFocusRequester)
@@ -2026,7 +2055,7 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        if (media.catalogType != CatalogType.LIVE_TV) {
+                        if (media.catalogType != CatalogType.LIVE_TV && media.nativeSabr == null) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                 contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
@@ -2073,7 +2102,7 @@ PlayerChromeIconButton(
                                 .playerSecondaryFocus(pictureModeFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
                             onFocused = { controlsFocused = it }
                         )
-                        PlayerChromeIconButton(
+                        if (media.nativeSabr == null) PlayerChromeIconButton(
                                     icon = Icons.Default.SmartDisplay,
                                     badgeText = selectedPlayerChoice.playerChoiceBadge(),
                                     contentDescription = "Player: ${selectedPlayerChoice.playerChoiceLabel()}",
@@ -2602,6 +2631,7 @@ PlayerChromeIconButton(
                         onRetry = { onRetry(player.currentPosition.coerceAtLeast(0L)) },
                         onNext = onPlayNext,
                         alternatePlayerLabel = "VLC",
+                        showAlternatePlayer = media.nativeSabr == null,
                         onSwitchPlayer = {
                             val selectedEngine = PlaybackEngine.VLC
                             selectedPlayerChoice = selectedEngine

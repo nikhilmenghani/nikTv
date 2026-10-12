@@ -1,0 +1,16 @@
+BgUtils 4.0.3, MIT license, https://github.com/LuanRT/BgUtils
+Pinned source commit: 0594e3da2eb4ff18a6d72f7d3c4049674bb25bc9
+bgutils.js bundles BotGuardClient, WebPoMinter and their official helpers
+using esbuild 0.25.12, IIFE format, Chrome 90 target.
+Local adaptation removes the upstream API key constant and header. NikTV's
+native bridge supplies the build-configured key only to GenerateIT requests.
+proof.js and the Kotlin bridge integrate normal service attestation for
+public-video playback. The WebView only performs attestation; Media3
+fetches and decodes all video and audio.
+
+Player n-parameter preparation uses the yt-dlp/ejs solver (Unlicense),
+Meriyah 6.1.4 (MIT) and Astring 1.9.0 (MIT). Bundles are taken from
+https://github.com/yuliskov/MediaServiceCore at commit
+c00b74d758c53f73aca5604a022b6de5bbfe6072, youtubeapi/src/main/assets/
+nsigsolver. Original bundle copyright/SPDX headers are retained;
+dependency license texts accompany the bundles.

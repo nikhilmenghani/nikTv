@@ -36,6 +36,10 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "LOCAL_GITHUB_TOKEN", "\"\"")
+        buildConfigField("String", "NIKTUBE_BOTGUARD_API_KEY",
+            providers.environmentVariable("NIKTUBE_BOTGUARD_API_KEY")
+                .orElse(providers.gradleProperty("NIKTUBE_BOTGUARD_API_KEY"))
+                .orElse("").get().asBuildConfigString())
         if (fireTvApk.get()) {
             ndk { abiFilters += setOf("armeabi-v7a", "arm64-v8a") }
         }
@@ -110,6 +114,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":niktube-sabr"))
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
     ksp("androidx.room:room-compiler:2.8.4")

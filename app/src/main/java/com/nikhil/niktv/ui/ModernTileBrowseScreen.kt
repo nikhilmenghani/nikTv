@@ -1,5 +1,8 @@
 package com.nikhil.niktv.ui
 
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.indication
+
 // MODERN_TILE_BROWSE_V1
 //
 // Tile-first destination browsing for Home / Movies / Series.
@@ -446,6 +449,7 @@ private fun ModernTilePhoneHeader(
                     Icon(Icons.Default.FavoriteBorder, "My List")
                 }
             }
+            NikTubeEntry()
             if (isPhone) {
                 Box {
                     IconButton(onClick = { profileMenuOpen = true }) {
@@ -2303,7 +2307,8 @@ internal fun ModernCompactMediaCard(
             .remoteCombinedClickable(
                 interactionSource = interactionSource,
                 onClick = returningTile.open,
-                onLongClick = { menuOpen = true }
+                onLongClick = { menuOpen = true },
+                showIndication = false
             )
     ) {
         Surface(
@@ -2325,7 +2330,10 @@ internal fun ModernCompactMediaCard(
                 borderColor
             )
         ) {
-            Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize()
+                .clip(shape)
+                .then(if (remoteNavigationActive) Modifier else
+                    Modifier.indication(interactionSource, LocalIndication.current))) {
                 ModernPosterImage(
                     item = item,
                     context = context,
@@ -4254,6 +4262,7 @@ private fun ModernCollectionPoster(
                 .onFocusChanged { focused = it.isFocused }
                 .remoteCombinedClickable(
                     interactionSource = interactionSource,
+                    showIndication = false,
                     onClick = returningTile.open,
                     onLongClick = if (onFavorite != null) {
                         {
@@ -4302,6 +4311,11 @@ private fun ModernCollectionPoster(
             Box(
                 Modifier
                     .fillMaxSize()
+                    // The fixed activation box owns gestures, but press feedback
+                    // belongs inside the poster's rounded visual boundary.
+                    .clip(shape)
+                    .then(if (remoteNavigationActive) Modifier else
+                        Modifier.indication(interactionSource, LocalIndication.current))
                     // Animate only the visual artwork. The Surface above owns
                     // focus and must keep fixed bounds so lazy-grid scrolling
                     // does not chase every animation frame.

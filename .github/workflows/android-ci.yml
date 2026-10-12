@@ -25,6 +25,8 @@ jobs:
       - name: Install compile SDK
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Unit tests, lint and debug build
+        env:
+          NIKTUBE_BOTGUARD_API_KEY: ${{ secrets.NIKTUBE_BOTGUARD_API_KEY }}
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug -PskipLocalGithubToken=true

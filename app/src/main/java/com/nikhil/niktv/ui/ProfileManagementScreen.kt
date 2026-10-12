@@ -219,7 +219,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
 
             BoxWithConstraints(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
                 val gap = if (compactChooser) 12.dp else 24.dp
-                val tileCount = profiles.size + 4
+                val tileCount = profiles.size + 5
                 val capacity = ((maxWidth + gap) / ((if (compactChooser) 148.dp else 180.dp) + gap)).toInt().coerceIn(1, 5)
                 val rowCount = (tileCount + capacity - 1) / capacity
                 val columns = (tileCount + rowCount - 1) / rowCount
@@ -265,6 +265,17 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     ) {
                         selectProfile(profile)
                     }
+                }
+
+                ProfileChooserTile(
+                    title = "NikTube",
+                    subtitle = "Discover YouTube videos",
+                    icon = Icons.Default.PlayCircle,
+                    tileWidth = chooserTileWidth,
+                    portraitCardHeight = portraitCardHeight,
+                    compact = compactChooser
+                ) {
+                    chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.NikTubeActivity::class.java))
                 }
 
                 ProfileChooserTile(

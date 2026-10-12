@@ -448,6 +448,8 @@ internal fun ModernSideRail(
                 }
             }
             Spacer(Modifier.height(12.dp))
+            NikTubeEntry(Modifier.fillMaxWidth(), compact = !expanded)
+            Spacer(Modifier.height(8.dp))
             ModernRailButton(Icons.Default.Home, "Home", state.homeOpen && !state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen, expanded, openHome)
             visibleCatalogTypes.forEach { type ->
                 ModernRailButton(type.icon(), type.title, !state.homeOpen && !state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen && state.selectedType == type, expanded) { selectType(type) }
@@ -554,6 +556,7 @@ internal fun YouTubeStyleTopBar(
         IconButton(onClick = openProfileSwitcher) {
             Icon(Icons.Default.AccountCircle, state.savedProfile?.name ?: "Profile")
         }
+        NikTubeEntry(compact = true)
     }
 }
 
@@ -744,6 +747,7 @@ internal fun ModernTopBar(
                 }
             }
 
+            item("mobile-niktube") { NikTubeEntry() }
             item("mobile-home") {
                 NikTvTextActionButton(
                     onClick = openHome,
