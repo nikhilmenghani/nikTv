@@ -118,6 +118,7 @@ class NikTubeClient(context: android.content.Context? = null) {
             return videos.values.take(24)
         }
 
+        @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
         internal fun parseStream(root: JSONObject): NikTubeStream {
             val status = root.optJSONObject("playabilityStatus")
             check(status?.optString("status") == "OK") {
