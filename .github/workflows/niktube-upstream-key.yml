@@ -1,0 +1,58 @@
+name: Read upstream NikTube verification key
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  read-key:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read published BgUtils key
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          def fetch(url):
+              request = Request(url, headers={"User-Agent": "NikTV-upstream-key-reader"})
+              with urlopen(request, timeout=20) as response:
+                  body = response.read(65537)
+              if len(body) > 65536:
+                  raise RuntimeError("Upstream response exceeds the expected size")
+              return body.decode("utf-8")
+
+          ref_url = "https://api.github.com/repos/LuanRT/BgUtils/git/ref/heads/main"
+          revision = json.loads(fetch(ref_url))["object"]["sha"]
+          if not re.fullmatch(r"[0-9a-f]{40}", revision):
+              raise RuntimeError("Invalid upstream commit revision")
+          source_path = "src/utils/constants.ts"
+          source_url = f"https://raw.githubusercontent.com/LuanRT/BgUtils/{revision}/{source_path}"
+          source = fetch(source_url)
+          matches = re.findall(
+              r"^\s*export\s+const\s+GOOG_API_KEY\s*=\s*(['\"])(AIza[A-Za-z0-9_-]{35})\1\s*;\s*$",
+              source, re.MULTILINE,
+          )
+          if len(matches) != 1:
+              raise RuntimeError("Expected exactly one published GOOG_API_KEY; inspect the upstream source")
+          key = matches[0][1]
+          browser_url = f"https://github.com/LuanRT/BgUtils/blob/{revision}/{source_path}"
+          summary = (
+              "## Published upstream NikTube verification key\n\n"
+              f"Source: [{revision}]({browser_url})\n\n"
+              "```text\n" + key + "\n```\n\n"
+              "Copy this public upstream value into `NIKTUBE_BOTGUARD_API_KEY` in "
+              "Actions repository secrets and your local Gradle properties, then rebuild.\n\n"
+              "This workflow reads the upstream value; it does not generate a key, test "
+              "its validity, or update your secret. If GitHub masks a matching saved secret, "
+              "use the pinned source link above to read the published value.\n"
+          )
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(summary, encoding="utf-8")
+          print(f"Read published GOOG_API_KEY from BgUtils commit {revision}. See the run summary.")
+          PY

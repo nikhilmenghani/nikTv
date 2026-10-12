@@ -21,3 +21,17 @@ The previous bundled value was published by BgUtils upstream. Removing it from
 the current source does not remove commit history or automatically resolve an
 existing GitHub secret-scanning alert. Review that alert as a published upstream
 library credential; no personal credential rotation is implied by this finding.
+
+## Read the current upstream value
+
+In GitHub Actions, select **Read upstream NikTube verification key**, then choose
+**Run workflow** on `main`. The run summary shows the published `GOOG_API_KEY`
+and a source link pinned to the exact BgUtils commit it was read from.
+
+Copy the value into the `NIKTUBE_BOTGUARD_API_KEY` repository secret and your
+local Gradle properties, then rebuild. If GitHub masks a value matching an
+existing secret, open the pinned public source link to copy it.
+
+The workflow runs only on request, uses no repository credentials, and does
+not execute upstream code or modify secrets. It reads the latest published
+value rather than issuing a new key or checking whether Google accepts it.
