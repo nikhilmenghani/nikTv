@@ -22,6 +22,10 @@ jobs:
           java-version: '17'
           distribution: temurin
           cache: gradle
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
       - name: Install compile SDK
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Unit tests, lint and debug build
@@ -29,4 +33,4 @@ jobs:
           NIKTUBE_BOTGUARD_API_KEY: ${{ secrets.NIKTUBE_BOTGUARD_API_KEY }}
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug -PskipLocalGithubToken=true
+          ./gradlew --no-daemon :app:testDebugUnitTest :niktube-sabr:testDebugUnitTest :app:lintDebug :app:assembleDebug -PskipLocalGithubToken=true
