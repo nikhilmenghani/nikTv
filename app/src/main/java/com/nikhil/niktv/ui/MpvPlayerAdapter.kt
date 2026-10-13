@@ -35,9 +35,12 @@ internal class MpvPlayerAdapter(
     // Native handle and all JNI commands belong to NativePlaybackWorker.
     private var mpv: MPVLib? = null
     private var nativeHasFile = false
+    private var pendingPreparePosition: Long? = null
     @Volatile private var replacementEndExpected = false
     @Volatile private var eofReached = false
-    private var attachedSurface: Surface? = null
+    @Volatile private var attachedSurface: Surface? = null
+    private var nativeSurface: Surface? = null
+    @Volatile private var surfaceSize: String? = null
     private var holder: SurfaceHolder? = null
     private var videoOutput: Any? = null
     @Volatile private var requested = false
@@ -56,6 +59,7 @@ internal class MpvPlayerAdapter(
     private var volumeValue = 1f
     private var repeat = Player.REPEAT_MODE_OFF
     private var subtitleDelayMillis = 0L
+    private var videoSizing = VideoResizeMode.FIT
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var focusHeld = false
     private var focusSuppression = Player.PLAYBACK_SUPPRESSION_REASON_NONE
@@ -90,10 +94,17 @@ internal class MpvPlayerAdapter(
 
     private val surfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(value: SurfaceHolder) = attach(value.surface)
-        override fun surfaceChanged(value: SurfaceHolder, format: Int, width: Int, height: Int) = attach(value.surface)
+        override fun surfaceChanged(value: SurfaceHolder, format: Int, width: Int, height: Int) {
+            if (width <= 0 || height <= 0) return
+            val dimensions = "${width}x$height"
+            if (surfaceSize == dimensions) return
+            surfaceSize = dimensions
+            enqueue { it.setPropertyString("android-surface-size", dimensions) }
+        }
         override fun surfaceDestroyed(value: SurfaceHolder) {
             attachedSurface = null
-            enqueue { it.setPropertyString("vo", "null"); it.detachSurface() }
+            surfaceSize = null
+            enqueue { detach(it) }
         }
     }
 
@@ -238,15 +249,9 @@ internal class MpvPlayerAdapter(
                 android.util.Log.i("NikTvMpv", "Native player initialized; demuxer buffer limit=${it.getPropertyInt("options/demuxer-max-bytes")} bytes")
                 startHealthSamples()
             }
-            attachedSurface?.takeIf(Surface::isValid)?.let { engine.attachSurface(it) }
-            engine.setPropertyBoolean("pause", !requested || focusSuppression != Player.PLAYBACK_SUPPRESSION_REASON_NONE)
-            engine.setPropertyString("start", if (live) "0" else (resumePosition / 1000.0).toString())
-            replacementEndExpected = nativeHasFile
-            nativeHasFile = true
-            engine.command(arrayOf("loadfile", selectedItem.localConfiguration!!.uri.toString(), "replace"))
-            selectedItem.localConfiguration?.subtitleConfigurations?.firstOrNull()?.uri?.toString()
-                ?.let { engine.command(arrayOf("sub-add", it, "select")) }
-            engine.setPropertyDouble("sub-delay", subtitleDelayMillis / 1000.0)
+            pendingPreparePosition = resumePosition
+            attachedSurface?.takeIf(Surface::isValid)?.let { attachNative(engine, it) }
+            loadWhenSurfaceReady(engine)
         }
     }
 
@@ -259,7 +264,7 @@ internal class MpvPlayerAdapter(
         state = Player.STATE_IDLE
         loaded = false
         abandonFocus()
-        return enqueue { nativeHasFile = false; it.command(arrayOf("stop")) }
+        return enqueue { pendingPreparePosition = null; nativeHasFile = false; it.command(arrayOf("stop")) }
     }
     override fun handleRelease(): ListenableFuture<*> {
         released.set(true)
@@ -267,6 +272,7 @@ internal class MpvPlayerAdapter(
         holder = null
         abandonFocus()
         return enqueueNative(allowReleased = true) {
+            pendingPreparePosition = null
             mpv?.let {
                 it.removeObserver(observer)
                 runCatching { it.command(arrayOf("stop")) }
@@ -335,12 +341,22 @@ internal class MpvPlayerAdapter(
         holder = null
         this.videoOutput = null
         attachedSurface = null
-        return enqueue { it.setPropertyString("vo", "null"); it.detachSurface() }
+        surfaceSize = null
+        return enqueue { detach(it) }
     }
 
     fun setSubtitleDelay(millis: Long) {
         subtitleDelayMillis = millis
         enqueue { it.setPropertyDouble("sub-delay", millis / 1000.0) }
+    }
+    fun setVideoSizing(mode: VideoResizeMode) {
+        if (videoSizing == mode) return
+        videoSizing = mode
+        // Crop/zoom inside the existing GPU output. Resizing its Android buffer
+        // queue instead can stall rendering and leave audio running ahead.
+        enqueue { engine ->
+            mpvVideoSizing(mode).forEach { (key, value) -> engine.setPropertyString(key, value) }
+        }
     }
     fun setSubtitleAppearance(preset: SubtitleAppearancePreset) {
         enqueue {
@@ -353,7 +369,39 @@ internal class MpvPlayerAdapter(
     }
     private fun attach(surface: Surface) {
         attachedSurface = surface
-        enqueue { if (surface.isValid) { it.attachSurface(surface); it.setPropertyString("vo", "gpu") } }
+        enqueue { if (attachedSurface === surface && surface.isValid) attachNative(it, surface) }
+    }
+    private fun attachNative(engine: MPVLib, surface: Surface) {
+        if (nativeSurface === surface) return
+        detach(engine)
+        engine.attachSurface(surface)
+        nativeSurface = surface
+        surfaceSize?.let { engine.setPropertyString("android-surface-size", it) }
+        engine.setPropertyString("vo", "gpu")
+        engine.setPropertyString("force-window", "yes")
+        android.util.Log.i("NikTvMpv", "Video surface attached")
+        loadWhenSurfaceReady(engine)
+    }
+    private fun loadWhenSurfaceReady(engine: MPVLib) {
+        val resumePosition = pendingPreparePosition ?: return
+        if (nativeSurface?.isValid != true) return
+        pendingPreparePosition = null
+        mpvVideoSizing(videoSizing).forEach { (key, value) -> engine.setPropertyString(key, value) }
+        engine.setPropertyBoolean("pause", !requested || focusSuppression != Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        engine.setPropertyString("start", if (live) "0" else (resumePosition / 1000.0).toString())
+        replacementEndExpected = nativeHasFile
+        nativeHasFile = true
+        engine.command(arrayOf("loadfile", selectedItem.localConfiguration!!.uri.toString(), "replace"))
+        selectedItem.localConfiguration?.subtitleConfigurations?.firstOrNull()?.uri?.toString()
+            ?.let { engine.command(arrayOf("sub-add", it, "select")) }
+        engine.setPropertyDouble("sub-delay", subtitleDelayMillis / 1000.0)
+        android.util.Log.i("NikTvMpv", "Stream opened after video surface became ready")
+    }
+    private fun detach(engine: MPVLib) {
+        if (nativeSurface == null) return
+        engine.setPropertyString("vo", "null")
+        engine.detachSurface()
+        nativeSurface = null
     }
     private fun startHealthSamples() {
         NativePlaybackWorker.scope.launch {
@@ -367,6 +415,9 @@ internal class MpvPlayerAdapter(
                     "health positionSecs=${engine.getPropertyDouble("time-pos")} " +
                         "cacheSecs=${engine.getPropertyDouble("demuxer-cache-duration")} " +
                         "dropped=${engine.getPropertyInt("frame-drop-count")} " +
+                        "avSyncSecs=${engine.getPropertyDouble("avsync")} " +
+                        "syncCorrectionSecs=${engine.getPropertyDouble("total-avsync-change")} " +
+                        "audioOutput=${engine.getPropertyString("current-ao")} " +
                         "cachePaused=${engine.getPropertyBoolean("paused-for-cache")}")
             }
         }

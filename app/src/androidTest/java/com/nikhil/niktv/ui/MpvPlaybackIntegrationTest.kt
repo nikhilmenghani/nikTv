@@ -60,6 +60,9 @@ class MpvPlaybackIntegrationTest {
                 player = MpvPlayerAdapter(context, PlayingMedia(
                     media = MediaItem("synthetic-mpv", "Synthetic MPV fixture", null, null),
                     url = Uri.fromFile(file).toString(), catalogType = CatalogType.MOVIES), 0L)
+                val surface = android.view.SurfaceView(host)
+                host.setContentView(surface)
+                player!!.setVideoSurfaceView(surface)
                 player!!.addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY) ready.set(true)

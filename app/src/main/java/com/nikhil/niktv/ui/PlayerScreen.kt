@@ -1894,30 +1894,24 @@ fun PlayerScreen(
             },
             update = { playerView ->
                 if (playerView.player !== player) playerView.player = player
-                val requestedResizeMode = when (resizeMode) {
+                val mpvPlayer = player as? MpvPlayerAdapter
+                mpvPlayer?.setVideoSizing(resizeMode)
+                val requestedResizeMode = if (mpvPlayer != null) AspectRatioFrameLayout.RESIZE_MODE_FILL else when (resizeMode) {
                     VideoResizeMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                     VideoResizeMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     VideoResizeMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     VideoResizeMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                 }
-                val applyVideoSizing = {
+                if (playerView.resizeMode != requestedResizeMode) {
                     playerView.resizeMode = requestedResizeMode
-                    playerView.requestLayout()
-                    playerView.invalidate()
-                    playerView.videoSurfaceView?.apply {
-                        val modeScale = if (resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
-                        scaleX = videoScale * modeScale
-                        scaleY = videoScale * modeScale
-                        translationX = videoOffset.x
-                        translationY = videoOffset.y
-                        requestLayout()
-                        invalidate()
-                    }
                 }
-                applyVideoSizing()
-                // PlayerView can compose before its SurfaceView/TextureView is attached.
-                // Reapply on the next UI turn so a resize choice is never silently lost.
-                playerView.post { applyVideoSizing() }
+                playerView.videoSurfaceView?.apply {
+                    val modeScale = if (mpvPlayer == null && resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
+                    scaleX = videoScale * modeScale
+                    scaleY = videoScale * modeScale
+                    translationX = videoOffset.x
+                    translationY = videoOffset.y
+                }
             },
                 modifier = Modifier
                     .fillMaxSize()

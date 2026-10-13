@@ -10,11 +10,15 @@ internal fun mpvPlaybackOptions(live: Boolean): Map<String, String> = linkedMapO
     "osc" to "no",
     "input-default-bindings" to "no",
     "input-vo-keyboard" to "no",
-    "vo" to "gpu",
+    // The Android surface must exist before opening GPU output or loading video.
+    "vo" to "null",
     "gpu-context" to "android",
     "gpu-api" to "opengl",
     "hwdec" to "mediacodec-copy",
-    "ao" to "audiotrack",
+    // Prefer Android's native presentation clock; retain AudioTrack for devices
+    // whose AAudio output cannot open this stream/channel layout.
+    "ao" to "aaudio,audiotrack",
+    "video-sync" to "audio",
     "idle" to "yes",
     "keep-open" to if (live) "no" else "yes",
     "pause" to "yes",
@@ -27,4 +31,10 @@ internal fun mpvPlaybackOptions(live: Boolean): Map<String, String> = linkedMapO
     "demuxer-readahead-secs" to if (live) "15" else "30",
     "osd-level" to "0",
     "tls-verify" to "yes"
+)
+
+internal fun mpvVideoSizing(mode: VideoResizeMode): Map<String, String> = mapOf(
+    "keepaspect" to if (mode == VideoResizeMode.STRETCH) "no" else "yes",
+    "panscan" to if (mode == VideoResizeMode.FILL || mode == VideoResizeMode.ZOOM) "1" else "0",
+    "video-zoom" to if (mode == VideoResizeMode.ZOOM) "0.32192809488736235" else "0"
 )
