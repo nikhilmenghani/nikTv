@@ -136,7 +136,7 @@ internal fun VlcPlayerScreen(
     var position by remember(media.progressKey) { mutableLongStateOf(initialResumePosition) }
     var duration by remember(media.progressKey) { mutableLongStateOf(0L) }
     var pendingInitialResumePosition by remember(media.progressKey, media.playbackAttemptId, media.url) {
-        mutableLongStateOf(initialResumePosition.coerceAtLeast(0L))
+        mutableLongStateOf(playbackRestartPosition(media.catalogType, initialResumePosition))
     }
     var error by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
@@ -293,7 +293,7 @@ internal fun VlcPlayerScreen(
     // Disabling jitter compensation causes live streams to lose their clock reference.
     // VLC has one cache threshold; its clock-jitter compensation can expand
     // the timing cushion when needed rather than imposing a large startup cache.
-    val networkCacheMillis = if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) 1000 else 1500
+    val networkCacheMillis = 1500
     val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId, networkCacheMillis) {
         LibVLC(context, arrayListOf("--network-caching=$networkCacheMillis"))
     }
@@ -304,8 +304,9 @@ internal fun VlcPlayerScreen(
     var streamWasPlaying by remember(player) { mutableStateOf(false) }
     var refreshPending by remember(player) { mutableStateOf(false) }
     val currentRetry by rememberUpdatedState(onRetry)
-    fun refreshLiveStream() {
+    fun refreshLiveStream(manual: Boolean = false) {
         if (refreshPending) return
+        if (manual) liveRecovery.reset()
         refreshPending = true
         modeFeedback = "Refreshing stream..."
         currentRetry(0L)
@@ -314,7 +315,7 @@ internal fun VlcPlayerScreen(
         playbackRequested = requested
         if (requested && media.catalogType == CatalogType.LIVE_TV &&
             (streamTerminated || error != null)) {
-            refreshLiveStream()
+            refreshLiveStream(manual = true)
         } else if (requested) player.play() else player.pause()
     }
     LaunchedEffect(player, refreshPending) {
@@ -528,10 +529,6 @@ internal fun VlcPlayerScreen(
                 pictureEditorVisible = false
                 appearancePreview = null
             }
-            extraControlsOpen -> {
-                extraControlsOpen = false
-                extraControlsRequester.requestFocus()
-            }
             controlsVisible -> {
                 controlsVisible = false
                 controlsFocused = false
@@ -611,7 +608,11 @@ internal fun VlcPlayerScreen(
                 MediaPlayer.Event.EncounteredError -> {
                     streamTerminated = true
                     buffering = false
-                    if (media.authorizationRetryCount == 0 && !authorizationRecoveryRequested) {
+                    if (media.catalogType == CatalogType.LIVE_TV && streamWasPlaying) {
+                        // The watchdog shares one budget for errors, EOF and stalls.
+                        // Do not treat every post-start transport error as expired authorization.
+                        error = null
+                    } else if (media.authorizationRetryCount == 0 && !authorizationRecoveryRequested) {
                         authorizationRecoveryRequested = true
                         error = null
                         scope.launch {
@@ -1338,7 +1339,7 @@ internal fun VlcPlayerScreen(
                             PlayerChromeIconButton(
                                 icon = Icons.Default.Refresh,
                                 contentDescription = "Refresh stream",
-                                onClick = { refreshLiveStream() },
+                                onClick = { refreshLiveStream(manual = true) },
                                 modifier = Modifier.playerSecondaryFocus(refreshRequester, secondaryActionRequesters,
                                     extraControlsRequester, lastPlaybackActionRequester, backRequester),
                                 onFocused = { controlsFocused = it }
@@ -1892,7 +1893,8 @@ PlayerChromeIconButton(
                         onPrevious = onPlayPrevious,
                         onBack = onBack,
                         onRetry = {
-                            onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
+                            if (media.catalogType == CatalogType.LIVE_TV) refreshLiveStream(manual = true)
+                            else onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
                                 else player.time).coerceAtLeast(0L))
                         },
                         onNext = onPlayNext,

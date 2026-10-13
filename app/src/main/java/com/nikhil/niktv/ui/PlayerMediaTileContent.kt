@@ -37,24 +37,26 @@ internal fun PlayerMediaTileContent(item: MediaItem, current: Boolean, isTv: Boo
             drawCircle(Color.White.copy(alpha = .09f), size.height * .84f, center,
                 style = Stroke(1.dp.toPx()))
         }
-        Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!item.logo.isNullOrBlank()) AsyncImage(
-                    model = artwork, contentDescription = null,
-                    modifier = Modifier.size(width = if (isTv) 48.dp else 40.dp, height = 28.dp)
-                        .clip(RoundedCornerShape(5.dp)), contentScale = ContentScale.Crop)
-                Text(if (current) "PLAYING" else if (item.episodeNumber != null) "EPISODE" else "MOVIE",
+        Row(
+            Modifier.fillMaxSize().padding(if (isTv) 12.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (!item.logo.isNullOrBlank()) AsyncImage(
+                model = artwork, contentDescription = null,
+                modifier = Modifier.width(if (isTv) 52.dp else 40.dp).fillMaxHeight()
+                    .clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(item.title, color = Color.White, fontWeight = FontWeight.SemiBold,
+                    style = if (isTv) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val episodeLabel = listOfNotNull(item.seasonNumber?.let { "S$it" },
+                    item.episodeNumber?.let { "E$it" }).joinToString(" / ")
+                Text(if (current) "PLAYING" else episodeLabel.ifEmpty { "MOVIE" },
                     color = if (current) accent else Color(0xFFB9BDD0),
-                    style = MaterialTheme.typography.labelSmall, maxLines = 1, modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall, maxLines = 1,
                     overflow = TextOverflow.Ellipsis)
             }
-            Text(item.title, color = Color.White, fontWeight = FontWeight.SemiBold,
-                style = MaterialTheme.typography.labelLarge, maxLines = 2,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            val episodeLabel = listOfNotNull(item.seasonNumber?.let { "S$it" },
-                item.episodeNumber?.let { "E$it" }).joinToString(" · ")
-            if (episodeLabel.isNotEmpty()) Text(episodeLabel, color = Color.White.copy(alpha = .68f),
-                style = MaterialTheme.typography.labelSmall, maxLines = 1)
         }
     }
 }

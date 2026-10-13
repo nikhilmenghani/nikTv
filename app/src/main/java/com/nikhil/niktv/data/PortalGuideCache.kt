@@ -8,7 +8,7 @@ internal data class PortalGuideCache(
     val fetchedAtMillis: Long,
     val schedules: Map<String, List<LiveProgramme>>
 ) {
-    private val ttlMillis = if (schedules.values.any { it.isNotEmpty() }) 5 * 60_000L else 60_000L
+    private val ttlMillis = if (schedules.values.any { it.isNotEmpty() }) 5 * 60_000L else 5 * 60_000L
 
     fun reusableFor(key: String, now: Long, force: Boolean = false): Boolean =
         !force && this.key == key && now - fetchedAtMillis in 0 until ttlMillis

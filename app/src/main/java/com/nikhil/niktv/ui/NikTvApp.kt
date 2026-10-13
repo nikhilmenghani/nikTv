@@ -889,13 +889,20 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                 val authorizationExpired = error.isAuthorizationFailureText()
                 var showDiagnostics by remember(error) { mutableStateOf(!authorizationExpired) }
                 val reauthenticateRequester = remember(error) { FocusRequester() }
-                LaunchedEffect(error, authorizationExpired) {
-                    if (authorizationExpired) reauthenticateRequester.requestFocus()
-                }
+                val diagnosticsCloseRequester = remember(error) { FocusRequester() }
                 Dialog(
                     onDismissRequest = { if (!state.reauthenticating) vm.dismissError() },
                     properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
                 ) {
+                    LaunchedEffect(error, authorizationExpired, state.reauthenticating) {
+                        if (state.reauthenticating) return@LaunchedEffect
+                        val initial = if (authorizationExpired) reauthenticateRequester else diagnosticsCloseRequester
+                        repeat(8) {
+                            withFrameNanos { }
+                            if (runCatching { initial.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                            kotlinx.coroutines.delay(40L)
+                        }
+                    }
                     Surface(
                         modifier = Modifier.padding(horizontal = 20.dp).widthIn(max = 620.dp).fillMaxWidth(),
                         shape = RoundedCornerShape(18.dp),
@@ -953,7 +960,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                                     NikTvSecondaryActionButton(
                                         onClick = vm::dismissError,
                                         enabled = !state.reauthenticating,
-                                        modifier = Modifier.size(48.dp),
+                                        modifier = Modifier.size(48.dp).focusRequester(diagnosticsCloseRequester),
                                         contentPadding = PaddingValues(0.dp)
                                     ) { Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(24.dp)) }
                                     if (showDiagnostics) NikTvPrimaryActionButton(

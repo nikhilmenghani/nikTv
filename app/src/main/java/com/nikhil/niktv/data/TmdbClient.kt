@@ -128,6 +128,23 @@ class TmdbClient {
     val configured: Boolean
         get() = readAccessToken.isNotBlank() || apiKey.isNotBlank()
 
+    suspend fun trailerKey(item: MediaItem, series: Boolean): String? = withContext(Dispatchers.IO) {
+        if (!configured) return@withContext null
+        val id = item.externalTmdbId ?: item.id.substringAfter(if (series) "tmdb-series:" else "tmdb-movie:", "")
+            .toIntOrNull() ?: if (series) confidentlyMatchSeries(item)?.id else confidentlyMatchMovie(item)?.id
+        if (id == null) return@withContext null
+        execute("/3/${if (series) "tv" else "movie"}/$id/videos", mapOf("include_video_language" to "en,null"))
+            .get("results")?.jsonArray.orEmpty()
+            .map { it.jsonObject }
+            .filter { it["site"]?.jsonPrimitive?.contentOrNull == "YouTube" &&
+                it["type"]?.jsonPrimitive?.contentOrNull in listOf("Trailer", "Teaser") }
+            .sortedWith(compareByDescending<kotlinx.serialization.json.JsonObject> {
+                it["type"]?.jsonPrimitive?.contentOrNull == "Trailer"
+            }.thenByDescending { it["official"]?.jsonPrimitive?.contentOrNull == "true" })
+            .firstNotNullOfOrNull { it["key"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { key -> key.matches(Regex("[A-Za-z0-9_-]{11}")) } }
+    }
+
     private val seriesAliases = java.util.concurrent.ConcurrentHashMap<Int, List<String>>()
 
     suspend fun withSeriesAliases(series: TmdbSeries): TmdbSeries = withContext(Dispatchers.IO) {

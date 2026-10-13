@@ -334,6 +334,7 @@ fun PlayerScreen(
     onVideoFramesRendered: ((Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
         context.isTvLikeDevice(LocalConfiguration.current)
     var extraControlsOpen by remember(media.progressKey) { mutableStateOf(false) }
@@ -410,7 +411,7 @@ fun PlayerScreen(
         }
     }
     var engineSwitchResumePosition by remember(media.progressKey, media.playbackAttemptId) {
-        mutableLongStateOf(media.resumePositionMillis)
+        mutableLongStateOf(playbackRestartPosition(media.catalogType, media.resumePositionMillis))
     }
     var restorePlayerSwitchFocus by remember(media.progressKey) {
         mutableStateOf(false)
@@ -469,7 +470,7 @@ fun PlayerScreen(
             onMoreOptionsOpenChanged = { moreOptionsOpen = it },
             onSelectPlayer = { selectedEngine, position ->
                 selectedPlayerChoice = selectedEngine
-                engineSwitchResumePosition = position
+                engineSwitchResumePosition = playbackRestartPosition(media.catalogType, position)
                 onPlaybackEngineChanged(selectedEngine)
                 sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
             },
@@ -706,19 +707,14 @@ fun PlayerScreen(
             DefaultMediaSourceFactory(androidx.media3.datasource.DefaultHttpDataSource.Factory()
                 .setDefaultRequestProperties(media.streamRequestHeaders))
         } else null
-        if (signedStreamSources != null) builder.setMediaSourceFactory(signedStreamSources)
+        if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
+            builder.setMediaSourceFactory((signedStreamSources ?: DefaultMediaSourceFactory(context))
+                .setLoadErrorHandlingPolicy(LiveSegmentLoadErrorPolicy { playbackHasBeenReady }))
+        } else if (signedStreamSources != null) builder.setMediaSourceFactory(signedStreamSources)
         builder.build().apply {
-            val mediaItemBuilder = MediaItem.Builder().setUri(media.url).apply {
-                if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
-                    setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
-                        .setTargetOffsetMs(6_000)
-                        .setMinOffsetMs(1_500)
-                        .setMaxOffsetMs(15_000)
-                        .setMinPlaybackSpeed(0.97f)
-                        .setMaxPlaybackSpeed(1.03f)
-                        .build())
-                }
-            }
+            // HLS supplies its own hold-back/segment timing. A fixed six-second
+            // offset puts long-segment streams too close to unfinished media.
+            val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
             if (media.nativeSabr != null) {
                 val transport = androidx.media3.datasource.DefaultHttpDataSource.Factory()
                     .setDefaultRequestProperties(media.streamRequestHeaders)
@@ -735,8 +731,8 @@ fun PlayerScreen(
             } else {
                 setMediaItem(mediaItemBuilder.build())
             }
-            val startPosition =
-                resumePosition ?: engineSwitchResumePosition
+            val startPosition = playbackRestartPosition(media.catalogType,
+                resumePosition ?: engineSwitchResumePosition)
             if (startPosition > 0L) seekTo(startPosition)
             prepare()
             playWhenReady = true
@@ -779,7 +775,10 @@ fun PlayerScreen(
                 loadEventInfo: androidx.media3.exoplayer.source.LoadEventInfo,
                 mediaLoadData: androidx.media3.exoplayer.source.MediaLoadData
             ) {
-                android.util.Log.i("NikTvStreamLoad", "type=${mediaLoadData.dataType} bytes=${loadEventInfo.bytesLoaded} elapsedMs=${loadEventInfo.loadDurationMs}")
+                val mediaMillis = if (mediaLoadData.mediaStartTimeMs != C.TIME_UNSET &&
+                    mediaLoadData.mediaEndTimeMs != C.TIME_UNSET)
+                    mediaLoadData.mediaEndTimeMs - mediaLoadData.mediaStartTimeMs else 0L
+                android.util.Log.i("NikTvStreamLoad", "type=${mediaLoadData.dataType} bytes=${loadEventInfo.bytesLoaded} elapsedMs=${loadEventInfo.loadDurationMs} mediaMs=$mediaMillis")
             }
             override fun onLoadError(
                 eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
@@ -788,7 +787,10 @@ fun PlayerScreen(
                 error: java.io.IOException,
                 wasCanceled: Boolean
             ) {
-                android.util.Log.w("NikTvStreamLoad", "type=${mediaLoadData.dataType} elapsedMs=${loadEventInfo.loadDurationMs} error=${error.javaClass.simpleName} canceled=$wasCanceled")
+                val httpStatus = error.causeSequence()
+                    .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
+                    .firstOrNull()?.responseCode
+                android.util.Log.w("NikTvStreamLoad", "type=${mediaLoadData.dataType} elapsedMs=${loadEventInfo.loadDurationMs} error=${error.javaClass.simpleName} cause=${error.cause?.javaClass?.simpleName} http=$httpStatus retryStopped=$wasCanceled")
             }
         }
         localPlayer.addAnalyticsListener(diagnostics)
@@ -912,6 +914,20 @@ fun PlayerScreen(
             castPlayer = castPlayer,
             localPlayer = localPlayer
         )
+    val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
+    val liveEdgeRecovery = remember(media.progressKey) { LiveStreamRecovery() }
+    var liveRefreshPending by remember(player) { mutableStateOf(false) }
+    val currentStreamRetry by rememberUpdatedState(onRetry)
+    LaunchedEffect(player, liveRefreshPending) {
+        if (liveRefreshPending) {
+            delay(10_000L)
+            liveRefreshPending = false
+            if (player.playbackState == Player.STATE_IDLE) {
+                playbackError = "The live stream could not be refreshed. Retry or choose another player."
+                controlsVisible = true
+            }
+        }
+    }
     DisposableEffect(player, media.progressKey) {
         /*
          * A replacement player can already be READY before this listener is
@@ -1001,6 +1017,37 @@ fun PlayerScreen(
                 playbackRequested = value
             }
             override fun onPlayerError(error: PlaybackException) {
+                val httpStatus = error.causeSequence()
+                    .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
+                    .firstOrNull()?.responseCode
+                if (player === localPlayer && !media.offlinePlayback && playbackRequested &&
+                    !liveRefreshPending && playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
+                        androidx.lifecycle.Lifecycle.State.STARTED) &&
+                    recoverableLiveSourceFailure(media.catalogType == CatalogType.LIVE_TV,
+                        playbackHasBeenReady, error.errorCode, httpStatus)) {
+                    val missingLiveSegment = player.currentManifest is androidx.media3.exoplayer.hls.HlsManifest &&
+                        httpStatus in setOf(404, 410)
+                    if ((missingLiveSegment || error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) &&
+                        liveEdgeRecovery.claimRecovery()) {
+                        playbackError = null
+                        startupTimedOut = false
+                        android.util.Log.w("NikTvPlayback", "Recovering live playlist at default position; code=${error.errorCode} http=$httpStatus")
+                        player.seekToDefaultPosition()
+                        player.prepare()
+                        player.play()
+                        return
+                    }
+                    if (liveRecovery.claimRecovery()) {
+                        liveRefreshPending = true
+                        playbackError = null
+                        startupTimedOut = false
+                        android.util.Log.w("NikTvPlayback", "Refreshing interrupted live stream; code=${error.errorCode} http=$httpStatus")
+                        coroutineScope.launch {
+                            if (currentLocalPlayer === player) currentStreamRetry(0L)
+                        }
+                        return
+                    }
+                }
                 if (player === localPlayer && shouldRecoverWithoutAudio(
                         audioFailureFallbackEnabled,
                         audioDisabledAfterFailure,
@@ -1217,6 +1264,23 @@ fun PlayerScreen(
                     android.os.SystemClock.elapsedRealtime(), player.isPlaying
                 )
                 LiveTvRecorder.reportPlaybackElapsed(media.url, livePlaybackElapsedMillis)
+                if (player === localPlayer && !media.offlinePlayback) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val active = playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
+                        androidx.lifecycle.Lifecycle.State.STARTED)
+                    val eligible = active && playbackRequested && playbackHasBeenReady &&
+                        playbackError == null && !liveRefreshPending
+                    liveEdgeRecovery.observePlayback(now, livePlaybackElapsedMillis, eligible)
+                    if (liveRecovery.shouldRecover(now, livePlaybackElapsedMillis, eligible,
+                            player.playbackState == Player.STATE_ENDED)) {
+                        liveRefreshPending = true
+                        android.util.Log.w("NikTvPlayback", "Refreshing stopped/stalled ExoPlayer live stream")
+                        currentStreamRetry(0L)
+                    } else if (eligible && liveRecovery.exhausted && player.playbackState == Player.STATE_ENDED) {
+                        playbackError = "The live stream stopped. Retry to refresh the stream, or choose another player."
+                        controlsVisible = true
+                    }
+                }
             }
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
@@ -1399,10 +1463,6 @@ fun PlayerScreen(
             pictureEditorVisible -> {
                 pictureEditorVisible = false
                 appearancePreview = null
-            }
-            extraControlsOpen -> {
-                extraControlsOpen = false
-                extraControlsRequester.requestFocus()
             }
             controlsVisible -> {
                 controlsVisible = false
@@ -2110,7 +2170,7 @@ PlayerChromeIconButton(
                                         val selectedEngine = selectedPlayerChoice.nextPlayerChoice()
                                         selectedPlayerChoice = selectedEngine
                                         modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
-                                        engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                                        engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
                                         onPlaybackEngineChanged(selectedEngine)
                                         sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
                                     },
@@ -2628,14 +2688,17 @@ PlayerChromeIconButton(
                         canNavigate = hasPlaybackQueue,
                         onPrevious = onPlayPrevious,
                         onBack = onBack,
-                        onRetry = { onRetry(player.currentPosition.coerceAtLeast(0L)) },
+                        onRetry = {
+                            liveRecovery.reset(); liveEdgeRecovery.reset()
+                            onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
+                        },
                         onNext = onPlayNext,
                         alternatePlayerLabel = "VLC",
                         showAlternatePlayer = media.nativeSabr == null,
                         onSwitchPlayer = {
                             val selectedEngine = PlaybackEngine.VLC
                             selectedPlayerChoice = selectedEngine
-                            engineSwitchResumePosition = player.currentPosition.coerceAtLeast(0L)
+                            engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
                             onPlaybackEngineChanged(selectedEngine)
                             sessionEngineOverride = selectedEngine
                         },

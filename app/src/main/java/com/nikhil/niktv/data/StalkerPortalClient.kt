@@ -250,10 +250,11 @@ class StalkerPortalClient(private val context: Context) {
         val schedules = if (cached?.reusableFor(cacheKey, now) == true) cached.schedules else {
             val response = runCatching {
                 request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-                    "type" to "itv", "action" to "get_epg_info", "period" to "24"
+                    "type" to "itv", "action" to "get_epg_info", "period" to "1"
                 )))
             }.getOrElse {
                 if (it is kotlinx.coroutines.CancellationException) throw it
+                epgCache = PortalGuideCache(cacheKey, System.currentTimeMillis(), emptyMap())
                 return items
             }
             response.epgSchedulesByChannel().also { fresh ->
@@ -624,46 +625,31 @@ class StalkerPortalClient(private val context: Context) {
             .filter { it.endTimeMillis == null || it.endTimeMillis > now }
             .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
 
-        /*
-         * Some Ministra providers expose a channel in get_epg_info but return
-         * an empty get_short_epg payload for that same channel. The player
-         * calendar can therefore have the programme while a manual tile
-         * refresh incorrectly says that the provider supplied nothing. Reuse
-         * the full-guide cache first, then make one full-guide request only
-         * for this empty-short-guide case.
-         */
+        // A missing short guide must never download the portal-wide 24-hour EPG.
+        // The EPG table endpoint is scoped to one channel and one date.
         if (schedule.isEmpty()) {
             val cacheKey = "${session.endpointUrl}|${session.token.take(12)}"
             val cached = epgCache
-            val useCache = cached?.reusableFor(cacheKey, now, forceRefresh) == true
-            val fullSchedules = if (useCache) {
-                cached!!.schedules
-            } else {
-                request(
-                    session.profile,
-                    session.endpointUrl,
-                    session,
-                    authorizedParams(session, mapOf(
-                        "type" to "itv",
-                        "action" to "get_epg_info",
-                        "period" to "24"
-                    )),
-                    background = !userSelected,
-                    onProviderWait = onProviderWait,
-                    onRequestStarted = onRequestStarted
-                ).epgSchedulesByChannel().also { fresh ->
-                    epgCache = PortalGuideCache(cacheKey, System.currentTimeMillis(), fresh)
-                }
-            }
-            schedules = fullSchedules
-            schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
+            val cachedSchedule = cached?.takeIf { it.reusableFor(cacheKey, now, forceRefresh) }
+                ?.schedules?.let { it[item.id] ?: it[item.epgChannelId] }.orEmpty()
                 .filter { it.endTimeMillis == null || it.endTimeMillis > now }
-                .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
-            Log.i(
-                "NikTvLiveGuide",
-                "Channel ${item.id}: short EPG has no usable entries; " +
-                    "full guide cached=$useCache, usable entries=${schedule.size}"
-            )
+            schedule = if (cachedSchedule.isNotEmpty()) cachedSchedule else {
+                val date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(now))
+                val response = try {
+                    request(session.profile, session.endpointUrl, session,
+                        authorizedParams(session, mapOf("type" to "epg", "action" to "get_simple_data_table",
+                            "ch_id" to item.id, "date" to date, "p" to "0")),
+                        background = !userSelected, onProviderWait = onProviderWait,
+                        onRequestStarted = onRequestStarted)
+                } catch (oversized: PortalResponseTooLargeException) {
+                    Log.w("NikTvLiveGuide", "Provider returned oversized channel EPG; no full-guide retry")
+                    return@withContext item.withFreshLiveSchedule(emptyList(), now)
+                }
+                response.epgSchedulesByChannel(item.id)[item.id].orEmpty()
+                    .filter { it.endTimeMillis == null || it.endTimeMillis > now }
+                    .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
+            }
+            Log.i("NikTvLiveGuide", "Channel ${item.id}: scoped EPG entries=${schedule.size}")
         }
         item.withFreshLiveSchedule(schedule, System.currentTimeMillis())
     }
@@ -880,7 +866,7 @@ class StalkerPortalClient(private val context: Context) {
             val responseBody = response.body
             val declaredLength = responseBody?.contentLength() ?: 0L
             if (declaredLength > MAX_PORTAL_JSON_BYTES) {
-                throw IllegalStateException(
+                throw PortalResponseTooLargeException(
                     "NikTV rejected an unexpectedly large portal response " +
                         "(${declaredLength} bytes) for ${params["action"] ?: "unknown action"}."
                 )
@@ -889,7 +875,7 @@ class StalkerPortalClient(private val context: Context) {
                 val source = payload.source()
                 source.request(MAX_PORTAL_JSON_BYTES + 1L)
                 if (source.buffer.size > MAX_PORTAL_JSON_BYTES) {
-                    throw IllegalStateException(
+                    throw PortalResponseTooLargeException(
                         "NikTV rejected an unexpectedly large portal response " +
                             "(more than ${MAX_PORTAL_JSON_BYTES} bytes) for ${params["action"] ?: "unknown action"}."
                     )
@@ -1037,7 +1023,7 @@ class StalkerPortalClient(private val context: Context) {
         val blockedUntil = trafficPrefs.getLong("blocked_until", 0L)
         if (blockedUntil > now) {
             val seconds = ((blockedUntil - now + 999L) / 1000L).coerceAtLeast(1L)
-            throw PortalRateLimitCooldownException(seconds)
+            throw PortalRateLimitCooldownException(seconds, trafficPrefs.getString("cooldown_source", null))
         }
     }
 
@@ -1045,7 +1031,9 @@ class StalkerPortalClient(private val context: Context) {
         val strikes = (trafficPrefs.getInt("rate_limit_strikes", 0) + 1).coerceAtMost(5)
         val exponential = 30L * (1L shl (strikes - 1))
         val seconds = maxOf(retryAfter ?: 30L, exponential).coerceAtMost(30L * 60L)
-        trafficPrefs.edit().putInt("rate_limit_strikes", strikes)
+        val source = if (retryAfter != null && retryAfter >= exponential) "provider retry delay" else "NikTV retry backoff"
+        Log.w("NikTvPortalTraffic", "HTTP 429: cooldownSeconds=$seconds source=$source providerRetrySeconds=$retryAfter")
+        trafficPrefs.edit().putInt("rate_limit_strikes", strikes).putString("cooldown_source", source)
             .putLong("blocked_until", System.currentTimeMillis() + seconds * 1000L).apply()
     }
 
@@ -1317,9 +1305,12 @@ private class PortalHttpException(
     message: String
 ) : IllegalStateException(message)
 
-private class PortalRateLimitCooldownException(val remainingSeconds: Long) :
-    IllegalStateException("Portal requests are paused for $remainingSeconds seconds")
+private class PortalRateLimitCooldownException(val remainingSeconds: Long, source: String? = null) :
+    IllegalStateException("Portal requests are paused for $remainingSeconds seconds" +
+        (source?.let { " ($it)" } ?: ""))
 
 /** Top-level VOD containers often include an episode_id sentinel of zero. */
 internal fun isPortalEpisodeRow(isEpisode: Boolean, episodeId: String?): Boolean =
     isEpisode || (episodeId?.toLongOrNull()?.let { it > 0L } == true)
+
+private class PortalResponseTooLargeException(message: String) : IllegalStateException(message)

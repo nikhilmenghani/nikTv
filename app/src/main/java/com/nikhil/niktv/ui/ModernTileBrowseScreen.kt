@@ -2472,6 +2472,9 @@ internal fun ModernCompactMediaCard(
             dismiss = { menuOpen = false },
             toggleFavorite = onFavorite,
             openSeries = onOpenSeries,
+            trailerItem = item.takeUnless { it.episodeNumber != null },
+            trailerSeries = onOpenSeries != null,
+            onTrailerReturned = returningTile.requestFocus,
             markWatched = onMarkWatched,
             clear = onClear
         )
@@ -2494,8 +2497,39 @@ internal fun ModernTileActionsMenu(
     togglePin: (() -> Unit)? = null,
     refreshProgramme: (() -> Unit)? = null,
     refreshMatches: (() -> Unit)? = null,
-    markWatched: (() -> Unit)? = null
+    markWatched: (() -> Unit)? = null,
+    trailerItem: MediaItem? = null,
+    trailerSeries: Boolean = false,
+    onTrailerReturned: (() -> Boolean)? = null
 ) {
+    val trailerContext = LocalContext.current
+    var trailerOpen by remember(trailerItem?.id) { mutableStateOf(false) }
+    var restoringTrailerFocus by remember(trailerItem?.id) { mutableStateOf(false) }
+    var trailerRemoteReturn by remember(trailerItem?.id) { mutableStateOf(false) }
+    val trailerInputMode = LocalInputModeManager.current
+    val trailerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        trailerRemoteReturn = result.data?.getBooleanExtra("remote_navigation", false) == true
+        restoringTrailerFocus = true
+    }
+    val windowFocused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
+    val inputMode = LocalInputModeManager.current.inputMode
+    LaunchedEffect(restoringTrailerFocus, windowFocused, inputMode) {
+        if (!restoringTrailerFocus || !windowFocused || onTrailerReturned == null) return@LaunchedEffect
+        if (trailerRemoteReturn) trailerInputMode.requestInputMode(InputMode.Keyboard)
+        repeat(8) {
+            withFrameNanos { }
+            if (onTrailerReturned()) { restoringTrailerFocus = false; return@LaunchedEffect }
+            delay(40L)
+        }
+    }
+    if (trailerOpen && trailerItem != null) TrailerDialog(trailerItem, trailerSeries,
+        launch = { key ->
+            trailerLauncher.launch(android.content.Intent(trailerContext,
+                com.nikhil.niktv.TrailerPlayerActivity::class.java)
+                .putExtra("video_key", key).putExtra("title", trailerItem.title))
+        }, dismiss = { trailerOpen = false })
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = dismiss,
@@ -2503,6 +2537,11 @@ internal fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        trailerItem?.takeUnless { it.isAdult }?.let {
+            NikDropdownMenuItem(text = { Text("Watch trailer") },
+                leadingIcon = { Icon(Icons.Default.SmartDisplay, null) },
+                onClick = { dismiss(); trailerOpen = true })
+        }
         markWatched?.let { action ->
             NikDropdownMenuItem(
                 text = { Text("Mark as watched") },
@@ -2519,7 +2558,7 @@ internal fun ModernTileActionsMenu(
         }
         refreshProgramme?.let { refresh ->
             NikDropdownMenuItem(
-                text = { Text("Refresh programme") },
+                text = { Text("Force fetch programme") },
                 leadingIcon = { Icon(Icons.Default.Refresh, null) },
                 onClick = {
                     dismiss()
@@ -3434,9 +3473,12 @@ private fun ModernIptvCollection(
             close = close,
             trailingAction = {
                 FilledTonalIconButton(
-                    onClick = refresh,
-                    enabled = !state.loading && !state.catalogLoadingMore &&
-                        !state.categoryRefreshing && !state.categoryFindSearching
+                    onClick = {
+                        if (!state.loading && !state.catalogLoadingMore &&
+                            !state.categoryRefreshing && !state.categoryFindSearching) refresh()
+                    },
+                    // Keep the focused header control attached while its spinner runs.
+                    enabled = true
                 ) {
                     if (state.categoryRefreshing) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -3681,6 +3723,7 @@ private fun ModernIptvCollection(
                 offlineRevision = state.offlineDownloadRevision,
                 modifier = tileModifier,
                 subtitle = media.description.orEmpty(),
+                trailerSeries = category.type == CatalogType.SERIES,
                 onClick = {
                     openItem(media)
                 },
@@ -3879,11 +3922,11 @@ internal fun FullDescriptionDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            NikTvSecondaryActionButton(
                 onClick = dismiss,
                 modifier = Modifier
+                    .fillMaxWidth()
                     .focusRequester(closeFocusRequester)
-                    .remoteFocusFrame(RoundedCornerShape(8.dp))
             ) {
                 Text("Close")
             }
@@ -4103,13 +4146,9 @@ internal fun ModernLiveChannelTile(
                                             )
                                         }
                                     } else detail?.let {
-                                        Text(
-                                            it,
-                                            color = Color.White.copy(alpha = .68f),
-                                            style = if (isTv) modernTvTileSubtitleStyle() else MaterialTheme.typography.bodySmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        Text(it, color = Color.White.copy(alpha = .68f),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -4132,10 +4171,7 @@ internal fun ModernLiveChannelTile(
                             Icon(Icons.Default.PushPin, "Pinned channel", Modifier.size(16.dp),
                                 tint = ModernBrandAccent)
                         }
-                        if (currentProgrammeTitle == null) {
-                            Icon(Icons.Default.PlayArrow, null, Modifier.size(22.dp),
-                                tint = Color.White.copy(alpha = .90f))
-                        }
+
                     }
                 }
                 programmeProgress?.takeIf { currentProgrammeTitle != null }?.let { progress ->
@@ -4184,6 +4220,7 @@ private fun ModernCollectionPoster(
     onFavorite: (() -> Unit)? = null,
     onRequestDescriptionMetadata: (() -> Unit)? = null,
     compactLandscape: Boolean = false,
+    trailerSeries: Boolean = false,
     isTv: Boolean
 ) {
     val returningTile = rememberReturningTile(onClick)
@@ -4468,6 +4505,9 @@ private fun ModernCollectionPoster(
             ModernTileActionsMenu(
                 expanded = menuOpen,
                 refreshMatches = refreshIptvMatches,
+                trailerItem = item,
+                trailerSeries = trailerSeries || item.id.startsWith("tmdb-series:"),
+                onTrailerReturned = returningTile.requestFocus,
                 isFavorite = isFavorite,
                 dismiss = { menuOpen = false },
                 toggleFavorite = favoriteAction,

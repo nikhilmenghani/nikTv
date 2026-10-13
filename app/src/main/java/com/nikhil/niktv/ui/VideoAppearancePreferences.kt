@@ -697,8 +697,7 @@ internal fun PlayerQueueOverlay(
     val compactQueueGrid =
         touchQueueRail && configuration.smallestScreenWidthDp < 600
     val queueColumnCount = when {
-        tvQueueGrid && liveChannelQueue -> 2
-        tvQueueGrid -> 6
+        tvQueueGrid -> 2
         compactQueueGrid -> 3
         configuration.screenWidthDp < 900 -> 4
         else -> 5
@@ -773,7 +772,7 @@ internal fun PlayerQueueOverlay(
     }
     val queueCardHeight = when {
         tvQueueGrid && liveChannelQueue -> if (liveXtream) 116.dp else 96.dp
-        tvQueueGrid -> 112.dp
+        tvQueueGrid -> 96.dp
         else -> (touchQueueSheetHeight - 40.dp).coerceAtLeast(96.dp)
     }
     // Touch queues are a single horizontal rail. Size cards from the usable
@@ -956,13 +955,16 @@ internal fun PlayerQueueOverlay(
 
         if (
             alreadyVisible &&
+            (!tvQueueGrid || gridState.firstVisibleItemScrollOffset == 0) &&
             runCatching { requester.requestFocus() }.getOrDefault(false)
         ) {
             return
         }
 
         scope.launch {
-            gridState.scrollToItem(layoutIndex)
+            gridState.scrollToItem(
+                if (tvQueueGrid) (layoutIndex / queueColumnCount) * queueColumnCount else layoutIndex
+            )
             repeat(4) {
                 withFrameNanos { }
                 if (
@@ -1608,6 +1610,7 @@ internal fun PlayerQueueOverlay(
                             .fillMaxWidth()
                             .clipToBounds(),
                         state = gridState,
+                        contentPadding = PaddingValues(vertical = 4.dp),
                         horizontalArrangement =
                             Arrangement.spacedBy(
                                 queueGridHorizontalSpacing

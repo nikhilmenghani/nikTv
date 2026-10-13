@@ -70,7 +70,8 @@ internal fun rememberCollectionPagination(
     }
 }
 
-internal data class ReturningTile(val modifier: Modifier, val open: () -> Unit)
+internal data class ReturningTile(val modifier: Modifier, val open: () -> Unit,
+    val requestFocus: () -> Boolean = { false })
 
 @Composable
 internal fun rememberReturningTile(open: () -> Unit): ReturningTile {
@@ -86,10 +87,10 @@ internal fun rememberReturningTile(open: () -> Unit): ReturningTile {
             returning = false
         }
     }
-    return ReturningTile(Modifier.focusRequester(requester)) {
+    return ReturningTile(Modifier.focusRequester(requester), open = {
         returning = true
         open()
-    }
+    }, requestFocus = { runCatching { requester.requestFocus() }.getOrDefault(false) })
 }
 
 internal fun appendedFocusIndex(previous: List<String>, current: List<String>): Int {

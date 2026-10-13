@@ -8,7 +8,8 @@ class PortalGuideCacheTest {
     @Test fun emptyProviderGuideIsSharedBrieflyThenRetried() {
         val cache = PortalGuideCache("provider", 1000L, emptyMap())
         assertTrue(cache.reusableFor("provider", 1001L))
-        assertFalse(cache.reusableFor("provider", 61_000L))
+        assertTrue(cache.reusableFor("provider", 61_000L))
+        assertFalse(cache.reusableFor("provider", 301_000L))
     }
 
     @Test fun manualRefreshAlwaysBypassesCacheAndOtherProfilesCannotReuseIt() {

@@ -225,6 +225,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         spacingMillis = 0L
     )
     private val liveGuideAttemptedAt = mutableMapOf<String, Long>()
+    private val liveGuideRetryPolicy = LiveGuideRetryPolicy()
     private var lastVisibleLiveGuideIds: Pair<String, List<String>>? = null
     private var liveGuideCacheSaveJob: Job? = null
     private var liveGuideExpiryJob: Job? = null
@@ -1139,10 +1140,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         liveGuideExpiryJob = null
         if (paused || targets.isEmpty()) return
         val now = System.currentTimeMillis()
-        val refreshAt = nextVisibleProgrammeExpiry(
-            targets.mapNotNull(::visibleLiveGuideItem),
-            now
-        ) ?: return
+        val refreshAt = (listOfNotNull(nextVisibleProgrammeExpiry(
+            targets.mapNotNull(::visibleLiveGuideItem), now)) +
+            targets.map { liveGuideRetryPolicy.retryAt(it.profileKey, it.itemId) }.filter { it > now })
+            .minOrNull() ?: return
         liveGuideExpiryJob = viewModelScope.launch {
             delay((refreshAt - System.currentTimeMillis()).coerceAtLeast(0L) + 1_000L)
             val snapshot = _state.value
@@ -1176,6 +1177,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (selectedLiveGuideTarget == target && channelScheduleJob?.isActive == true) return false
         val item = visibleLiveGuideItem(target) ?: return false
         val now = System.currentTimeMillis()
+        if (now < liveGuideRetryPolicy.retryAt(target.profileKey, target.itemId)) return false
         val current = item.currentLiveProgramme(now)
         val needsTimedProgramme = current == null ||
             current.startTimeMillis == null || current.endTimeMillis == null
@@ -1224,10 +1226,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 "Channel ${item.id}: current programme=${enriched.currentLiveProgramme(System.currentTimeMillis()) != null}, " +
                     "${enriched.liveSchedule.size} stored guide entries in ${System.currentTimeMillis() - attemptedAt}ms"
             )
+            liveGuideRetryPolicy.record(profileKey, item.id,
+                enriched.currentLiveProgramme(System.currentTimeMillis()) != null, System.currentTimeMillis())
             publishLiveChannelGuide(profileKey, enriched)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             liveGuideAttemptedAt.remove(key, attemptedAt)
             throw cancelled
+        } catch (error: Exception) {
+            liveGuideRetryPolicy.record(profileKey, item.id, false, System.currentTimeMillis())
+            throw error
         } finally {
             _state.update { it.copy(
                 liveGuideLoadingIds = it.liveGuideLoadingIds - item.id,
@@ -1278,7 +1285,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         channelScheduleJob?.cancel()
         publishLiveChannelGuide(target.profileKey, item)
         // An old non-empty schedule can be expired; check what is airing now.
-        if (!force && item.currentLiveProgramme(System.currentTimeMillis()) != null) return
+        if (!force && (item.currentLiveProgramme(System.currentTimeMillis()) != null ||
+            System.currentTimeMillis() < liveGuideRetryPolicy.retryAt(target.profileKey, item.id))) return
         fun feedback(message: String) {
             if (force && _state.value.session?.profile?.cacheKey() == target.profileKey) {
                 Toast.makeText(getApplication(), message, Toast.LENGTH_SHORT).show()
@@ -1314,6 +1322,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         })
                 }
                 Log.d("NikTvLiveGuide", "Selected channel ${item.id}: ${enriched.liveSchedule.size} guide entries")
+                liveGuideRetryPolicy.record(target.profileKey, item.id,
+                    enriched.currentLiveProgramme(System.currentTimeMillis()) != null, System.currentTimeMillis())
                 publishLiveChannelGuide(target.profileKey, enriched)
                 val now = System.currentTimeMillis()
                 val previousProgramme = item.currentLiveProgramme(now)
@@ -1328,7 +1338,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 throw cancelled
             } catch (error: Exception) {
                 Log.w("NikTvLiveGuide", "Could not load the selected channel guide", error)
-                feedback("Could not refresh programme. Please try again.")
+                liveGuideRetryPolicy.record(target.profileKey, item.id, false, System.currentTimeMillis())
+                feedback(error.message ?: "Could not refresh programme. Please try again.")
             } finally {
                 _state.update { it.copy(
                     liveGuideLoadingIds = it.liveGuideLoadingIds - item.id,
@@ -1498,7 +1509,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         userRequested: Boolean = false
     ) {
         val key = categoryRefreshKey(session, category)
-        if (categoryRefreshJobs[key]?.isActive == true) return
+        val existingRefresh = categoryRefreshJobs[key]?.takeIf { it.isActive }
+        if (existingRefresh != null) {
+            if (userRequested) {
+                _state.update { it.copy(categoryRefreshing = true) }
+                viewModelScope.launch {
+                    existingRefresh.join()
+                    _state.update { it.copy(categoryRefreshing = false) }
+                    Toast.makeText(getApplication(), "Category refresh finished", Toast.LENGTH_SHORT).show()
+                }
+            }
+            return
+        }
         categoryRefreshJobs[key] = viewModelScope.launch {
             if (userRequested) _state.update { it.copy(categoryRefreshing = true, error = null) }
             try {
@@ -1516,7 +1538,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val currentCache = _state.value.browseCachesByType[category.type]
                     ?.takeIf { it.profileKey == profileKey }
-                    ?: return@launch
+                    ?: BrowseCatalogCache(profileKey, category.type, System.currentTimeMillis(),
+                        _state.value.rawCategoriesByType[category.type].orEmpty().ifEmpty { listOf(category) }, emptyMap())
                 val refreshedAt = System.currentTimeMillis()
                 val cachedItems = currentCache.itemsByCategory[category.id].orEmpty()
                 val cachedPage = currentCache.pagesByCategory[category.id] ?: 1
@@ -1573,6 +1596,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 store.saveBrowseCatalog(updated)
+                if (userRequested) Toast.makeText(getApplication(), "Category refreshed", Toast.LENGTH_SHORT).show()
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -1984,6 +2008,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             val now = System.currentTimeMillis()
             val key = "$profileKey|${category.id}|${channel.id}"
             if (channel.currentLiveProgramme(now) == null &&
+                now >= liveGuideRetryPolicy.retryAt(profileKey, channel.id) &&
                 now - (liveGuideAttemptedAt[key] ?: 0L) >= 2 * 60_000L) {
                 try {
                     delay(650L)
@@ -1991,6 +2016,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     if (!isCurrent()) return ""
                     liveGuideAttemptedAt[key] = System.currentTimeMillis()
+                    liveGuideRetryPolicy.record(profileKey, channel.id,
+                        enriched.currentLiveProgramme(System.currentTimeMillis()) != null, System.currentTimeMillis())
                     publishGuide(listOf(enriched))
                     consecutiveFailures = 0
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -2028,18 +2055,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
         val session = snapshot.session ?: return
         val category = snapshot.selectedCategory ?: return
-        if (category.type == CatalogType.LIVE_TV &&
-            snapshot.modernIptvCategory?.id == category.id) {
-            // Retry the channels currently on screen immediately, even when
-            // an automatic first-page refresh is already running.
-            val visibleIds = lastVisibleLiveGuideIds
-                ?.takeIf { it.first == categoryRefreshKey(session, category) }
-                ?.second.orEmpty()
-            if (visibleIds.isNotEmpty()) {
-                val itemsById = snapshot.items.associateBy { it.id }
-                loadVisibleLiveGuides(visibleIds.mapNotNull { itemsById[it] }, force = true)
-            }
-        }
+        // Category refresh updates channel/media listings. Programme refresh remains
+        // an explicit per-channel action from the long-press menu.
         viewModelScope.launch {
             withContext(Dispatchers.IO) { portal.invalidateCatalog(session.profile, category) }
             if (_state.value.session?.profile == session.profile &&
@@ -3551,8 +3568,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         tmdbAvailabilityJob?.cancel()
         val profileKey = session.profile.cacheKey()
         val section = _state.value.modernTmdbSection ?: return
+        if (forceId == null) {
+            // Browsing only paints saved badges. Provider checks are user initiated.
+            tmdbAvailabilityJob = viewModelScope.launch {
+                val saved = tmdbAvailability.read(profileKey, type).entries.mapValues { it.value.matches }
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey || current.modernTmdbSection != section) current
+                    else if (type == CatalogType.MOVIES) current.copy(modernTmdbMovieMatches = saved)
+                    else current.copy(modernTmdbSeriesMatches = saved)
+                }
+            }
+            return
+        }
         tmdbAvailabilityJob = viewModelScope.launch {
-            var forcedId = forceId
             while (isActive) {
                 val snapshot = _state.value
                 if (snapshot.session?.profile?.cacheKey() != profileKey ||
@@ -3569,8 +3597,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         modernTmdbMovieMatches = current.modernTmdbMovieMatches + cachedMatches)
                     else current.copy(modernTmdbSeriesMatches = current.modernTmdbSeriesMatches + cachedMatches)
                 }
-                val manualId = forcedId
-                forcedId = null
+                val manualId = forceId
                 val pending = ids.filter { id ->
                     if (manualId != null) id == manualId else saved[id]?.isFresh(now, interval) != true
                 }
@@ -3600,8 +3627,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }.getOrElse { error ->
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
                         if (manualId != null) _state.update { it.copy(error = error.message ?: "Could not refresh IPTV matches") }
-                        delay(60_000L)
-                        continue
+                        return@launch
                     }
                 } else null
                 if (catalog != null) tmdbAvailabilityCatalogs[profileKey to type] = catalog
@@ -3669,8 +3695,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     if (catalog == null) delay(2_000L)
                 }
-                // Failed checks remain due, but cannot create a tight retry loop.
-                delay(60_000L)
+                // One explicit tile refresh, never a page-wide background retry.
+                return@launch
             }
         }
     }
