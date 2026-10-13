@@ -671,9 +671,10 @@ internal fun VlcPlayerScreen(
             controlsVisible = true
             awaitCancellation()
         } finally {
+            val cleanupStartedAt = android.os.SystemClock.elapsedRealtime()
             try {
-            // Stop native output before explicitly abandoning its surface. Detaching
-            // first lets the hardware decoder enqueue into an invalid BufferQueue.
+            // Native stop can wait for the downloader/decoder. This coroutine owns
+            // shutdown; view disposal must never duplicate stop on the UI thread.
             withContext(NonCancellable + Dispatchers.Main.immediate) {
                 player.setEventListener(null)
             }
@@ -704,6 +705,7 @@ internal fun VlcPlayerScreen(
             }
             } finally {
                 if (ownsPlaybackSlot) vlcPlaybackLifecycle.unlock()
+                android.util.Log.i("NikTvPlayback", "VLC cleanup completed in ${android.os.SystemClock.elapsedRealtime() - cleanupStartedAt}ms")
             }
         }
     }
@@ -1150,8 +1152,10 @@ internal fun VlcPlayerScreen(
                 update = { layout ->
                     val previouslyAttached = surfacePlayer[0]
                     if (previouslyAttached !== player) {
+                        // The previous player's coroutine stops/releases it on IO,
+                        // and the playback mutex holds back the replacement stream.
+                        // Detach its callbacks before attaching this retained view.
                         runCatching { previouslyAttached?.setEventListener(null) }
-                        runCatching { previouslyAttached?.stop() }
                         runCatching { previouslyAttached?.detachViews() }
                         runCatching { player.detachViews() }
                         player.attachViews(layout, null, true, false)
@@ -1172,15 +1176,13 @@ internal fun VlcPlayerScreen(
                     player.updateVideoSurfaces()
                 },
                 onRelease = { layout ->
-                    // Stop native video output while the surface is still valid so
-                    // leaving playback cannot enqueue frames into an abandoned
-                    // BufferQueue. The coroutine cleanup remains the owner of
-                    // releasing MediaPlayer and LibVLC resources.
+                    // Removing the video view must not wait for a network read or
+                    // native decoder shutdown. Detach callbacks here; the owning
+                    // coroutine performs stop/release on IO exactly once.
                     layout.setOnTouchListener(null)
                     layout.setOnKeyListener(null)
                     val attached = surfacePlayer[0]
                     runCatching { attached?.setEventListener(null) }
-                    runCatching { attached?.stop() }
                     runCatching { attached?.detachViews() }
                     surfacePlayer[0] = null
                     if (videoView === layout) videoView = null
