@@ -166,7 +166,8 @@ internal fun Modifier.playerQueueSwipeObserver(
 internal fun PlaybackEngine.nextPlayerChoice(): PlaybackEngine = when (this) {
     PlaybackEngine.AUTO -> PlaybackEngine.MEDIA3
     PlaybackEngine.MEDIA3 -> PlaybackEngine.VLC
-    PlaybackEngine.VLC -> PlaybackEngine.AUTO
+    PlaybackEngine.VLC -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.AUTO
+    PlaybackEngine.MPV -> PlaybackEngine.AUTO
     PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
 }
 
@@ -174,13 +175,15 @@ internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
     PlaybackEngine.AUTO -> "Auto"
     PlaybackEngine.MEDIA3 -> "ExoPlayer"
     PlaybackEngine.VLC -> "VLC"
+    PlaybackEngine.MPV -> "MPV"
     PlaybackEngine.EXOPLAYER -> "ExoPlayer"
 }
 
 internal val PLAYER_ENGINE_OPTIONS = listOf(
     PlaybackEngine.AUTO,
     PlaybackEngine.MEDIA3,
-    PlaybackEngine.VLC
+    PlaybackEngine.VLC,
+    PlaybackEngine.MPV
 )
 
 /*
@@ -277,6 +280,7 @@ internal fun PlayerControlsTimeoutButton(
 
 private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
     PlaybackEngine.VLC -> "VLC"
+    PlaybackEngine.MPV -> "MPV"
     else -> "ExoPlayer"
 }
 
@@ -288,6 +292,7 @@ private fun PlaybackEngine.resolvePlayerEngine(
         if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC
         else PlaybackEngine.MEDIA3
     PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
+    PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
     else -> this
 }
 
@@ -423,11 +428,12 @@ fun PlayerScreen(
     }
     val configuredEngine = if (media.offlinePlayback) PlaybackEngine.MEDIA3 else when (playbackEngine) {
         PlaybackEngine.VLC -> PlaybackEngine.VLC
+        PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
         PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
-    val effectiveEngine = if (media.nativeSabr != null) PlaybackEngine.MEDIA3 else sessionEngineOverride ?: configuredEngine
+    val effectiveEngine = if (media.nativeSabr != null || media.separateAudioUrl != null) PlaybackEngine.MEDIA3 else sessionEngineOverride ?: configuredEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
@@ -682,7 +688,14 @@ fun PlayerScreen(
         mutableStateOf<Long?>(null)
     }
 
-    val createLocalPlayer = { resumePosition: Long? ->
+    val createLocalPlayer: (Long?) -> Player = { resumePosition ->
+        if (effectiveEngine == PlaybackEngine.MPV) {
+            MpvPlayerAdapter(context, media, playbackRestartPosition(media.catalogType,
+                resumePosition ?: engineSwitchResumePosition)).apply {
+                prepare()
+                playWhenReady = true
+            }
+        } else {
         val renderersFactory = DefaultRenderersFactory(context).apply {
             if (effectiveEngine == PlaybackEngine.MEDIA3) {
                 setEnableDecoderFallback(true)
@@ -738,6 +751,7 @@ fun PlayerScreen(
             playWhenReady = true
             repeatMode = Player.REPEAT_MODE_OFF
         }
+        }
     }
 
     /*
@@ -766,7 +780,8 @@ fun PlayerScreen(
     }
     val localPlayer = localLease?.player
     DisposableEffect(localPlayer, media.playbackAttemptId) {
-        if (localPlayer == null || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) {
+        val exoPlayer = localPlayer as? ExoPlayer
+        if (exoPlayer == null || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) {
             return@DisposableEffect onDispose { }
         }
         val diagnostics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
@@ -793,8 +808,8 @@ fun PlayerScreen(
                 android.util.Log.w("NikTvStreamLoad", "type=${mediaLoadData.dataType} elapsedMs=${loadEventInfo.loadDurationMs} error=${error.javaClass.simpleName} cause=${error.cause?.javaClass?.simpleName} http=$httpStatus retryStopped=$wasCanceled")
             }
         }
-        localPlayer.addAnalyticsListener(diagnostics)
-        onDispose { localPlayer.removeAnalyticsListener(diagnostics) }
+        exoPlayer.addAnalyticsListener(diagnostics)
+        onDispose { exoPlayer.removeAnalyticsListener(diagnostics) }
     }
     val audioFailureFallbackEnabled = remember(context) { AudioFailurePreferences.enabled(context) }
     var audioDisabledAfterFailure by remember(localPlayer) { mutableStateOf(false) }
@@ -835,6 +850,14 @@ fun PlayerScreen(
     }
 
     val currentLocalPlayer by rememberUpdatedState(localPlayer)
+    LaunchedEffect(localPlayer, subtitleDelayMs, subtitleAppearance) {
+        if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) {
+            (localPlayer as? MpvPlayerAdapter)?.let {
+                it.setSubtitleDelay(subtitleDelayMs)
+                it.setSubtitleAppearance(subtitleAppearance)
+            }
+        }
+    }
     val currentCastSessionActive by rememberUpdatedState(castSessionActive)
 
     DisposableEffect(castPlayer, media.progressKey) {
@@ -2879,6 +2902,7 @@ internal fun PlaybackEngine.playerChoiceBadge(): String = when (this) {
     PlaybackEngine.AUTO -> "AUTO"
     PlaybackEngine.MEDIA3, PlaybackEngine.EXOPLAYER -> "EXO"
     PlaybackEngine.VLC -> "VLC"
+    PlaybackEngine.MPV -> "MPV"
 }
 
 private object FailedDecoderRegistry {

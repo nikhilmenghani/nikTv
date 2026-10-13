@@ -1,0 +1,18 @@
+NikTV uses dev.jdtech.mpv:libmpv:1.0.0, an optional Android MPV backend.
+
+Wrapper source and release (MIT):
+https://github.com/jarnedemeulemeester/libmpv-android/tree/v1.0.0
+https://github.com/jarnedemeulemeester/libmpv-android/releases/tag/v1.0.0
+
+The MIT wrapper license does not replace the licenses of its native libraries.
+The published native build includes MPV 0.41.0 and FFmpeg 8.1, with FFmpeg's
+GPL/version3 build options enabled. Redistribution must comply with the native
+libraries' applicable source and license requirements, including GPLv3.
+
+Corresponding native build scripts and dependency versions:
+https://github.com/jarnedemeulemeester/libmpv-android/tree/v1.0.0/buildscripts
+https://github.com/mpv-player/mpv/tree/v0.41.0
+https://github.com/FFmpeg/FFmpeg/tree/n8.1
+
+Included notices: WRAPPER-LICENSE, MPV-COPYRIGHT, COPYING.GPLv3.
+The upstream release/build scripts list the remaining native dependencies.

@@ -50,11 +50,9 @@ import com.nikhil.niktv.data.SubtitleSearchRequest
 import com.nikhil.niktv.data.LiveTvRecorder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
@@ -295,10 +293,16 @@ internal fun VlcPlayerScreen(
         vlcPlaybackOptions(media.catalogType == CatalogType.LIVE_TV, media.offlinePlayback,
             isHlsPlayback(media.playbackFormat, media.url))
     }
-    val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
-        LibVLC(context, ArrayList(playbackOptions))
+    // Retain the AndroidView during channel changes. Recreating it while the old
+    // decoder stops can abandon its BufferQueue and introduce navigation stalls.
+    val preparedSession = remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+        VlcPlaybackSession.create(context, playbackOptions)
     }
-    val player = remember(libVlc) { MediaPlayer(libVlc) }
+    DisposableEffect(preparedSession) {
+        onDispose { NativePlaybackWorker.scope.launch { preparedSession.close() } }
+    }
+    val libVlc = preparedSession.lib
+    val player = preparedSession.player
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
     val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
     var streamTerminated by remember(player) { mutableStateOf(false) }
@@ -317,7 +321,7 @@ internal fun VlcPlayerScreen(
         if (requested && media.catalogType == CatalogType.LIVE_TV &&
             (streamTerminated || error != null)) {
             refreshLiveStream(manual = true)
-        } else if (requested) player.play() else player.pause()
+        } else preparedSession.command { if (requested) it.play() else it.pause() }
     }
     LaunchedEffect(player, refreshPending) {
         if (refreshPending) {
@@ -415,7 +419,7 @@ internal fun VlcPlayerScreen(
     val currentSetGestureFeedback by rememberUpdatedState<(Pair<Boolean, Float>?) -> Unit> { gestureFeedback = it }
     val currentPlaybackRequested by rememberUpdatedState(playbackRequested)
     val currentSetPlaybackRequested by rememberUpdatedState<(Boolean) -> Unit> { playbackRequested = it }
-    val currentPlayer by rememberUpdatedState(player)
+    val currentNativeSession by rememberUpdatedState(preparedSession)
     val currentSeekable by rememberUpdatedState(seekable)
     val currentDuration by rememberUpdatedState(duration)
     val currentCatalogType by rememberUpdatedState(media.catalogType)
@@ -434,7 +438,7 @@ internal fun VlcPlayerScreen(
     }
     PauseTvPlaybackInBackground {
         playbackRequested = false
-        player.pause()
+        preparedSession.command { it.pause() }
         controlsVisible = true
     }
     DisposableEffect(pipActivity) {
@@ -634,7 +638,7 @@ internal fun VlcPlayerScreen(
             // preparation on a worker prevents that mutex from freezing Compose
             // input dispatch and triggering an ANR.
             var preparedExternalSubtitle = false
-            withContext(Dispatchers.IO) {
+            withContext(NativePlaybackWorker.dispatcher) {
                 val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
                     // Prefer device-supported hardware decoders. With force=false,
                     // VLC retains its software decoder fallback and device exclusions.
@@ -660,7 +664,7 @@ internal fun VlcPlayerScreen(
             // Check on the main thread after asynchronous media preparation.
             // Home may have been pressed while the stream was opening.
             if (!tvBackgroundPolicy || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
-                    androidx.lifecycle.Lifecycle.State.STARTED) == true) player.play()
+                    androidx.lifecycle.Lifecycle.State.STARTED) == true) preparedSession.command { it.play() }
             if (preparedExternalSubtitle) externalSubtitleAttached = true
             awaitCancellation()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -671,41 +675,16 @@ internal fun VlcPlayerScreen(
             controlsVisible = true
             awaitCancellation()
         } finally {
-            val cleanupStartedAt = android.os.SystemClock.elapsedRealtime()
             try {
-            // Native stop can wait for the downloader/decoder. This coroutine owns
-            // shutdown; view disposal must never duplicate stop on the UI thread.
-            withContext(NonCancellable + Dispatchers.Main.immediate) {
-                player.setEventListener(null)
-            }
-            val finalTiming = withContext(NonCancellable + Dispatchers.IO) {
-                val position = (
-                    if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
-                    else player.time
-                ).coerceAtLeast(0L)
-                val length = player.length.coerceAtLeast(0L)
-                runCatching { player.stop() }
-                position to length
-            }
-            // VideoHelper surface callbacks belong to the main looper. Keep
-            // detach there, while potentially blocking native calls stay on IO.
-            try {
-                withContext(NonCancellable + Dispatchers.Main.immediate) {
-                    player.detachViews()
-                }
-            } finally {
-                withContext(NonCancellable + Dispatchers.IO) {
-                    runCatching { player.release() }
-                    runCatching { libVlc.release() }
-                }
-            }
+            val finalTiming = preparedSession.close()
             if (media.progressKey.isNotBlank() &&
                 media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
-                onProgress(media.progressKey, finalTiming.first, finalTiming.second)
+                onProgress(media.progressKey,
+                    if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else finalTiming.first,
+                    finalTiming.second)
             }
             } finally {
                 if (ownsPlaybackSlot) vlcPlaybackLifecycle.unlock()
-                android.util.Log.i("NikTvPlayback", "VLC cleanup completed in ${android.os.SystemClock.elapsedRealtime() - cleanupStartedAt}ms")
             }
         }
     }
@@ -743,7 +722,7 @@ internal fun VlcPlayerScreen(
                 // Seek exactly once after VLC reaches Playing. Retrying this seek
                 // every polling tick makes keyframe-based VOD streams replay the
                 // same opening segment several times before playback can advance.
-                player.time = target
+                preparedSession.command { it.time = target }
                 pendingInitialResumePosition = 0L
                 position = target
             } else if (pendingResume > 0L) {
@@ -1098,17 +1077,17 @@ internal fun VlcPlayerScreen(
                             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                                 val requested = !currentPlaybackRequested
                                 currentSetPlaybackRequested(requested)
-                                if (requested) currentPlayer.play() else currentPlayer.pause()
+                                currentNativeSession.command { if (requested) it.play() else it.pause() }
                                 currentShowControls()
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY -> {
                                 currentSetPlaybackRequested(true)
-                                currentPlayer.play(); currentShowControls(); true
+                                currentNativeSession.command { it.play() }; currentShowControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_PAUSE -> {
                                 currentSetPlaybackRequested(false)
-                                currentPlayer.pause(); currentShowControls(); true
+                                currentNativeSession.command { it.pause() }; currentShowControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
                                 if (
@@ -1117,7 +1096,7 @@ internal fun VlcPlayerScreen(
                                 ) {
                                     currentPlayPrevious()
                                 } else {
-                                    if (currentSeekable) currentPlayer.time = (currentPlayer.time - 10_000L).coerceAtLeast(0L)
+                                    if (currentSeekable) currentNativeSession.command { it.time = (it.time - 10_000L).coerceAtLeast(0L) }
                                     currentShowControls()
                                 }
                                 true
@@ -1129,7 +1108,7 @@ internal fun VlcPlayerScreen(
                                 ) {
                                     currentPlayNext()
                                 } else {
-                                    if (currentSeekable) currentPlayer.time = (currentPlayer.time + 10_000L).coerceAtMost(currentDuration)
+                                    if (currentSeekable) currentNativeSession.command { it.time = (it.time + 10_000L).coerceAtMost(currentDuration) }
                                     currentShowControls()
                                 }
                                 true

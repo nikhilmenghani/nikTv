@@ -3487,9 +3487,14 @@ internal fun PlaybackEngineSettingsContent(
         Triple(
             PlaybackEngine.VLC,
             "VLC",
-            "Use software decoding and broad format compatibility."
+            "Use hardware decoding with broad format compatibility."
+        ),
+        Triple(
+            PlaybackEngine.MPV,
+            "MPV",
+            "Use an alternative player with a 32 MB packet buffer."
         )
-    )
+    ).filter { it.first != PlaybackEngine.MPV || mpvSupportedSdk(android.os.Build.VERSION.SDK_INT) }
 
     if (compact) {
         val selectedDescription =

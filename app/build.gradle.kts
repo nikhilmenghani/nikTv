@@ -25,8 +25,46 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// All native players share one process-level C++ runtime. Pin MPV's newer
+// backwards-compatible runtime rather than picking an older transitive copy.
+val mpvNativeRuntime = configurations.create("mpvNativeRuntime") {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+dependencies { add(mpvNativeRuntime.name, "dev.jdtech.mpv:libmpv:1.0.0") }
+abstract class PrepareMpvNativeRuntime : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val archive: org.gradle.api.file.RegularFileProperty
+    @get:OutputDirectory
+    abstract val outputDirectory: org.gradle.api.file.DirectoryProperty
+    @get:javax.inject.Inject
+    abstract val files: org.gradle.api.file.FileSystemOperations
+    @get:javax.inject.Inject
+    abstract val archives: org.gradle.api.file.ArchiveOperations
+
+    @TaskAction fun extract() {
+        files.sync {
+            from(archives.zipTree(archive)) {
+                include("jni/**/libc++_shared.so")
+                eachFile { path = path.removePrefix("jni/") }
+            }
+            includeEmptyDirs = false
+            into(outputDirectory)
+        }
+    }
+}
+val prepareMpvNativeRuntime = tasks.register<PrepareMpvNativeRuntime>("prepareMpvNativeRuntime") {
+    archive.set(layout.file(mpvNativeRuntime.elements.map { it.single().asFile }))
+    outputDirectory.set(layout.buildDirectory.dir("generated/mpv-jni"))
+}
+androidComponents.onVariants { variant ->
+    variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareMpvNativeRuntime) { it.outputDirectory }
+}
+
 android {
     namespace = "com.nikhil.niktv"
+    packaging { jniLibs.pickFirsts += "**/libc++_shared.so" }
     compileSdk = 36
     defaultConfig {
         applicationId = "com.nikhil.niktv"
@@ -147,6 +185,7 @@ dependencies {
 
     implementation("androidx.media3:media3-database:1.8.0")
     implementation("androidx.media3:media3-transformer:1.8.0")
+    implementation("dev.jdtech.mpv:libmpv:1.0.0")
     implementation("org.videolan.android:libvlc-all:3.6.5")
     debugImplementation("androidx.compose.ui:ui-tooling")
     androidTestImplementation("androidx.test:runner:1.7.0")

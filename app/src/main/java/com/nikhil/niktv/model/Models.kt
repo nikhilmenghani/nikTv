@@ -359,7 +359,7 @@ data class PlayingMedia(
 )
 
 @Serializable
-enum class PlaybackEngine { AUTO, MEDIA3, VLC, EXOPLAYER }
+enum class PlaybackEngine { AUTO, MEDIA3, VLC, EXOPLAYER, MPV }
 
 @Serializable
 data class PlaybackProgress(
