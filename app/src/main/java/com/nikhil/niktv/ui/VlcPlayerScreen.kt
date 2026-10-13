@@ -289,13 +289,14 @@ internal fun VlcPlayerScreen(
         }
     }
 
-    // Allow VLC's normal clock correction for uneven transport-stream timestamps.
-    // Disabling jitter compensation causes live streams to lose their clock reference.
-    // VLC has one cache threshold; its clock-jitter compensation can expand
-    // the timing cushion when needed rather than imposing a large startup cache.
+    // Keep startup caching independent of HLS's sustained download buffer.
     val networkCacheMillis = 1500
-    val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId, networkCacheMillis) {
-        LibVLC(context, arrayListOf("--network-caching=$networkCacheMillis"))
+    val playbackOptions = remember(media.catalogType, media.offlinePlayback, media.playbackFormat, media.url) {
+        vlcPlaybackOptions(media.catalogType == CatalogType.LIVE_TV, media.offlinePlayback,
+            isHlsPlayback(media.playbackFormat, media.url))
+    }
+    val libVlc = remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+        LibVLC(context, ArrayList(playbackOptions))
     }
     val player = remember(libVlc) { MediaPlayer(libVlc) }
     var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
@@ -785,6 +786,40 @@ internal fun VlcPlayerScreen(
                 error = "The live stream stopped. Retry to refresh the stream, or choose another player."
                 controlsVisible = true
             }
+        }
+    }
+
+    // Observe actual video output, independently of VLC's media clock. Read native
+    // statistics on a worker, retain/release the media reference, and never log URLs.
+    LaunchedEffect(player) {
+        if (media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) return@LaunchedEffect
+        var previous: IMedia.Stats? = null
+        var sampledAt = android.os.SystemClock.elapsedRealtime()
+        while (true) {
+            delay(15_000L)
+            if (!playbackRequested || !streamWasPlaying || refreshPending ||
+                !playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
+                    androidx.lifecycle.Lifecycle.State.STARTED)) {
+                previous = null
+                sampledAt = android.os.SystemClock.elapsedRealtime()
+                continue
+            }
+            val stats = withContext(Dispatchers.IO) {
+                runCatching {
+                    val retainedMedia = player.media ?: return@runCatching null
+                    try { retainedMedia.stats } finally { retainedMedia.release() }
+                }.getOrNull()
+            } ?: continue
+            val now = android.os.SystemClock.elapsedRealtime()
+            val before = previous
+            if (before != null) {
+                android.util.Log.i("NikTvVlcHealth",
+                    "sampleMs=${now - sampledAt} frames=${stats.displayedPictures - before.displayedPictures} " +
+                        "lost=${stats.lostPictures - before.lostPictures} bytes=${stats.readBytes - before.readBytes} " +
+                        "positionMs=$position buffering=$buffering")
+            }
+            previous = stats
+            sampledAt = now
         }
     }
 
