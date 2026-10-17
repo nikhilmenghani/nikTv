@@ -281,7 +281,8 @@ internal fun ModernTileBrowseScreen(
     configureTmdb: () -> Unit,
     configureIptv: (CatalogType) -> Unit,
     removeIptvCategory: (CatalogType, String) -> Unit,
-    resetSurface: () -> Unit
+    resetSurface: () -> Unit,
+    playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -324,6 +325,7 @@ internal fun ModernTileBrowseScreen(
                         category = activeIptv,
                         close = closeSection,
                         openItem = openIptvItem,
+                        playInContext = playInContext,
                         toggleFavorite = toggleFavorite,
                         loadMore = loadMoreIptv,
                         refresh = refreshIptv,
@@ -449,7 +451,6 @@ private fun ModernTilePhoneHeader(
                     Icon(Icons.Default.FavoriteBorder, "My List")
                 }
             }
-            NikTubeEntry()
             if (isPhone) {
                 Box {
                     IconButton(onClick = { profileMenuOpen = true }) {
@@ -3115,7 +3116,8 @@ private fun ModernIptvCollection(
     refreshLiveProgramme: (MediaItem) -> Unit,
     findChannelsInCategory: (String) -> Unit,
     cancelCategoryFind: () -> Unit,
-    isTv: Boolean
+    isTv: Boolean,
+    playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -3710,7 +3712,12 @@ private fun ModernIptvCollection(
                     },
                     onClick = {
                         focusedPosterIndex = index
-                        openItem(media)
+                        if (playInContext != null) playInContext(media, matchingItems.distinctBy { it.id },
+                            com.nikhil.niktv.model.PlaybackQueueFilter(trimmedChannelQuery, filteredSourceIds,
+                                pinnedIds = if (trimmedChannelQuery.isBlank()) null else emptyList(),
+                                selectedOrdinal = displayedItems.take(index).count { it.id == media.id },
+                                contextId = category.id))
+                        else openItem(media)
                     },
                     modifier = tileModifier,
                     isTv = isTv
@@ -3725,7 +3732,12 @@ private fun ModernIptvCollection(
                 subtitle = media.description.orEmpty(),
                 trailerSeries = category.type == CatalogType.SERIES,
                 onClick = {
-                    openItem(media)
+                    if (playInContext != null) playInContext(media, matchingItems.distinctBy { it.id },
+                            com.nikhil.niktv.model.PlaybackQueueFilter(trimmedChannelQuery, filteredSourceIds,
+                                pinnedIds = if (trimmedChannelQuery.isBlank()) null else emptyList(),
+                                selectedOrdinal = displayedItems.take(index).count { it.id == media.id },
+                                contextId = category.id))
+                        else openItem(media)
                 },
                 isFavorite = favorite,
                 onFavorite = favoriteAction,

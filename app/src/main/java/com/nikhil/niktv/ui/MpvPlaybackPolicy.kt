@@ -1,6 +1,7 @@
 package com.nikhil.niktv.ui
 
 internal const val MPV_DEMUXER_BUFFER_BYTES = 32L * 1024L * 1024L
+@androidx.annotation.ChecksSdkIntAtLeast(api = 26, parameter = 0)
 internal fun mpvSupportedSdk(sdk: Int): Boolean = sdk >= 26
 
 /** Compressed packet cache limit, independent of decoder/GPU memory and startup. */

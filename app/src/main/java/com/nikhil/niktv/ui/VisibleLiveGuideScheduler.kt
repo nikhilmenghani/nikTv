@@ -2,6 +2,8 @@ package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.currentLiveProgramme
+import com.nikhil.niktv.model.freshUntilMillis
+import com.nikhil.niktv.model.isMissingLiveProgrammeTitle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -67,9 +69,24 @@ internal fun <Key> prioritizeVisibleLiveGuides(visible: List<Key>, focused: Key?
         else ordered
     }
 
-/** Earliest point at which a currently displayed timed programme becomes stale. */
+/** Earliest point at which a displayed programme becomes stale, even without broadcast times. */
 internal fun nextVisibleProgrammeExpiry(items: List<MediaItem>, now: Long): Long? =
     items.asSequence()
-        .mapNotNull { it.currentLiveProgramme(now)?.endTimeMillis }
+        .mapNotNull { it.currentLiveProgramme(now)?.freshUntilMillis() }
         .filter { it > now }
         .minOrNull()
+
+/** Wake missing guides after a failed/empty request without needing another scroll event. */
+internal fun nextLiveGuideAttemptAt(item: MediaItem, now: Long, attemptedAt: Long?, retryAt: Long): Long? {
+    val programme = item.currentLiveProgramme(now)
+    if (programme?.startTimeMillis != null && programme.endTimeMillis != null) return null
+    // The two-minute spacing protects incomplete guides, not a known broadcast
+    // boundary. A short programme must refresh when it ends instead of going blank.
+    val endedSinceAttempt = programme == null && attemptedAt != null &&
+        (item.liveSchedule + listOfNotNull(item.liveProgramme)).any {
+            !isMissingLiveProgrammeTitle(it.title) && it.startTimeMillis != null &&
+                it.endTimeMillis?.let { end -> end in (attemptedAt + 1)..now } == true
+        }
+    if (endedSinceAttempt) return maxOf(retryAt, now)
+    return maxOf(retryAt, attemptedAt?.plus(2 * 60_000L) ?: now)
+}

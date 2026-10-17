@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">NikTube</string>
+    <string name="app_name_uppercase">NIKTUBE</string>
+    <string name="onboarding_welcome_title">Make NikTube yours</string>
     <string name="offline_download_channel">Offline downloads</string>
     <string name="offline_download_progress">Saving media for offline playback</string>
 </resources>

@@ -82,7 +82,7 @@ class StalkerGuideResponseTest {
             worker.join(1000)
         }
     }
-    @Test fun oversizedScopedGuideDoesNotRetryTheWholePortalOrFailPlayback() = runBlocking {
+    @Test fun oversizedScopedGuideDoesNotRepeatTheSharedDownloadOrFailPlayback() = runBlocking {
         val server = ServerSocket(0)
         val wholePortal = AtomicBoolean(false)
         val requests = AtomicInteger(0)
@@ -115,8 +115,8 @@ class StalkerGuideResponseTest {
                 .playingChannelSchedule(session, item, userSelected = true, forceRefresh = true)
             assertTrue(result.liveSchedule.isEmpty())
             assertEquals("stream", result.command)
-            assertEquals(2, requests.get())
-            assertFalse(wholePortal.get())
+            assertEquals(3, requests.get())
+            assertTrue(wholePortal.get())
         } finally { server.close(); worker.join(1000) }
     }
 

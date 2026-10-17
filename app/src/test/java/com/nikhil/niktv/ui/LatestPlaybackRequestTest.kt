@@ -69,7 +69,7 @@ class LatestPlaybackRequestTest {
         assertEquals(listOf("new"), played)
     }
 
-    @Test fun rapidSelectionsOnlyStartLatestAfterPreviousCleanup() = runBlocking {
+    @Test fun foregroundSelectionDoesNotWaitForObsoleteCleanup() = runBlocking {
         val requests = LatestPlaybackRequest()
         val releaseCleanup = CompletableDeferred<Unit>()
         val started = mutableListOf<Int>()
@@ -86,11 +86,57 @@ class LatestPlaybackRequestTest {
                 requests.run { started += index }
             }
         }
-        assertEquals(listOf(0), started)
+        assertEquals((0..12).toList(), started)
         releaseCleanup.complete(Unit)
         first.join()
         replacements.forEach { it.join() }
-        assertEquals(listOf(0, 12), started)
+        assertEquals((0..12).toList(), started)
+    }
+
+    @Test fun coalescedDirectionBurstStartsOnlyLatestAndDirectSelectionSupersedesIt() = runBlocking {
+        val requests = LatestPlaybackRequest()
+        val cursor = PlaybackNavigationCursor()
+        val ids = listOf("A", "B", "C", "D")
+        var active = "A"
+        val opens = mutableListOf<String>()
+        val jobs = listOf("B", "C", "B", "C").map { id ->
+            val generation = requests.begin()
+            cursor.select(generation, ids, id)
+            launch(start = CoroutineStart.UNDISPATCHED) {
+                requests.run(generation) {
+                    kotlinx.coroutines.delay(120)
+                    opens += id
+                    active = id
+                    cursor.commit(generation, ids, id)
+                }
+            }
+        }
+        val direct = requests.begin()
+        cursor.select(direct, ids, "D")
+        requests.run(direct) { active = "D"; opens += "D"; cursor.commit(direct, ids, "D") }
+        jobs.forEach { it.join() }
+        assertEquals(listOf("D"), opens)
+        assertEquals("D", active)
+        assertNull(cursor.pendingId)
+        assertFalse(requests.isRunning)
+    }
+
+    @Test fun nestedPreparationRemainsCancellableBeforeAndAfterResolution() = runBlocking {
+        val requests = LatestPlaybackRequest()
+        val finish = CompletableDeferred<Unit>()
+        var oldMetadataPublished = false
+        val id = requests.begin()
+        val old = launch(start = CoroutineStart.UNDISPATCHED) {
+            requests.run(id) {
+                requests.run(id) { }
+                assertTrue(requests.isRunning)
+                finish.await()
+                oldMetadataPublished = true
+            }
+        }
+        requests.run { }
+        finish.complete(Unit); old.join()
+        assertFalse(oldMetadataPublished)
     }
 
     @Test fun closingPlaybackCancelsPendingSelection() = runBlocking {

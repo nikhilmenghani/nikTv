@@ -65,6 +65,8 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -165,7 +167,8 @@ internal fun Modifier.playerQueueSwipeObserver(
 
 internal fun PlaybackEngine.nextPlayerChoice(): PlaybackEngine = when (this) {
     PlaybackEngine.AUTO -> PlaybackEngine.MEDIA3
-    PlaybackEngine.MEDIA3 -> PlaybackEngine.VLC
+    PlaybackEngine.MEDIA3 -> PlaybackEngine.FLOW
+    PlaybackEngine.FLOW -> PlaybackEngine.VLC
     PlaybackEngine.VLC -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.AUTO
     PlaybackEngine.MPV -> PlaybackEngine.AUTO
     PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
@@ -174,6 +177,7 @@ internal fun PlaybackEngine.nextPlayerChoice(): PlaybackEngine = when (this) {
 internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
     PlaybackEngine.AUTO -> "Auto"
     PlaybackEngine.MEDIA3 -> "ExoPlayer"
+    PlaybackEngine.FLOW -> "Flow"
     PlaybackEngine.VLC -> "VLC"
     PlaybackEngine.MPV -> "MPV"
     PlaybackEngine.EXOPLAYER -> "ExoPlayer"
@@ -182,6 +186,7 @@ internal fun PlaybackEngine.playerChoiceLabel(): String = when (this) {
 internal val PLAYER_ENGINE_OPTIONS = listOf(
     PlaybackEngine.AUTO,
     PlaybackEngine.MEDIA3,
+    PlaybackEngine.FLOW,
     PlaybackEngine.VLC,
     PlaybackEngine.MPV
 )
@@ -279,6 +284,7 @@ internal fun PlayerControlsTimeoutButton(
 
 
 private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
+    PlaybackEngine.FLOW -> "Flow"
     PlaybackEngine.VLC -> "VLC"
     PlaybackEngine.MPV -> "MPV"
     else -> "ExoPlayer"
@@ -335,6 +341,7 @@ fun PlayerScreen(
     startFullscreen: Boolean = false,
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null,
+    onPlaybackIntentChanged: (Boolean) -> Unit = {},
     onVideoFrameRendered: () -> Unit = {},
     onVideoFramesRendered: ((Int) -> Unit)? = null
 ) {
@@ -350,7 +357,7 @@ fun PlayerScreen(
 
     val channelTransportEnabled =
         media.catalogType == CatalogType.LIVE_TV &&
-            media.episodeQueue.distinctBy { it.id }.size > 1
+            (media.episodeQueue.distinctBy { it.id }.size > 1 || queueHasMore || queueLoadingMore)
     DisposableEffect(
         transportActivity,
         channelTransportEnabled,
@@ -361,25 +368,12 @@ fun PlayerScreen(
             if (!channelTransportEnabled) {
                 false
             } else {
-                when (event.keyCode) {
-                    KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
-                    KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                        if (
-                            event.action == KeyEvent.ACTION_DOWN &&
-                            event.repeatCount == 0
-                        ) onPlayNext()
-                        true
-                    }
-                    KeyEvent.KEYCODE_MEDIA_REWIND,
-                    KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                        if (
-                            event.action == KeyEvent.ACTION_DOWN &&
-                            event.repeatCount == 0
-                        ) onPlayPrevious()
-                        true
-                    }
-                    else -> false
+                val direction = liveChannelTransportDirection(event.keyCode, event.action, event.repeatCount)
+                when (direction) {
+                    1 -> onPlayNext()
+                    -1 -> onPlayPrevious()
                 }
+                direction != null
             }
         }
         transportActivity?.playerTransportKeyHandler = handler
@@ -426,14 +420,20 @@ fun PlayerScreen(
     LaunchedEffect(playbackEngine) {
         selectedPlayerChoice = playbackEngine
     }
-    val configuredEngine = if (media.offlinePlayback) PlaybackEngine.MEDIA3 else when (playbackEngine) {
+    val configuredEngine = if (media.offlinePlayback && playbackEngine != PlaybackEngine.FLOW) PlaybackEngine.MEDIA3 else when (playbackEngine) {
+        PlaybackEngine.FLOW -> PlaybackEngine.FLOW
         PlaybackEngine.VLC -> PlaybackEngine.VLC
         PlaybackEngine.MPV -> if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) PlaybackEngine.MPV else PlaybackEngine.MEDIA3
         PlaybackEngine.MEDIA3 -> PlaybackEngine.MEDIA3
         PlaybackEngine.EXOPLAYER -> PlaybackEngine.MEDIA3
         PlaybackEngine.AUTO -> if (PlayerEngineFallback.prefersVlc(context, playbackScope)) PlaybackEngine.VLC else PlaybackEngine.MEDIA3
     }
-    val effectiveEngine = if (media.nativeSabr != null || media.separateAudioUrl != null) PlaybackEngine.MEDIA3 else sessionEngineOverride ?: configuredEngine
+
+    val requestedEngine = sessionEngineOverride ?: configuredEngine
+
+    val effectiveEngine = if (media.nativeSabr != null || media.separateAudioUrl != null ||
+
+        (requestedEngine == PlaybackEngine.VLC && vlcHeaderOptions(media.streamRequestHeaders) == null)) PlaybackEngine.MEDIA3 else requestedEngine
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
@@ -452,6 +452,8 @@ fun PlayerScreen(
             liveQueueCategoryTitle = liveQueueCategoryTitle,
             liveQueueXtream = liveQueueXtream,
             onProgress = onProgress,
+            onPlaybackIntentChanged = onPlaybackIntentChanged,
+            onVideoFrameRendered = onVideoFrameRendered,
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
             offlineDownloadInProgress = offlineDownloadInProgress,
@@ -475,13 +477,14 @@ fun PlayerScreen(
             moreOptionsOpen = moreOptionsOpen,
             onMoreOptionsOpenChanged = { moreOptionsOpen = it },
             onSelectPlayer = { selectedEngine, position ->
+                restorePlayerSwitchFocus = true
                 selectedPlayerChoice = selectedEngine
                 engineSwitchResumePosition = playbackRestartPosition(media.catalogType, position)
                 onPlaybackEngineChanged(selectedEngine)
                 sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
             },
             configuredEngine = selectedPlayerChoice,
-            focusPlayerSwitchOnEnter = false,
+            focusPlayerSwitchOnEnter = restorePlayerSwitchFocus,
             onPlayerSwitchFocusRestored = { restorePlayerSwitchFocus = false }
         )
         return
@@ -491,6 +494,7 @@ fun PlayerScreen(
     var livePlaybackElapsedMillis by remember(media.progressKey) { mutableLongStateOf(0L) }
     val currentOnPlayPrevious by rememberUpdatedState(onPlayPrevious)
     val currentOnPlayNext by rememberUpdatedState(onPlayNext)
+    val currentNextEpisode by rememberUpdatedState(media.nextEpisode)
     val activity = remember(context) { context.findActivity() }
     var videoScale by remember(media.progressKey) { mutableFloatStateOf(1f) }
     var videoOffset by remember(media.progressKey) { mutableStateOf(Offset.Zero) }
@@ -504,13 +508,25 @@ fun PlayerScreen(
         fullscreenOverride?.let { focusMode = it }
     }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
-    var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
+    val savedResizeMode = rememberVideoResizeMode()
+    var resizePreview by remember(media.progressKey) { mutableStateOf<VideoResizeMode?>(null) }
+    val resizeMode = resizePreview ?: savedResizeMode
     val (appearanceProfiles, persistedAppearanceProfile) =
         rememberVideoAppearanceProfiles(useSchedule = true)
     var appearancePreview by remember { mutableStateOf<VideoAppearanceProfile?>(null) }
     val activeAppearanceProfile =
         appearancePreview ?: persistedAppearanceProfile
     var modeFeedback by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(requestedEngine, effectiveEngine, media.playbackAttemptId) {
+
+        if (requestedEngine == PlaybackEngine.VLC && effectiveEngine == PlaybackEngine.MEDIA3 &&
+
+            vlcHeaderOptions(media.streamRequestHeaders) == null)
+
+            modeFeedback = "Using ExoPlayer for this stream’s required headers"
+
+    }
     var previousLiveRecordingActive by remember { mutableStateOf(liveRecording.active) }
     LaunchedEffect(liveRecording.active, liveRecording.error, media.url) {
         modeFeedback = when {
@@ -527,6 +543,11 @@ fun PlayerScreen(
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
     var pictureModePickerVisible by remember { mutableStateOf(false) }
+    var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
+    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible
+    val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
         if (unique.any { it.id == media.media.id }) unique
@@ -592,7 +613,7 @@ fun PlayerScreen(
     }
 
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
-    var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
+    var playbackRequested by remember(media.progressKey) { mutableStateOf(media.playWhenReady) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackHasBeenReady by remember(media.progressKey) { mutableStateOf(false) }
     var bufferingIndicatorVisible by remember(media.progressKey) { mutableStateOf(true) }
@@ -643,11 +664,27 @@ fun PlayerScreen(
     val progressFocusRequester = remember(media.progressKey) { FocusRequester() }
     val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
 
+    LaunchedEffect(returnControlFocus) {
+        val target = returnControlFocus ?: return@LaunchedEffect
+        controlsVisible = true
+        if (compactMobileControls) extraControlsOpen = true
+        try {
+            // Let the dialog window detach before handing focus back to its origin.
+            delay(80L)
+            repeat(4) {
+                withFrameNanos { }
+                if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            }
+        } finally { if (returnControlFocus === target) returnControlFocus = null }
+    }
+
+
     LaunchedEffect(restorePlayerSwitchFocus, effectiveEngine) {
         if (restorePlayerSwitchFocus) {
             controlsVisible = true
+            if (compactMobileControls) extraControlsOpen = true
             delay(120L)
-            runCatching { moreFocusRequester.requestFocus() }
+            runCatching { playerSwitchFocusRequester.requestFocus() }
             restorePlayerSwitchFocus = false
         }
     }
@@ -688,22 +725,36 @@ fun PlayerScreen(
         mutableStateOf<Long?>(null)
     }
 
+    val detectedManifestMime = remember(media.url, media.playbackAttemptId) {
+        java.util.concurrent.atomic.AtomicReference<String?>(null)
+    }
+    var manifestFallbackUsed by remember(media.url, media.playbackAttemptId) { mutableStateOf(false) }
     val createLocalPlayer: (Long?) -> Player = { resumePosition ->
-        if (effectiveEngine == PlaybackEngine.MPV) {
+        if (effectiveEngine == PlaybackEngine.MPV && mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) {
             MpvPlayerAdapter(context, media, playbackRestartPosition(media.catalogType,
                 resumePosition ?: engineSwitchResumePosition)).apply {
                 prepare()
-                playWhenReady = true
+                playWhenReady = media.playWhenReady && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             }
         } else {
-        val renderersFactory = DefaultRenderersFactory(context).apply {
-            if (effectiveEngine == PlaybackEngine.MEDIA3) {
+        val renderersFactory = (if (effectiveEngine == PlaybackEngine.FLOW)
+            io.github.aedev.flow.player.factory.PlayerFactory().createRenderersFactory(context)
+            else DefaultRenderersFactory(context)).apply {
+            if (effectiveEngine.isMedia3Player()) {
                 setEnableDecoderFallback(true)
-                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope))
+                setMediaCodecSelector(FailedDecoderRegistry.selector(context, playbackScope, media.decoderSessionId))
             }
         }
         val builder = ExoPlayer.Builder(context, renderersFactory)
-        if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
+
+            .setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
+
+                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
+
+            .setHandleAudioBecomingNoisy(true)
+        if (effectiveEngine == PlaybackEngine.FLOW) {
+            configureFlowInspiredPlayer(context, builder, media.catalogType == CatalogType.LIVE_TV)
+        } else if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
             // Startup and recovery thresholds are independent of the buffer we
             // accumulate while playing. Keep memory bounded on TV devices.
             builder.setLoadControl(androidx.media3.exoplayer.DefaultLoadControl.Builder()
@@ -716,18 +767,22 @@ fun PlayerScreen(
                 DefaultMediaSourceFactory(OfflineMediaDownloads.cacheDataSourceFactory(context))
             )
         }
-        val signedStreamSources = if (media.streamRequestHeaders.isNotEmpty()) {
-            DefaultMediaSourceFactory(androidx.media3.datasource.DefaultHttpDataSource.Factory()
-                .setDefaultRequestProperties(media.streamRequestHeaders))
-        } else null
-        if (media.catalogType == CatalogType.LIVE_TV && !media.offlinePlayback) {
-            builder.setMediaSourceFactory((signedStreamSources ?: DefaultMediaSourceFactory(context))
-                .setLoadErrorHandlingPolicy(LiveSegmentLoadErrorPolicy { playbackHasBeenReady }))
-        } else if (signedStreamSources != null) builder.setMediaSourceFactory(signedStreamSources)
+        val http = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(media.streamRequestHeaders)
+        val upstream = androidx.media3.datasource.DefaultDataSource.Factory(context, http)
+        val signedStreamSources = DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory {
+            ManifestMimeDataSource(upstream.createDataSource(), android.net.Uri.parse(media.url), detectedManifestMime::set)
+        })
+        if (!media.offlinePlayback) builder.setMediaSourceFactory(signedStreamSources.apply {
+            if (media.catalogType == CatalogType.LIVE_TV)
+                setLoadErrorHandlingPolicy(LiveSegmentLoadErrorPolicy { playbackHasBeenReady })
+        })
         builder.build().apply {
             // HLS supplies its own hold-back/segment timing. A fixed six-second
             // offset puts long-segment streams too close to unfinished media.
             val mediaItemBuilder = MediaItem.Builder().setUri(media.url)
+
+                .setMimeType(playbackMimeType(media.playbackFormat, media.url))
             if (media.nativeSabr != null) {
                 val transport = androidx.media3.datasource.DefaultHttpDataSource.Factory()
                     .setDefaultRequestProperties(media.streamRequestHeaders)
@@ -736,7 +791,7 @@ fun PlayerScreen(
                 setMediaSource(com.newtube.sabr.SabrMediaSource(media.nativeSabr, transport,
                     androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(context)))
             } else if (media.separateAudioUrl != null) {
-                val sources = signedStreamSources ?: DefaultMediaSourceFactory(context)
+                val sources = signedStreamSources
                 setMediaSource(androidx.media3.exoplayer.source.MergingMediaSource(
                     sources.createMediaSource(mediaItemBuilder.build()),
                     sources.createMediaSource(MediaItem.fromUri(media.separateAudioUrl))
@@ -748,7 +803,7 @@ fun PlayerScreen(
                 resumePosition ?: engineSwitchResumePosition)
             if (startPosition > 0L) seekTo(startPosition)
             prepare()
-            playWhenReady = true
+            playWhenReady = media.playWhenReady && (!isTvDevice || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
             repeatMode = Player.REPEAT_MODE_OFF
         }
         }
@@ -802,7 +857,8 @@ fun PlayerScreen(
                 error: java.io.IOException,
                 wasCanceled: Boolean
             ) {
-                val httpStatus = error.causeSequence()
+
+                val httpStatus = error.causeSequence().filterIsInstance<NativePlaybackFailure>().firstOrNull()?.httpStatus ?: error.causeSequence()
                     .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
                     .firstOrNull()?.responseCode
                 android.util.Log.w("NikTvStreamLoad", "type=${mediaLoadData.dataType} elapsedMs=${loadEventInfo.loadDurationMs} error=${error.javaClass.simpleName} cause=${error.cause?.javaClass?.simpleName} http=$httpStatus retryStopped=$wasCanceled")
@@ -952,6 +1008,10 @@ fun PlayerScreen(
         }
     }
     DisposableEffect(player, media.progressKey) {
+
+        val retryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+
+        val completion = EpisodeCompletionGate()
         /*
          * A replacement player can already be READY before this listener is
          * installed. Adopt its observable state first so Compose never waits
@@ -990,15 +1050,12 @@ fun PlayerScreen(
                     "state=$state bufferedMs=$bufferedMillis positionMs=${player.currentPosition} live=${media.catalogType == CatalogType.LIVE_TV}"
                 )
                 if (
-                    state == Player.STATE_ENDED &&
-                    media.catalogType == CatalogType.SERIES &&
-                    media.nextEpisode != null &&
-                    !autoPlayCancelled &&
-                    !advancing
+                    media.catalogType == CatalogType.SERIES && !advancing &&
+                    completion.claim(state == Player.STATE_ENDED, playbackRequested, currentNextEpisode != null, autoPlayCancelled)
                 ) {
                     advancing = true
                     subtitleDialogOpen = false
-                    onPlayNext()
+                    currentOnPlayNext()
                 }
             }
             override fun onTracksChanged(tracks: Tracks) {
@@ -1038,16 +1095,41 @@ fun PlayerScreen(
             override fun onIsPlayingChanged(value: Boolean) { isPlaying = value }
             override fun onPlayWhenReadyChanged(value: Boolean, reason: Int) {
                 playbackRequested = value
+                onPlaybackIntentChanged(value)
             }
             override fun onPlayerError(error: PlaybackException) {
-                val httpStatus = error.causeSequence()
+                val inferredMime = detectedManifestMime.get()
+                if (player === localPlayer && effectiveEngine.isMedia3Player() &&
+                    media.nativeSabr == null && media.separateAudioUrl == null && !manifestFallbackUsed &&
+                    inferredMime != null && playbackMimeType(media.playbackFormat, media.url) == null &&
+                    error.errorCode in setOf(PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+                        PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED)) {
+                    // Opaque endpoints may reveal HLS/DASH only in their response headers.
+                    // Retry preparation once with that observed MIME, preserving headers and pause intent.
+                    manifestFallbackUsed = true
+                    playbackError = null
+                    val position = playbackRestartPosition(media.catalogType, player.currentPosition)
+                    val requested = playbackRequested
+                    player.setMediaItem(MediaItem.Builder().setUri(media.url).setMimeType(inferredMime).build())
+                    if (position > 0L) player.seekTo(position)
+                    player.prepare()
+                    player.playWhenReady = requested
+                    return
+                }
+
+                val httpStatus = error.causeSequence().filterIsInstance<NativePlaybackFailure>()
+                    .firstOrNull()?.httpStatus ?: error.causeSequence()
                     .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
                     .firstOrNull()?.responseCode
                 if (player === localPlayer && !media.offlinePlayback && playbackRequested &&
                     !liveRefreshPending && playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
                         androidx.lifecycle.Lifecycle.State.STARTED) &&
                     recoverableLiveSourceFailure(media.catalogType == CatalogType.LIVE_TV,
-                        playbackHasBeenReady, error.errorCode, httpStatus)) {
+                        playbackHasBeenReady, error.errorCode, httpStatus,
+                        playlistStalled = error.causeSequence().any {
+                            it is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistStuckException ||
+                                it is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistResetException
+                        })) {
                     val missingLiveSegment = player.currentManifest is androidx.media3.exoplayer.hls.HlsManifest &&
                         httpStatus in setOf(404, 410)
                     if ((missingLiveSegment || error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) &&
@@ -1065,8 +1147,8 @@ fun PlayerScreen(
                         playbackError = null
                         startupTimedOut = false
                         android.util.Log.w("NikTvPlayback", "Refreshing interrupted live stream; code=${error.errorCode} http=$httpStatus")
-                        coroutineScope.launch {
-                            if (currentLocalPlayer === player) currentStreamRetry(0L)
+                        retryScope.launch {
+                            if (currentLocalPlayer === player && playbackRequested) currentStreamRetry(0L)
                         }
                         return
                     }
@@ -1092,16 +1174,11 @@ fun PlayerScreen(
                     FailedDecoderRegistry.record(
                         context,
                         error,
-                        playbackScope
+                        playbackScope,
+                        media.decoderSessionId
                     )
 
-                val authorizationFailure =
-                    error.causeSequence()
-                        .filterIsInstance<
-                            HttpDataSource.InvalidResponseCodeException
-                        >()
-                        .firstOrNull()
-                        ?.responseCode in setOf(401, 403)
+                val authorizationFailure = httpStatus in setOf(401, 403)
 
                 when {
                     authorizationFailure &&
@@ -1111,8 +1188,10 @@ fun PlayerScreen(
                             "Stream authorization expired. Requesting a fresh playback link…"
                         controlsVisible = true
 
-                        coroutineScope.launch {
+                        retryScope.launch {
                             delay(350L)
+
+                            if (!playbackRequested) return@launch
                             onPlaybackAuthorizationFailure(
                                 player.currentPosition
                                     .coerceAtLeast(0L)
@@ -1120,7 +1199,7 @@ fun PlayerScreen(
                         }
                     }
 
-                    failedDecoder != null -> {
+                    failedDecoder != null && allowDecoderRecovery(media.decoderRecoveryCount) -> {
                         /*
                          * MTK_AVC_RUNTIME_RECOVERY_V14
                          *
@@ -1142,8 +1221,14 @@ fun PlayerScreen(
                                 )
                                 .coerceAtLeast(0L)
 
-                        coroutineScope.launch {
+                        retryScope.launch {
                             delay(250L)
+
+                            if (!playbackRequested) {
+                                decoderRecoveryInProgress = false
+                                playbackError = "Decoder recovery paused. Retry or switch player."
+                                return@launch
+                            }
 
                             onRetryAlternateDecoder(
                                 recoveryPosition
@@ -1181,7 +1266,8 @@ fun PlayerScreen(
             }
         }
         player.addListener(listener)
-        onDispose { player.removeListener(listener) }
+
+        onDispose { retryScope.coroutineContext[kotlinx.coroutines.Job]?.cancel(); player.removeListener(listener) }
     }
     LaunchedEffect(playbackState, playbackHasBeenReady, decoderRecoveryInProgress) {
         bufferingIndicatorVisible = when {
@@ -1260,12 +1346,6 @@ fun PlayerScreen(
                 val remainingMillis = (duration - player.currentPosition).coerceAtLeast(0L)
                 val seconds = ((remainingMillis + 999L) / 1000L).toInt()
                 remainingSeconds = seconds.takeIf { it <= 30 }
-                if ((remainingMillis <= 750L || player.playbackState == Player.STATE_ENDED) && !advancing) {
-                    advancing = true
-                    subtitleDialogOpen = false
-                    onPlayNext()
-                    return@LaunchedEffect
-                }
             }
             delay(500)
         }
@@ -1328,10 +1408,17 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(player, media.url) {
-        delay(25_000L)
-        if (playbackState != Player.STATE_READY && playbackError == null) {
-            startupTimedOut = true
-            controlsVisible = true
+        val deadline = PlaybackStartupDeadline()
+        while (!playbackHasBeenReady && playbackError == null) {
+            if (deadline.expired(android.os.SystemClock.elapsedRealtime(),
+                    playbackRequested && player.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+                    playbackState == Player.STATE_READY)) {
+                startupTimedOut = true
+                controlsVisible = true
+                player.pause()
+                break
+            }
+            delay(250L)
         }
     }
     /*
@@ -1355,6 +1442,7 @@ fun PlayerScreen(
         embeddedMode,
         queueVisible,
         pictureEditorVisible,
+        playerOptionsOpen,
         programmeGuideOpen,
         moreOptionsOpen
     ) {
@@ -1365,6 +1453,7 @@ fun PlayerScreen(
                 !startupTimedOut
                 && !queueVisible
                 && !pictureEditorVisible
+                && !playerOptionsOpen
                 && !programmeGuideOpen
                 && !moreOptionsOpen
 
@@ -1411,14 +1500,15 @@ fun PlayerScreen(
         if (
             !embeddedMode &&
             controlsVisible &&
+            !playerOptionsOpen && returnControlFocus == null &&
             !restorePlayerSwitchFocus &&
             playbackError == null &&
             !startupTimedOut
         ) {
             delay(80L)
 
-            runCatching {
-                playPauseFocusRequester.requestFocus()
+            if (!currentPlayerOptionsOpen && returnControlFocus == null) {
+                runCatching { playPauseFocusRequester.requestFocus() }
             }
         }
     }
@@ -1459,6 +1549,7 @@ fun PlayerScreen(
         controlsVisible,
         queueVisible,
         pictureEditorVisible,
+        playerOptionsOpen,
         embeddedMode,
         inPictureInPicture,
         media.progressKey
@@ -1468,6 +1559,7 @@ fun PlayerScreen(
             !controlsVisible &&
             !queueVisible &&
             !pictureEditorVisible &&
+            !playerOptionsOpen &&
             !inPictureInPicture
         ) {
             delay(40L)
@@ -1764,6 +1856,7 @@ fun PlayerScreen(
                                     focusMode &&
                                         hasPlaybackQueue &&
                                         !pictureEditorVisible &&
+                                        !playerOptionsOpen &&
                                         if (compactMobileControls) {
                                             event.x >= playerView.width * 0.25f &&
                                                 event.x <= playerView.width * 0.75f
@@ -1895,7 +1988,7 @@ fun PlayerScreen(
             update = { playerView ->
                 if (playerView.player !== player) playerView.player = player
                 val mpvPlayer = player as? MpvPlayerAdapter
-                mpvPlayer?.setVideoSizing(resizeMode)
+                if (mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) mpvPlayer?.setVideoSizing(resizeMode)
                 val requestedResizeMode = if (mpvPlayer != null) AspectRatioFrameLayout.RESIZE_MODE_FILL else when (resizeMode) {
                     VideoResizeMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                     VideoResizeMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -1907,10 +2000,12 @@ fun PlayerScreen(
                 }
                 playerView.videoSurfaceView?.apply {
                     val modeScale = if (mpvPlayer == null && resizeMode == VideoResizeMode.ZOOM) 1.25f else 1f
-                    scaleX = videoScale * modeScale
-                    scaleY = videoScale * modeScale
-                    translationX = videoOffset.x
-                    translationY = videoOffset.y
+                    val gestureScale = if (resizePreview != null) 1f else videoScale
+                    val gestureOffset = if (resizePreview != null) Offset.Zero else videoOffset
+                    scaleX = gestureScale * modeScale
+                    scaleY = gestureScale * modeScale
+                    translationX = gestureOffset.x
+                    translationY = gestureOffset.y
                 }
             },
                 modifier = Modifier
@@ -1934,6 +2029,7 @@ fun PlayerScreen(
             !controlsVisible &&
             !queueVisible &&
             !pictureEditorVisible &&
+            !playerOptionsOpen &&
             !inPictureInPicture
         ) {
             Box(
@@ -1971,6 +2067,7 @@ fun PlayerScreen(
                     hasPlaybackQueue &&
                     !queueVisible &&
                     !pictureEditorVisible &&
+                    !playerOptionsOpen &&
                     !inPictureInPicture,
             controlsVisible = controlsVisible,
             onOpen = {
@@ -2158,11 +2255,8 @@ PlayerChromeIconButton(
                             badgeText = resizeMode.badge,
                             contentDescription = "Video fit: ${resizeMode.label}",
                             onClick = {
-                                val nextMode = resizeMode.next()
-                                resizeMode = nextMode
-                                videoScale = 1f
-                                videoOffset = Offset.Zero
-                                modeFeedback = "Video fit · ${nextMode.label}"
+                                resizePreview = savedResizeMode
+                                resizePickerVisible = true
                             },
                             modifier = Modifier
                                 .playerSecondaryFocus(resizeFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
@@ -2183,14 +2277,7 @@ PlayerChromeIconButton(
                                     icon = Icons.Default.SmartDisplay,
                                     badgeText = selectedPlayerChoice.playerChoiceBadge(),
                                     contentDescription = "Player: ${selectedPlayerChoice.playerChoiceLabel()}",
-                                    onClick = {
-                                        val selectedEngine = selectedPlayerChoice.nextPlayerChoice()
-                                        selectedPlayerChoice = selectedEngine
-                                        modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
-                                        engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
-                                        onPlaybackEngineChanged(selectedEngine)
-                                        sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
-                                    },
+                                    onClick = { playerPickerVisible = true },
                                     modifier = Modifier
                                         .playerSecondaryFocus(playerSwitchFocusRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
                                     size = if (compactMobileControls) 44.dp else 48.dp,
@@ -2621,6 +2708,45 @@ PlayerChromeIconButton(
                 VideoAppearancePreferences.setActive(context, it)
             }
         )
+        if (playerPickerVisible) PlayerEngineQuickOverlay(
+            selectedEngine = selectedPlayerChoice,
+            onDismiss = {
+                playerPickerVisible = false
+                controlsVisible = true
+                coroutineScope.launch { delay(80L); runCatching { playerSwitchFocusRequester.requestFocus() } }
+            },
+            onSelect = { selectedEngine ->
+                playerPickerVisible = false
+                controlsVisible = true
+                if (selectedEngine != selectedPlayerChoice.pickerChoice()) {
+                    restorePlayerSwitchFocus = true
+                    selectedPlayerChoice = selectedEngine
+                    modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
+                    engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
+                    onPlaybackEngineChanged(selectedEngine)
+                    sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
+                } else {
+                    coroutineScope.launch { delay(80L); runCatching { playerSwitchFocusRequester.requestFocus() } }
+                }
+            }
+        )
+        if (resizePickerVisible) VideoResizeQuickOverlay(
+            preview = resizeMode,
+            onPreview = { resizePreview = it },
+            onSave = {
+                VideoResizePreferences.save(context, resizeMode)
+                videoScale = 1f
+                videoOffset = Offset.Zero
+                resizePreview = null
+                resizePickerVisible = false
+                returnControlFocus = resizeFocusRequester
+            },
+            onSkip = {
+                resizePreview = null
+                resizePickerVisible = false
+                returnControlFocus = resizeFocusRequester
+            }
+        )
         if (pictureModePickerVisible) PictureModeQuickOverlay(
             profiles = appearanceProfiles,
             preview = activeAppearanceProfile,
@@ -2633,12 +2759,12 @@ PlayerChromeIconButton(
                 VideoAppearancePreferences.setActive(context, activeAppearanceProfile.id)
                 pictureModePickerVisible = false
                 appearancePreview = null
-                showControlsAndFocusPlayPause()
+                returnControlFocus = pictureModeFocusRequester
             },
             onSkip = {
                 appearancePreview = null
                 pictureModePickerVisible = false
-                showControlsAndFocusPlayPause()
+                returnControlFocus = pictureModeFocusRequester
             }
         )
         if (
@@ -2710,10 +2836,13 @@ PlayerChromeIconButton(
                             onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                         },
                         onNext = onPlayNext,
-                        alternatePlayerLabel = "VLC",
-                        showAlternatePlayer = media.nativeSabr == null,
+                        alternatePlayerLabel = if (vlcHeaderOptions(media.streamRequestHeaders) != null) "VLC"
+                            else if (effectiveEngine == PlaybackEngine.MPV) "ExoPlayer" else "MPV",
+                        showAlternatePlayer = media.nativeSabr == null &&
+                            (vlcHeaderOptions(media.streamRequestHeaders) != null || mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)),
                         onSwitchPlayer = {
-                            val selectedEngine = PlaybackEngine.VLC
+                            val selectedEngine = if (vlcHeaderOptions(media.streamRequestHeaders) != null) PlaybackEngine.VLC
+                                else if (effectiveEngine == PlaybackEngine.MPV) PlaybackEngine.MEDIA3 else PlaybackEngine.MPV
                             selectedPlayerChoice = selectedEngine
                             engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
                             onPlaybackEngineChanged(selectedEngine)
@@ -2895,15 +3024,13 @@ PlayerChromeIconButton(
 internal fun PlaybackEngine.playerChoiceBadge(): String = when (this) {
     PlaybackEngine.AUTO -> "AUTO"
     PlaybackEngine.MEDIA3, PlaybackEngine.EXOPLAYER -> "EXO"
+    PlaybackEngine.FLOW -> "FLOW"
     PlaybackEngine.VLC -> "VLC"
     PlaybackEngine.MPV -> "MPV"
 }
 
 private object FailedDecoderRegistry {
-    private val failedNames =
-        java.util.Collections.synchronizedSet(
-            mutableSetOf<String>()
-        )
+    private val sessions = DecoderSessionFailures()
 
     /*
      * Accept both runtime and initialization failure wording emitted by
@@ -2932,10 +3059,10 @@ private object FailedDecoderRegistry {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun selector(
         context: Context,
-        playbackScope: String
+        playbackScope: String,
+        sessionId: String
     ): MediaCodecSelector {
-        failedNames +=
-            context
+        val rememberedMtk = context
                 .getSharedPreferences(
                     "player_decoder_fallbacks",
                     Context.MODE_PRIVATE
@@ -2944,7 +3071,7 @@ private object FailedDecoderRegistry {
                     "failed_decoders",
                     emptySet()
                 )
-                .orEmpty()
+                .orEmpty().filter { it == "omx.mtk.video.decoder.avc" }.toSet()
 
         return MediaCodecSelector {
                 mimeType,
@@ -2959,6 +3086,7 @@ private object FailedDecoderRegistry {
                         tunneling
                     )
 
+            val failedNames = rememberedMtk + sessions.failed(sessionId)
             val filtered =
                 candidates.filterNot {
                     it.name.lowercase() in
@@ -2997,23 +3125,16 @@ private object FailedDecoderRegistry {
                     filtered
                 }
 
-            /*
-             * If the device genuinely exposes no alternative decoder, retain
-             * Media3's original candidates so the app reports the real device
-             * capability rather than manufacturing a no-decoder condition.
-             */
-            if (ordered.isEmpty()) {
-                candidates
-            } else {
-                ordered
-            }
+            // Exhaustion is final for this selection: do not restore failed candidates.
+            ordered
         }
     }
 
     fun record(
         context: Context,
         error: Throwable,
-        playbackScope: String
+        playbackScope: String,
+        sessionId: String
     ): String? {
         val messages =
             generateSequence(
@@ -3036,21 +3157,20 @@ private object FailedDecoderRegistry {
         val normalized =
             decoder.lowercase()
 
-        failedNames.add(normalized)
-
-        context
-            .getSharedPreferences(
-                "player_decoder_fallbacks",
-                Context.MODE_PRIVATE
-            )
-            .edit()
-            .putStringSet(
-                "failed_decoders",
-                failedNames.toSet()
-            )
-            .apply()
+        sessions.record(sessionId, normalized)
 
         if (normalized == "omx.mtk.video.decoder.avc") {
+            context
+                .getSharedPreferences(
+                    "player_decoder_fallbacks",
+                    Context.MODE_PRIVATE
+                )
+                .edit()
+                .putStringSet(
+                    "failed_decoders",
+                    setOf(normalized).filter { it == "omx.mtk.video.decoder.avc" }.toSet()
+                )
+                .apply()
             PlayerEngineFallback.recordMtkAvcFailure(context, playbackScope)
         }
 
@@ -3334,8 +3454,8 @@ private fun PlayerEngineChoiceButton(
  * visible without shrinking long labels into unreadable chips.
  */
 @Composable
-private fun PlayerPictureModeChoiceButton(
-    profile: VideoAppearanceProfile,
+internal fun PlayerVisualChoiceButton(
+    label: String,
     selected: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
@@ -3372,7 +3492,7 @@ private fun PlayerPictureModeChoiceButton(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                profile.name,
+                label,
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontSize = if (isTv) 11.sp else 10.sp,
                     lineHeight = if (isTv) 13.sp else 11.sp
@@ -3428,10 +3548,6 @@ internal fun PictureModeQuickOverlay(
     val skipRequester = remember { FocusRequester() }
     val settingsRequester = remember { FocusRequester() }
     val applyRequester = remember { FocusRequester() }
-    LaunchedEffect(profiles, preview.id) {
-        withFrameNanos { }
-        modeRequesters.getOrNull(profiles.indexOfFirst { it.id == preview.id }.coerceAtLeast(0))?.requestFocus()
-    }
     AlertDialog(
         onDismissRequest = onSkip,
         shape = RoundedCornerShape(20.dp),
@@ -3452,7 +3568,7 @@ internal fun PictureModeQuickOverlay(
         },
         text = {
             Column(
-                Modifier.then(
+                Modifier.playerChoiceFocusEntry(modeRequesters.getOrNull(profiles.indexOfFirst { it.id == preview.id }.coerceAtLeast(0)) ?: settingsRequester).then(
                     if (compactPhone) {
                         Modifier.widthIn(min = 260.dp, max = 330.dp)
                     } else {
@@ -3468,8 +3584,8 @@ internal fun PictureModeQuickOverlay(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         rowModes.forEachIndexed { column, profile ->
                             val index = row * columns + column
-                            PlayerPictureModeChoiceButton(
-                                profile = profile,
+                            PlayerVisualChoiceButton(
+                                label = profile.name,
                                 selected = profile.id == preview.id,
                                 modifier = Modifier.weight(1f).focusRequester(modeRequesters[index]).focusProperties {
                                     if (column > 0) left = modeRequesters[index - 1]
@@ -3667,11 +3783,6 @@ internal fun PlaybackProgressBar(
             Modifier.fillMaxWidth().padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                elapsed,
-                color = Color.White.copy(alpha = 0.92f),
-                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium
-            )
             Spacer(Modifier.weight(1f))
             Text(
                 "−$remaining  /  $total",
@@ -3680,27 +3791,31 @@ internal fun PlaybackProgressBar(
             )
         }
         Slider(
-            value = safePosition.toFloat(),
+            // Use one normalized unit for the thumb, painted track and accessibility range.
+            // Millisecond values were being clamped at the range endpoint on device.
+            value = fraction,
             onValueChange = {
                 dragging = true
-                preview = it.toLong().coerceIn(0L, safeDuration)
+                preview = (it.toDouble() * safeDuration).toLong().coerceIn(0L, safeDuration)
                 revision++
             },
             onValueChangeFinished = { dragging = false; revision++ },
             enabled = active && safeDuration > 0L,
-            valueRange = 0f..safeDuration.coerceAtLeast(1L).toFloat(),
+            valueRange = 0f..1f,
             modifier = Modifier.fillMaxWidth().height(if (compact) 20.dp else 28.dp)
                 .focusProperties { canFocus = false },
             thumb = {
-                Box(
-                    Modifier
-                        .width(if (compact) 3.dp else 4.dp)
-                        .height(if (compact) 16.dp else 20.dp)
-                        .shadow(3.dp, RoundedCornerShape(99.dp))
-                        .background(
-                            MaterialTheme.colorScheme.primary,
-                            RoundedCornerShape(99.dp)
-                        )
+                Text(
+                    elapsed,
+                    modifier = Modifier
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .semantics { contentDescription = "Current playback time $elapsed" }
+                        .padding(horizontal = 6.dp, vertical = if (compact) 1.dp else 3.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    softWrap = false
                 )
             },
             track = {

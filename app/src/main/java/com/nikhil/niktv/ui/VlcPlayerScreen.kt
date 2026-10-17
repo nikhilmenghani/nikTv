@@ -49,6 +49,7 @@ import com.nikhil.niktv.model.PlaybackEngine
 import com.nikhil.niktv.data.SubtitleSearchRequest
 import com.nikhil.niktv.data.LiveTvRecorder
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
@@ -80,6 +81,8 @@ internal fun VlcPlayerScreen(
     liveQueueCategoryTitle: String = "",
     liveQueueXtream: Boolean = false,
     onProgress: (String, Long, Long) -> Unit,
+    onPlaybackIntentChanged: (Boolean) -> Unit = {},
+    onVideoFrameRendered: () -> Unit = {},
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
     offlineDownloadInProgress: Boolean = false,
@@ -164,7 +167,9 @@ internal fun VlcPlayerScreen(
     var authorizationRecoveryRequested by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf(false) }
     var inPictureInPicture by remember { mutableStateOf(false) }
     var gestureFeedback by remember(media.progressKey) { mutableStateOf<Pair<Boolean, Float>?>(null) }
-    var resizeMode by remember(media.progressKey) { mutableStateOf(VideoResizeMode.FIT) }
+    val savedResizeMode = rememberVideoResizeMode()
+    var resizePreview by remember(media.progressKey) { mutableStateOf<VideoResizeMode?>(null) }
+    val resizeMode = resizePreview ?: savedResizeMode
     val (appearanceProfiles, persistedAppearanceProfile) =
         rememberVideoAppearanceProfiles(useSchedule = true)
     var appearancePreview by remember { mutableStateOf<VideoAppearanceProfile?>(null) }
@@ -187,6 +192,11 @@ internal fun VlcPlayerScreen(
     var queueRevealDragging by remember(media.progressKey) { mutableStateOf(false) }
     var pictureEditorVisible by remember { mutableStateOf(false) }
     var pictureModePickerVisible by remember { mutableStateOf(false) }
+    var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
+    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible
+    val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
     var audioDialogOpen by remember(media.media.id) { mutableStateOf(false) }
@@ -195,7 +205,6 @@ internal fun VlcPlayerScreen(
     var selectedSubtitleTrackId by remember(media.media.id) { mutableStateOf<Int?>(null) }
     var subtitleDelayMs by remember(media.media.id) { mutableLongStateOf(initialSubtitleDelayMs) }
     var externalSubtitleFile by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile) }
-    var externalSubtitleAttached by remember(media.media.id) { mutableStateOf(false) }
     var externalSubtitleEnabled by remember(media.media.id) { mutableStateOf(initialExternalSubtitleFile != null) }
     var subtitleAppearance by remember { mutableStateOf(SubtitleAppearancePreset.STANDARD) }
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
@@ -208,6 +217,7 @@ internal fun VlcPlayerScreen(
     val currentHasPlaybackQueue by rememberUpdatedState(hasPlaybackQueue)
     val currentPlayPrevious by rememberUpdatedState(onPlayPrevious)
     val currentPlayNext by rememberUpdatedState(onPlayNext)
+    val currentNextEpisode by rememberUpdatedState(media.nextEpisode)
     val currentAdvancePrevious by rememberUpdatedState<() -> Unit> {
         if (media.catalogType == CatalogType.LIVE_TV || !advancing) {
             advancing = true
@@ -278,11 +288,27 @@ internal fun VlcPlayerScreen(
     val progressRequester = remember(media.progressKey) { FocusRequester() }
     val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
 
+    LaunchedEffect(returnControlFocus) {
+        val target = returnControlFocus ?: return@LaunchedEffect
+        controlsVisible = true
+        if (compactMobileControls) extraControlsOpen = true
+        try {
+            // Let the dialog window detach before handing focus back to its origin.
+            delay(80L)
+            repeat(4) {
+                withFrameNanos { }
+                if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            }
+        } finally { if (returnControlFocus === target) returnControlFocus = null }
+    }
+
+
     LaunchedEffect(focusPlayerSwitchOnEnter) {
         if (focusPlayerSwitchOnEnter) {
             controlsVisible = true
+            if (compactMobileControls) extraControlsOpen = true
             delay(120L)
-            runCatching { moreRequester.requestFocus() }
+            runCatching { playerSwitchRequester.requestFocus() }
             onPlayerSwitchFocusRestored()
         }
     }
@@ -293,22 +319,61 @@ internal fun VlcPlayerScreen(
         vlcPlaybackOptions(media.catalogType == CatalogType.LIVE_TV, media.offlinePlayback,
             isHlsPlayback(media.playbackFormat, media.url))
     }
-    // Retain the AndroidView during channel changes. Recreating it while the old
-    // decoder stops can abandon its BufferQueue and introduce navigation stalls.
-    val preparedSession = remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
-        VlcPlaybackSession.create(context, playbackOptions)
+    // Construct JNI state asynchronously; the session still owns decoder cleanup
+    // before replacement media may acquire the native playback slot.
+    var playbackRequested by remember(media.progressKey) { mutableStateOf(media.playWhenReady) }
+    val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
+    var session by remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+        mutableStateOf<VlcPlaybackSession?>(null)
     }
-    DisposableEffect(preparedSession) {
-        onDispose { NativePlaybackWorker.scope.launch { preparedSession.close() } }
+    LaunchedEffect(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+        var created: VlcPlaybackSession? = null
+        try {
+            // JNI construction and module discovery must not block Compose or input dispatch.
+            withContext(kotlinx.coroutines.NonCancellable + NativePlaybackWorker.dispatcher) {
+                created = VlcPlaybackSession.create(context, playbackOptions)
+            }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            session = created
+            awaitCancellation()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { error = "VLC initialization failed. Retry or switch player." }
+        finally { created?.close() }
+    }
+    val preparedSession = session
+    if (preparedSession == null) {
+        BackHandler(onBack = onBack)
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (error == null) CircularProgressIndicator()
+            else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(error.orEmpty())
+                NikTvPrimaryActionButton(onClick = { onRetry(position) }) { Text("Retry") }
+                NikTvTextActionButton(onClick = { onSelectPlayer(PlaybackEngine.MEDIA3, position) }) { Text("Switch player") }
+            }
+        }
+        return
     }
     val libVlc = preparedSession.lib
     val player = preparedSession.player
-    var playbackRequested by remember(media.progressKey) { mutableStateOf(true) }
-    val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
+    var downloadedNativeTrackIds by remember(player) { mutableStateOf(emptySet<Int>()) }
+    var attachedDownloadedTrackId by remember(player, externalSubtitleFile) { mutableStateOf<Int?>(null) }
+    var nativeSubtitleAttached by remember(player, externalSubtitleFile) { mutableStateOf(false) }
+    var nativeSubtitleBeforeIds by remember(player, externalSubtitleFile) { mutableStateOf(emptySet<Int>()) }
+    val downloadedUsesOverlay = externalSubtitleFile?.extension?.let(::downloadedSubtitleUsesOverlay) != false
+
     var streamTerminated by remember(player) { mutableStateOf(false) }
     var streamWasPlaying by remember(player) { mutableStateOf(false) }
     var refreshPending by remember(player) { mutableStateOf(false) }
     val currentRetry by rememberUpdatedState(onRetry)
+    val focus = remember(player) {
+        VlcAudioFocus(context,
+            play = { play -> preparedSession.command { if (play) it.play() else it.pause() } },
+            volume = { gain -> preparedSession.command { it.volume = (gain * 100).toInt() } },
+            intentChanged = { playbackRequested = it; onPlaybackIntentChanged(it) })
+    }
+    DisposableEffect(focus) { onDispose { focus.close() } }
+    val completion = remember(player) { EpisodeCompletionGate() }
+
     fun refreshLiveStream(manual: Boolean = false) {
         if (refreshPending) return
         if (manual) liveRecovery.reset()
@@ -317,11 +382,11 @@ internal fun VlcPlayerScreen(
         currentRetry(0L)
     }
     fun requestPlayback(requested: Boolean) {
-        playbackRequested = requested
+        focus.request(requested, apply = false)
         if (requested && media.catalogType == CatalogType.LIVE_TV &&
             (streamTerminated || error != null)) {
             refreshLiveStream(manual = true)
-        } else preparedSession.command { if (requested) it.play() else it.pause() }
+        } else preparedSession.command { if (focus.shouldPlay) it.play() else it.pause() }
     }
     LaunchedEffect(player, refreshPending) {
         if (refreshPending) {
@@ -344,25 +409,35 @@ internal fun VlcPlayerScreen(
     val surfacePlayer = remember { arrayOfNulls<MediaPlayer>(1) }
     fun refreshSubtitleTracks() {
         subtitleTracks = player.spuTracks.orEmpty()
-            .filter { it.id >= 0 }
+            .filter { it.id >= 0 && it.id !in downloadedNativeTrackIds }
             .map { it.id to (it.name?.takeIf(String::isNotBlank) ?: "Subtitle ${it.id}") }
         selectedSubtitleTrackId = player.spuTrack.takeIf { it >= 0 }
     }
-    fun selectDownloadedSubtitleWhenReady() {
-        scope.launch {
-            repeat(12) { attempt ->
-                if (attempt > 0) delay(250L)
+    LaunchedEffect(player, externalSubtitleFile, externalSubtitleEnabled, streamWasPlaying) {
+        val file = externalSubtitleFile ?: return@LaunchedEffect
+        if (!externalSubtitleEnabled || !streamWasPlaying || downloadedSubtitleUsesOverlay(file.extension)) return@LaunchedEffect
+        attachedDownloadedTrackId?.let { player.setSpuTrack(it); return@LaunchedEffect }
+        if (!nativeSubtitleAttached) {
+            nativeSubtitleBeforeIds = player.spuTracks.orEmpty().map { it.id }.toSet()
+            nativeSubtitleAttached = player.addSlave(IMedia.Slave.Type.Subtitle, android.net.Uri.fromFile(file), false)
+            if (!nativeSubtitleAttached) { modeFeedback = "Could not load downloaded subtitle"; return@LaunchedEffect }
+        }
+        repeat(12) {
+            val tracks = player.spuTracks.orEmpty().map { it.id }
+            val id = attachedSubtitleTrackId(nativeSubtitleBeforeIds, tracks, player.spuTrack)
+            if (id != null) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                attachedDownloadedTrackId = id
+                downloadedNativeTrackIds = downloadedNativeTrackIds + id
+                player.setSpuTrack(id)
+                player.setSpuDelay(subtitleDelayMs * 1_000L)
                 refreshSubtitleTracks()
-                val downloadedTrackId = subtitleTracks.lastOrNull()?.first
-                    ?: return@repeat
-                if (player.setSpuTrack(downloadedTrackId)) {
-                    selectedSubtitleTrackId = downloadedTrackId
-                    player.setSpuDelay(subtitleDelayMs * 1_000L)
-                    return@launch
-                }
+                return@LaunchedEffect
             }
+            delay(250L)
         }
     }
+
     LaunchedEffect(player, subtitleDelayMs) {
         player.setSpuDelay(subtitleDelayMs * 1_000L)
     }
@@ -418,7 +493,7 @@ internal fun VlcPlayerScreen(
     val currentSetQueueRevealDragging by rememberUpdatedState<(Boolean) -> Unit> { queueRevealDragging = it }
     val currentSetGestureFeedback by rememberUpdatedState<(Pair<Boolean, Float>?) -> Unit> { gestureFeedback = it }
     val currentPlaybackRequested by rememberUpdatedState(playbackRequested)
-    val currentSetPlaybackRequested by rememberUpdatedState<(Boolean) -> Unit> { playbackRequested = it }
+    val currentSetPlaybackRequested by rememberUpdatedState<(Boolean) -> Unit> { requestPlayback(it) }
     val currentNativeSession by rememberUpdatedState(preparedSession)
     val currentSeekable by rememberUpdatedState(seekable)
     val currentDuration by rememberUpdatedState(duration)
@@ -437,8 +512,7 @@ internal fun VlcPlayerScreen(
         onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
     PauseTvPlaybackInBackground {
-        playbackRequested = false
-        preparedSession.command { it.pause() }
+        requestPlayback(false)
         controlsVisible = true
     }
     DisposableEffect(pipActivity) {
@@ -461,13 +535,14 @@ internal fun VlcPlayerScreen(
             controlsFocused = false
         }
     }
-    LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible, programmeGuideOpen, moreOptionsOpen) {
+    LaunchedEffect(controlsVisible, controlsFocused, dpadInteraction, playing, controlsTimeoutSeconds, media.progressKey, queueVisible, pictureEditorVisible, playerOptionsOpen, programmeGuideOpen, moreOptionsOpen) {
         if (
             controlsVisible &&
             playing &&
             error == null &&
             !queueVisible &&
             !pictureEditorVisible &&
+            !playerOptionsOpen &&
             !programmeGuideOpen &&
             !moreOptionsOpen &&
             controlsTimeoutSeconds != PLAYER_CONTROLS_TIMEOUT_INFINITE
@@ -487,11 +562,14 @@ internal fun VlcPlayerScreen(
         if (
             controlsVisible &&
             !embeddedMode &&
+            !playerOptionsOpen && returnControlFocus == null &&
             !focusPlayerSwitchOnEnter &&
             error == null
         ) {
             delay(80)
-            runCatching { playRequester.requestFocus() }
+            if (!currentPlayerOptionsOpen && returnControlFocus == null) {
+                runCatching { playRequester.requestFocus() }
+            }
         }
     }
 
@@ -506,6 +584,7 @@ internal fun VlcPlayerScreen(
         controlsVisible,
         queueVisible,
         pictureEditorVisible,
+        playerOptionsOpen,
         embeddedMode,
         inPictureInPicture,
         media.progressKey
@@ -515,6 +594,7 @@ internal fun VlcPlayerScreen(
             !controlsVisible &&
             !queueVisible &&
             !pictureEditorVisible &&
+            !playerOptionsOpen &&
             !inPictureInPicture
         ) {
             delay(40L)
@@ -568,29 +648,19 @@ internal fun VlcPlayerScreen(
                 }
                 MediaPlayer.Event.Playing -> {
                     error = null
-                    playbackRequested = true
+                    if (!focus.shouldPlay) preparedSession.command { it.pause() }
                     streamWasPlaying = true
                     streamTerminated = false
-                    playing = true
+                    playing = focus.shouldPlay
                     buffering = false
-                    advancing = false
                     refreshSubtitleTracks()
                     refreshAudioTracks()
-                    externalSubtitleFile?.takeIf { !externalSubtitleAttached && it.exists() }?.let { file ->
-                        externalSubtitleAttached = player.addSlave(
-                            IMedia.Slave.Type.Subtitle,
-                            android.net.Uri.fromFile(file),
-                            true
-                        )
-                        refreshSubtitleTracks()
-                        player.setSpuDelay(subtitleDelayMs * 1_000L)
-                        selectDownloadedSubtitleWhenReady()
+                    if (externalSubtitleEnabled && externalSubtitleFile?.extension?.let(::downloadedSubtitleUsesOverlay) != false) {
+                        player.setSpuTrack(-1)
+                        selectedSubtitleTrackId = null
                     }
                 }
-                MediaPlayer.Event.Paused -> {
-                    playbackRequested = false
-                    playing = false
-                }
+                MediaPlayer.Event.Paused -> playing = false
                 MediaPlayer.Event.Stopped -> {
                     streamTerminated = true
                     playing = false
@@ -601,13 +671,12 @@ internal fun VlcPlayerScreen(
                     playing = false
                     if (
                         media.catalogType == CatalogType.SERIES &&
-                        media.nextEpisode != null &&
-                        !autoPlayCancelled &&
+                        completion.claim(true, playbackRequested, currentNextEpisode != null, autoPlayCancelled) &&
                         !advancing
                     ) {
                         advancing = true
                         subtitleDialogOpen = false
-                        onPlayNext()
+                        currentPlayNext()
                     }
                 }
                 MediaPlayer.Event.EncounteredError -> {
@@ -617,15 +686,9 @@ internal fun VlcPlayerScreen(
                         // The watchdog shares one budget for errors, EOF and stalls.
                         // Do not treat every post-start transport error as expired authorization.
                         error = null
-                    } else if (media.authorizationRetryCount == 0 && !authorizationRecoveryRequested) {
-                        authorizationRecoveryRequested = true
-                        error = null
-                        scope.launch {
-                            delay(250L)
-                            onPlaybackAuthorizationFailure(player.time.coerceAtLeast(0L))
-                        }
                     } else {
-                        error = "VLC could not play this stream after requesting a fresh playback link."
+                        // LibVLC's event has no HTTP status. Do not invent an authorization failure.
+                        error = "VLC could not open this media. Retry or switch player."
                         controlsVisible = true
                     }
                 }
@@ -637,23 +700,14 @@ internal fun VlcPlayerScreen(
             // Media construction can wait on LibVLC's native mutex. Keeping all
             // preparation on a worker prevents that mutex from freezing Compose
             // input dispatch and triggering an ANR.
-            var preparedExternalSubtitle = false
             withContext(NativePlaybackWorker.dispatcher) {
                 val vlcMedia = Media(libVlc, android.net.Uri.parse(media.url)).apply {
                     // Prefer device-supported hardware decoders. With force=false,
                     // VLC retains its software decoder fallback and device exclusions.
                     setHWDecoderEnabled(true, false)
                     addOption(":network-caching=$networkCacheMillis")
-                    externalSubtitleFile?.takeIf(File::exists)?.let { file ->
-                        addSlave(
-                            IMedia.Slave(
-                                IMedia.Slave.Type.Subtitle,
-                                4,
-                                android.net.Uri.fromFile(file).toString()
-                            )
-                        )
-                        preparedExternalSubtitle = true
-                    }
+                    requireNotNull(vlcHeaderOptions(media.streamRequestHeaders))
+                        .forEach(::addOption)
                 }
                 try {
                     player.media = vlcMedia
@@ -664,8 +718,7 @@ internal fun VlcPlayerScreen(
             // Check on the main thread after asynchronous media preparation.
             // Home may have been pressed while the stream was opening.
             if (!tvBackgroundPolicy || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
-                    androidx.lifecycle.Lifecycle.State.STARTED) == true) preparedSession.command { it.play() }
-            if (preparedExternalSubtitle) externalSubtitleAttached = true
+                    androidx.lifecycle.Lifecycle.State.STARTED) == true) focus.request(playbackRequested)
             awaitCancellation()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -804,6 +857,36 @@ internal fun VlcPlayerScreen(
         }
     }
 
+    LaunchedEffect(player) {
+        val deadline = PlaybackStartupDeadline()
+        while (!streamWasPlaying && error == null) {
+            val foreground = !tvBackgroundPolicy || playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
+                androidx.lifecycle.Lifecycle.State.STARTED)
+            if (deadline.expired(android.os.SystemClock.elapsedRealtime(),
+                    foreground && playbackRequested && focus.shouldPlay, streamWasPlaying)) {
+                preparedSession.command { it.stop() }
+                streamTerminated = true
+                buffering = false
+                error = "The stream did not start within 25 seconds. Retry or switch player."
+                controlsVisible = true
+                break
+            }
+            delay(250L)
+        }
+    }
+
+    LaunchedEffect(player) {
+        while (true) {
+            val displayed = withContext(NativePlaybackWorker.dispatcher) {
+                player.media?.let { current ->
+                    try { current.stats?.displayedPictures ?: 0 } finally { current.release() }
+                } ?: 0
+            }
+            if (displayed > 0) { onVideoFrameRendered(); break }
+            delay(250L)
+        }
+    }
+
     LaunchedEffect(player, media.nextEpisode, autoPlayCancelled) {
         if (media.catalogType != CatalogType.SERIES || media.nextEpisode == null || autoPlayCancelled) {
             remainingSeconds = null
@@ -814,13 +897,7 @@ internal fun VlcPlayerScreen(
             if (knownDuration > 0L) {
                 val seconds = (((knownDuration - player.time).coerceAtLeast(0L) + 999L) / 1_000L).toInt()
                 remainingSeconds = seconds.takeIf { it <= 30 }
-                val remainingMillis = (knownDuration - player.time).coerceAtLeast(0L)
-                if (remainingMillis <= 750L && !advancing) {
-                    advancing = true
-                    subtitleDialogOpen = false
-                    onPlayNext()
-                    return@LaunchedEffect
-                }
+
             }
             delay(500L)
         }
@@ -948,6 +1025,7 @@ internal fun VlcPlayerScreen(
                                     focusMode &&
                                         currentHasPlaybackQueue &&
                                         !pictureEditorVisible &&
+                                        !playerOptionsOpen &&
                                         if (compactMobileControls) {
                                             event.x >= layout.width * 0.25f &&
                                                 event.x <= layout.width * 0.75f
@@ -1077,17 +1155,16 @@ internal fun VlcPlayerScreen(
                             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                                 val requested = !currentPlaybackRequested
                                 currentSetPlaybackRequested(requested)
-                                currentNativeSession.command { if (requested) it.play() else it.pause() }
                                 currentShowControls()
                                 true
                             }
                             KeyEvent.KEYCODE_MEDIA_PLAY -> {
                                 currentSetPlaybackRequested(true)
-                                currentNativeSession.command { it.play() }; currentShowControls(); true
+                                currentShowControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_PAUSE -> {
                                 currentSetPlaybackRequested(false)
-                                currentNativeSession.command { it.pause() }; currentShowControls(); true
+                                currentShowControls(); true
                             }
                             KeyEvent.KEYCODE_MEDIA_REWIND -> {
                                 if (
@@ -1177,7 +1254,7 @@ internal fun VlcPlayerScreen(
             file = externalSubtitleFile,
             positionMs = position,
             delayMs = subtitleDelayMs,
-            enabled = externalSubtitleEnabled,
+            enabled = externalSubtitleEnabled && downloadedUsesOverlay,
             appearance = subtitleAppearance,
             modifier = Modifier.fillMaxSize().padding(bottom = if (controlsVisible) 118.dp else 24.dp)
         )
@@ -1186,6 +1263,7 @@ internal fun VlcPlayerScreen(
             !controlsVisible &&
             !queueVisible &&
             !pictureEditorVisible &&
+            !playerOptionsOpen &&
             !inPictureInPicture
         ) {
             Box(
@@ -1223,6 +1301,7 @@ internal fun VlcPlayerScreen(
                     hasPlaybackQueue &&
                     !queueVisible &&
                     !pictureEditorVisible &&
+                    !playerOptionsOpen &&
                     !inPictureInPicture,
             controlsVisible = controlsVisible,
             onOpen = {
@@ -1410,9 +1489,8 @@ PlayerChromeIconButton(
                             badgeText = resizeMode.badge,
                             contentDescription = "Video fit: ${resizeMode.label}",
                             onClick = {
-                                val nextMode = resizeMode.next()
-                                resizeMode = nextMode
-                                modeFeedback = "Video fit · ${nextMode.label}"
+                                resizePreview = savedResizeMode
+                                resizePickerVisible = true
                             },
                             modifier = Modifier
                                 .playerSecondaryFocus(resizeRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
@@ -1433,11 +1511,7 @@ PlayerChromeIconButton(
                                 icon = Icons.Default.SmartDisplay,
                                 badgeText = configuredEngine.playerChoiceBadge(),
                                 contentDescription = "Player: ${configuredEngine.playerChoiceLabel()}",
-                                onClick = {
-                                    val selectedEngine = configuredEngine.nextPlayerChoice()
-                                    modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
-                                    onSelectPlayer(selectedEngine, player.time.coerceAtLeast(0L))
-                                },
+                                onClick = { playerPickerVisible = true },
                                 modifier = Modifier
                                     .playerSecondaryFocus(playerSwitchRequester, secondaryActionRequesters, extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
                                 size = if (compactMobileControls) 44.dp else 48.dp,
@@ -1862,6 +1936,38 @@ PlayerChromeIconButton(
                 VideoAppearancePreferences.setActive(context, it)
             }
         )
+        if (playerPickerVisible) PlayerEngineQuickOverlay(
+            selectedEngine = configuredEngine,
+            onDismiss = {
+                playerPickerVisible = false
+                controlsVisible = true
+                scope.launch { delay(80L); runCatching { playerSwitchRequester.requestFocus() } }
+            },
+            onSelect = { selectedEngine ->
+                playerPickerVisible = false
+                controlsVisible = true
+                if (selectedEngine != configuredEngine.pickerChoice()) {
+                    onSelectPlayer(selectedEngine, (if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
+                } else {
+                    scope.launch { delay(80L); runCatching { playerSwitchRequester.requestFocus() } }
+                }
+            }
+        )
+        if (resizePickerVisible) VideoResizeQuickOverlay(
+            preview = resizeMode,
+            onPreview = { resizePreview = it },
+            onSave = {
+                VideoResizePreferences.save(context, resizeMode)
+                resizePreview = null
+                resizePickerVisible = false
+                returnControlFocus = resizeRequester
+            },
+            onSkip = {
+                resizePreview = null
+                resizePickerVisible = false
+                returnControlFocus = resizeRequester
+            }
+        )
         if (pictureModePickerVisible) PictureModeQuickOverlay(
             profiles = appearanceProfiles,
             preview = activeAppearanceProfile,
@@ -1874,12 +1980,12 @@ PlayerChromeIconButton(
                 VideoAppearancePreferences.setActive(context, activeAppearanceProfile.id)
                 pictureModePickerVisible = false
                 appearancePreview = null
-                showControls()
+                returnControlFocus = pictureModeRequester
             },
             onSkip = {
                 appearancePreview = null
                 pictureModePickerVisible = false
-                showControls()
+                returnControlFocus = pictureModeRequester
             }
         )
 
@@ -1916,7 +2022,7 @@ PlayerChromeIconButton(
                         onNext = onPlayNext,
                         alternatePlayerLabel = "ExoPlayer",
                         onSwitchPlayer = {
-                            onSelectPlayer(PlaybackEngine.MEDIA3, player.time.coerceAtLeast(0L))
+                            onSelectPlayer(PlaybackEngine.MEDIA3, (if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
                         },
                         retryModifier = Modifier.focusRequester(errorRetryRequester)
                     )
@@ -1988,14 +2094,18 @@ PlayerChromeIconButton(
         if (subtitleDialogOpen) {
             SubtitleSelectionDialog(
                 tracks = subtitleTracks.map { (id, label) ->
-                    SubtitleTrackOption(id.toString(), label, selectedSubtitleTrackId == id)
-                },
+                    SubtitleTrackOption(id.toString(), label, !externalSubtitleEnabled && selectedSubtitleTrackId == id)
+                } + if (externalSubtitleFile != null) listOf(
+                    SubtitleTrackOption("downloaded", "Downloaded subtitle", externalSubtitleEnabled)
+                ) else emptyList(),
                 delayMs = subtitleDelayMs,
                 onSelect = { id ->
-                    val trackId = id?.toIntOrNull() ?: -1
-                    player.setSpuTrack(trackId)
-                    selectedSubtitleTrackId = trackId.takeIf { it >= 0 }
-                    externalSubtitleEnabled = id != null
+                    val selection = vlcSubtitleSelection(id, externalSubtitleFile != null)
+                    externalSubtitleEnabled = selection.downloaded
+                    val nativeId = if (selection.downloaded && !downloadedUsesOverlay)
+                        attachedDownloadedTrackId ?: -1 else selection.nativeId
+                    player.setSpuTrack(nativeId)
+                    selectedSubtitleTrackId = nativeId.takeIf { it >= 0 }
                 },
                 onDelayChange = { delay ->
                     subtitleDelayMs = delay
@@ -2014,11 +2124,10 @@ PlayerChromeIconButton(
                     externalSubtitleFile?.takeIf { it != file }?.delete()
                     externalSubtitleFile = file
                     externalSubtitleEnabled = true
-                    player.addSlave(IMedia.Slave.Type.Subtitle, android.net.Uri.fromFile(file), true)
-                    externalSubtitleAttached = true
-                    refreshSubtitleTracks()
-                    player.setSpuDelay(subtitleDelayMs * 1_000L)
-                    selectDownloadedSubtitleWhenReady()
+                    // The keyed effect selects the native path for styled/non-text formats.
+                    // SRT/VTT uses our timed overlay; native embedded tracks stay disabled.
+                    player.setSpuTrack(-1)
+                    selectedSubtitleTrackId = null
                 },
                 downloadedSubtitleName = externalSubtitleFile?.name,
                 onDeleteDownloadedSubtitle = externalSubtitleFile?.let { file ->
@@ -2027,7 +2136,6 @@ PlayerChromeIconButton(
                         selectedSubtitleTrackId = null
                         file.delete()
                         externalSubtitleFile = null
-                        externalSubtitleAttached = false
                         externalSubtitleEnabled = false
                         refreshSubtitleTracks()
                     }

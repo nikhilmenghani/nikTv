@@ -25,9 +25,8 @@ class MpvPlaybackIntegrationTest {
         val context = instrumentation.targetContext
         assertTrue("Never run synthetic tests in the user's profile package", context.packageName.endsWith(".regression"))
         File(context.cacheDir, "retry.wav").delete()
-        // A missing-file regression host provides a foreground window without a
-        // second active player or any provider/profile access.
-        val host = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
+        // An empty foreground host has no second player or audio-focus owner.
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
             .putExtra("engine", "MEDIA3").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val file = File(context.cacheDir, "mpv-fixture.wav")
         val samples = 44_100 * 20

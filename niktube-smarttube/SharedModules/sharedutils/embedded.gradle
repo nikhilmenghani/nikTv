@@ -1,0 +1,89 @@
+
+apply plugin: 'com.android.library'
+apply from: rootProject.file('niktube-smarttube/SharedModules/constants.gradle')
+android {
+    namespace 'com.liskovsoft.sharedutils'
+    compileSdk 37
+    defaultConfig {
+        minSdk 24
+        buildConfigField 'String', 'FLAVOR', '"ststable"'
+        buildConfigField 'String', 'VERSION_NAME', '"32.67"'
+        buildConfigField 'int', 'VERSION_CODE', '2457'
+        buildConfigField 'long', 'TIMESTAMP', '0L'
+        consumerProguardFiles 'build/embedded/consumer-rules.pro'
+    }
+    buildFeatures { buildConfig true }
+    sourceSets.main {
+        java.setSrcDirs(['build/embedded/main/java'])
+        kotlin.setSrcDirs(['build/embedded/main/java'])
+        res.setSrcDirs(['build/embedded/main/res'])
+        assets.setSrcDirs(['build/embedded/main/assets'])
+        jniLibs.setSrcDirs(['build/embedded/main/jniLibs', 'build/embedded/main/libs'])
+        manifest.srcFile 'build/embedded/main/AndroidManifest.xml'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+}
+ext.modulePrefix = ':st-exoplayer-'
+ext.protobufVersion = '3.17.3'
+ext.androidXTestVersion = '1.6.1'
+ext.kotlinVersion = '2.4.10'
+ext.kotlinxVersion = '1.11.0'
+ext.coreXVersion = '1.19.0'
+ext.kotlinCoreXVersion = '1.19.0'
+dependencies { coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5' }
+configurations.configureEach {
+    exclude group: 'androidx.leanback', module: 'leanback'
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+
+    testImplementation 'junit:junit:' + junitVersion
+    testImplementation 'org.robolectric:robolectric:' + robolectricVersion
+    testImplementation project(':st-sharedtests')
+    testImplementation project(':st-sharedutils')
+
+    implementation project(':st-commons-io-2.8.0')
+
+    implementation 'androidx.appcompat:appcompat:' + appCompatXVersion
+    // Note: 1.2.0 Requires multiple androidx.lifecycle libs
+    implementation 'androidx.preference:preference:' + preferenceXVersion
+
+    implementation 'com.squareup.okhttp3:okhttp:' + okhttpVersion
+    implementation 'com.squareup.okhttp3:okhttp-dnsoverhttps:' + okhttpVersion
+    implementation 'com.squareup.okhttp3:logging-interceptor:' + okhttpVersion
+    implementation 'com.squareup.okhttp3:okhttp-brotli:' + okhttpBrotliVersion
+    implementation('com.localebro:okhttpprofiler:' + okhttpProfilerVersion) {
+        exclude group: 'com.squareup.okhttp3', module: 'okhttp' // force global version
+    }
+
+    // Both libraries should be present.
+    // Use specific version of Cronet instead of one hardcoded inside okhttp extension
+    // implementation 'com.google.android.gms:play-services-cronet:' + playServicesCronetVersion
+    implementation 'org.chromium.net:cronet-api:' + cronetApiVersion
+    
+    // Cronet provider support (native, gms).
+    implementation 'org.chromium.net:cronet-embedded:' + cronetApiVersion
+
+    implementation 'com.google.code.gson:gson:' + gsonVersion
+
+    implementation 'io.reactivex.rxjava2:rxandroid:' + rxAndroidVersion
+    implementation 'io.reactivex.rxjava2:rxjava:' + rxJavaVersion
+    implementation 'com.jakewharton:disklrucache:' + diskLruCacheVersion
+
+    // Add modern TLS ciphers to HttpUrlConnection
+    // https://stackoverflow.com/questions/16299531/how-to-override-the-cipherlist-sent-to-the-server-by-android-when-using-httpsurl
+    implementation 'info.guardianproject.netcipher:netcipher:' + netcipherVersion
+
+    // Add kotlin support libs
+    implementation 'androidx.core:core-ktx:' + kotlinCoreXVersion
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:' + kotlinVersion
+
+    //implementation 'org.conscrypt:conscrypt-android:2.5.2'
+
+    implementation 'dnsjava:dnsjava:' + dnsjavaVersion
+}

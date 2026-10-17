@@ -630,12 +630,13 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                   PlayerScreen(
                     media = playback,
                     onBack = vm::closePlayer,
-                    onRetry = vm::retryPlayback,
+                    onRetry = { vm.retryPlayback(it, playback) },
                     onRetryAlternateDecoder = { position -> vm.retryPlaybackWithAlternateDecoder(position, playback) },
                     onPlaybackAuthorizationFailure = { position -> vm.retryPlaybackAfterAuthorizationFailure(position, playback) },
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
+                    onPlaybackIntentChanged = { vm.setPlaybackIntent(playback.playbackAttemptId, it) },
                     onDownload = {
                         val present = state.offlineDownloads.any { download ->
                             download.profileKey == (state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey()) &&
@@ -674,7 +675,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                         ?.progressLabel(),
                     onPlayItem = vm::openMedia,
                     onPlayQueueItem = vm::openMediaFromQueue,
-                    pinnedQueueIds = pinnedQueueIds,
+                    pinnedQueueIds = playback.queueFilter?.pinnedIds ?: pinnedQueueIds,
                     queueFavoriteIds = state.favorites
                         .asSequence()
                         .filter { it.kind == FavoriteKind.CHANNEL }
@@ -746,6 +747,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     selectType = vm::openCatalogType,
                     selectCategory = vm::loadCategory,
                     play = vm::openMedia,
+                    playInContext = vm::openMediaInContext,
                     openTrendingMovie = vm::openTrendingMovie,
                     selectTmdbMovieMatch = vm::selectTmdbMovieMatch,
                     closeTmdbMovieMatches = vm::closeTmdbMovieMatches,

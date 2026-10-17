@@ -8,6 +8,11 @@ import android.util.Log
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
@@ -53,7 +58,34 @@ class StalkerPortalClient(private val context: Context) {
         xtreamCatalogCache.invalidate(Triple(profile, category.type, category.id))
     }
     private val trafficPrefs = context.getSharedPreferences("portal_traffic_guard", Context.MODE_PRIVATE)
-    @Volatile private var epgCache: PortalGuideCache? = null
+    private val guideScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val guideDisk = PortalGuideDiskCache(context)
+    private val guideCache = SharedPortalGuideCache(guideScope, read = guideDisk::read, write = guideDisk::write,
+        propagate = { error ->
+            (error is PortalHttpException && error.statusCode in setOf(401, 403)) ||
+                error.message.orEmpty().contains("Authorization failed", ignoreCase = true)
+        })
+    // Programme metadata survives token renewal, but never crosses account/credential identities.
+    private fun PortalSession.guideCacheKey(): String = sha1("${profile}|$endpointUrl")
+
+    fun prioritizePlayback() = guideCache.cancelPending()
+    fun close() = guideScope.cancel()
+
+    private suspend fun sharedChannelGuide(session: PortalSession, force: Boolean = false,
+        userSelected: Boolean = false, onProviderWait: (Long) -> Unit = {}, onRequestStarted: () -> Unit = {}
+    ): PortalGuideCache? {
+        val consumer = currentCoroutineContext()
+        return guideCache.get(session.guideCacheKey(), force) {
+            val memory = android.app.ActivityManager.MemoryInfo()
+            (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.getMemoryInfo(memory)
+            val runtime = Runtime.getRuntime()
+            if (memory.lowMemory || runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory() < 24L * 1024 * 1024)
+                throw java.io.IOException("Guide download deferred under memory pressure")
+            requestSharedGuide(session, background = !userSelected,
+                onProviderWait = { if (consumer.isActive) onProviderWait(it) },
+                onRequestStarted = { if (consumer.isActive) onRequestStarted() })
+        }
+    }
 
     suspend fun authenticate(profile: PortalProfile): PortalSession = authMutex.withLock { withContext(Dispatchers.IO) {
         if (profile.portalType == PortalType.XTREAM) return@withContext authenticateXtream(profile)
@@ -159,7 +191,8 @@ class StalkerPortalClient(private val context: Context) {
         category: Category,
         page: Int,
         pageSize: Int? = null,
-        includeEpg: Boolean = true
+        includeEpg: Boolean = true,
+        background: Boolean = false
     ): PortalCatalogPage = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) {
             if (pageSize == null) {
@@ -188,7 +221,7 @@ class StalkerPortalClient(private val context: Context) {
             "movie_id" to "0", "season_id" to "0", "episode_id" to "0", "fav" to "0",
             "sortby" to "added", "hd" to "0", "ended" to "0", "search" to ""
         )
-        val payload = request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams)).payload()
+        val payload = request(session.profile, session.endpointUrl, session, authorizedParams(session, listingParams), background = background).payload()
         val listingNodes = payload.arrayFromData()
         val rawItems = listingNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null
@@ -238,29 +271,16 @@ class StalkerPortalClient(private val context: Context) {
             ?: if (total != null && pageSize != null && pageSize > 0) {
                 ((total + pageSize - 1) / pageSize).coerceAtLeast(requestedPage)
             } else null
+        Log.i("NikTvCatalogPage", "category=${category.id} page=$requestedPage rows=${listingNodes.size} total=$total perPage=$pageSize maxPage=$maxPage more=$hasMore")
         PortalCatalogPage(items, requestedPage, hasMore, totalPages, total, pageSize)
     }
 
     /** Enrich a whole channel page with the separate Ministra guide in one request. */
     private suspend fun enrichWithPortalEpg(session: PortalSession, items: List<MediaItem>): List<MediaItem> {
         if (items.isEmpty()) return items
-        val cacheKey = "${session.endpointUrl}|${session.token.take(12)}"
-        val now = System.currentTimeMillis()
-        val cached = epgCache
-        val schedules = if (cached?.reusableFor(cacheKey, now) == true) cached.schedules else {
-            val response = runCatching {
-                request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-                    "type" to "itv", "action" to "get_epg_info", "period" to "1"
-                )))
-            }.getOrElse {
-                if (it is kotlinx.coroutines.CancellationException) throw it
-                epgCache = PortalGuideCache(cacheKey, System.currentTimeMillis(), emptyMap())
-                return items
-            }
-            response.epgSchedulesByChannel().also { fresh ->
-                epgCache = PortalGuideCache(cacheKey, System.currentTimeMillis(), fresh)
-            }
-        }
+        val schedules = try { sharedChannelGuide(session)?.schedules.orEmpty() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { return items }
         return items.map { item ->
             val schedule = (schedules[item.id] ?: schedules[item.epgChannelId]).orEmpty()
             // The channel listing can itself supply valid now-playing text even
@@ -592,12 +612,18 @@ class StalkerPortalClient(private val context: Context) {
                     val encoded = entry.string("title") ?: return@mapNotNull null
                     val title = encoded.decodeBase64()?.utf8() ?: encoded
                     if (isMissingLiveProgrammeTitle(title)) return@mapNotNull null
-                    fun time(key: String): Long? = entry.string(key)?.toLongOrNull()?.let {
-                        if (it < 10_000_000_000L) it * 1000L else it
-                    }
-                    LiveProgramme(title, time("start_timestamp"), time("stop_timestamp"), now)
+                    LiveProgramme(title,
+                        entry.programmeTimestamp("start_timestamp", "start_ts", "start_time"),
+                        entry.programmeTimestamp("stop_timestamp", "end_timestamp", "stop_ts", "end_ts", "end_time"), now)
                 }.filter { it.endTimeMillis == null || it.endTimeMillis > now }
             return@withContext item.withFreshLiveSchedule(schedule, now)
+        }
+        val warmGuide = guideCache.cached(session.guideCacheKey())
+        val warmSchedule = warmGuide?.schedules
+            ?.let { it[item.id] ?: it[item.epgChannelId] }.orEmpty()
+        if (!forceRefresh && item.withFreshLiveSchedule(warmSchedule, System.currentTimeMillis())
+                .currentLiveProgramme(System.currentTimeMillis()) != null) {
+            return@withContext item.withFreshLiveSchedule(warmSchedule, System.currentTimeMillis())
         }
         val response = request(
             session.profile,
@@ -625,15 +651,14 @@ class StalkerPortalClient(private val context: Context) {
             .filter { it.endTimeMillis == null || it.endTimeMillis > now }
             .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
 
-        // A missing short guide must never download the portal-wide 24-hour EPG.
-        // The EPG table endpoint is scoped to one channel and one date.
-        if (schedule.isEmpty()) {
-            val cacheKey = "${session.endpointUrl}|${session.token.take(12)}"
-            val cached = epgCache
-            val cachedSchedule = cached?.takeIf { it.reusableFor(cacheKey, now, forceRefresh) }
+        // Empty per-channel endpoints are common even when the shared guide works.
+        // Download it once per profile/interval, then advance cached schedules locally.
+        if (item.withFreshLiveSchedule(schedule, now).currentLiveProgramme(now) == null) {
+            val refreshExhaustedWindow = warmGuide?.channelWindowExpired(item.id, item.epgChannelId, now) == true
+            val cachedSchedule = sharedChannelGuide(session, forceRefresh || refreshExhaustedWindow, userSelected, onProviderWait, onRequestStarted)
                 ?.schedules?.let { it[item.id] ?: it[item.epgChannelId] }.orEmpty()
                 .filter { it.endTimeMillis == null || it.endTimeMillis > now }
-            schedule = if (cachedSchedule.isNotEmpty()) cachedSchedule else {
+            val fallback = if (item.withFreshLiveSchedule(cachedSchedule, now).currentLiveProgramme(now) != null) cachedSchedule else {
                 val date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(now))
                 val response = try {
                     request(session.profile, session.endpointUrl, session,
@@ -643,12 +668,16 @@ class StalkerPortalClient(private val context: Context) {
                         onRequestStarted = onRequestStarted)
                 } catch (oversized: PortalResponseTooLargeException) {
                     Log.w("NikTvLiveGuide", "Provider returned oversized channel EPG; no full-guide retry")
-                    return@withContext item.withFreshLiveSchedule(emptyList(), now)
+                    return@withContext item.withFreshLiveSchedule(schedule, now)
                 }
                 response.epgSchedulesByChannel(item.id)[item.id].orEmpty()
                     .filter { it.endTimeMillis == null || it.endTimeMillis > now }
                     .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
             }
+            // A short guide can contain tomorrow's rows while the channel table
+            // has the current programme. Keep both, but never label a future row as current.
+            schedule = (fallback + schedule).distinctBy { Triple(it.title, it.startTimeMillis, it.endTimeMillis) }
+                .sortedBy { it.startTimeMillis ?: Long.MAX_VALUE }
             Log.i("NikTvLiveGuide", "Channel ${item.id}: scoped EPG entries=${schedule.size}")
         }
         item.withFreshLiveSchedule(schedule, System.currentTimeMillis())
@@ -817,6 +846,64 @@ class StalkerPortalClient(private val context: Context) {
     }
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
+    private fun portalHttpRequest(profile: PortalProfile, endpointUrl: String, session: PortalSession?, params: Map<String, String>): Request {
+        val endpoint = endpointUrl.toHttpUrl().newBuilder().apply {
+            params.forEach { (key, value) ->
+                if (key == "cmd") addEncodedQueryParameter(key, value) else addQueryParameter(key, value)
+            }
+        }.build()
+        cookies.seedPortalCookies(endpoint, profile.macAddress)
+        return Request.Builder().url(endpoint)
+            .addHeader("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux armv7l; en-US)")
+            .addHeader("User-Agent", USER_AGENT)
+            .header("X-User-Agent", "Model: MAG424; Link: WiFi")
+            .header("Language", "en-US")
+            .header("Accept", "application/json, text/javascript, */*; q=0.01")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Referer", portalReferer(endpoint))
+            .header("Connection", "keep-alive")
+            .apply { session?.let { header("Authorization", "Bearer ${it.token}"); header("X-Token", it.token) } }
+            .build()
+    }
+
+    private suspend fun requestSharedGuide(session: PortalSession, background: Boolean,
+        onProviderWait: (Long) -> Unit, onRequestStarted: () -> Unit
+    ): Map<String, List<LiveProgramme>> = requestGate.run(background, MIN_REQUEST_SPACING_MS,
+        checkAllowed = ::checkTrafficCooldown, onWait = onProviderWait) {
+        onRequestStarted()
+        val params = authorizedParams(session, mapOf("type" to "itv", "action" to "get_epg_info", "period" to "1"))
+        val maximum = 8L * 1024 * 1024
+        http.newCall(portalHttpRequest(session.profile, session.endpointUrl, session, params)).readCancellable { response ->
+            val body = response.body ?: error("The provider returned no guide response body")
+            if (response.isSuccessful && body.contentLength() > maximum)
+                throw PortalResponseTooLargeException("The shared programme guide exceeds the download limit")
+            val source = body.source()
+            val peek = source.peek()
+            peek.request(256)
+            val preview = peek.readUtf8(minOf(256L, peek.buffer.size))
+            if (!response.isSuccessful || preview.contains("Authorization failed", ignoreCase = true)) {
+                val retryAfter = response.header("Retry-After")?.toLongOrNull()
+                    ?: runCatching { parsePortalResponse(preview).payload().string("retry_after")?.toLongOrNull() }.getOrNull()
+                if (response.code == 429) recordRateLimit(retryAfter)
+                throw PortalHttpException(response.code, retryAfter, buildDiagnostic(session.endpointUrl, params,
+                    response.code, response.header("Content-Type"), preview, session.profile, session))
+            }
+            if (body.contentLength() > maximum) throw PortalResponseTooLargeException("The shared programme guide exceeds the download limit")
+            val bounded = object : java.io.FilterInputStream(source.inputStream()) {
+                var count = 0L
+                private fun account(size: Int) {
+                    if (size > 0) count += size
+                    if (count > maximum) throw PortalResponseTooLargeException("The shared programme guide exceeds the download limit")
+                }
+                override fun read(): Int = super.read().also { if (it >= 0) account(1) }
+                override fun read(bytes: ByteArray, offset: Int, length: Int): Int =
+                    super.read(bytes, offset, minOf(length.toLong(), maximum - count + 1).toInt()).also(::account)
+            }
+            bounded.reader(Charsets.UTF_8).use { readStreamingPortalGuide(it, System.currentTimeMillis()) }
+                .also { clearRateLimitStrikes() }
+        }
+    }
+
     private suspend fun request(
         profile: PortalProfile,
         endpointUrl: String,
@@ -824,7 +911,8 @@ class StalkerPortalClient(private val context: Context) {
         params: Map<String, String>,
         background: Boolean = params["action"] in setOf("get_short_epg", "get_epg_info"),
         onProviderWait: (Long) -> Unit = {},
-        onRequestStarted: () -> Unit = {}
+        onRequestStarted: () -> Unit = {},
+        maximumResponseBytes: Long = MAX_PORTAL_JSON_BYTES
     ): JsonElement = requestGate.run(
         background = background,
         minimumSpacingMillis = when (params["action"]) {
@@ -839,33 +927,10 @@ class StalkerPortalClient(private val context: Context) {
         // create_link is the immediate continuation of a user-selected playback
         // lookup. Keep the rolling request budget, but do not add a full second
         // of artificial latency after the preceding episode/movie detail call.
-        val endpoint = endpointUrl.toHttpUrl().newBuilder().apply {
-            params.forEach { (key, value) ->
-                // Cast4K's Retrofit declaration marks the Stalker `cmd` value as
-                // encoded. Preserve command paths such as /media/123.mpg exactly.
-                if (key == "cmd") addEncodedQueryParameter(key, value)
-                else addQueryParameter(key, value)
-            }
-        }.build()
-        cookies.seedPortalCookies(endpoint, profile.macAddress)
-        val builder = Request.Builder()
-            .url(endpoint)
-            .addHeader("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux armv7l; en-US)")
-            .addHeader("User-Agent", USER_AGENT)
-            .header("X-User-Agent", "Model: MAG424; Link: WiFi")
-            .header("Language", "en-US")
-            .header("Accept", "application/json, text/javascript, */*; q=0.01")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Referer", portalReferer(endpoint))
-            .header("Connection", "keep-alive")
-        session?.let {
-            builder.header("Authorization", "Bearer ${it.token}")
-            builder.header("X-Token", it.token)
-        }
-        http.newCall(builder.build()).readCancellable { response ->
+        http.newCall(portalHttpRequest(profile, endpointUrl, session, params)).readCancellable { response ->
             val responseBody = response.body
             val declaredLength = responseBody?.contentLength() ?: 0L
-            if (declaredLength > MAX_PORTAL_JSON_BYTES) {
+            if (declaredLength > maximumResponseBytes) {
                 throw PortalResponseTooLargeException(
                     "NikTV rejected an unexpectedly large portal response " +
                         "(${declaredLength} bytes) for ${params["action"] ?: "unknown action"}."
@@ -873,11 +938,11 @@ class StalkerPortalClient(private val context: Context) {
             }
             val body = responseBody?.let { payload ->
                 val source = payload.source()
-                source.request(MAX_PORTAL_JSON_BYTES + 1L)
-                if (source.buffer.size > MAX_PORTAL_JSON_BYTES) {
+                source.request(maximumResponseBytes + 1L)
+                if (source.buffer.size > maximumResponseBytes) {
                     throw PortalResponseTooLargeException(
                         "NikTV rejected an unexpectedly large portal response " +
-                            "(more than ${MAX_PORTAL_JSON_BYTES} bytes) for ${params["action"] ?: "unknown action"}."
+                            "(more than $maximumResponseBytes bytes) for ${params["action"] ?: "unknown action"}."
                     )
                 }
                 source.buffer.readUtf8()
@@ -1111,6 +1176,11 @@ class StalkerPortalClient(private val context: Context) {
     }
     private fun JsonElement.string(key: String): String? = (this as? JsonObject)?.string(key)
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
+    private fun JsonObject.programmeTimestamp(vararg keys: String): Long? = keys.firstNotNullOfOrNull { key ->
+        string(key)?.toLongOrNull()?.takeIf { it > 0 }?.let { raw ->
+            if (raw < 10_000_000_000L) raw * 1_000L else raw
+        }
+    }
     private fun JsonObject.boolish(key: String): Boolean = string(key)?.lowercase() in setOf("1", "true", "yes")
     private fun JsonObject.liveProgramme(allowGenericTitle: Boolean = false): LiveProgramme? {
         val nested = listOf("now_playing", "current_program", "current_programme", "epg")
@@ -1134,13 +1204,10 @@ class StalkerPortalClient(private val context: Context) {
             ?: if (source !== this) string("cur_playing")?.takeIf(String::isNotBlank) else null)
             ?: return null
         if (isMissingLiveProgrammeTitle(title)) return null
-        fun timestamp(vararg keys: String): Long? = keys.firstNotNullOfOrNull { key ->
-            source.string(key)?.toLongOrNull()?.let { raw -> if (raw < 10_000_000_000L) raw * 1_000L else raw }
-        }
         return LiveProgramme(
             title = title,
-            startTimeMillis = timestamp("start_timestamp", "start_ts", "start_time"),
-            endTimeMillis = timestamp("stop_timestamp", "end_timestamp", "stop_ts", "end_ts", "end_time"),
+            startTimeMillis = source.programmeTimestamp("start_timestamp", "start_ts", "start_time"),
+            endTimeMillis = source.programmeTimestamp("stop_timestamp", "end_timestamp", "stop_ts", "end_ts", "end_time"),
             observedAtMillis = System.currentTimeMillis()
         )
     }
@@ -1150,27 +1217,37 @@ class StalkerPortalClient(private val context: Context) {
         val data = (root as? JsonObject)?.get("data") ?: root
         val result = linkedMapOf<String, MutableList<LiveProgramme>>()
         fun add(channelId: String?, node: JsonElement) {
-            val id = channelId?.takeIf(String::isNotBlank)
+            val objectNode = node as? JsonObject ?: return
+            val id = (objectNode.string("ch_id") ?: objectNode.string("channel_id") ?: channelId)?.takeIf(String::isNotBlank)
                 ?: defaultChannelId?.takeIf(String::isNotBlank)
                 ?: return
-            val programme = (node as? JsonObject)?.liveProgramme(allowGenericTitle = true) ?: return
+            val programme = objectNode.liveProgramme(allowGenericTitle = true) ?: return
             result.getOrPut(id) { mutableListOf() }.add(programme)
         }
         when (data) {
-            is JsonObject -> data.forEach { (channelKey, value) ->
-                when (value) {
-                    is JsonArray -> value.forEach { node ->
-                        val o = node as? JsonObject
-                        add(o?.string("ch_id") ?: o?.string("channel_id") ?: channelKey, node)
+            is JsonObject -> {
+                val directEntries = data["programs"] as? JsonArray ?: data["epg"] as? JsonArray
+                if (directEntries != null) {
+                    directEntries.forEach { add(data.string("ch_id") ?: data.string("channel_id"), it) }
+                } else if (data.liveProgramme(allowGenericTitle = true) != null) {
+                    add(data.string("ch_id") ?: data.string("channel_id"), data)
+                } else data.forEach { (channelKey, value) ->
+                    when (value) {
+                        is JsonArray -> value.forEach { node ->
+                            val o = node as? JsonObject
+                            add(o?.string("ch_id") ?: o?.string("channel_id") ?: channelKey, node)
+                        }
+                        is JsonObject -> {
+                            val entries = value["data"] as? JsonArray
+                                ?: value["programs"] as? JsonArray
+                                ?: value["epg"] as? JsonArray
+                            if (entries != null) entries.forEach {
+                                add(value.string("ch_id") ?: value.string("channel_id") ?: channelKey, it)
+                            }
+                            else add(value.string("ch_id") ?: value.string("channel_id") ?: channelKey, value)
+                        }
+                        else -> Unit
                     }
-                    is JsonObject -> {
-                        val entries = value["data"] as? JsonArray
-                            ?: value["programs"] as? JsonArray
-                            ?: value["epg"] as? JsonArray
-                        if (entries != null) entries.forEach { add(channelKey, it) }
-                        else add(value.string("ch_id") ?: value.string("channel_id") ?: channelKey, value)
-                    }
-                    else -> Unit
                 }
             }
             is JsonArray -> data.forEach { node ->

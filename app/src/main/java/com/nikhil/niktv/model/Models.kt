@@ -355,11 +355,15 @@ data class PlayingMedia(
     val playbackFormat: String = "",
     val separateAudioUrl: String? = null,
     val streamRequestHeaders: Map<String, String> = emptyMap(),
-    val nativeSabr: com.newtube.sabr.SabrStreamInfo? = null
+    val nativeSabr: com.newtube.sabr.SabrStreamInfo? = null,
+    val queueFilter: PlaybackQueueFilter? = null,
+    val playWhenReady: Boolean = true,
+    val decoderSessionId: String = java.util.UUID.randomUUID().toString(),
+    val decoderRecoveryCount: Int = 0
 )
 
 @Serializable
-enum class PlaybackEngine { AUTO, MEDIA3, VLC, EXOPLAYER, MPV }
+enum class PlaybackEngine { AUTO, MEDIA3, VLC, EXOPLAYER, MPV, FLOW }
 
 @Serializable
 data class PlaybackProgress(
@@ -401,4 +405,14 @@ data class PortalSession(
     val hardwareVersion2: String,
     val random: String? = null,
     val authenticatedAtMillis: Long = System.currentTimeMillis()
+)
+
+/** A local browse context; never stores credentials or a resolved stream URL. */
+data class PlaybackQueueFilter(
+    val query: String = "",
+    val sourceIds: Set<String>? = null,
+    val fixedIds: Set<String>? = null,
+    val pinnedIds: List<String>? = null,
+    val selectedOrdinal: Int = 0,
+    val contextId: String? = null
 )

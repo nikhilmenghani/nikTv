@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.NikTv" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.NikTv.Base" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:colorAccent">#7C4DFF</item>
@@ -8,4 +8,5 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:statusBarColor">#080B12</item>
     </style>
+    <style name="Theme.NikTv" parent="Theme.NikTv.Base" />
 </resources>

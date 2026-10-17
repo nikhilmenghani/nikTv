@@ -17,6 +17,24 @@ class LiveChannelGuideUpdateTest {
     private fun state() = NikTvState(session = session, items = listOf(channel), browseCache = cache,
         browseCachesByType = mapOf(CatalogType.LIVE_TV to cache))
 
+    @Test fun staleSelectedTileUsesLatestGuideWithoutChangingItsStreamCommand() {
+        val populated = state().withLiveChannelGuide(profile.cacheKey(), enriched)
+        val selected = populated.withCachedLiveGuide(profile.cacheKey(), channel)
+        assertEquals(programme, selected.liveProgramme)
+        assertEquals("original-command", selected.command)
+        assertNull(populated.withCachedLiveGuide("different-profile", channel).liveProgramme)
+    }
+
+    @Test fun selectingAnOldSnapshotCannotReviveAnAuthoritativelyClearedGuide() {
+        assertNull(state().withCachedLiveGuide(profile.cacheKey(), enriched).liveProgramme)
+    }
+
+    @Test fun playerOpenedFromMovieScreenCanStillReuseItsLiveCache() {
+        val populated = state().withLiveChannelGuide(profile.cacheKey(), enriched)
+            .copy(selectedType = CatalogType.MOVIES, items = listOf(channel.copy(title = "Movie")))
+        assertEquals(programme, populated.withCachedLiveGuide(profile.cacheKey(), channel).liveProgramme)
+    }
+
     @Test fun guideArrivingAfterBackUpdatesTileAndBothCachesWithoutReopeningPlayer() {
         val updated = state().withLiveChannelGuide(profile.cacheKey(), enriched)
         assertNull(updated.nowPlaying)

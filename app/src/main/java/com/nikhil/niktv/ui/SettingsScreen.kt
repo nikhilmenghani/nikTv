@@ -764,6 +764,8 @@ internal fun ModernSettingsScreen(
         val appBrightnessRequester = remember { FocusRequester() }
         val keepAwakeRequester = remember { FocusRequester() }
         val orientationRequester = remember { FocusRequester() }
+        val queueLayoutRequester = remember { FocusRequester() }
+        val nikTubeEngineRequester = remember { FocusRequester() }
         val playbackEngineRequester = remember { FocusRequester() }
         val audioFallbackRequester = remember { FocusRequester() }
         val seriesSeasonRequester = remember { FocusRequester() }
@@ -960,12 +962,43 @@ SettingsSwitch(
             CompactOrientationSetting(
                 entryRequester = orientationRequester,
                 upRequester = keepAwakeRequester,
-                downRequester = audioFallbackRequester
+                downRequester = queueLayoutRequester
             )
 
 
         }
         SettingsSection("Playback") {
+            val queueLayout = rememberPlayerQueueLayout()
+            CompactSettingsOptionRow(
+                icon = Icons.Default.ViewList,
+                title = "Player media browser",
+                subtitle = "Choose compact tiles or a list in a side panel while video continues playing.",
+                belowContent = {
+                    Spacer(Modifier.height(8.dp))
+                    SettingsChoiceGrid(options = PlayerQueueLayout.entries.map { it to it.label },
+                        selected = queueLayout, onSelect = { PlayerQueuePreferences.setLayout(context, it) },
+                        entryRequester = queueLayoutRequester, upRequester = orientationRequester,
+                        downRequester = nikTubeEngineRequester)
+                }
+            )
+            SettingsDivider()
+            var nikTubeEngine by remember { mutableStateOf(com.nikhil.niktv.data.NikTubeEnginePreferences.selected(context)) }
+            CompactSettingsOptionRow(
+                icon = Icons.Default.PlayCircle,
+                title = "NikTube experience",
+                subtitle = "Automatic uses SmartTube on TV and Flow on phones/tablets. You can choose either experience on this device.",
+                belowContent = {
+                    Spacer(Modifier.height(8.dp))
+                    SettingsChoiceGrid(
+                        options = listOf(com.nikhil.niktv.data.NikTubeEngine.AUTO to "Automatic", com.nikhil.niktv.data.NikTubeEngine.FLOW to "Flow", com.nikhil.niktv.data.NikTubeEngine.SMARTTUBE to "SmartTube"),
+                        selected = nikTubeEngine,
+                        onSelect = { nikTubeEngine = it; com.nikhil.niktv.data.NikTubeEnginePreferences.set(context, it) },
+                        entryRequester = nikTubeEngineRequester, upRequester = queueLayoutRequester,
+                        downRequester = audioFallbackRequester
+                    )
+                }
+            )
+            SettingsDivider()
             val audioFallbackContext = LocalContext.current
             var audioFallbackEnabled by remember {
                 mutableStateOf(AudioFailurePreferences.enabled(audioFallbackContext))
@@ -978,7 +1011,7 @@ SettingsSwitch(
                     SettingsSwitch(
                         checked = audioFallbackEnabled,
                         modifier = Modifier.focusRequester(audioFallbackRequester).focusProperties {
-                            up = orientationRequester
+                            up = nikTubeEngineRequester
                             down = playbackEngineRequester
                         },
                         onCheckedChange = {
@@ -3483,6 +3516,11 @@ internal fun PlaybackEngineSettingsContent(
             PlaybackEngine.MEDIA3,
             "ExoPlayer",
             "Use NikTV decoder fallback and recovery."
+        ),
+        Triple(
+            PlaybackEngine.FLOW,
+            "Flow",
+            "Use Flow-inspired rendering and memory-aware buffering with NikTV controls."
         ),
         Triple(
             PlaybackEngine.VLC,

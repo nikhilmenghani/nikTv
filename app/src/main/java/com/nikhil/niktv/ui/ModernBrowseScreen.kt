@@ -195,7 +195,8 @@ internal fun ModernBrowseScreen(
     refreshLiveProgramme: (MediaItem) -> Unit,
     refreshTmdbMatches: (Int, CatalogType) -> Unit,
     findChannelsInCategory: (String) -> Unit,
-    cancelCategoryFind: () -> Unit
+    cancelCategoryFind: () -> Unit,
+    playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null
 ) {
     val home = state.homeOpen
     val layoutToggleRequester = remember { FocusRequester() }
@@ -214,6 +215,7 @@ internal fun ModernBrowseScreen(
     run {
         ModernTileBrowseScreen(
             state = state,
+            playInContext = playInContext,
             dashboardSurface = dashboardSurface,
             openHome = openHome,
             selectType = selectType,

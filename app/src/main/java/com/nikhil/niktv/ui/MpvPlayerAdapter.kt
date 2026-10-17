@@ -26,7 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class MpvPlayerAdapter(
     context: Context,
     private val media: PlayingMedia,
-    startPosition: Long
+    startPosition: Long,
+    @androidx.annotation.VisibleForTesting private val liveStartPosition: String = "0"
 ) : SimpleBasePlayer(Looper.getMainLooper()) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -58,6 +59,17 @@ internal class MpvPlayerAdapter(
     private var selection = TrackSelectionParameters.DEFAULT_WITHOUT_CONTEXT
     private var volumeValue = 1f
     private var repeat = Player.REPEAT_MODE_OFF
+    @Volatile private var lastNativeFailure: String? = null
+    private val nativeLogObserver = object : MPVLib.LogObserver {
+        override fun logMessage(prefix: String, level: Int, text: String) {
+            if (!released.get() && level <= 30 && text.isNotBlank()) {
+                val failure = nativePlaybackFailure("$prefix: $text")
+                // A trailing generic demux failure must not erase the useful HTTP/codec cause.
+                if (lastNativeFailure == null || failure.kind != NativeFailureKind.UNKNOWN)
+                    lastNativeFailure = failure.message
+            }
+        }
+    }
     private var subtitleDelayMillis = 0L
     private var videoSizing = VideoResizeMode.FIT
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -91,6 +103,17 @@ internal class MpvPlayerAdapter(
             }
             publish()
         }, main).build()
+
+    private val noisyReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && !released.get()) playWhenReady = false
+        }
+    }
+    init {
+        androidx.core.content.ContextCompat.registerReceiver(appContext, noisyReceiver,
+            android.content.IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
 
     private val surfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(value: SurfaceHolder) = attach(value.surface)
@@ -139,7 +162,7 @@ internal class MpvPlayerAdapter(
         }
         override fun event(eventId: Int) {
             when (eventId) {
-                MPVLib.MpvEvent.MPV_EVENT_START_FILE -> eofReached = false
+                MPVLib.MpvEvent.MPV_EVENT_START_FILE -> { eofReached = false; lastNativeFailure = null }
                 MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED -> enqueue { engine ->
                     refreshTracks(engine)
                     val length = engine.getPropertyDouble("duration")
@@ -172,8 +195,8 @@ internal class MpvPlayerAdapter(
                         if (!released.get() && state != Player.STATE_IDLE) {
                             if (ended) state = Player.STATE_ENDED
                             else {
-                                error = PlaybackException("MPV could not continue this stream. Retry or choose another player.",
-                                    null, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+                                val failure = nativePlaybackFailure(lastNativeFailure)
+                                error = PlaybackException(failure.message, failure, failure.playbackCode())
                                 state = Player.STATE_IDLE
                             }
                             publish()
@@ -239,6 +262,7 @@ internal class MpvPlayerAdapter(
                     }
                 if (headers.isNotEmpty()) it.setOptionString("http-header-fields", headers)
                 it.addObserver(observer)
+                it.addLogObserver(nativeLogObserver)
                 it.init()
                 it.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
                 it.observeProperty("duration", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
@@ -268,6 +292,7 @@ internal class MpvPlayerAdapter(
     }
     override fun handleRelease(): ListenableFuture<*> {
         released.set(true)
+        runCatching { appContext.unregisterReceiver(noisyReceiver) }
         holder?.removeCallback(surfaceCallback)
         holder = null
         abandonFocus()
@@ -275,6 +300,7 @@ internal class MpvPlayerAdapter(
             pendingPreparePosition = null
             mpv?.let {
                 it.removeObserver(observer)
+                it.removeLogObserver(nativeLogObserver)
                 runCatching { it.command(arrayOf("stop")) }
                 runCatching { it.detachSurface() }
                 it.destroy()
@@ -388,7 +414,7 @@ internal class MpvPlayerAdapter(
         pendingPreparePosition = null
         mpvVideoSizing(videoSizing).forEach { (key, value) -> engine.setPropertyString(key, value) }
         engine.setPropertyBoolean("pause", !requested || focusSuppression != Player.PLAYBACK_SUPPRESSION_REASON_NONE)
-        engine.setPropertyString("start", if (live) "0" else (resumePosition / 1000.0).toString())
+        engine.setPropertyString("start", if (live) liveStartPosition else (resumePosition / 1000.0).toString())
         replacementEndExpected = nativeHasFile
         nativeHasFile = true
         engine.command(arrayOf("loadfile", selectedItem.localConfiguration!!.uri.toString(), "replace"))
@@ -458,6 +484,11 @@ internal class MpvPlayerAdapter(
         if (!released.get()) invalidateState()
         firstFrame = false
     }
+    @androidx.annotation.VisibleForTesting
+    internal suspend fun diagnosticFrameDrops(): Int? = kotlinx.coroutines.withContext(NativePlaybackWorker.dispatcher) {
+        if (released.get()) null else mpv?.getPropertyInt("frame-drop-count")
+    }
+
     private fun enqueue(action: (MPVLib) -> Unit): ListenableFuture<Void> = enqueueNative { mpv?.let(action) }
     private fun enqueueNative(allowReleased: Boolean = false, action: () -> Unit): ListenableFuture<Void> {
         val future = SettableFuture.create<Void>()
@@ -471,8 +502,8 @@ internal class MpvPlayerAdapter(
                 if (failure is UnsatisfiedLinkError) android.util.Log.w("NikTvMpv", "Native loader: ${failure.message}")
                 main.post {
                     if (!released.get()) {
-                        error = PlaybackException("MPV could not play this media. Retry or choose another player.", null,
-                            PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
+                        val native = nativePlaybackFailure(failure.message)
+                        error = PlaybackException(native.message, native, native.playbackCode())
                         state = Player.STATE_IDLE
                         publish()
                     }

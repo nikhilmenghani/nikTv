@@ -1,0 +1,254 @@
+<?xml version='1.0' encoding='utf-8'?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
+    
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" android:minSdkVersion="33" />
+    
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" android:minSdkVersion="33" />
+    
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    
+    <queries>
+        <intent>
+            <action android:name="android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL" />
+        </intent>
+    </queries>
+
+    <application>
+
+        
+        
+        <property android:name="android.window.PROPERTY_COMPAT_ALLOW_MIN_ASPECT_RATIO_OVERRIDE" android:value="true" />
+        <property android:name="android.window.PROPERTY_COMPAT_IGNORE_ORIENTATION_REQUEST_WHEN_LOOP_DETECTED" android:value="true" />
+
+        <meta-data android:name="com.samsung.android.keepalive.density" android:value="true" />
+        <meta-data android:name="com.samsung.android.multidisplay.keep_process_alive" android:value="true" />
+        <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc" />
+
+        <activity android:name=".TvActivity" android:banner="@drawable/tv_banner" android:exported="true" android:launchMode="singleTop" android:screenOrientation="landscape" android:theme="@style/Theme.Flow.Starting">
+            </activity>
+
+        
+        <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode" android:launchMode="singleTop" android:resizeableActivity="true" android:supportsPictureInPicture="true" android:theme="@style/Theme.Flow.Starting" android:windowSoftInputMode="adjustResize" android:windowLayoutInDisplayCutoutMode="shortEdges">
+
+            
+            </activity>
+        
+        
+        <service android:name=".service.Media3MusicService" android:foregroundServiceType="mediaPlayback" android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+        
+        
+        <service android:name=".service.VideoPlayerService" android:enabled="true" android:exported="true" android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        
+        <service android:name="androidx.work.impl.foreground.SystemForegroundService" android:foregroundServiceType="dataSync" tools:node="merge" />
+
+        <receiver android:name=".data.video.downloader.work.DownloadActionReceiver" android:exported="false" />
+
+        
+        <service android:name=".sync.transport.SyncForegroundService" android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync">
+        </service>
+        
+        
+        <receiver android:name=".notification.NotificationActionReceiver" android:enabled="true" android:exported="false">
+            <intent-filter>
+                <action android:name="io.github.aedev.flow.action.CANCEL_DOWNLOAD" />
+                <action android:name="io.github.aedev.flow.action.RETRY_DOWNLOAD" />
+                <action android:name="io.github.aedev.flow.action.PAUSE_DOWNLOAD" />
+                <action android:name="io.github.aedev.flow.action.RESUME_DOWNLOAD" />
+                <action android:name="io.github.aedev.flow.action.DISMISS_NOTIFICATION" />
+            </intent-filter>
+        </receiver>
+
+        
+        <receiver android:name=".platform.LauncherAliasRepairReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        
+        <receiver android:name=".notification.ReminderReceiver" android:enabled="true" android:exported="false" />
+
+        
+        <receiver android:name=".widget.core.action.WidgetPlaybackReceiver" android:exported="false" />
+        <activity android:name=".widget.config.WidgetConfigActivity" android:exported="true" android:excludeFromRecents="true" android:taskAffinity="" android:theme="@style/Theme.Flow">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".widget.nowplaying.NowPlayingWidgetReceiver" android:exported="true" android:label="@string/widget_now_playing_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_now_playing_info" />
+        </receiver>
+        <receiver android:name=".widget.turntable.TurntableWidgetReceiver" android:exported="true" android:label="@string/widget_turntable_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_turntable_info" />
+        </receiver>
+        <receiver android:name=".widget.quickactions.QuickActionsWidgetReceiver" android:exported="true" android:label="@string/widget_quick_actions_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_quick_actions_info" />
+        </receiver>
+        <receiver android:name=".widget.recognize.RecognizeWidgetReceiver" android:exported="true" android:label="@string/widget_recognize_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_recognize_info" />
+        </receiver>
+        <receiver android:name=".widget.recent.RecentlyPlayedWidgetReceiver" android:exported="true" android:label="@string/widget_recently_played_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_recently_played_info" />
+        </receiver>
+        <receiver android:name=".widget.onrepeat.OnRepeatWidgetReceiver" android:exported="true" android:label="@string/widget_on_repeat_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_on_repeat_info" />
+        </receiver>
+        <receiver android:name=".widget.playlist.PlaylistWidgetReceiver" android:exported="true" android:label="@string/widget_playlist_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_playlist_info" />
+        </receiver>
+        <receiver android:name=".widget.week.WeekWidgetReceiver" android:exported="true" android:label="@string/widget_week_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_week_info" />
+        </receiver>
+        <receiver android:name=".widget.downloads.DownloadsWidgetReceiver" android:exported="true" android:label="@string/widget_downloads_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_downloads_info" />
+        </receiver>
+
+        
+        
+        <activity-alias android:name=".IconFlowRed" android:enabled="true" android:exported="true" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconFlowLight" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_flow_light" android:roundIcon="@mipmap/ic_launcher_flow_light_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconFlowPlay" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_flow_play" android:roundIcon="@mipmap/ic_launcher_flow_play_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconAmoled" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_amoled" android:roundIcon="@mipmap/ic_launcher_amoled_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconMonochrome" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_monochrome" android:roundIcon="@mipmap/ic_launcher_monochrome_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconGhost" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_ghost" android:roundIcon="@mipmap/ic_launcher_ghost_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconDynamic" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_dynamic" android:roundIcon="@mipmap/ic_launcher_dynamic_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconMaterialSky" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_material_sky" android:roundIcon="@mipmap/ic_launcher_material_sky_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconMaterialMint" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_material_mint" android:roundIcon="@mipmap/ic_launcher_material_mint_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressiveScallop" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_scallop" android:roundIcon="@mipmap/ic_launcher_expressive_scallop_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressiveSegmented" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_segmented" android:roundIcon="@mipmap/ic_launcher_expressive_segmented_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressivePlay" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_play" android:roundIcon="@mipmap/ic_launcher_expressive_play_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressiveSky" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_sky" android:roundIcon="@mipmap/ic_launcher_expressive_sky_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressiveMint" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_mint" android:roundIcon="@mipmap/ic_launcher_expressive_mint_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressiveCookie" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_cookie" android:roundIcon="@mipmap/ic_launcher_expressive_cookie_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressiveOval" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_oval" android:roundIcon="@mipmap/ic_launcher_expressive_oval_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+        
+        <activity-alias android:name=".IconExpressivePill" android:enabled="false" android:exported="true" android:icon="@mipmap/ic_launcher_expressive_pill" android:roundIcon="@mipmap/ic_launcher_expressive_pill_round" android:targetActivity=".MainActivity">
+            </activity-alias>
+
+
+        
+        <provider android:name="io.github.aedev.flow.FlowShareProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/shared_file_paths" />
+        </provider>
+    </application>
+
+</manifest>

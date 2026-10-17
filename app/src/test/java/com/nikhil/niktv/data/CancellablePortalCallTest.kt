@@ -29,6 +29,11 @@ class CancellablePortalCallTest {
         override fun isCanceled() = cancelled
         override fun timeout() = Timeout.NONE
         override fun clone(): Call = PendingCall()
+        override fun addEventListener(eventListener: okhttp3.EventListener) = Unit
+        override fun <T : Any> tag(type: kotlin.reflect.KClass<T>): T? = null
+        override fun <T> tag(type: Class<out T>): T? = null
+        override fun <T : Any> tag(type: kotlin.reflect.KClass<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
+        override fun <T : Any> tag(type: Class<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
         fun respond() = callback.onResponse(this, Response.Builder().request(request())
             .protocol(Protocol.HTTP_1_1).code(200).message("OK").body("guide".toResponseBody()).build())
     }

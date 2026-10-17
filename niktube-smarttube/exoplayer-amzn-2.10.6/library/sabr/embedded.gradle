@@ -1,0 +1,67 @@
+
+apply plugin: 'com.android.library'
+apply from: rootProject.file('niktube-smarttube/SharedModules/constants.gradle')
+android {
+    namespace 'com.google.android.exoplayer2.source.sabr'
+    compileSdk 37
+    defaultConfig {
+        minSdk 24
+        buildConfigField 'String', 'FLAVOR', '"ststable"'
+        buildConfigField 'String', 'VERSION_NAME', '"32.67"'
+        buildConfigField 'int', 'VERSION_CODE', '2457'
+        buildConfigField 'long', 'TIMESTAMP', '0L'
+        consumerProguardFiles 'build/embedded/consumer-rules.pro'
+    }
+    buildFeatures { buildConfig true }
+    sourceSets.main {
+        java.setSrcDirs(['build/embedded/main/java'])
+        kotlin.setSrcDirs(['build/embedded/main/java'])
+        res.setSrcDirs(['build/embedded/main/res'])
+        assets.setSrcDirs(['build/embedded/main/assets'])
+        jniLibs.setSrcDirs(['build/embedded/main/jniLibs', 'build/embedded/main/libs'])
+        manifest.srcFile 'build/embedded/main/AndroidManifest.xml'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+}
+ext.modulePrefix = ':st-exoplayer-'
+ext.protobufVersion = '3.17.3'
+ext.androidXTestVersion = '1.6.1'
+ext.kotlinVersion = '2.4.10'
+ext.kotlinxVersion = '1.11.0'
+ext.coreXVersion = '1.19.0'
+ext.kotlinCoreXVersion = '1.19.0'
+dependencies { coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5' }
+configurations.configureEach {
+    exclude group: 'androidx.leanback', module: 'leanback'
+}
+
+configurations { sabrProtoc }
+dependencies { sabrProtoc 'com.google.protobuf:protoc:3.17.3:windows-x86_64@exe' }
+def generateProto = tasks.register('embeddedSabrProto', Exec) {
+    def destination = layout.buildDirectory.dir('embedded/proto')
+    inputs.files(fileTree('src/main/proto'), configurations.sabrProtoc)
+    outputs.dir(destination)
+    doFirst {
+        destination.get().asFile.mkdirs()
+        commandLine([configurations.sabrProtoc.singleFile.absolutePath, '--proto_path=' + file('src/main/proto').absolutePath,
+            '--java_out=lite:' + destination.get().asFile.absolutePath] + fileTree('src/main/proto').matching { include '**/*.proto' }.files.collect { it.absolutePath })
+    }
+}
+android.sourceSets.main.java.srcDir layout.buildDirectory.dir('embedded/proto').get().asFile
+tasks.named('preBuild').configure { dependsOn generateProto }
+
+dependencies {
+    implementation project(':st-exoplayer-library-core')
+    implementation project(':st-mediaserviceinterfaces')
+    implementation project(':st-sharedutils')
+    implementation project(':st-youtubeapi')
+    compileOnly 'org.checkerframework:checker-qual:' + checkerframeworkVersion
+    implementation 'androidx.annotation:annotation:1.1.0'
+    implementation 'com.google.protobuf:protobuf-javalite:' + protobufVersion
+    testImplementation project(':st-exoplayer-testutils-robolectric')
+    testImplementation project(':st-exoplayer-library-sabr')
+}

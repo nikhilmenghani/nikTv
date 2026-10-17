@@ -649,6 +649,7 @@ private fun QueueArtworkFallback(item: MediaItem) {
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal fun PlayerQueueOverlay(
     items: List<MediaItem>,
     playingId: String,
@@ -692,12 +693,21 @@ internal fun PlayerQueueOverlay(
             !context.packageManager.hasSystemFeature(
                 android.content.pm.PackageManager.FEATURE_TOUCHSCREEN
             )
-    val touchQueueRail = !tvQueueGrid
+    val queueLayout = rememberPlayerQueueLayout()
+    val listQueue = queueLayout == PlayerQueueLayout.LIST
+    val phoneQueue = !tvQueueGrid && configuration.smallestScreenWidthDp < 600
+    val listPanelWidth = if (phoneQueue) {
+        configuration.screenWidthDp.dp * if (configuration.screenWidthDp < 600) .88f else .46f
+    } else {
+        (configuration.screenWidthDp.dp * .36f).coerceIn(300.dp, 380.dp)
+    }
+    val touchQueueRail = !tvQueueGrid && !listQueue
     val liveChannelQueue = onTogglePin != null
     val compactQueueGrid =
         touchQueueRail && configuration.smallestScreenWidthDp < 600
     val queueColumnCount = when {
-        tvQueueGrid -> 2
+        listQueue -> 1
+        tvQueueGrid -> 3
         compactQueueGrid -> 3
         configuration.screenWidthDp < 900 -> 4
         else -> 5
@@ -713,8 +723,9 @@ internal fun PlayerQueueOverlay(
         (configuration.screenHeightDp * (if (compactQueueGrid) .30f else .27f)).dp.coerceIn(
             if (compactQueueGrid) 132.dp else 145.dp,
             if (compactQueueGrid) 158.dp else 172.dp
-        )
+        ).let { (it + 32.dp).coerceAtLeast(168.dp) } // Header and focus gutters; preserve card height.
     val queueSheetMinHeight = when {
+        listQueue -> 200.dp
         tvQueueGrid -> 200.dp
         touchQueueRail -> touchQueueSheetHeight
         else -> 260.dp
@@ -731,17 +742,21 @@ internal fun PlayerQueueOverlay(
                 }
             ).dp
     val queueSheetMaxHeight = when {
+        listQueue -> (configuration.screenHeightDp.dp - 32.dp).coerceAtLeast(200.dp)
+        tvQueueGrid -> 232.dp
         touchQueueRail -> touchQueueSheetHeight
         desiredQueueSheetMaxHeight > queueSheetMinHeight ->
             desiredQueueSheetMaxHeight
         else -> queueSheetMinHeight
     }
     val queueOuterHorizontalPadding = when {
+        listQueue -> 10.dp
         tvQueueGrid -> 18.dp
         touchQueueRail -> 8.dp
         else -> 28.dp
     }
     val queueOuterVerticalPadding = when {
+        listQueue -> 8.dp
         tvQueueGrid -> 8.dp
         touchQueueRail -> 6.dp
         else -> 22.dp
@@ -749,13 +764,16 @@ internal fun PlayerQueueOverlay(
     val queueDismissBoundary =
         queueSheetMaxHeight + queueOuterVerticalPadding
     val queueSheetPadding = when {
+        listQueue -> 10.dp
         tvQueueGrid -> 10.dp
         compactQueueGrid -> 10.dp
+        touchQueueRail -> 10.dp
         else -> 20.dp
     }
     val queueSheetCornerRadius =
         if (touchQueueRail) 18.dp else 24.dp
     val queueHeaderSpacer = when {
+        listQueue -> 6.dp
         tvQueueGrid -> 4.dp
         touchQueueRail -> 3.dp
         else -> 14.dp
@@ -766,14 +784,15 @@ internal fun PlayerQueueOverlay(
         else -> 12.dp
     }
     val queueGridVerticalSpacing = when {
+        listQueue -> 6.dp
         tvQueueGrid -> 7.dp
         touchQueueRail -> 8.dp
         else -> 12.dp
     }
     val queueCardHeight = when {
-        tvQueueGrid && liveChannelQueue -> if (liveXtream) 116.dp else 96.dp
-        tvQueueGrid -> 96.dp
-        else -> (touchQueueSheetHeight - 40.dp).coerceAtLeast(96.dp)
+        listQueue -> 68.dp
+        tvQueueGrid -> 72.dp
+        else -> (touchQueueSheetHeight - 72.dp).coerceAtLeast(96.dp)
     }
     // Touch queues are a single horizontal rail. Size cards from the usable
     // width so four full tiles remain visible while programme titles get more
@@ -783,6 +802,7 @@ internal fun PlayerQueueOverlay(
             configuration.screenWidthDp.dp -
                 (queueOuterHorizontalPadding * 2) -
                 (queueSheetPadding * 2) -
+                8.dp - // Both ends need room for the focused tile's scale/border.
                 (queueGridHorizontalSpacing * 3)
             ) / 4f
     } else {
@@ -810,6 +830,9 @@ internal fun PlayerQueueOverlay(
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val loadMoreRequester = remember { FocusRequester() }
     val queueFocusParking = remember { FocusRequester() }
+    val layoutToggleRequester = remember { FocusRequester() }
+    var layoutToggleFocused by remember { mutableStateOf(false) }
+    var previousQueueLayout by remember { mutableStateOf(queueLayout) }
     val currentIndex =
         uniqueItems.indexOfFirst { it.id == playingId }.coerceAtLeast(0)
     val initialVisibleItem =
@@ -823,6 +846,7 @@ internal fun PlayerQueueOverlay(
     )
 
     var focusedIndex by remember(playingId) { mutableIntStateOf(currentIndex) }
+    var focusMoveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var previousItemIds by remember {
         mutableStateOf(uniqueItems.mapTo(linkedSetOf()) { it.id })
     }
@@ -938,6 +962,7 @@ internal fun PlayerQueueOverlay(
         val minIndex = if (leadingLoadPrevious) -1 else 0
         val target = index.coerceIn(minIndex, maxIndex)
         focusedIndex = target
+        focusMoveJob?.cancel()
 
         val requester =
             if (target < 0 || target >= uniqueItems.size) {
@@ -955,16 +980,15 @@ internal fun PlayerQueueOverlay(
 
         if (
             alreadyVisible &&
-            (!tvQueueGrid || gridState.firstVisibleItemScrollOffset == 0) &&
             runCatching { requester.requestFocus() }.getOrDefault(false)
         ) {
             return
         }
 
-        scope.launch {
-            gridState.scrollToItem(
-                if (tvQueueGrid) (layoutIndex / queueColumnCount) * queueColumnCount else layoutIndex
-            )
+        focusMoveJob = scope.launch {
+            val scrollIndex = if (tvQueueGrid) (layoutIndex / queueColumnCount) * queueColumnCount else layoutIndex
+            if (tvQueueGrid) gridState.animateScrollToItem(scrollIndex)
+            else gridState.scrollToItem(scrollIndex)
             repeat(4) {
                 withFrameNanos { }
                 if (
@@ -975,6 +999,18 @@ internal fun PlayerQueueOverlay(
                     return@launch
                 }
             }
+        }
+    }
+
+    LaunchedEffect(queueLayout) {
+        if (queueLayout == previousQueueLayout) return@LaunchedEffect
+        previousQueueLayout = queueLayout
+        focusMoveJob?.cancel()
+        val target = focusedIndex.coerceIn(0, uniqueItems.lastIndex.coerceAtLeast(0))
+        if (uniqueItems.isNotEmpty()) gridState.scrollToItem(target + if (leadingLoadPrevious) 1 else 0)
+        repeat(4) {
+            withFrameNanos { }
+            if (runCatching { layoutToggleRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
     }
 
@@ -1079,7 +1115,7 @@ internal fun PlayerQueueOverlay(
         var focused by remember(entryKey(index)) { mutableStateOf(false) }
         val current = item.id == playingId
 
-        if (liveChannelQueue) {
+        if (liveChannelQueue && !tvQueueGrid && !listQueue) {
             ModernLiveChannelTile(
                 item = item,
                 onRefreshProgramme = { onRefreshProgramme?.invoke(item) },
@@ -1163,7 +1199,10 @@ internal fun PlayerQueueOverlay(
                 },
                 shape = cardShape
             ) {
-                PlayerMediaTileContent(item = item, current = current, isTv = tvQueueGrid)
+                if (tvQueueGrid || listQueue) {
+                    CompactPlayerQueueContent(item, current, liveChannelQueue, liveCategoryTitle, liveXtream,
+                        guideNow, item.id in favoriteIds, item.id in pinnedIds)
+                } else PlayerMediaTileContent(item = item, current = current, isTv = tvQueueGrid)
 
             }
 
@@ -1197,6 +1236,14 @@ internal fun PlayerQueueOverlay(
                     if (event.type == KeyEventType.KeyUp) onDismiss()
                     return@onPreviewKeyEvent true
                 }
+                if (layoutToggleFocused && event.type == KeyEventType.KeyDown && favoriteMenuItemId == null) {
+                    return@onPreviewKeyEvent when (event.key) {
+                        Key.DirectionDown -> { focusAt(focusedIndex); true }
+                        Key.DirectionUp, Key.DirectionLeft -> { onDismiss(); true }
+                        Key.DirectionRight -> true
+                        else -> false
+                    }
+                }
                 if (
                     event.type != KeyEventType.KeyDown ||
                     favoriteMenuItemId != null
@@ -1212,7 +1259,7 @@ internal fun PlayerQueueOverlay(
                     if (touchQueueRail) {
                         when (event.key) {
                             Key.DirectionUp -> {
-                                onDismiss()
+                                runCatching { layoutToggleRequester.requestFocus() }
                                 true
                             }
 
@@ -1248,7 +1295,7 @@ internal fun PlayerQueueOverlay(
                         when (event.key) {
                             Key.DirectionUp -> {
                                 if (layoutIndex < queueColumnCount) {
-                                    onDismiss()
+                                    runCatching { layoutToggleRequester.requestFocus() }
                                 } else {
                                     focusAt(focusedIndex - queueColumnCount)
                                 }
@@ -1256,7 +1303,8 @@ internal fun PlayerQueueOverlay(
                             }
 
                             Key.DirectionLeft -> {
-                                if (currentColumn > 0 && focusedIndex > if (leadingLoadPrevious) -1 else 0) {
+                                if (listQueue) onDismiss()
+                                else if (currentColumn > 0 && focusedIndex > if (leadingLoadPrevious) -1 else 0) {
                                     focusAt(focusedIndex - 1)
                                 }
                                 true
@@ -1321,9 +1369,8 @@ internal fun PlayerQueueOverlay(
                                     kotlin.math.abs(delta.x)
                             val outsideTap =
                                 delta.getDistance() < 12.dp.toPx() &&
-                                    start.y <
-                                    size.height -
-                                    queueDismissBoundary.toPx()
+                                    (if (listQueue) start.x < size.width - listPanelWidth.toPx() - queueOuterHorizontalPadding.toPx() else
+                                        start.y < size.height - queueDismissBoundary.toPx())
                             if (swipeDown || outsideTap) {
                                 onDismiss()
                             }
@@ -1343,18 +1390,18 @@ internal fun PlayerQueueOverlay(
                 horizontal = queueOuterHorizontalPadding,
                 vertical = queueOuterVerticalPadding
             ),
-        contentAlignment = Alignment.BottomCenter
+        contentAlignment = if (listQueue) Alignment.CenterEnd else Alignment.BottomCenter
     ) {
         Surface(
             Modifier
-                .fillMaxWidth()
+                .then(if (listQueue) Modifier.width(listPanelWidth) else Modifier.fillMaxWidth())
                 .heightIn(
                     min = queueSheetMinHeight,
                     max = queueSheetMaxHeight
                 )
                 .graphicsLayer {
-                    translationY =
-                        size.height * (1f - renderedReveal)
+                    if (listQueue) translationX = size.width * (1f - renderedReveal)
+                    else translationY = size.height * (1f - renderedReveal)
                 },
             color = Color(0xF51A1A1A),
             shape =
@@ -1374,7 +1421,7 @@ internal fun PlayerQueueOverlay(
                 ) {
                     Text(
                         "Choose what to play",
-                        style = if (tvQueueGrid) {
+                        style = if (tvQueueGrid || listQueue) {
                             MaterialTheme.typography.titleSmall
                         } else {
                             MaterialTheme.typography.titleMedium
@@ -1382,9 +1429,10 @@ internal fun PlayerQueueOverlay(
                         color = Color.White,
                         maxLines = 1
                     )
-                    Text(
+                    if (listQueue) Spacer(Modifier.weight(1f)) else Text(
                         when {
-                            tvQueueGrid -> "D-pad browse  •  ↑ closes  •  OK Play"
+                            listQueue -> if (tvQueueGrid) "↑↓ browse · ← closes" else "Tap to play · Hold for options"
+                            tvQueueGrid -> "D-pad browse  •  ↑ View  •  Back closes"
                             touchQueueRail -> "Swipe sideways to browse  •  Swipe down to close"
                             else -> "Swipe to browse  •  Swipe down to close"
                         },
@@ -1393,6 +1441,22 @@ internal fun PlayerQueueOverlay(
                         color = Color.LightGray,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                    NikTvActionButton(
+                        label = if (listQueue) "Tiles" else "List",
+                        icon = if (listQueue) Icons.Default.GridView else Icons.Default.ViewList,
+                        modifier = Modifier.width(92.dp).height(44.dp)
+                            .focusRequester(layoutToggleRequester)
+                            .onFocusChanged { layoutToggleFocused = it.isFocused },
+                        onClick = {
+                            // Claim focus before replacing the grid. Touch clicks do not
+                            // focus buttons automatically, and removal of a focused tile
+                            // otherwise lets focus search choose a new tile.
+                            focusMoveJob?.cancel()
+                            layoutToggleRequester.requestFocus()
+                            PlayerQueuePreferences.setLayout(context,
+                                if (listQueue) PlayerQueueLayout.GRID else PlayerQueueLayout.LIST)
+                        }
                     )
                     if (!isEpisodeQueue && (loadingMore || autoAppendPending)) {
                         CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
@@ -1588,10 +1652,11 @@ internal fun PlayerQueueOverlay(
                     LazyHorizontalGrid(
                         rows = GridCells.Fixed(1),
                         modifier = Modifier
-                            .height(queueCardHeight)
+                            .height(queueCardHeight + 4.dp)
                             .fillMaxWidth()
                             .clipToBounds(),
                         state = gridState,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
                         horizontalArrangement =
                             Arrangement.spacedBy(
                                 queueGridHorizontalSpacing
@@ -1603,6 +1668,10 @@ internal fun PlayerQueueOverlay(
                         content = queueGridContent
                     )
                 } else {
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides
+                            remember { object : androidx.compose.foundation.gestures.BringIntoViewSpec {} }
+                    ) {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(queueColumnCount),
                         modifier = Modifier
@@ -1610,7 +1679,7 @@ internal fun PlayerQueueOverlay(
                             .fillMaxWidth()
                             .clipToBounds(),
                         state = gridState,
-                        contentPadding = PaddingValues(vertical = 4.dp),
+                        contentPadding = PaddingValues(4.dp),
                         horizontalArrangement =
                             Arrangement.spacedBy(
                                 queueGridHorizontalSpacing
@@ -1621,6 +1690,7 @@ internal fun PlayerQueueOverlay(
                             ),
                         content = queueGridContent
                     )
+                    }
                 }
             }
         }

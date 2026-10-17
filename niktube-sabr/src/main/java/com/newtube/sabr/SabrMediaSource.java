@@ -35,7 +35,7 @@ import androidx.media3.exoplayer.upstream.Allocator;
 import androidx.media3.exoplayer.upstream.BandwidthMeter;
 import androidx.media3.exoplayer.upstream.Loader;
 import androidx.media3.extractor.DefaultExtractorInput;
-import androidx.media3.extractor.DummyTrackOutput;
+import androidx.media3.extractor.DiscardingTrackOutput;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -485,7 +485,7 @@ public final class SabrMediaSource extends BaseMediaSource {
                 };
                 response = new SabrProtocol.ResponseInput(input, owner.period.info, track, before);
                 DefaultExtractorInput container = new DefaultExtractorInput(response::read, 0, C.LENGTH_UNSET);
-                extractor.init((id, typeId) -> typeId == track.type ? owner.queue : new DummyTrackOutput(),
+                extractor.init((id, typeId) -> typeId == track.type ? owner.queue : new DiscardingTrackOutput(),
                         startUs, owner.period.info.durationUs);
                 while (!canceled && extractor.read(container)) { }
                 if (canceled) return;

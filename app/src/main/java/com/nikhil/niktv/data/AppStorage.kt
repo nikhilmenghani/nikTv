@@ -17,7 +17,8 @@ data class AppStorageSnapshot(
     val hlsWorkingBytes: Long,
     val temporaryCacheBytes: Long,
     val recordingBytes: Long = 0L,
-    val mediaCacheBytes: Long = 0L
+    val mediaCacheBytes: Long = 0L,
+    val nikTubeDownloadBytes: Long = 0L
 )
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -46,9 +47,10 @@ suspend fun appStorageSnapshot(
         }
 
     val artworkDirectory = File(appContext.cacheDir, "artwork_cache")
+    val flowArtworkDirectory = File(appContext.cacheDir, "image_cache")
     val subtitleDirectory = File(appContext.cacheDir, "subtitles")
     val hlsDirectory = File(appContext.cacheDir, "hls_exports")
-    val namedCacheBytes = directorySize(artworkDirectory) + directorySize(subtitleDirectory)
+    val namedCacheBytes = directorySize(artworkDirectory) + directorySize(flowArtworkDirectory) + directorySize(subtitleDirectory)
     val allCacheBytes = directorySize(appContext.cacheDir) +
         (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
     android.util.Log.i("NikTvStorage", "catalogues=${directorySize(File(appContext.cacheDir, "catalogues-v1"))}, artwork=${directorySize(artworkDirectory)}, other=${(allCacheBytes - namedCacheBytes - directorySize(File(appContext.cacheDir, "catalogues-v1"))).coerceAtLeast(0L)} bytes")
@@ -57,8 +59,9 @@ suspend fun appStorageSnapshot(
         totalBytes = stats.totalBytes,
         availableBytes = stats.availableBytes,
         offlineDownloadBytes = trackedPublicBytes,
+        nikTubeDownloadBytes = NikTubeDownloads.bytes(appContext),
         mediaCacheBytes = OfflineMediaDownloads.cachedMediaBytes(appContext) + directorySize(hlsDirectory),
-        artworkCacheBytes = directorySize(artworkDirectory),
+        artworkCacheBytes = directorySize(artworkDirectory) + directorySize(flowArtworkDirectory),
         subtitleCacheBytes = directorySize(subtitleDirectory),
         hlsWorkingBytes = 0L,
         temporaryCacheBytes = (allCacheBytes - namedCacheBytes - directorySize(hlsDirectory)).coerceAtLeast(0L),
@@ -70,10 +73,12 @@ suspend fun appStorageSnapshot(
 suspend fun clearArtworkCache(context: Context): Long = withContext(Dispatchers.IO) {
     val appContext = context.applicationContext
     val directory = File(appContext.cacheDir, "artwork_cache")
-    val before = directorySize(directory)
+    val flowDirectory = File(appContext.cacheDir, "image_cache")
+    val before = directorySize(directory) + directorySize(flowDirectory)
     runCatching { appContext.imageLoader.memoryCache?.clear() }
     runCatching { appContext.imageLoader.diskCache?.clear() }
-    val after = directorySize(directory)
+    deleteDirectoryContents(directory)
+    val after = directorySize(directory) + directorySize(flowDirectory)
     (before - after).coerceAtLeast(0L)
 }
 
@@ -85,7 +90,10 @@ suspend fun clearHlsWorkingFiles(context: Context): Long =
 
 suspend fun clearTemporaryCaches(context: Context): Long = withContext(Dispatchers.IO) {
     val appContext = context.applicationContext
-    val excluded = setOf("artwork_cache", "subtitles", "hls_exports", "data")
+    // Flow owns live SimpleCache/OkHttp instances. Deleting their files here would
+    // invalidate open indexes; its own storage screen clears them through their owners.
+    val excluded = setOf("artwork_cache", "image_cache", "subtitles", "hls_exports", "data",
+        "exoplayer", "exoplayer_music", "http_cache")
     val before = unnamedCacheSize(appContext, excluded)
     deleteDirectoryContents(appContext.cacheDir, excluded, setOf("workdb.sqlite"))
     appContext.externalCacheDir?.let(::deleteDirectoryContents)

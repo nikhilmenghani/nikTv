@@ -23,6 +23,12 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.dagger.hilt.android")
+}
+
+// Test-only manifests and package IDs must never overwrite Android Studio's normal debug outputs.
+if (providers.gradleProperty("regressionBuild").orNull == "true") {
+    layout.buildDirectory.set(layout.projectDirectory.dir("build-regression"))
 }
 
 // All native players share one process-level C++ runtime. Pin MPV's newer
@@ -59,13 +65,17 @@ val prepareMpvNativeRuntime = tasks.register<PrepareMpvNativeRuntime>("prepareMp
     outputDirectory.set(layout.buildDirectory.dir("generated/mpv-jni"))
 }
 androidComponents.onVariants { variant ->
+    variant.resValues.put(variant.makeResValueKey("string", "search_authority"),
+        variant.applicationId.map { com.android.build.api.variant.ResValue("$it.smarttube", "Embedded SmartTube search") })
+    variant.resValues.put(variant.makeResValueKey("string", "niktv_search_intent_data"),
+        variant.applicationId.map { com.android.build.api.variant.ResValue("content://$it.smarttube/video", "Embedded SmartTube search") })
     variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareMpvNativeRuntime) { it.outputDirectory }
 }
 
 android {
     namespace = "com.nikhil.niktv"
     packaging { jniLibs.pickFirsts += "**/libc++_shared.so" }
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.nikhil.niktv"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -136,9 +146,9 @@ android {
             manifest.srcFile("src/regression/AndroidManifest.xml")
         }
     }
-    buildFeatures { compose = true; buildConfig = true }
+    buildFeatures { compose = true; buildConfig = true; resValues = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; isCoreLibraryDesugaringEnabled = true }
     lint {
         disable.addAll(listOf("MissingTvBanner", "OldTargetApi", "GradleDependency", "NewerVersionAvailable"))
         abortOnError = true
@@ -152,6 +162,11 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":niktube-flow"))
+    implementation(project(":st-smarttubetv"))
+    implementation("com.google.dagger:hilt-android:2.60.1")
+    ksp("com.google.dagger:hilt-android-compiler:2.60.1")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
     implementation(project(":niktube-sabr"))
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
@@ -190,6 +205,9 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("junit:junit:4.13.2")
+    // Expose the embedded networking API to its device smoke test; production already bundles it.
+    androidTestImplementation(project(":st-sharedutils"))
+    androidTestImplementation("org.chromium.net:cronet-api:143.7445.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }

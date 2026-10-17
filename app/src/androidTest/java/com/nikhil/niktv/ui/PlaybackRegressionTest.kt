@@ -68,7 +68,37 @@ class PlaybackRegressionTest {
             file.delete()
         }
     }
+    private fun exerciseEngineSwitch(engine: String, targetLabel: String) {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val file = File(context.cacheDir, "retry.wav")
+        file.delete()
+        val activity = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
+            .putExtra("engine", engine).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            await("A startup error must offer $targetLabel") {
+                find(instrumentation.uiAutomation.rootInActiveWindow, targetLabel) != null
+            }
+            fixture(file)
+            var clicked = false
+            var node = find(instrumentation.uiAutomation.rootInActiveWindow, targetLabel)
+            while (node != null && !clicked) {
+                clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                node = node.parent
+            }
+            assertTrue(clicked)
+            await("Switching engine must notify the user choice") { PlaybackRegressionActivity.enginePreferenceChanges == 1 }
+            await("Engine switch must preserve the pending resume position") { PlaybackRegressionActivity.progress >= 3500L }
+            assertEquals("Engine switches reuse the resolved URL", 0, PlaybackRegressionActivity.retries)
+            assertEquals(0, PlaybackRegressionActivity.automaticRetries)
+        } finally { instrumentation.runOnMainSync { activity.finish() }; file.delete() }
+    }
+    @Test fun media3ErrorCanSwitchToVlcWithoutLosingResume() = exerciseEngineSwitch("MEDIA3", "Try VLC")
+    @Test fun vlcErrorCanSwitchToMedia3WithoutLosingPendingResume() = exerciseEngineSwitch("VLC", "Try ExoPlayer")
+
     @Test fun testMedia3SameUrlRetry() = exercise("MEDIA3")
+    @Test fun testFlowSameUrlRetry() = exercise("FLOW")
+    @Test fun flowErrorCanSwitchToVlcWithoutLosingResume() = exerciseEngineSwitch("FLOW", "Try VLC")
     @Test fun testVlcManualRetryAfterAutomaticAttempt() = exercise("VLC")
 }
 

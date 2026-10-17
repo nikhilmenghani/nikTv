@@ -9,14 +9,14 @@ try {
     if ($api -lt 29) { throw 'The full suite includes scoped MediaStore cleanup tests and requires API 29 or newer.' }
     & .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true -PskipLocalGithubToken=true --offline
     if ($LASTEXITCODE -ne 0) { throw 'Regression build failed.' }
-    $metadata = Get-Content -LiteralPath app\build\outputs\apk\debug\output-metadata.json -Raw | ConvertFrom-Json
-    $testMetadata = Get-Content -LiteralPath app\build\outputs\apk\androidTest\debug\output-metadata.json -Raw | ConvertFrom-Json
+    $metadata = Get-Content -LiteralPath app\build-regression\outputs\apk\debug\output-metadata.json -Raw | ConvertFrom-Json
+    $testMetadata = Get-Content -LiteralPath app\build-regression\outputs\apk\androidTest\debug\output-metadata.json -Raw | ConvertFrom-Json
     if ($metadata.applicationId -ne 'com.nikhil.niktv.regression' -or $testMetadata.applicationId -ne 'com.nikhil.niktv.regression.test') {
         throw 'Refusing to install APKs outside the isolated regression packages.'
     }
-    & adb -s $Serial install -r app\build\outputs\apk\debug\app-universal-debug.apk
+    & adb -s $Serial install -r app\build-regression\outputs\apk\debug\app-universal-debug.apk
     if ($LASTEXITCODE -ne 0) { throw 'Isolated app installation failed.' }
-    & adb -s $Serial install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+    & adb -s $Serial install -r app\build-regression\outputs\apk\androidTest\debug\app-debug-androidTest.apk
     if ($LASTEXITCODE -ne 0) { throw 'Test APK installation failed.' }
     $result = (& adb -s $Serial shell am instrument -w com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner | Out-String)
     Write-Output $result

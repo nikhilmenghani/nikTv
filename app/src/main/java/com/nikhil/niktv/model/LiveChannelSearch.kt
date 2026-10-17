@@ -2,6 +2,13 @@ package com.nikhil.niktv.model
 
 private const val UNTIMED_PROGRAMME_FRESHNESS_MS = 5 * 60_000L
 
+/** When a displayed row stops being safe to show, including provider text without times. */
+fun LiveProgramme.freshUntilMillis(): Long? =
+    if (startTimeMillis != null && endTimeMillis != null) endTimeMillis
+    else observedAtMillis?.let { observed ->
+        minOf(endTimeMillis ?: Long.MAX_VALUE, observed + UNTIMED_PROGRAMME_FRESHNESS_MS)
+    }
+
 /** A successful guide response replaces the previous guide, including an empty response. */
 fun MediaItem.withFreshLiveSchedule(schedule: List<LiveProgramme>, now: Long): MediaItem {
     val updated = copy(

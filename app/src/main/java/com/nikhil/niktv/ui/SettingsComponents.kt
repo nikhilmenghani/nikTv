@@ -7,6 +7,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.semantics.Role
@@ -76,16 +79,26 @@ internal fun SettingsGroupHeading(title: String, description: String) {
 internal fun <T> SettingsChoiceGrid(
     options: List<Pair<T, String>>,
     selected: T,
-    onSelect: (T) -> Unit
+    onSelect: (T) -> Unit,
+    entryRequester: FocusRequester? = null,
+    upRequester: FocusRequester? = null,
+    downRequester: FocusRequester? = null
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val columns = if (maxWidth >= 480.dp) options.size.coerceAtMost(5) else 2
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            options.chunked(columns).forEach { row ->
+            val rows = options.chunked(columns)
+            rows.forEachIndexed { rowIndex, row ->
                 SettingsChoiceRow(Modifier.fillMaxWidth()) {
                     row.forEach { (value, label) ->
                         SettingsChoiceButton(selected == value, { onSelect(value) },
-                            modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))) {
+                            modifier = Modifier
+                                .then(if (value == selected && entryRequester != null) Modifier.focusRequester(entryRequester) else Modifier)
+                                .focusProperties {
+                                    if (rowIndex == 0 && upRequester != null) up = upRequester
+                                    if (rowIndex == rows.lastIndex && downRequester != null) down = downRequester
+                                }
+                                .remoteFocusFrame(RoundedCornerShape(10.dp))) {
                             Text(label)
                         }
                     }

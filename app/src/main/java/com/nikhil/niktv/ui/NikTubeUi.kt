@@ -60,6 +60,10 @@ private val tubeTopics = listOf(
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 internal fun NikTubeScreen(onBack: () -> Unit, vm: NikTubeViewModel = viewModel()) {
+    val device = LocalContext.current
+    val tv = device.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+        !device.packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+    if (!tv) { NikTubeMobileScreen(onBack); return }
     var destination by rememberSaveable { mutableStateOf(TubeDestination.DISCOVER) }
     var topic by rememberSaveable { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }

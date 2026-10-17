@@ -10,6 +10,36 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisibleLiveGuideSchedulerTest {
+    @Test fun untimedProgrammeGetsAnExpiryWakeBeforeItDisappears() {
+        val programme = LiveProgramme("Current", observedAtMillis = 1_000L)
+        val channel = MediaItem("1", "Channel", null, null, liveProgramme = programme)
+        assertEquals(301_000L, nextVisibleProgrammeExpiry(listOf(channel), 2_000L))
+    }
+
+    @Test fun retryWakeRespectsBothAttemptSpacingAndProviderCooldown() {
+        val channel = MediaItem("1", "Channel", null, null)
+        assertEquals(301_000L, nextLiveGuideAttemptAt(channel, 2_000L, 1_000L, 301_000L))
+        assertEquals(121_000L, nextLiveGuideAttemptAt(channel, 2_000L, 1_000L, 0L))
+        assertEquals(2_000L, nextLiveGuideAttemptAt(channel, 2_000L, null, 0L))
+        assertNull(nextLiveGuideAttemptAt(channel.copy(liveProgramme = LiveProgramme("Current", 1_000L, 5_000L)),
+            2_000L, 1_000L, 301_000L))
+    }
+
+    @Test fun untimedRefreshIsScheduledEvenWhileTheTitleIsStillFresh() {
+        val channel = MediaItem("1", "Channel", null, null,
+            liveProgramme = LiveProgramme("Current", observedAtMillis = 1_000L))
+        assertEquals(121_000L, nextLiveGuideAttemptAt(channel, 2_000L, 1_000L, 0L))
+    }
+
+    @Test fun knownProgrammeBoundaryDoesNotWaitForTwoMinuteSpacingButFailuresStillCoolDown() {
+        val channel = MediaItem("1", "Channel", null, null,
+            liveProgramme = LiveProgramme("Short programme", 500L, 1_500L))
+        assertEquals(2_000L, nextLiveGuideAttemptAt(channel, 2_000L, 1_000L, 0L))
+        assertEquals(301_000L, nextLiveGuideAttemptAt(channel, 2_000L, 1_000L, 301_000L))
+        // A subsequent failed attempt cannot keep bypassing the spacing using that old boundary.
+        assertEquals(121_600L, nextLiveGuideAttemptAt(channel, 2_000L, 1_600L, 0L))
+    }
+
     @Test fun expiryWakeUsesFirstAiringProgrammeEndAndIgnoresStaleEntries() {
         val now = 1_000L
         fun channel(id: String, start: Long, end: Long) = MediaItem(

@@ -35,10 +35,10 @@ class NavigationAndParentalRegressionTest {
         while (node != null) { if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return; node = node.parent }
         fail("Action cannot be clicked: $text")
     }
-    private fun open(type: Class<out android.app.Activity>): android.app.Activity {
+    private fun open(type: Class<out android.app.Activity>, engine: String = "MEDIA3"): android.app.Activity {
         val context = instrumentation.targetContext
         assertTrue(context.packageName.endsWith(".regression"))
-        return instrumentation.startActivitySync(Intent(context, type).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        return instrumentation.startActivitySync(Intent(context, type).putExtra("engine", engine).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
     private fun enterPin(value: String) {
         var field: AccessibilityNodeInfo? = null
@@ -46,9 +46,11 @@ class NavigationAndParentalRegressionTest {
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }
         assertTrue(field!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
     }
-    @Test fun previousAndNextActionsNavigateFromPlaybackFailure() {
+    @Test fun previousAndNextActionsNavigateFromPlaybackFailure() = exerciseNavigation("MEDIA3")
+    @Test fun flowPreviousAndNextKeepNikTvNavigation() = exerciseNavigation("FLOW")
+    private fun exerciseNavigation(engine: String) {
         File(instrumentation.targetContext.cacheDir, "retry.wav").delete()
-        val activity = open(PlaybackRegressionActivity::class.java)
+        val activity = open(PlaybackRegressionActivity::class.java, engine)
         try {
             click("Next channel")
             await("Next must select the second fixture") { PlaybackRegressionActivity.currentMediaId == "second" }

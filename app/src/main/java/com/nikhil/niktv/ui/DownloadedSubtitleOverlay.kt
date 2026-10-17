@@ -19,7 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-private data class DownloadedSubtitleCue(val startMs: Long, val endMs: Long, val text: String)
+internal data class DownloadedSubtitleCue(val startMs: Long, val endMs: Long, val text: String)
 
 internal enum class SubtitleAppearancePreset(
     val label: String,
@@ -64,9 +64,11 @@ internal fun DownloadedSubtitleOverlay(
     }
 }
 
-private fun parseDownloadedSubtitle(file: File): List<DownloadedSubtitleCue> {
-    val timestamp = Regex("(\\d{2}):(\\d{2}):(\\d{2})[,.:](\\d{3})")
-    return file.readText().replace("\r\n", "\n").replace('\r', '\n')
+private fun parseDownloadedSubtitle(file: File): List<DownloadedSubtitleCue> = parseDownloadedSubtitleText(file.readText())
+
+internal fun parseDownloadedSubtitleText(raw: String): List<DownloadedSubtitleCue> {
+    val timestamp = Regex("(?:(\\d{2,}):)?(\\d{2}):(\\d{2})[,.:](\\d{3})")
+    return raw.replace("\r\n", "\n").replace('\r', '\n')
         .split(Regex("\\n\\s*\\n"))
         .mapNotNull { block ->
             val lines = block.lines().filter(String::isNotBlank)
@@ -84,5 +86,5 @@ private fun parseDownloadedSubtitle(file: File): List<DownloadedSubtitleCue> {
 private fun parseSubtitleTime(value: String, pattern: Regex): Long? {
     val match = pattern.find(value) ?: return null
     val (hours, minutes, seconds, millis) = match.destructured
-    return hours.toLong() * 3_600_000L + minutes.toLong() * 60_000L + seconds.toLong() * 1_000L + millis.toLong()
+    return (hours.toLongOrNull() ?: 0L) * 3_600_000L + minutes.toLong() * 60_000L + seconds.toLong() * 1_000L + millis.toLong()
 }

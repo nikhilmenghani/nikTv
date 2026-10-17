@@ -7,6 +7,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LivePlaybackPolicyTest {
+    @Test fun stuckOrResetLivePlaylistsUseBoundedRecoveryWithoutTreatingAuthAsNetwork() {
+        assertTrue(recoverableLiveSourceFailure(true, true, PlaybackException.ERROR_CODE_IO_UNSPECIFIED, null, true))
+        assertFalse(recoverableLiveSourceFailure(false, true, PlaybackException.ERROR_CODE_IO_UNSPECIFIED, null, true))
+        assertFalse(recoverableLiveSourceFailure(true, false, PlaybackException.ERROR_CODE_IO_UNSPECIFIED, null, true))
+        assertFalse(recoverableLiveSourceFailure(true, true, PlaybackException.ERROR_CODE_IO_UNSPECIFIED, 403, true))
+    }
+
     @Test fun missingLiveChunksSkipRetriesButStartupAndPlaylistLoadsKeepNormalPolicy() {
         assertTrue(expiredLiveSegment(true, C.DATA_TYPE_MEDIA, 404))
         assertTrue(expiredLiveSegment(true, C.DATA_TYPE_MEDIA, 410))

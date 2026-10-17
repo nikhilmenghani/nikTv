@@ -3,8 +3,16 @@
 /.idea/
 /local.properties
 **/build/
+**/build-regression/
 *.iml
 /execute_python.py
 /execute_python.bat
 /HANDOFF.md
 **/.wrangler/
+/niktube-flow/.gradle/
+/niktube-flow/.kotlin/
+/niktube-flow/local.properties
+/.upstream-import/
+/.local-secrets/
+**/http-client.private.env.json
+**/__pycache__/

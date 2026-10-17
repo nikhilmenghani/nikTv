@@ -4,6 +4,16 @@ import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.model.FavoriteKind
 import com.nikhil.niktv.model.MediaItem
 
+/** A delayed tile/player selection must not overwrite a guide already fetched into the catalogue. */
+internal fun NikTvState.withCachedLiveGuide(profileKey: String, item: MediaItem): MediaItem {
+    if (session?.profile?.cacheKey() != profileKey) return item
+    val cached = (if (selectedType == CatalogType.LIVE_TV) items.firstOrNull { it.id == item.id } else null)
+        ?: browseCachesByType[CatalogType.LIVE_TV]?.takeIf { it.profileKey == profileKey }
+            ?.itemsByCategory?.values?.firstNotNullOfOrNull { entries -> entries.firstOrNull { it.id == item.id } }
+        ?: return item
+    return item.copy(liveProgramme = cached.liveProgramme, liveSchedule = cached.liveSchedule)
+}
+
 /** A guide response changes guide fields only, never stream commands or the active selection. */
 internal fun NikTvState.withLiveChannelGuide(profileKey: String, enriched: MediaItem): NikTvState {
     if (session?.profile?.cacheKey() != profileKey) return this

@@ -1,0 +1,101 @@
+
+apply plugin: 'com.android.library'
+apply from: rootProject.file('niktube-smarttube/SharedModules/constants.gradle')
+android {
+    namespace 'com.liskovsoft.youtubeapi'
+    compileSdk 37
+    defaultConfig {
+        minSdk 24
+        buildConfigField 'String', 'FLAVOR', '"ststable"'
+        buildConfigField 'String', 'VERSION_NAME', '"32.67"'
+        buildConfigField 'int', 'VERSION_CODE', '2457'
+        buildConfigField 'long', 'TIMESTAMP', '0L'
+        consumerProguardFiles 'build/embedded/consumer-rules.pro'
+    }
+    buildFeatures { buildConfig true }
+    sourceSets.main {
+        java.setSrcDirs(['build/embedded/main/java'])
+        kotlin.setSrcDirs(['build/embedded/main/java'])
+        res.setSrcDirs(['build/embedded/main/res'])
+        assets.setSrcDirs(['build/embedded/main/assets'])
+        jniLibs.setSrcDirs(['build/embedded/main/jniLibs', 'build/embedded/main/libs'])
+        manifest.srcFile 'build/embedded/main/AndroidManifest.xml'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+}
+ext.modulePrefix = ':st-exoplayer-'
+ext.protobufVersion = '3.17.3'
+ext.androidXTestVersion = '1.6.1'
+ext.kotlinVersion = '2.4.10'
+ext.kotlinxVersion = '1.11.0'
+ext.coreXVersion = '1.19.0'
+ext.kotlinCoreXVersion = '1.19.0'
+dependencies { coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5' }
+configurations.configureEach {
+    exclude group: 'androidx.leanback', module: 'leanback'
+}
+
+apply from: rootProject.file('tools/upstream-credentials.gradle')
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+
+    testImplementation project(':st-youtubeapi')
+    testImplementation project(':st-sharedtests')
+    testImplementation 'co.infinum:retromock:' + retromockVersion
+    testImplementation 'junit:junit:' + junitVersion
+    testImplementation 'org.robolectric:robolectric:' + robolectricVersion
+
+    androidTestImplementation project(':st-youtubeapi')
+    androidTestImplementation project(':st-sharedtests')
+    androidTestImplementation 'junit:junit:' + junitVersion
+    androidTestImplementation 'androidx.test:runner:' + testXSupportVersion
+    androidTestImplementation 'androidx.test:rules:' + testXSupportVersion
+
+    implementation project(':st-commons-io-2.8.0') // My Android 4.3 fix
+    implementation project(':st-sharedutils')
+    implementation project(':st-mediaserviceinterfaces')
+
+    implementation 'com.squareup.retrofit2:retrofit:' + retrofitVersion
+    implementation 'com.squareup.retrofit2:converter-gson:' + retrofitVersion
+    implementation 'com.google.code.gson:gson:' + gsonVersion
+    implementation 'com.jayway.jsonpath:json-path:' + jsonPathVersion
+
+    implementation 'com.google.net.cronet:cronet-okhttp:' + cronetOkHttpVersion
+    implementation 'org.chromium.net:cronet-api:' + cronetApiVersion
+
+    implementation 'io.reactivex.rxjava2:rxandroid:' + rxAndroidVersion
+    implementation 'io.reactivex.rxjava2:rxjava:' + rxJavaVersion
+
+    implementation 'androidx.annotation:annotation:' + annotationXVersion
+
+    // js interpreter
+    // duktape fork
+    // implementation 'app.cash.quickjs:quickjs-android:' + quickjsVersion
+    //implementation 'com.squareup.duktape:duktape-android:' + duktapeVersion
+    //implementation 'org.mozilla:rhino:' + rhinoVersion
+    //implementation 'com.eclipsesource.j2v8:j2v8:' + j2v8Version + '@aar'
+    // https://mvnrepository.com/artifact/com.eclipsesource.j2v8/j2v8/6.2.1
+    //implementation(name: 'j2v8-6.2.1', ext: 'aar')
+    //implementation files('libs/j2v8-6.2.1-fixed.aar')
+    // https://stackoverflow.com/questions/60878599/error-building-android-library-direct-local-aar-file-dependencies-are-not-supp
+
+    implementation project(':st-j2v8')
+
+
+    // Add kotlin support libs
+    implementation 'androidx.core:core-ktx:' + kotlinCoreXVersion
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:' + kotlinVersion
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:' + kotlinxVersion
+
+    // https://github.com/florianingerl/com.florianingerl.util.regex
+    implementation 'com.github.florianingerl.util:regex:' + florianingerlRegexVersion
+
+    // NewPipe pot
+    implementation 'androidx.webkit:webkit:' + webkitVersion
+    implementation 'com.grack:nanojson:' + nanojsonVersion
+}

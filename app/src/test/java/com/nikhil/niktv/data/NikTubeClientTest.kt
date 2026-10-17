@@ -10,6 +10,14 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = android.app.Application::class)
 class NikTubeClientTest {
+    @Test fun paginationKeepsAllItemsAndReadsContinuation() {
+        val items = org.json.JSONArray()
+        repeat(30) { index -> items.put(JSONObject().put("videoRenderer", JSONObject().put("videoId", "video%06d".format(index)).put("title", JSONObject().put("simpleText", "Video $index")))) }
+        items.put(JSONObject("""{"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"page-2"}}}}"""))
+        val page = NikTubeClient.parsePage(JSONObject().put("contents", items))
+        assertEquals(30, page.videos.size)
+        assertEquals("page-2", page.continuation)
+    }
     @Test fun searchDeduplicatesVideosAndIgnoresNonVideoResults() {
         val video = """{"videoRenderer":{"videoId":"jNQXAC9IVRw","title":{"runs":[{"text":"Me at "},{"text":"the zoo"}]},"ownerText":{"runs":[{"text":"jawed"}]},"lengthText":{"simpleText":"0:19"}}}"""
         val result = NikTubeClient.parseVideos(JSONObject("""{"contents":[$video,{"channelRenderer":{"channelId":"channel"}},$video]}"""))

@@ -33,7 +33,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -204,8 +203,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val favoriteSeriesMetadataMutex = Mutex()
     private val favoriteEpisodeCacheRefreshMutex = Mutex()
     private val sessionRefreshMutex = Mutex()
-    private val playbackQueuePrefetches =
-        mutableMapOf<String, Deferred<PortalCatalogPage>>()
+    private val playbackQueuePrefetches = SpeculativePageCache<PortalCatalogPage>(
+        viewModelScope, SystemClock::elapsedRealtime
+    )
     private val categoryRefreshJobs = mutableMapOf<String, Job>()
     private var categoryFindJob: Job? = null
     private var categoryFindGeneration = 0
@@ -358,6 +358,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connect(profile: PortalProfile) = task {
+        portal.prioritizePlayback()
         profilePreparationJob?.cancel()
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
@@ -1142,7 +1143,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val now = System.currentTimeMillis()
         val refreshAt = (listOfNotNull(nextVisibleProgrammeExpiry(
             targets.mapNotNull(::visibleLiveGuideItem), now)) +
-            targets.map { liveGuideRetryPolicy.retryAt(it.profileKey, it.itemId) }.filter { it > now })
+            targets.mapNotNull { target ->
+                visibleLiveGuideItem(target)?.let { item ->
+                    nextLiveGuideAttemptAt(item, now, liveGuideAttemptedAt[target.key],
+                        liveGuideRetryPolicy.retryAt(target.profileKey, target.itemId))
+                }
+            }.filter { it > now })
             .minOrNull() ?: return
         liveGuideExpiryJob = viewModelScope.launch {
             delay((refreshAt - System.currentTimeMillis()).coerceAtLeast(0L) + 1_000L)
@@ -1178,12 +1184,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val item = visibleLiveGuideItem(target) ?: return false
         val now = System.currentTimeMillis()
         if (now < liveGuideRetryPolicy.retryAt(target.profileKey, target.itemId)) return false
-        val current = item.currentLiveProgramme(now)
-        val needsTimedProgramme = current == null ||
-            current.startTimeMillis == null || current.endTimeMillis == null
+        val attemptAt = nextLiveGuideAttemptAt(item, now, liveGuideAttemptedAt[target.key],
+            liveGuideRetryPolicy.retryAt(target.profileKey, target.itemId))
         return target.key in liveGuideForcedKeys ||
-            (needsTimedProgramme &&
-                now - (liveGuideAttemptedAt[target.key] ?: 0L) >= 2 * 60_000L)
+            (attemptAt != null && now >= attemptAt)
     }
 
     private suspend fun loadVisibleLiveGuide(target: LiveGuideTarget) {
@@ -1233,22 +1237,37 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             liveGuideAttemptedAt.remove(key, attemptedAt)
             throw cancelled
         } catch (error: Exception) {
-            liveGuideRetryPolicy.record(profileKey, item.id, false, System.currentTimeMillis())
+            liveGuideRetryPolicy.recordFailure(profileKey, item.id, System.currentTimeMillis())
             throw error
         } finally {
             _state.update { it.copy(
                 liveGuideLoadingIds = it.liveGuideLoadingIds - item.id,
                 liveGuideWaitingUntilById = it.liveGuideWaitingUntilById - item.id
             ) }
+            rescheduleVisibleLiveGuideExpiry()
         }
     }
 
     private fun publishLiveChannelGuide(profileKey: String, enriched: MediaItem) {
         if (_state.value.session?.profile?.cacheKey() != profileKey) return
         collectionCatalogMemory?.takeIf { it.profileKey == profileKey && it.type == CatalogType.LIVE_TV }?.let { cache ->
-            collectionCatalogMemory = cache.copy(items = cache.items.map { if (it.id == enriched.id) enriched else it })
+            collectionCatalogMemory = cache.copy(items = cache.items.map {
+                if (it.id == enriched.id) it.copy(liveProgramme = enriched.liveProgramme, liveSchedule = enriched.liveSchedule) else it
+            })
         }
         _state.update { it.withLiveChannelGuide(profileKey, enriched) }
+        rescheduleVisibleLiveGuideExpiry()
+        liveGuideCacheSaveJob?.cancel()
+        liveGuideCacheSaveJob = viewModelScope.launch {
+            delay(2_500L)
+            _state.value.browseCachesByType[CatalogType.LIVE_TV]
+                ?.takeIf { it.profileKey == profileKey }
+                ?.let { store.saveBrowseCatalog(it, scheduleMetadataSync = false) }
+        }
+    }
+
+    private fun rescheduleVisibleLiveGuideExpiry() {
+        val profileKey = _state.value.session?.profile?.cacheKey() ?: return
         val visible = lastVisibleLiveGuideIds
         if (visible?.first?.startsWith(profileKey) == true) {
             val snapshot = _state.value
@@ -1262,13 +1281,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        liveGuideCacheSaveJob?.cancel()
-        liveGuideCacheSaveJob = viewModelScope.launch {
-            delay(2_500L)
-            _state.value.browseCachesByType[CatalogType.LIVE_TV]
-                ?.takeIf { it.profileKey == profileKey }
-                ?.let { store.saveBrowseCatalog(it, scheduleMetadataSync = false) }
-        }
     }
 
     private var manualLiveGuideTarget: LiveGuideTarget? = null
@@ -1279,7 +1291,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         requestSelectedLiveGuide(session, item, force = true)
     }
 
-    private fun requestSelectedLiveGuide(session: PortalSession, item: MediaItem, force: Boolean = false) {
+    private fun requestSelectedLiveGuide(session: PortalSession, selectedItem: MediaItem, force: Boolean = false) {
+        val item = _state.value.withCachedLiveGuide(session.profile.cacheKey(), selectedItem)
         val target = LiveGuideTarget(session.profile.cacheKey(), item.portalCategoryId.orEmpty(), item.id)
         if (!force && selectedLiveGuideTarget == target && channelScheduleJob?.isActive == true) return
         channelScheduleJob?.cancel()
@@ -1338,7 +1351,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 throw cancelled
             } catch (error: Exception) {
                 Log.w("NikTvLiveGuide", "Could not load the selected channel guide", error)
-                liveGuideRetryPolicy.record(target.profileKey, item.id, false, System.currentTimeMillis())
+                liveGuideRetryPolicy.recordFailure(target.profileKey, item.id, System.currentTimeMillis())
                 feedback(error.message ?: "Could not refresh programme. Please try again.")
             } finally {
                 _state.update { it.copy(
@@ -1348,10 +1361,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 if (manualLiveGuideTarget === target) {
                     manualLiveGuideTarget = null
                     _state.update { it.copy(manualLiveGuideLoadingId = null) }
+                    val visible = lastVisibleLiveGuideIds?.second.orEmpty().toSet()
                     val snapshot = _state.value
-                    val visibleIds = lastVisibleLiveGuideIds?.second.orEmpty().toSet()
-                    loadVisibleLiveGuides(snapshot.items.filter { it.id in visibleIds }, force = false)
+                    val items = if (playerGuideViewportActive) snapshot.nowPlaying?.episodeQueue.orEmpty()
+                        else snapshot.items
+                    loadVisibleLiveGuides(items.filter { it.id in visible }, force = false)
                 }
+                rescheduleVisibleLiveGuideExpiry()
             }
         }
     }
@@ -1525,7 +1541,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             if (userRequested) _state.update { it.copy(categoryRefreshing = true, error = null) }
             try {
                 val page = withAutomaticSessionRetry(session) { activeSession ->
-                    fetchInitialCatalogPage(activeSession, category, forceRefresh = true)
+                    fetchInitialCatalogPage(activeSession, category, forceRefresh = true,
+                        minimumPages = if (userRequested) {
+                            _state.value.browseCachesByType[category.type]
+                                ?.takeIf { it.profileKey == session.profile.cacheKey() }
+                                ?.pagesByCategory?.get(category.id) ?: 1
+                        } else 1)
                 }
                 val profileKey = session.profile.cacheKey()
                 if (_state.value.session?.profile?.cacheKey() != profileKey) return@launch
@@ -1546,11 +1567,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 // A background refresh only fetches the provider's first page.
                 // Keep the pages the user already loaded instead of silently
                 // collapsing the category back to page one when its cache ages.
-                val pageItems = if (cachedPage > page.page) {
-                    (page.items + cachedItems).distinctBy { it.id }
-                } else {
-                    page.items
-                }
+                val refreshedWindow = com.nikhil.niktv.data.refreshedCategoryWindow(
+                    cachedItems, cachedPage, currentCache.hasMoreByCategory[category.id], page, userRequested)
+                val pageItems = refreshedWindow.items
                 val cachedById = if (category.type == CatalogType.LIVE_TV) {
                     cachedItems.associateBy { it.id }
                 } else emptyMap()
@@ -1570,12 +1589,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     } else fresh
                 }
-                val refreshedPage = maxOf(cachedPage, page.page)
-                val refreshedHasMore = if (cachedPage > page.page) {
-                    currentCache.hasMoreByCategory[category.id] ?: page.hasMore
-                } else {
-                    page.hasMore
-                }
+                val refreshedPage = refreshedWindow.page
+                val refreshedHasMore = refreshedWindow.hasMore
                 val updated = currentCache.copy(
                     cachedAtMillis = refreshedAt,
                     itemsByCategory = currentCache.itemsByCategory + (category.id to refreshedItems),
@@ -1780,7 +1795,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 active.media.portalCategoryId == category.id
                             ) {
                                 active.withAppendedPlaybackQueue(
-                                    result.items
+                                    result.items.filter { active.queueFilter?.includes(it, active.catalogType) != false }
                                 )
                             } else {
                                 active
@@ -2219,13 +2234,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }.onSuccess { next ->
+                    if (_state.value.nowPlaying?.playbackAttemptId != playing.playbackAttemptId ||
+                        _state.value.session != session) return@onSuccess
+                    val sameSeasonEpisodes = next.episodes.filter { season == null || it.seasonNumber == null || it.seasonNumber == season }
                     val oldQueue =
                         playing.episodeQueue.ifEmpty {
                             listOf(playing.media)
                         }
 
                     val mergedQueue =
-                        (oldQueue + next.episodes)
+                        (oldQueue + sameSeasonEpisodes)
                             .distinctBy { it.id }
                             .sortedWith(
                                 compareBy<MediaItem>(
@@ -2307,7 +2325,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                                 active == null ||
                                 active.catalogType !=
                                     CatalogType.SERIES ||
-                                active.series?.id != series.id
+                                active.series?.id != series.id ||
+                                active.media.seasonNumber != playing.media.seasonNumber ||
+                                active.playbackAttemptId != playing.playbackAttemptId ||
+                                current.session != session
                             ) {
                                 current.copy(
                                     playbackQueueLoadingMore = false
@@ -2358,6 +2379,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }.onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
+                    if (_state.value.nowPlaying?.playbackAttemptId != playing.playbackAttemptId ||
+                        _state.value.session != session) return@onFailure
                     _state.update {
                         it.copy(
                             playbackQueueLoadingMore = false,
@@ -2430,31 +2454,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 withTimeout(45_000L) {
                     val requestedPage = snapshot.playbackQueuePage + 1
                     val prefetchKey = playbackQueuePrefetchKey(scope, requestedPage)
-                    val prefetched = playbackQueuePrefetches.remove(prefetchKey)
                     val startedAt = SystemClock.elapsedRealtime()
-                    val prefetchedResult = prefetched?.let { deferred ->
-                        val result = runCatching {
-                            withTimeoutOrNull(5_000L) {
-                                deferred.await()
-                            }
-                        }
-                            .onFailure { error ->
-                                Log.w(
-                                    PLAYBACK_QUEUE_LOG_TAG,
-                                    "Prefetch failed; retrying page $requestedPage",
-                                    error
-                                )
-                            }
-                            .getOrNull()
-                        if (result == null && !deferred.isCompleted) {
-                            deferred.cancel()
-                            Log.i(
-                                PLAYBACK_QUEUE_LOG_TAG,
-                                "Prefetch wait exceeded 5s; fetching page $requestedPage in foreground"
-                            )
-                        }
-                        result
-                    }
+                    val prefetchedResult = playbackQueuePrefetches.takeReady(prefetchKey, session)
                     val result = prefetchedResult
                         ?: fetchNextUniquePlaybackPage(
                             session = session,
@@ -2470,6 +2471,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     result
                 }
             }.onSuccess { result ->
+                if (_state.value.nowPlaying?.playbackAttemptId != playing.playbackAttemptId ||
+                    _state.value.session != session) return@onSuccess
                 val oldQueue =
                     playing.episodeQueue.ifEmpty {
                         listOf(playing.media)
@@ -2555,7 +2558,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         } else {
                             val updatedPlaying =
                                 active.withAppendedPlaybackQueue(
-                                    result.items
+                                    result.items.filter { active.queueFilter?.includes(it, active.catalogType) != false }
                                 )
 
                             val browseMatches =
@@ -2610,6 +2613,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
+                if (_state.value.nowPlaying?.playbackAttemptId != playing.playbackAttemptId ||
+                    _state.value.session != session) return@onFailure
                 _state.update {
                     it.copy(
                         playbackQueueLoadingMore = false,
@@ -2627,10 +2633,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         session: PortalSession,
         category: Category,
         requestedPage: Int,
-        existingIds: Set<String>
+        existingIds: Set<String>,
+        background: Boolean = false
     ): PortalCatalogPage {
         var nextPage = requestedPage
-        var result = portal.catalogPage(session, category, nextPage, includeEpg = false)
+        var result = portal.catalogPage(session, category, nextPage, includeEpg = false, background = background)
         var duplicatePagesSkipped = 0
 
         while (
@@ -2640,7 +2647,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             duplicatePagesSkipped++
             nextPage = (result.page + 1).coerceAtLeast(nextPage + 1)
-            result = portal.catalogPage(session, category, nextPage, includeEpg = false)
+            result = portal.catalogPage(session, category, nextPage, includeEpg = false, background = background)
         }
         return result
     }
@@ -2682,7 +2689,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun fetchInitialCatalogPage(
         session: PortalSession,
         category: Category,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        minimumPages: Int = 1
     ): PortalCatalogPage {
         if (session.profile.portalType == PortalType.XTREAM && category.sourceCategoryIds.isNotEmpty()) {
             val catalog = collectionCatalog(session, category.type, forceRefresh)
@@ -2710,7 +2718,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val knownIds = merged.mapTo(mutableSetOf()) { it.id }
         var latestPage = firstPage
 
-        while (latestPage.hasMore && merged.size < target) {
+        while (latestPage.hasMore && (merged.size < target || latestPage.page < minimumPages)) {
             val nextPage = portal.catalogPage(session, category, latestPage.page + 1,
                 includeEpg = !_state.value.modernUiEnabled)
             val additions = nextPage.items.filter { knownIds.add(it.id) }
@@ -2725,7 +2733,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             // resumes from the following page.
             items = merged,
             page = latestPage.page,
-            hasMore = latestPage.hasMore
+            hasMore = latestPage.hasMore,
+            totalPages = latestPage.totalPages ?: firstPage.totalPages,
+            totalItems = latestPage.totalItems ?: firstPage.totalItems,
+            pageSize = latestPage.pageSize ?: firstPage.pageSize
         )
     }
 
@@ -2744,26 +2755,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
         val requestedPage = currentPage + 1
         val key = playbackQueuePrefetchKey(scope, requestedPage)
-        // A completed Deferred is the warm cache. Do not replace it when the
-        // user switches to another item in the same playback queue.
-        if (playbackQueuePrefetches.containsKey(key)) return
-
-        playbackQueuePrefetches.keys
-            .filterNot { it.startsWith("$scope:page:") }
-            .forEach { staleKey ->
-                playbackQueuePrefetches.remove(staleKey)?.cancel()
-            }
-
-        playbackQueuePrefetches[key] = viewModelScope.async {
-            // Let playback initialization and its first artwork requests win.
-            delay(750L)
+        val memory = android.app.ActivityManager.MemoryInfo()
+        (getApplication<android.app.Application>().getSystemService(android.content.Context.ACTIVITY_SERVICE)
+            as android.app.ActivityManager).getMemoryInfo(memory)
+        playbackQueuePrefetches.schedule(key, session, permitted = !memory.lowMemory) {
             val startedAt = SystemClock.elapsedRealtime()
             fetchNextUniquePlaybackPage(
                 session = session,
                 category = category,
                 requestedPage = requestedPage,
-                existingIds = existingIds
+                existingIds = existingIds,
+                background = true
             ).also { result ->
+                check(result.items.size <= 1000) { "Speculative catalog page exceeds warm-cache budget" }
                 Log.i(
                     PLAYBACK_QUEUE_LOG_TAG,
                     "Prefetched page=${result.page} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} " +
@@ -3989,53 +3993,63 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openTrendingMovie(entry: TrendingMovie) = task {
-        tmdbAvailabilityJob?.cancel()
-        val session = requireNotNull(_state.value.session)
-        val saved = store.tmdbMappings.first().firstOrNull {
-            it.profileKey == session.profile.cacheKey() &&
-                it.type == CatalogType.MOVIES &&
-                it.tmdbId == entry.tmdb.id &&
-                it.media.externalTmdbId == entry.tmdb.id &&
-                it.playbackVerified
-        }
-        if (saved != null) {
-            commitTmdbMovieSelection(session, entry.tmdb, saved.media, saved.confirmedByUser)
-            return@task
-        }
+    fun openTrendingMovie(entry: TrendingMovie) {
+        val requestId = beginPlaybackRequest()
+        playbackTask(requestId) {
+            tmdbAvailabilityJob?.cancel()
+            val session = requireNotNull(_state.value.session)
+            val saved = store.tmdbMappings.first().firstOrNull {
+                it.profileKey == session.profile.cacheKey() &&
+                    it.type == CatalogType.MOVIES &&
+                    it.tmdbId == entry.tmdb.id &&
+                    it.media.externalTmdbId == entry.tmdb.id &&
+                    it.playbackVerified
+            }
+            if (saved != null) {
+                commitTmdbMovieSelection(session, entry.tmdb, saved.media, saved.confirmedByUser, requestId)
+                return@playbackTask
+            }
 
-        val prefetched = _state.value.modernTmdbMovieMatches[entry.tmdb.id]?.takeIf { it.isNotEmpty() }
-        val lookup = if (prefetched != null) MovieMatchLookup(prefetched, prefetched,
-            if (session.profile.portalType == PortalType.XTREAM) emptyList()
-            else listOf(entry.tmdb.title to 1))
-            else resolveInitialTmdbMovieCandidates(session, entry)
-        val candidates = lookup.matches
-        if (candidates.isEmpty()) {
-            error(
-                "\"${entry.tmdb.title}\" was not found in this IPTV profile."
-            )
-        }
-        if (candidates.size > 1) {
-            _state.update {
-                it.copy(
-                    movieMatchSelection = entry.tmdb,
-                    movieMatchCandidates = candidates.take(INITIAL_MOVIE_MATCH_LIMIT),
-                    movieMatchLoadingMore = lookup.pendingRequests.isNotEmpty()
+            val prefetched = _state.value.modernTmdbMovieMatches[entry.tmdb.id]?.takeIf { it.isNotEmpty() }
+            val lookup = if (prefetched != null) MovieMatchLookup(prefetched, prefetched,
+                if (session.profile.portalType == PortalType.XTREAM) emptyList()
+                else listOf(entry.tmdb.title to 1))
+                else resolveInitialTmdbMovieCandidates(session, entry)
+            val candidates = lookup.matches
+            if (candidates.isEmpty()) {
+                error(
+                    "\"${entry.tmdb.title}\" was not found in this IPTV profile."
                 )
             }
-            if (lookup.pendingRequests.isNotEmpty()) {
-                loadMoreTmdbMovieCandidates(session, entry, lookup)
+            if (candidates.size > 1) {
+                _state.update {
+                    it.copy(
+                        movieMatchSelection = entry.tmdb,
+                        movieMatchCandidates = candidates.take(INITIAL_MOVIE_MATCH_LIMIT),
+                        movieMatchLoadingMore = lookup.pendingRequests.isNotEmpty()
+                    )
+                }
+                if (lookup.pendingRequests.isNotEmpty()) {
+                    loadMoreTmdbMovieCandidates(session, entry, lookup)
+                }
+                return@playbackTask
             }
-            return@task
+            commitTmdbMovieSelection(session, entry.tmdb, candidates.single(), confirmedByUser = false, requestId = requestId)
         }
-        commitTmdbMovieSelection(session, entry.tmdb, candidates.single(), confirmedByUser = false)
+
     }
 
-    fun selectTmdbMovieMatch(item: MediaItem) = task {
-        val session = requireNotNull(_state.value.session)
-        val movie = requireNotNull(_state.value.movieMatchSelection)
-        commitTmdbMovieSelection(session, movie, item, confirmedByUser = true)
+
+    fun selectTmdbMovieMatch(item: MediaItem) {
+        val requestId = beginPlaybackRequest()
+        playbackTask(requestId) {
+            val session = requireNotNull(_state.value.session)
+            val movie = requireNotNull(_state.value.movieMatchSelection)
+            commitTmdbMovieSelection(session, movie, item, confirmedByUser = true, requestId = requestId)
+        }
+
     }
+
 
     fun closeTmdbMovieMatches() = _state.update {
         it.copy(movieMatchSelection = null, movieMatchCandidates = emptyList(), movieMatchLoadingMore = false)
@@ -4045,7 +4059,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         session: PortalSession,
         movie: TmdbMovie,
         resolved: MediaItem,
-        confirmedByUser: Boolean
+        confirmedByUser: Boolean,
+        requestId: Long
     ) {
         val returnToMatchSelection = _state.value.movieMatchSelection != null
         // Do not persist or leave the match page until Wio has accepted the
@@ -4055,7 +4070,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             type = CatalogType.MOVIES,
             series = null,
             episodes = emptyList(),
-            directFullscreen = true
+            directFullscreen = true,
+            requestId = requestId
         )
         // A playable stream only proves that the IPTV entry exists; it does
         // not prove that a manually chosen fuzzy-title result is the same
@@ -4709,8 +4725,24 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         else item
     }
 
+    fun openMediaInContext(item: MediaItem, queue: List<MediaItem>, filter: PlaybackQueueFilter) {
+        if (_state.value.selectedType == CatalogType.SERIES && _state.value.selectedSeries == null) {
+            openMedia(item); return
+        }
+        val snapshot = _state.value
+        val requestId = beginPlaybackRequest()
+        playbackNavigationIndex = null
+        navigationCursor.select(requestId, queue.map { it.id }, item.id)
+        playbackTask(requestId) {
+            playInternal(item, snapshot.selectedType, snapshot.selectedSeries, queue,
+                directFullscreen = snapshot.modernUiEnabled && snapshot.selectedType == CatalogType.MOVIES,
+                requestId = requestId, queueFilter = filter)
+        }
+    }
+
     fun openMedia(item: MediaItem) {
         if (gateAdultAction(item, _state.value.selectedType) { openMedia(item) }) return
+        navigationCursor.cancel()
         playbackNavigationIndex = null
         openMediaInternal(item)
     }
@@ -4763,8 +4795,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 refreshedItemsById[queued.id] ?: queued
             }
             val refreshedSelection = refreshedItemsById[item.id] ?: item
-            val requestId = latestPlaybackRequest.begin()
-            task {
+            val requestId = beginPlaybackRequest()
+            navigationCursor.select(requestId, playbackNavigationQueue(activePlayback).map { it.id }, item.id,
+                playbackNavigationIndex)
+            playbackTask(requestId) {
                 playInternal(
                     item = refreshedSelection,
                     type = activePlayback.catalogType,
@@ -4815,9 +4849,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 snapshot.modernIptvCategory != null &&
                 snapshot.selectedType == CatalogType.MOVIES
             ) {
-                task {
+                val requestId = beginPlaybackRequest()
+                playbackTask(requestId) {
                     playInternal(
                         item = item,
+                        requestId = requestId,
                         type = CatalogType.MOVIES,
                         series = null,
                         episodes = queue,
@@ -5836,8 +5872,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) {
-        val requestId = latestPlaybackRequest.begin()
-        task { playInternal(item, type, series, episodes, requestId = requestId) }
+        val requestId = beginPlaybackRequest()
+        playbackNavigationIndex = null
+        navigationCursor.select(requestId, episodes.map { it.id }, item.id)
+        playbackTask(requestId) { playInternal(item, type, series, episodes, requestId = requestId) }
     }
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -5995,11 +6033,18 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val latestPlaybackRequest = LatestPlaybackRequest()
-    private var pendingNavigationId: String? = null
+    private val navigationCursor = PlaybackNavigationCursor()
+    private val pendingNavigationId: String? get() = navigationCursor.pendingId
     private var playbackNavigationIndex: Int? = null
     private var channelScheduleJob: Job? = null
     private var selectedLiveGuideTarget: LiveGuideTarget? = null
     private var autoAdvanceAfterQueueLoadJob: Job? = null
+
+    private fun beginPlaybackRequest(): Long {
+        portal.prioritizePlayback()
+        navigationCursor.cancel()
+        return latestPlaybackRequest.begin()
+    }
 
     private suspend fun playInternal(
         item: MediaItem,
@@ -6010,9 +6055,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         authorizationRetryCount: Int = 0,
         resumePositionOverride: Long? = null,
         directFullscreen: Boolean = false,
-        requestId: Long = latestPlaybackRequest.begin(),
-        reauthenticate: Boolean = false
+        requestId: Long,
+        reauthenticate: Boolean = false,
+        queueFilter: PlaybackQueueFilter? = null
     ) = latestPlaybackRequest.run(requestId) {
+        if (navigationCursor.pendingRequest != requestId) navigationCursor.select(requestId,
+            _state.value.nowPlaying?.let(::playbackNavigationQueue).orEmpty().map { it.id }, item.id,
+            playbackNavigationIndex)
         try {
             if ((isAdultMedia(item, type) || series?.let { isAdultMedia(it, CatalogType.SERIES) } == true) && !authorizeParental()) return@run
             if (type == CatalogType.LIVE_TV) _state.update { it.copy(liveGuidePriorityId = item.id) }
@@ -6020,9 +6069,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             liveGuideScheduler.pause()
             channelScheduleJob?.cancel()
             // Keep completed warm pages, but let the selected stream precede unfinished prefetches.
-            playbackQueuePrefetches.filterValues { !it.isCompleted }.keys.toList().forEach {
-                playbackQueuePrefetches.remove(it)?.cancel()
-            }
+            playbackQueuePrefetches.cancelUnfinished()
             // Coalesce a burst of remote presses before opening another stream.
             if (type == CatalogType.LIVE_TV && _state.value.nowPlaying != null) delay(120L)
             val session = requireNotNull(_state.value.session)
@@ -6034,14 +6081,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             ?: refreshSession(session.profile)
                     }
                 } finally {
-                    _state.update { it.copy(reauthenticating = false) }
+                    if (latestPlaybackRequest.isCurrent(requestId)) _state.update { it.copy(reauthenticating = false) }
                 }
                 resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed)
+                    authorizationRetryCount, resumePositionOverride, directFullscreen, refreshed, requestId, queueFilter)
             } else {
-                withAutomaticSessionRetry(session) { activeSession ->
+                withAutomaticSessionRetry(session, playbackRequestId = requestId) { activeSession ->
                     resolvePlayback(item, type, series, episodes, forceFreshUrl,
-                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession)
+                        authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter)
                 }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -6051,7 +6098,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             // or repeat the authentication retry outside LatestPlaybackRequest.
             throw PlaybackRequestException(error)
         } finally {
-            if (latestPlaybackRequest.isCurrent(requestId) && pendingNavigationId == item.id) pendingNavigationId = null
+            navigationCursor.finish(requestId)
         }
     }
 
@@ -6065,13 +6112,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         authorizationRetryCount: Int = 0,
         resumePositionOverride: Long? = null,
         directFullscreen: Boolean = false,
-        session: PortalSession
+        session: PortalSession,
+        requestId: Long,
+        queueFilter: PlaybackQueueFilter?
     ) {
         val playbackStartedAt = SystemClock.elapsedRealtime()
         val offlineEntry = _state.value.offlineDownloads
             .firstOrNull { it.key == "${session.profile.cacheKey()}:${type.name}:${requestedItem.id}" }
-        val offlineUrl = offlineEntry
-            ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl, it.downloadId) }
+        val offlineUrl = withContext(Dispatchers.IO) { offlineEntry
+            ?.let { OfflineMediaDownloads.playableUri(getApplication(), it.requestId, it.sourceUrl, it.downloadId) } }
         // Browse tiles and loaded pages already contain the provider command.
         // Do not search the provider again before every play; create_link is
         // the validation step for Stalker. Only rebuild the item after an
@@ -6096,8 +6145,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             "NikTvPlayback",
             "Resolved ${type.name} item=${item.id} in ${SystemClock.elapsedRealtime() - playbackStartedAt}ms"
         )
-        val playbackQueue = when (type) {
-            CatalogType.SERIES -> episodes.sortedWith(
+        val activeQueueOwner = _state.value.nowPlaying?.takeIf { active ->
+            active.catalogType == type && active.series?.id == series?.id &&
+                active.media.seasonNumber == item.seasonNumber &&
+                (queueFilter ?: active.queueFilter)?.copy(selectedOrdinal = 0) == active.queueFilter?.copy(selectedOrdinal = 0)
+        }
+        val playbackQueue = withContext(Dispatchers.Default) {
+            val supplied = reconcilePlaybackQueueSnapshot(episodes, activeQueueOwner?.episodeQueue.orEmpty(), item.id)
+            when (type) {
+            CatalogType.SERIES -> supplied.filter {
+                item.seasonNumber == null || it.seasonNumber == null || it.seasonNumber == item.seasonNumber
+            }.sortedWith(
                 compareBy<MediaItem>(
                     { it.seasonNumber ?: Int.MAX_VALUE },
                     { it.episodeNumber ?: it.title.episodeOrderFromTitle() ?: Int.MAX_VALUE },
@@ -6106,8 +6164,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
             CatalogType.LIVE_TV,
             CatalogType.MOVIES,
-            CatalogType.RADIO -> playbackCatalogQueue(session, item, type, episodes)
-        }
+            CatalogType.RADIO -> playbackCatalogQueue(session, item, type, supplied)
+        } }
         val queueIndex = playbackQueue.indexOfFirst { it.id == item.id }.takeIf { it >= 0 }
         val wrapLiveQueue = type == CatalogType.LIVE_TV && playbackQueue.size > 1
         val previousItem = queueIndex?.let { index ->
@@ -6203,7 +6261,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     1
             }
 
-        val initialPlaybackHasMore =
+        val initialPlaybackHasMore = queueFilter?.fixedIds == null &&
             when {
                 preservePlaybackPagination ->
                     paginationSnapshot.playbackQueueHasMore
@@ -6241,6 +6299,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
 
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if (!latestPlaybackRequest.isCurrent(requestId) ||
+            _state.value.session?.profile?.cacheKey() != session.profile.cacheKey() ||
+            _state.value.session != session) return
         channelScheduleJob?.cancel()
         _state.update {
             it.copy(
@@ -6252,9 +6313,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     nextEpisode = nextItem,
                     series = series,
                     episodeQueue = playbackQueue,
+                    queueFilter = queueFilter ?: paginationSnapshot.nowPlaying?.takeIf {
+                        it.catalogType == type && it.episodeQueue.any { queued -> queued.id == item.id }
+                    }?.queueFilter,
                     resumePositionMillis = resumePosition,
                     progressKey = progressKey,
                     authorizationRetryCount = authorizationRetryCount,
+                    playWhenReady = if (forceFreshUrl) paginationSnapshot.nowPlaying?.playWhenReady ?: true else true,
+                    decoderSessionId = paginationSnapshot.nowPlaying?.takeIf {
+                        forceFreshUrl && it.media.id == item.id && it.catalogType == type
+                    }?.decoderSessionId ?: java.util.UUID.randomUUID().toString(),
+                    decoderRecoveryCount = paginationSnapshot.nowPlaying?.takeIf {
+                        forceFreshUrl && it.media.id == item.id && it.catalogType == type
+                    }?.decoderRecoveryCount ?: 0,
             directFullscreen = directFullscreen,
             offlinePlayback = offlineUrl != null,
             playbackFormat = offlineEntry?.fileType.orEmpty().ifBlank { mediaFormatLabel(url) }
@@ -6275,6 +6346,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 playbackQueueLoadingMore = false
             )
         }
+        val committedIds = _state.value.nowPlaying?.let(::playbackNavigationQueue).orEmpty().map { it.id }
+        if (queueFilter != null) navigationCursor.select(requestId, committedIds, item.id,
+            committedIds.withIndex().filter { it.value == item.id }
+                .getOrNull(queueFilter.selectedOrdinal)?.index)
+        navigationCursor.commit(requestId, committedIds, item.id)
+        playbackNavigationIndex = null
         if (type == CatalogType.LIVE_TV) requestSelectedLiveGuide(session, item)
         if (
             newPlaybackScope != null &&
@@ -6358,6 +6435,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
      */
     private suspend fun <T> withAutomaticSessionRetry(
         initialSession: PortalSession,
+        playbackRequestId: Long? = null,
         operation: suspend (PortalSession) -> T
     ): T {
         // A background coroutine may have captured the previous token before
@@ -6377,7 +6455,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 throw firstError
             }
 
-            _state.update { it.copy(reauthenticating = true) }
+            if (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId))
+                _state.update { it.copy(reauthenticating = true) }
             val refreshed = try {
                 sessionRefreshMutex.withLock {
                     _state.value.session
@@ -6388,7 +6467,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         ?: refreshSession(activeSession.profile)
                 }
             } finally {
-                _state.update { it.copy(reauthenticating = false) }
+                if (playbackRequestId == null || latestPlaybackRequest.isCurrent(playbackRequestId))
+                    _state.update { it.copy(reauthenticating = false) }
             }
             operation(refreshed)
         }
@@ -6413,33 +6493,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     /*
      * MOVIE_LIVE_NAVIGATION_QUEUE_V8
      *
-     * PlayingMedia.episodeQueue is a snapshot. For catalog-style playback,
-     * prefer the current visible catalog when it still contains the active
-     * item so Next/Previous follows exactly what the user sees in the rail.
+     * PlayingMedia.episodeQueue owns the selected browse context. Append matching
+     * pages and reconcile metadata by ID, without adopting an unrelated browse list.
      */
     private fun playbackNavigationQueue(
         playing: PlayingMedia
     ): List<MediaItem> {
         val snapshot = _state.value
-        val currentCatalog =
-            snapshot.items.distinctBy { it.id }
-
-        val catalogCanOwnNavigation =
-            playing.catalogType in setOf(
-                CatalogType.LIVE_TV,
-                CatalogType.MOVIES,
-                CatalogType.RADIO
-            ) &&
-                snapshot.selectedType == playing.catalogType &&
-                currentCatalog.any {
-                    it.id == playing.media.id
-                }
-
-        val providerOrder = if (catalogCanOwnNavigation) {
-            currentCatalog
-        } else {
-            playing.episodeQueue.distinctBy { it.id }
-        }
+        // The committed queue owns navigation, not whichever browse screen updated last.
+        val providerOrder = playing.episodeQueue.ifEmpty { listOf(playing.media) }.distinctBy { it.id }
         if (playing.catalogType != CatalogType.LIVE_TV) return providerOrder
         val profileKey = snapshot.session?.profile?.cacheKey()
             ?: snapshot.savedProfile?.cacheKey()
@@ -6448,7 +6510,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             ?.takeIf { it.isNotBlank() }
             ?: snapshot.selectedCategory?.id
             ?: return providerOrder
-        val pinnedOrder = IptvPinPreferences.pinnedChannelOrder(
+        val pinnedOrder = playing.queueFilter?.pinnedIds ?: IptvPinPreferences.pinnedChannelOrder(
             getApplication(), profileKey, categoryId
         )
         val byId = providerOrder.associateBy { it.id }
@@ -6493,52 +6555,27 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = snapshot.nowPlaying ?: return
         val queue = playbackNavigationQueue(playing)
 
-        val index = (playbackNavigationIndex ?: -1)
-            .takeIf { it in queue.indices && queue[it].id == (pendingNavigationId ?: playing.media.id) }
-            ?: queue.indexOfFirst { it.id == (pendingNavigationId ?: playing.media.id) }
+        val index = navigationCursor.index(queue.map { it.id }, playing.media.id)
 
         if (index < 0) return
 
-        if (
-            playing.catalogType == CatalogType.LIVE_TV &&
-            index == queue.lastIndex &&
-            snapshot.playbackQueueHasMore
-        ) {
-            val previousSize = queue.size
-            val boundaryItemId = pendingNavigationId ?: playing.media.id
-            val loadStarted = snapshot.playbackQueueLoadingMore || loadMorePlaybackQueue()
-            if (loadStarted && autoAdvanceAfterQueueLoadJob?.isActive != true) {
-                autoAdvanceAfterQueueLoadJob = viewModelScope.launch {
-                    _state.first { !it.playbackQueueLoadingMore }
-                    val updatedPlaying = _state.value.nowPlaying ?: return@launch
-                    val updatedQueue = playbackNavigationQueue(updatedPlaying)
-                    if (
-                        updatedPlaying.catalogType == CatalogType.LIVE_TV &&
-                        updatedQueue.size > previousSize &&
-                        (pendingNavigationId ?: updatedPlaying.media.id) == boundaryItemId &&
-                        (playbackNavigationIndex ?: updatedQueue.indexOfFirst { it.id == updatedPlaying.media.id }) == index
-                    ) {
-                        playNextEpisode()
-                    }
-                }
-            }
+        if (index == queue.lastIndex && snapshot.playbackQueueHasMore) {
+            navigateAfterQueueBoundary(playing, queue, 1)
             return
         }
 
-        val nextIndex = if (index < queue.lastIndex) index + 1 else 0
-        val next = queue.getOrNull(nextIndex)
-            ?.takeIf { index < queue.lastIndex || (playing.catalogType == CatalogType.LIVE_TV && queue.size > 1) }
-            ?: return
+        val nextIndex = adjacentQueueIndex(index, queue.size, 1, playing.catalogType == CatalogType.LIVE_TV) ?: return
+        val next = queue[nextIndex]
 
-        pendingNavigationId = next.id
         playbackNavigationIndex = nextIndex
-        val requestId = latestPlaybackRequest.begin()
-        task {
+        val requestId = beginPlaybackRequest()
+        navigationCursor.select(requestId, queue.map { it.id }, next.id, nextIndex)
+        playbackTask(requestId) {
             playInternal(
                 item = next,
                 type = playing.catalogType,
                 series = playing.series,
-                episodes = queue,
+                episodes = playing.episodeQueue.ifEmpty { queue.distinctBy { it.id } },
                 directFullscreen = playing.directFullscreen,
                 requestId = requestId
             )
@@ -6549,29 +6586,69 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = _state.value.nowPlaying ?: return
         val queue = playbackNavigationQueue(playing)
 
-        val index = (playbackNavigationIndex ?: -1)
-            .takeIf { it in queue.indices && queue[it].id == (pendingNavigationId ?: playing.media.id) }
-            ?: queue.indexOfFirst { it.id == (pendingNavigationId ?: playing.media.id) }
+        val index = navigationCursor.index(queue.map { it.id }, playing.media.id)
 
         if (index < 0) return
 
-        val previousIndex = if (index > 0) index - 1 else queue.lastIndex
-        val previous = queue.getOrNull(previousIndex)
-            ?.takeIf { index > 0 || (playing.catalogType == CatalogType.LIVE_TV && queue.size > 1) }
-            ?: return
+        if (playing.catalogType == CatalogType.SERIES && index == 0 &&
+            _state.value.playbackQueueHasMore &&
+            (queue.firstOrNull()?.let { it.episodeNumber ?: it.title.episodeOrderFromTitle() } ?: Int.MAX_VALUE) > 1) {
+            navigateAfterQueueBoundary(playing, queue, -1)
+            return
+        }
 
-        pendingNavigationId = previous.id
+        val previousIndex = adjacentQueueIndex(index, queue.size, -1, playing.catalogType == CatalogType.LIVE_TV) ?: return
+        val previous = queue[previousIndex]
+
         playbackNavigationIndex = previousIndex
-        val requestId = latestPlaybackRequest.begin()
-        task {
+        val requestId = beginPlaybackRequest()
+        navigationCursor.select(requestId, queue.map { it.id }, previous.id, previousIndex)
+        playbackTask(requestId) {
             playInternal(
                 item = previous,
                 type = playing.catalogType,
                 series = playing.series,
-                episodes = queue,
+                episodes = playing.episodeQueue.ifEmpty { queue.distinctBy { it.id } },
                 directFullscreen = playing.directFullscreen,
                 requestId = requestId
             )
+        }
+    }
+
+    /** A page result may extend the context, but only this still-current intent may navigate. */
+    private fun navigateAfterQueueBoundary(playing: PlayingMedia, queue: List<MediaItem>, direction: Int) {
+        val boundary = queueOccurrences(queue.map { it.id })
+            .getOrNull(navigationCursor.index(queue.map { it.id }, playing.media.id)) ?: return
+        autoAdvanceAfterQueueLoadJob?.cancel()
+        val requestId = beginPlaybackRequest()
+        navigationCursor.select(requestId, queue.map { it.id }, boundary.id,
+            queueOccurrences(queue.map { it.id }).indexOf(boundary))
+        val started = _state.value.playbackQueueLoadingMore || loadMorePlaybackQueue()
+        autoAdvanceAfterQueueLoadJob = viewModelScope.launch {
+            try {
+                if (!started) return@launch
+                _state.first { !it.playbackQueueLoadingMore }
+                val snapshot = _state.value
+                val active = snapshot.nowPlaying ?: return@launch
+                if (!latestPlaybackRequest.isCurrent(requestId) ||
+                    active.playbackAttemptId != playing.playbackAttemptId ||
+                    active.media.seasonNumber != playing.media.seasonNumber) return@launch
+                val updated = playbackNavigationQueue(active)
+                val index = navigationCursor.index(updated.map { it.id }, active.media.id)
+                val occurrence = queueOccurrences(updated.map { it.id }).getOrNull(index)
+                if (occurrence != boundary) return@launch
+                val canMove = adjacentQueueIndex(index, updated.size, direction,
+                    active.catalogType == CatalogType.LIVE_TV && !snapshot.playbackQueueHasMore) != null
+                if (canMove) {
+                    if (direction > 0) playNextEpisode() else playPreviousEpisode()
+                }
+            } finally {
+                if (latestPlaybackRequest.isCurrent(requestId)) {
+                    latestPlaybackRequest.cancel()
+                    _state.update { it.copy(loading = false) }
+                }
+                navigationCursor.finish(requestId)
+            }
         }
     }
 
@@ -6632,8 +6709,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun cancelPendingPlayback(cancelGuide: Boolean = true) {
+        val hadPendingPlayback = latestPlaybackRequest.isRunning
         latestPlaybackRequest.cancel()
-        pendingNavigationId = null
+        if (hadPendingPlayback) _state.update { it.copy(loading = false) }
+        navigationCursor.cancel()
         playbackNavigationIndex = null
         if (cancelGuide) channelScheduleJob?.cancel()
         autoAdvanceAfterQueueLoadJob?.cancel()
@@ -6669,10 +6748,22 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun retryPlayback(positionMillis: Long) {
+    fun setPlaybackIntent(attemptId: String, requested: Boolean) {
+        _state.update { state ->
+            val playing = state.nowPlaying
+            if (playing?.playbackAttemptId != attemptId || playing.playWhenReady == requested) state
+            else state.copy(nowPlaying = playing.copy(playWhenReady = requested))
+        }
+    }
+
+    fun retryPlayback(positionMillis: Long, failedPlayback: PlayingMedia) {
         val playing = _state.value.nowPlaying ?: return
-        val requestId = latestPlaybackRequest.begin()
+        if (pendingNavigationId != null || latestPlaybackRequest.isRunning || !samePlaybackAttempt(playing, failedPlayback)) return
+        // An explicit Retry can start playback; a later pause while resolving is retained at commit.
+        _state.update { it.copy(nowPlaying = playing.copy(playWhenReady = true)) }
+        val requestId = beginPlaybackRequest()
         viewModelScope.launch {
+            if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
             _state.update { it.copy(error = null) }
             runCatching {
                 playInternal(
@@ -6688,7 +6779,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
                 .onFailure { error ->
-                    if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                    if (error is kotlinx.coroutines.CancellationException || !latestPlaybackRequest.isCurrent(requestId)) return@onFailure
                     _state.update { it.copy(error = error.message ?: "Playback retry failed") }
                 }
         }
@@ -6702,10 +6793,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 ?: return
 
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
-            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url ||
-            playing.playbackAttemptId != failedPlayback.playbackAttemptId) return
+            !samePlaybackAttempt(playing, failedPlayback)) return
 
-        val requestId = latestPlaybackRequest.begin()
+        if (!allowDecoderRecovery(playing.decoderRecoveryCount)) return
+        val requestId = beginPlaybackRequest()
         viewModelScope.launch {
             latestPlaybackRequest.run(requestId) {
                 /*
@@ -6733,6 +6824,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         nowPlaying =
                             playing.copy(
                                 playbackAttemptId = java.util.UUID.randomUUID().toString(),
+                                decoderRecoveryCount = playing.decoderRecoveryCount + 1,
                                 resumePositionMillis =
                                     positionMillis
                                         .coerceAtLeast(0L)
@@ -6745,15 +6837,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun retryPlaybackAfterAuthorizationFailure(positionMillis: Long, failedPlayback: PlayingMedia) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
-            playing.media.id != failedPlayback.media.id || playing.url != failedPlayback.url ||
-            playing.playbackAttemptId != failedPlayback.playbackAttemptId) return
+            !samePlaybackAttempt(playing, failedPlayback)) return
         if (playing.authorizationRetryCount > 0) return
         if (!_state.value.automaticReauthentication) {
             _state.update { it.copy(error = "Authorization failed.") }
             return
         }
-        val requestId = latestPlaybackRequest.begin()
+        val requestId = beginPlaybackRequest()
         viewModelScope.launch {
+            if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
             /*
              * Keep PlayerScreen mounted while a rejected provider link is
              * refreshed. Clearing nowPlaying here returned the user to the
@@ -6777,7 +6869,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     reauthenticate = true
                 )
             }.onFailure { error ->
-                if (error is kotlinx.coroutines.CancellationException) return@onFailure
+                if (error is kotlinx.coroutines.CancellationException || !latestPlaybackRequest.isCurrent(requestId)) return@onFailure
                 _state.update { it.copy(error = error.message ?: "Could not refresh stream authorization") }
             }
         }
@@ -7038,6 +7130,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        portal.close()
         com.nikhil.niktv.data.CatalogPlaybackActivity.playing = false
         super.onCleared()
     }
@@ -7226,6 +7319,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.saveFavorites(allFavorites)
     }
 
+    private fun openFavoriteQueue(item: MediaItem, type: CatalogType, queue: List<MediaItem>) {
+        val requestId = beginPlaybackRequest()
+        playbackNavigationIndex = null
+        playbackTask(requestId) {
+            playInternal(item, type, null, queue, requestId = requestId,
+                queueFilter = PlaybackQueueFilter(fixedIds = queue.mapTo(mutableSetOf()) { it.id }, pinnedIds = emptyList()))
+        }
+    }
+
     fun openFavorite(favorite: FavoriteItem) {
         val type = when (favorite.kind) {
             FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
@@ -7236,11 +7338,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             com.nikhil.niktv.data.adultContentLabel(favorite.categoryTitle.orEmpty()) || favorite.series?.isAdult == true)
         if (gateAdultAction(protectedMedia, type) { openFavorite(favorite) }) return
         when (favorite.kind) {
-            FavoriteKind.CHANNEL -> play(favorite.media, CatalogType.LIVE_TV)
-            FavoriteKind.MOVIE -> play(favorite.media, CatalogType.MOVIES)
-            FavoriteKind.EPISODE -> task {
+            FavoriteKind.CHANNEL, FavoriteKind.MOVIE -> {
+                val queue = _state.value.favorites.filter { it.kind == favorite.kind }.map { it.media }
+                openFavoriteQueue(favorite.media, type, queue)
+            }
+            FavoriteKind.EPISODE -> {
+                val requestId = beginPlaybackRequest()
+                playbackTask(requestId) {
                 val episodes = favorite.series?.let { portal.episodeSeason(requireNotNull(_state.value.session), it, _state.value.seriesStartSeason, favorite.media.seasonNumber).episodes }.orEmpty()
-                playInternal(favorite.media, CatalogType.SERIES, favorite.series, episodes)
+                playInternal(favorite.media, CatalogType.SERIES, favorite.series, episodes, requestId = requestId)
+                }
             }
             FavoriteKind.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
@@ -7328,8 +7435,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             else -> CatalogType.SERIES
         }
         if (gateAdultAction(recent.series ?: recent.media, type) { openRecent(recent) }) return
+        val requestId = beginPlaybackRequest()
         when (recent.kind) {
-            FavoriteKind.CHANNEL -> task {
+            FavoriteKind.CHANNEL -> playbackTask(requestId) {
                 val snapshot = _state.value
                 val session = requireNotNull(snapshot.session)
                 val categoryId = recent.media.portalCategoryId
@@ -7351,21 +7459,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             selectedSeries = null
                         )
                     }
-                    playInternal(recent.media, CatalogType.LIVE_TV, null, channels)
+                    playInternal(recent.media, CatalogType.LIVE_TV, null, channels, requestId = requestId)
                 } else {
-                    playInternal(recent.media, CatalogType.LIVE_TV, null, listOf(recent.media))
+                    playInternal(recent.media, CatalogType.LIVE_TV, null, listOf(recent.media), requestId = requestId)
                 }
             }
             FavoriteKind.MOVIE -> play(recent.media, CatalogType.MOVIES)
-            FavoriteKind.EPISODE -> task {
+            FavoriteKind.EPISODE -> playbackTask(requestId) {
                 val session = requireNotNull(_state.value.session)
                 val episodes = recent.series?.let { series ->
                     runCatching { recentEpisodeQueue(session, series, recent.media.seasonNumber) }
                         .getOrDefault(emptyList())
                 }.orEmpty().ifEmpty { listOf(recent.media) }
-                playInternal(recent.media, CatalogType.SERIES, recent.series, episodes)
+                playInternal(recent.media, CatalogType.SERIES, recent.series, episodes, requestId = requestId)
             }
-            FavoriteKind.SERIES -> task {
+            FavoriteKind.SERIES -> playbackTask(requestId) {
                 val session = requireNotNull(_state.value.session)
                 val savedEpisode = recent.lastPlayed
                 val episodes = savedEpisode?.let { episode ->
@@ -7373,7 +7481,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         .getOrDefault(emptyList())
                 }.orEmpty().ifEmpty { listOfNotNull(savedEpisode) }
                 val resumeEpisode = savedEpisode?.let { saved -> episodes.firstOrNull { it.id == saved.id } ?: saved }
-                if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes)
+                if (resumeEpisode != null) playInternal(resumeEpisode, CatalogType.SERIES, recent.media, episodes, requestId = requestId)
                 else {
                     _state.update { it.copy(homeOpen = false, selectedType = CatalogType.SERIES, selectedSeries = recent.media, playbackReturnFocusId = null, seriesOpenedFromFavorites = false, seriesOpenedFromHome = true, items = episodes) }
                 }
@@ -7491,18 +7599,23 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openWatchedEpisode(watched: WatchedSeries, episode: MediaItem) = task {
-        val session = requireNotNull(_state.value.session)
-        val queue = portal.episodeSeason(session, watched.series, _state.value.seriesStartSeason, episode.seasonNumber).episodes
-        val updated = _state.value.watchedSeries.map {
-            if (it.key == watched.key) it.copy(newEpisodes = it.newEpisodes.filter { candidate -> candidate.isAfter(episode) }) else it
+    fun openWatchedEpisode(watched: WatchedSeries, episode: MediaItem) {
+        if (gateAdultAction(watched.series, CatalogType.SERIES) { openWatchedEpisode(watched, episode) }) return
+        val requestId = beginPlaybackRequest()
+        playbackTask(requestId) {
+            val session = requireNotNull(_state.value.session)
+            val queue = portal.episodeSeason(session, watched.series, _state.value.seriesStartSeason, episode.seasonNumber).episodes
+            val updated = _state.value.watchedSeries.map {
+                if (it.key == watched.key) it.copy(newEpisodes = it.newEpisodes.filter { candidate -> candidate.isAfter(episode) }) else it
+            }
+            val profileKey = session.profile.cacheKey()
+            allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
+            _state.update { it.copy(watchedSeries = updated) }
+            store.saveWatchedSeries(allWatchedSeries)
+            playInternal(episode, CatalogType.SERIES, watched.series, queue, requestId = requestId)
         }
-        val profileKey = session.profile.cacheKey()
-        allWatchedSeries = allWatchedSeries.filterNot { it.profileKey == profileKey } + updated
-        _state.update { it.copy(watchedSeries = updated) }
-        store.saveWatchedSeries(allWatchedSeries)
-        playInternal(episode, CatalogType.SERIES, watched.series, queue)
     }
+
 
     fun markEpisodeWatched(watched: WatchedSeries, episode: MediaItem) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
@@ -7547,6 +7660,25 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }
+
+    private fun playbackTask(requestId: Long, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
+            _state.update { it.copy(loading = true, error = null) }
+            try {
+                withTimeout(90_000L) { latestPlaybackRequest.run(requestId) { block() } }
+            } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                if (latestPlaybackRequest.isCurrent(requestId))
+                    _state.update { it.copy(error = "Playback resolution timed out. Retry or switch player.") }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (latestPlaybackRequest.isCurrent(requestId))
+                    _state.update { it.copy(error = failure.message ?: "Could not open media") }
+            } finally {
+                if (latestPlaybackRequest.isCurrent(requestId)) _state.update { it.copy(loading = false) }
+            }
+        }
+    }
 
     private fun task(block: suspend () -> Unit) {
         viewModelScope.launch {

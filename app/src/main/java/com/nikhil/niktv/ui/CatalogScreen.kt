@@ -205,7 +205,8 @@ internal fun CatalogScreen(
     openOfflineDownloads: () -> Unit,
     closeOfflineDownloads: () -> Unit,
     playOfflineDownload: (OfflineMediaDownload) -> Unit,
-    playRecording: (RecordedLiveTvMedia) -> Unit
+    playRecording: (RecordedLiveTvMedia) -> Unit,
+    playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -390,6 +391,7 @@ internal fun CatalogScreen(
                 )
                 else -> browseStateHolder.SaveableStateProvider(browseStateKey) { ModernBrowseScreen(
                     state = state,
+                    playInContext = playInContext,
                     selectType = selectType,
                     selectCategory = selectCategory,
                     play = play,

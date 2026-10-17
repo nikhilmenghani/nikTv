@@ -18,6 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check source credentials
+        run: python3 tools/check-source-secrets.py
+
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
@@ -50,6 +53,8 @@ jobs:
       - name: Build signed debug APK
         env:
           NIKTUBE_BOTGUARD_API_KEY: ${{ secrets.NIKTUBE_BOTGUARD_API_KEY }}
+          NIKTUBE_GOOGLE_API_KEY_31043AAE8BE2: ${{ secrets.NIKTUBE_GOOGLE_API_KEY_31043AAE8BE2 }}
+          NIKTUBE_GOOGLE_API_KEY_418AF06CD1D9: ${{ secrets.NIKTUBE_GOOGLE_API_KEY_418AF06CD1D9 }}
           DEV_KEYSTORE_PATH: ${{ runner.temp }}/niktv.keystore
           DEV_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           DEV_KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

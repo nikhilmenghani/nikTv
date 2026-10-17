@@ -436,7 +436,7 @@ private fun OfflineStorageCard(
             storage?.let { snapshot ->
                 val usedBytes = (snapshot.totalBytes - snapshot.availableBytes).coerceAtLeast(0L)
                 val nikTvBytes = snapshot.offlineDownloadBytes + snapshot.artworkCacheBytes +
-                    snapshot.subtitleCacheBytes + snapshot.temporaryCacheBytes + snapshot.recordingBytes + snapshot.mediaCacheBytes
+                    snapshot.subtitleCacheBytes + snapshot.temporaryCacheBytes + snapshot.recordingBytes + snapshot.mediaCacheBytes + snapshot.nikTubeDownloadBytes
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -480,6 +480,7 @@ private fun OfflineStorageCard(
                     StorageRowModel("Live TV recordings", snapshot.recordingBytes, Icons.Default.FiberManualRecord, MaterialTheme.colorScheme.primary, onClearRecordings),
                     StorageRowModel("Media cache", snapshot.mediaCacheBytes, Icons.Default.VideoLibrary, Color(0xFF60A5FA), onClearMediaCache),
                     StorageRowModel("Offline downloads", snapshot.offlineDownloadBytes, Icons.Default.DownloadDone, MaterialTheme.colorScheme.primary, onClearDownloads),
+                    StorageRowModel("NikTube downloads", snapshot.nikTubeDownloadBytes, Icons.Default.VideoLibrary, MaterialTheme.colorScheme.primary, null),
                     StorageRowModel("Artwork cache", snapshot.artworkCacheBytes, Icons.Default.Image, Color(0xFF60A5FA), onClearArtwork),
                     StorageRowModel("Downloaded subtitles", snapshot.subtitleCacheBytes, Icons.Default.Subtitles, Color(0xFFA78BFA), onClearSubtitles),
                     StorageRowModel("Temporary cache", snapshot.temporaryCacheBytes, Icons.Default.CleaningServices, Color(0xFFF59E0B), onClearTemporary)

@@ -61,11 +61,14 @@ internal class VlcPlaybackSession private constructor(
         )
 
         fun create(context: Context, options: List<String>): VlcPlaybackSession {
+            val started = SystemClock.elapsedRealtime()
             appContext = context.applicationContext
             val lib = pool.acquire(options)
             try {
                 android.util.Log.i("NikTvPlayback", "VLC engine id=${System.identityHashCode(lib)}; fresh stream player")
-                return VlcPlaybackSession(lib, MediaPlayer(lib), options)
+                return VlcPlaybackSession(lib, MediaPlayer(lib), options).also {
+                    android.util.Log.i("NikTvPlayback", "VLC creation elapsedMs=${SystemClock.elapsedRealtime() - started}")
+                }
             } catch (failure: Throwable) {
                 pool.release(options, lib)
                 throw failure

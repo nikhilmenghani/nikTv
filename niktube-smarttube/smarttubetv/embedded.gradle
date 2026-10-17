@@ -1,0 +1,108 @@
+
+apply plugin: 'com.android.library'
+apply from: rootProject.file('niktube-smarttube/SharedModules/constants.gradle')
+android {
+    namespace 'com.liskovsoft.smartyoutubetv2.tv'
+    compileSdk 37
+    defaultConfig {
+        minSdk 24
+        buildConfigField 'String', 'FLAVOR', '"ststable"'
+        buildConfigField 'String', 'VERSION_NAME', '"32.67"'
+        buildConfigField 'int', 'VERSION_CODE', '2457'
+        buildConfigField 'long', 'TIMESTAMP', '0L'
+        consumerProguardFiles 'build/embedded/consumer-rules.pro'
+    }
+    buildFeatures { buildConfig true }
+    sourceSets.main {
+        java.setSrcDirs(['build/embedded/main/java'])
+        kotlin.setSrcDirs(['build/embedded/main/java'])
+        res.setSrcDirs(['build/embedded/main/res'])
+        assets.setSrcDirs(['build/embedded/main/assets'])
+        jniLibs.setSrcDirs(['build/embedded/main/jniLibs', 'build/embedded/main/libs'])
+        manifest.srcFile 'build/embedded/main/AndroidManifest.xml'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+}
+ext.modulePrefix = ':st-exoplayer-'
+ext.protobufVersion = '3.17.3'
+ext.androidXTestVersion = '1.6.1'
+ext.kotlinVersion = '2.4.10'
+ext.kotlinxVersion = '1.11.0'
+ext.coreXVersion = '1.19.0'
+ext.kotlinCoreXVersion = '1.19.0'
+dependencies { coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5' }
+configurations.configureEach {
+    exclude group: 'androidx.leanback', module: 'leanback'
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+
+    implementation 'androidx.leanback:leanback:' + leanbackXVersion
+    implementation 'androidx.leanback:leanback-preference:' + leanbackXVersion
+    implementation 'androidx.recommendation:recommendation:' + leanbackXVersion
+    implementation 'androidx.annotation:annotation:' + annotationXVersion
+    implementation 'androidx.recyclerview:recyclerview:' + recyclerviewXVersion // exoplayer 2.12.1 fix
+    implementation 'androidx.media:media:' + mediaXVersion // exoplayer fix
+    implementation 'androidx.constraintlayout:constraintlayout:' + constraintLayoutXVersion
+
+    implementation 'com.github.bumptech.glide:glide:' + glideVersion
+    implementation 'com.github.bumptech.glide:annotations:' + glideVersion
+    annotationProcessor 'com.github.bumptech.glide:compiler:' + glideVersion
+    implementation 'com.github.zjupure:webpdecoder:' + webpDecoderVersion
+    implementation 'androidx.multidex:multidex:' + multiDexVersion
+
+    //////// BEGIN EXOPLAYER /////////
+
+    implementation project(':st-exoplayer-library-core')
+    implementation project(':st-exoplayer-library-ui')
+    implementation project(':st-exoplayer-extension-leanback')
+    implementation project(':st-exoplayer-extension-mediasession')
+
+    // implementation 'com.amazon.android:exoplayer:' + amazonExoplayerVersion
+    // implementation 'com.amazon.android:extension-leanback:' + amazonExoplayerVersion
+    // implementation 'com.amazon.android:extension-mediasession:' + amazonExoplayerVersion
+
+    // implementation 'com.google.android.exoplayer:exoplayer:' + exoplayerVersion
+    // implementation 'com.google.android.exoplayer:extension-leanback:' + exoplayerVersion
+    // implementation 'com.google.android.exoplayer:extension-mediasession:' + exoplayerVersion
+
+    // implementation 'com.github.amzn:exoplayer-amazon-port:' + amazonExoplayerJitpackVersion
+
+    //////// END EXOPLAYER //////////
+
+    testImplementation 'junit:junit:' + junitVersion
+    testImplementation 'org.robolectric:robolectric:' + robolectricVersion
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test.ext:truth:1.6.0'
+    androidTestImplementation 'androidx.test:runner:' + testXSupportVersion
+    androidTestImplementation 'androidx.test:rules:' + testXSupportVersion
+    androidTestImplementation 'androidx.test.espresso:espresso-core:' + espressoVersion
+
+    implementation project(':st-fragment-1.1.0')
+    implementation project(':st-leanback-1.0.0')
+    implementation project(':st-common')
+    implementation project(':st-sharedutils')
+    implementation project(':st-mediaserviceinterfaces')
+    implementation project(':st-youtubeapi')
+    implementation project(':st-chatkit')
+    implementation project(':st-doubletapplayerview')
+
+    implementation 'io.reactivex.rxjava2:rxandroid:' + rxAndroidVersion
+    implementation 'io.reactivex.rxjava2:rxjava:' + rxJavaVersion
+
+    // Add the Firebase Crashlytics SDK.
+
+
+
+    // debugImplementation 'com.squareup.leakcanary:leakcanary-android:2.14'
+
+    implementation 'net.gotev:speech:' + gotevSpeechVersion
+
+    // ByeByeDPI fix
+    implementation 'org.conscrypt:conscrypt-android:' + conscryptVersion
+}

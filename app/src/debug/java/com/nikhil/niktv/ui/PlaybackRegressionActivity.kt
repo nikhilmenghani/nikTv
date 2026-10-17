@@ -21,6 +21,8 @@ class PlaybackRegressionActivity : ComponentActivity() {
         @Volatile var retries = 0
         @Volatile var retryPosition = -1L
         @Volatile var automaticRetries = 0
+        @Volatile var firstFrames = 0
+        @Volatile var enginePreferenceChanges = 0
     }
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,17 +39,22 @@ class PlaybackRegressionActivity : ComponentActivity() {
         progress = 0L
         retries = 0
         automaticRetries = 0
+        firstFrames = 0
+        enginePreferenceChanges = 0
         val engine = PlaybackEngine.valueOf(intent.getStringExtra("engine") ?: "MEDIA3")
         val first = MediaItem("fixture", "Local regression fixture", null, null)
         val second = MediaItem("second", "Second local fixture", null, null)
         val initial = PlayingMedia(
             media = first,
             previousEpisode = second, nextEpisode = second, episodeQueue = listOf(first, second),
-            url = android.net.Uri.fromFile(File(cacheDir, "retry.wav")).toString(),
-            catalogType = CatalogType.MOVIES,
+            url = intent.getStringExtra("url") ?: android.net.Uri.fromFile(File(cacheDir, "retry.wav")).toString(),
+            catalogType = CatalogType.valueOf(intent.getStringExtra("catalog") ?: "MOVIES"),
+            playbackFormat = intent.getStringExtra("format").orEmpty(),
+            streamRequestHeaders = intent.getStringArrayExtra("headers").orEmpty().toList().chunked(2)
+                .filter { it.size == 2 }.associate { it[0] to it[1] },
             progressKey = "synthetic-fixture",
             resumePositionMillis = savedInstanceState?.getLong("fixtureResume", 2500L) ?: 2500L,
-            authorizationRetryCount = 1
+            authorizationRetryCount = intent.getIntExtra("authorizationRetries", 1)
         )
         val current = mutableStateOf(initial)
         fun navigate(item: MediaItem) {
@@ -79,6 +86,7 @@ class PlaybackRegressionActivity : ComponentActivity() {
                         )
                     },
                     onRetryAlternateDecoder = {},
+                    onVideoFrameRendered = { firstFrames++ },
                     onPlaybackAuthorizationFailure = { automaticRetries++ },
                     onPlayPrevious = { navigate(first) },
                     onPlayNext = { navigate(second) },
@@ -87,6 +95,7 @@ class PlaybackRegressionActivity : ComponentActivity() {
                         knownDuration = duration
                         android.util.Log.i("NikTvRegression", "progress=$position duration=$duration retries=$retries")
                     },
+                    onPlaybackEngineChanged = { enginePreferenceChanges++ },
                     playbackEngine = engine
                 )
             }

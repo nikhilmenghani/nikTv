@@ -2,14 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- MPV is guarded at runtime on API 26+. Other players still support API 24. -->
-    <uses-sdk tools:overrideLibrary="dev.jdtech.mpv" />
+    <uses-sdk tools:overrideLibrary="dev.jdtech.mpv,io.github.aedev.flow" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" tools:replace="android:maxSdkVersion" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />
@@ -21,7 +22,24 @@
     </queries>
     <application android:name=".NikTvApplication" android:allowBackup="false" android:largeHeap="true" android:icon="${appIcon}" android:roundIcon="${appIcon}" android:label="${appLabel}" android:theme="@style/Theme.NikTv" android:usesCleartextTraffic="true" android:banner="${appBanner}">
         <meta-data android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME" android:value="com.nikhil.niktv.cast.CastOptionsProvider" />
-        <activity android:name=".NikTubeActivity" android:exported="false" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode">
+        <activity android:name=".NikTubeActivity" android:exported="true" android:supportsPictureInPicture="true" android:launchMode="singleTop" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="youtube.com" />
+                <data android:host="www.youtube.com" />
+                <data android:host="m.youtube.com" />
+                <data android:host="music.youtube.com" />
+                <data android:host="youtu.be" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
             <property android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" android:value="true" />
         </activity>
         <activity android:name=".TrailerPlayerActivity" android:exported="false" android:screenOrientation="userLandscape" />
@@ -50,6 +68,7 @@
                 android:resource="@xml/niktv_share_paths" />
         </provider>
         <service android:name=".data.NikTvDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".data.NikTubePlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
         <service android:name=".data.LiveTvRecordingService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
