@@ -12,6 +12,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,10 +29,12 @@ internal fun PlayerErrorActions(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onNext: () -> Unit,
-    alternatePlayerLabel: String,
     onSwitchPlayer: () -> Unit,
     retryModifier: Modifier = Modifier,
-    showAlternatePlayer: Boolean = true
+    switchPlayerModifier: Modifier = Modifier,
+    showAlternatePlayer: Boolean = true,
+    onReauthenticate: (() -> Unit)? = null,
+    reauthenticating: Boolean = false
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -75,13 +79,33 @@ internal fun PlayerErrorActions(
                 }
             }
         }
-        if (showAlternatePlayer) NikTvSecondaryActionButton(
-            onClick = onSwitchPlayer,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Default.SwapHoriz, "Switch playback engine")
-            Spacer(Modifier.width(7.dp))
-            Text("Try $alternatePlayerLabel")
+        val recoveryActions: @Composable (Modifier) -> Unit = { actionModifier ->
+            if (onReauthenticate != null) NikTvSecondaryActionButton(
+                onClick = onReauthenticate,
+                enabled = !reauthenticating,
+                modifier = actionModifier,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
+            ) {
+                Icon(Icons.Default.VpnKey, null)
+                Spacer(Modifier.width(7.dp))
+                Text(if (reauthenticating) "Signing in…" else "Reauthenticate")
+            }
+            if (showAlternatePlayer) NikTvSecondaryActionButton(
+                onClick = onSwitchPlayer,
+                modifier = actionModifier.then(switchPlayerModifier),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
+            ) {
+                Icon(Icons.Default.SwapHoriz, null)
+                Spacer(Modifier.width(7.dp))
+                Text("Choose player")
+            }
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            if (maxWidth >= 360.dp && onReauthenticate != null && showAlternatePlayer) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { recoveryActions(Modifier.weight(1f)) }
+            } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                recoveryActions(Modifier.fillMaxWidth())
+            }
         }
     }
 }

@@ -6073,7 +6073,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             // Coalesce a burst of remote presses before opening another stream.
             if (type == CatalogType.LIVE_TV && _state.value.nowPlaying != null) delay(120L)
             val session = requireNotNull(_state.value.session)
-            if (reauthenticate && session.profile.portalType == PortalType.STALKER) {
+            if (reauthenticate) {
                 _state.update { it.copy(reauthenticating = true) }
                 val refreshed = try {
                     sessionRefreshMutex.withLock {
@@ -6756,7 +6756,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun retryPlayback(positionMillis: Long, failedPlayback: PlayingMedia) {
+    fun reauthenticatePlayback(positionMillis: Long, failedPlayback: PlayingMedia) =
+        retryPlayback(positionMillis, failedPlayback, reauthenticate = true)
+
+    fun retryPlayback(positionMillis: Long, failedPlayback: PlayingMedia, reauthenticate: Boolean = false) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning || !samePlaybackAttempt(playing, failedPlayback)) return
         // An explicit Retry can start playback; a later pause while resolving is retained at commit.
@@ -6773,7 +6776,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     playing.episodeQueue,
                     forceFreshUrl = true,
                     resumePositionOverride = positionMillis.coerceAtLeast(0L),
-                    reauthenticate = true,
+                    reauthenticate = reauthenticate,
                     directFullscreen = playing.directFullscreen,
                     requestId = requestId
                 )

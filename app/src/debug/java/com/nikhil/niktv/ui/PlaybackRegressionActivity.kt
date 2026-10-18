@@ -18,7 +18,9 @@ class PlaybackRegressionActivity : ComponentActivity() {
         @Volatile var currentMediaId = "fixture"
         @Volatile var progress = 0L
         @Volatile var knownDuration = 0L
+        @Volatile var retryNow: (() -> Unit)? = null
         @Volatile var retries = 0
+        @Volatile var reauthentications = 0
         @Volatile var retryPosition = -1L
         @Volatile var automaticRetries = 0
         @Volatile var firstFrames = 0
@@ -38,6 +40,7 @@ class PlaybackRegressionActivity : ComponentActivity() {
         }
         progress = 0L
         retries = 0
+        reauthentications = 0
         automaticRetries = 0
         firstFrames = 0
         enginePreferenceChanges = 0
@@ -53,6 +56,7 @@ class PlaybackRegressionActivity : ComponentActivity() {
             streamRequestHeaders = intent.getStringArrayExtra("headers").orEmpty().toList().chunked(2)
                 .filter { it.size == 2 }.associate { it[0] to it[1] },
             progressKey = "synthetic-fixture",
+            playWhenReady = intent.getBooleanExtra("playWhenReady", true),
             resumePositionMillis = savedInstanceState?.getLong("fixtureResume", 2500L) ?: 2500L,
             authorizationRetryCount = intent.getIntExtra("authorizationRetries", 1)
         )
@@ -63,6 +67,13 @@ class PlaybackRegressionActivity : ComponentActivity() {
             current.value = current.value.copy(media = item, progressKey = "synthetic-${item.id}",
                 playbackAttemptId = UUID.randomUUID().toString())
         }
+        fun retry(position: Long) {
+            retryPosition = position
+            retries++
+            current.value = current.value.copy(playbackAttemptId = UUID.randomUUID().toString(),
+                resumePositionMillis = position, authorizationRetryCount = 0, playWhenReady = true)
+        }
+        retryNow = { retry(2500L) }
         window.callback = PlayerTransportWindowCallback(window.callback) { event ->
             if (event.action != android.view.KeyEvent.ACTION_DOWN || event.repeatCount != 0) false
             else when (event.keyCode) {
@@ -76,16 +87,17 @@ class PlaybackRegressionActivity : ComponentActivity() {
                 PlayerScreen(
                     media = current.value,
                     onBack = { finish() },
-                    onRetry = { position ->
+                    onRetry = { position -> retry(position) },
+                    onRetryAlternateDecoder = {},
+                    onReauthenticate = { position ->
+                        reauthentications++
                         retryPosition = position
-                        retries++
                         current.value = current.value.copy(
                             playbackAttemptId = UUID.randomUUID().toString(),
-                            resumePositionMillis = position,
-                            authorizationRetryCount = 0
+                            resumePositionMillis = position, playWhenReady = true
                         )
                     },
-                    onRetryAlternateDecoder = {},
+                    onPlaybackIntentChanged = { current.value = current.value.copy(playWhenReady = it) },
                     onVideoFrameRendered = { firstFrames++ },
                     onPlaybackAuthorizationFailure = { automaticRetries++ },
                     onPlayPrevious = { navigate(first) },
@@ -106,7 +118,7 @@ class PlaybackRegressionActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
     override fun onDestroy() {
-        if (instance === this) instance = null
+        if (instance === this) { instance = null; retryNow = null }
         super.onDestroy()
     }
 }

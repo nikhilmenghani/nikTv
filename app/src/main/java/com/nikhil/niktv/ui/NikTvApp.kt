@@ -631,6 +631,9 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     media = playback,
                     onBack = vm::closePlayer,
                     onRetry = { vm.retryPlayback(it, playback) },
+                    onReauthenticate = if (playback.offlinePlayback) null else
+                        { position -> vm.reauthenticatePlayback(position, playback) },
+                    reauthenticating = state.reauthenticating,
                     onRetryAlternateDecoder = { position -> vm.retryPlaybackWithAlternateDecoder(position, playback) },
                     onPlaybackAuthorizationFailure = { position -> vm.retryPlaybackAfterAuthorizationFailure(position, playback) },
                     onPlayPrevious = vm::playPreviousEpisode,

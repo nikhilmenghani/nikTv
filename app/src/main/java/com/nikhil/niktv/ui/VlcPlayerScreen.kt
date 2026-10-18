@@ -92,6 +92,8 @@ internal fun VlcPlayerScreen(
     initialExternalSubtitleFile: File? = null,
     onRetry: (Long) -> Unit,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
+    onReauthenticate: ((Long) -> Unit)? = null,
+    reauthenticating: Boolean = false,
     queueHasMore: Boolean = false,
     queueLoadingMore: Boolean = false,
     onLoadMoreQueue: () -> Boolean = { false },
@@ -193,6 +195,7 @@ internal fun VlcPlayerScreen(
     var pictureEditorVisible by remember { mutableStateOf(false) }
     var pictureModePickerVisible by remember { mutableStateOf(false) }
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible
@@ -279,10 +282,11 @@ internal fun VlcPlayerScreen(
     val nextRequester = remember(media.progressKey) { FocusRequester() }
     val playNextNowRequester = remember(media.progressKey) { FocusRequester() }
     val errorRetryRequester = remember(media.progressKey) { FocusRequester() }
+    val errorPlayerRequester = remember(media.progressKey) { FocusRequester() }
     LaunchedEffect(error, media.progressKey) {
-        if (error != null) {
+        if (error != null && !currentPlayerOptionsOpen) {
             delay(120L)
-            runCatching { errorRetryRequester.requestFocus() }
+            if (!currentPlayerOptionsOpen) runCatching { errorRetryRequester.requestFocus() }
         }
     }
     val progressRequester = remember(media.progressKey) { FocusRequester() }
@@ -321,7 +325,7 @@ internal fun VlcPlayerScreen(
     }
     // Construct JNI state asynchronously; the session still owns decoder cleanup
     // before replacement media may acquire the native playback slot.
-    var playbackRequested by remember(media.progressKey) { mutableStateOf(media.playWhenReady) }
+    var playbackRequested by remember(media.progressKey, media.playbackAttemptId) { mutableStateOf(media.playWhenReady) }
     val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
     var session by remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
         mutableStateOf<VlcPlaybackSession?>(null)
@@ -348,9 +352,24 @@ internal fun VlcPlayerScreen(
             else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(error.orEmpty())
                 NikTvPrimaryActionButton(onClick = { onRetry(position) }) { Text("Retry") }
-                NikTvTextActionButton(onClick = { onSelectPlayer(PlaybackEngine.MEDIA3, position) }) { Text("Switch player") }
+                NikTvTextActionButton(onClick = { playerPickerVisible = true }) { Text("Choose player") }
+                onReauthenticate?.let { authenticate ->
+                    NikTvTextActionButton(enabled = !reauthenticating, onClick = { authenticate(position) }) {
+                        Text(if (reauthenticating) "Signing in…" else "Reauthenticate")
+                    }
+                }
             }
         }
+        if (playerPickerVisible) PlayerEngineQuickOverlay(
+            selectedEngine = configuredEngine,
+            onDismiss = { playerPickerVisible = false },
+            onSelect = { selected ->
+                playerPickerVisible = false
+                onSelectPlayer(selected, position)
+                if (selected.resolvePlayerEngine(context, media.series?.id ?: media.progressKey.ifBlank { media.media.id }) == PlaybackEngine.VLC)
+                    onRetry(position)
+            }
+        )
         return
     }
     val libVlc = preparedSession.lib
@@ -680,6 +699,7 @@ internal fun VlcPlayerScreen(
                     }
                 }
                 MediaPlayer.Event.EncounteredError -> {
+                    preparedSession.retireAfterFailure()
                     streamTerminated = true
                     buffering = false
                     if (media.catalogType == CatalogType.LIVE_TV && streamWasPlaying) {
@@ -723,6 +743,7 @@ internal fun VlcPlayerScreen(
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            preparedSession.retireAfterFailure()
             buffering = false
             error = "VLC could not open this stream. Try another channel or retry playback."
             controlsVisible = true
@@ -864,6 +885,7 @@ internal fun VlcPlayerScreen(
                 androidx.lifecycle.Lifecycle.State.STARTED)
             if (deadline.expired(android.os.SystemClock.elapsedRealtime(),
                     foreground && playbackRequested && focus.shouldPlay, streamWasPlaying)) {
+                preparedSession.retireAfterFailure()
                 preparedSession.command { it.stop() }
                 streamTerminated = true
                 buffering = false
@@ -1941,13 +1963,23 @@ PlayerChromeIconButton(
             onDismiss = {
                 playerPickerVisible = false
                 controlsVisible = true
-                scope.launch { delay(80L); runCatching { playerSwitchRequester.requestFocus() } }
+                val origin = if (playerPickerFromError) errorPlayerRequester else playerSwitchRequester
+                playerPickerFromError = false
+                scope.launch { delay(80L); runCatching { origin.requestFocus() } }
             },
             onSelect = { selectedEngine ->
+                val fromError = playerPickerFromError
+                playerPickerFromError = false
                 playerPickerVisible = false
                 controlsVisible = true
-                if (selectedEngine != configuredEngine.pickerChoice()) {
+                if (fromError && selectedEngine.resolvePlayerEngine(context,
+                        media.series?.id ?: media.progressKey.ifBlank { media.media.id }) == PlaybackEngine.VLC) {
                     onSelectPlayer(selectedEngine, (if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
+                    onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
+                } else if (selectedEngine != configuredEngine.pickerChoice()) {
+                    onSelectPlayer(selectedEngine, (if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
+                } else if (fromError) {
+                    onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
                 } else {
                     scope.launch { delay(80L); runCatching { playerSwitchRequester.requestFocus() } }
                 }
@@ -2020,10 +2052,15 @@ PlayerChromeIconButton(
                                 else player.time).coerceAtLeast(0L))
                         },
                         onNext = onPlayNext,
-                        alternatePlayerLabel = "ExoPlayer",
                         onSwitchPlayer = {
-                            onSelectPlayer(PlaybackEngine.MEDIA3, (if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
+                            playerPickerFromError = true
+                            playerPickerVisible = true
                         },
+                        switchPlayerModifier = Modifier.focusRequester(errorPlayerRequester),
+                        onReauthenticate = onReauthenticate?.let { authenticate ->
+                            { authenticate((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L)) }
+                        },
+                        reauthenticating = reauthenticating,
                         retryModifier = Modifier.focusRequester(errorRetryRequester)
                     )
                 }

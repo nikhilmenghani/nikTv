@@ -49,4 +49,39 @@ class ReusablePlaybackEnginePoolTest {
         assertEquals(listOf(hls), destroyed)
         assertSame(ts, pool.acquire("ts"))
     }
+
+    @Test fun failedEngineIsReplacedBeforeItsLastLeaseHasClosed() {
+        val failed = pool.acquire("live")
+        val otherLease = pool.acquire("live")
+        pool.invalidate("live", failed)
+        val replacement = pool.acquire("live")
+        assertNotSame(failed, replacement)
+        assertTrue(destroyed.isEmpty())
+        pool.release("live", failed)
+        assertTrue(destroyed.isEmpty())
+        pool.release("live", otherLease)
+        assertEquals(listOf(failed), destroyed)
+        assertSame(replacement, pool.acquire("live"))
+    }
+
+    @Test fun lateFailureFromOldEngineCannotRetireItsReplacement() {
+        val failed = pool.acquire("live")
+        pool.invalidate("live", failed)
+        val replacement = pool.acquire("live")
+        pool.invalidate("live", failed)
+        pool.release("live", failed)
+        assertSame(replacement, pool.acquire("live"))
+        assertEquals(listOf(failed), destroyed)
+    }
+
+    @Test fun idleFailedEngineIsDestroyedOnceAndHealthyOtherConfigurationSurvives() {
+        val failed = pool.acquire("live")
+        val movie = pool.acquire("movie")
+        pool.release("live", failed)
+        pool.invalidate("live", failed)
+        pool.invalidate("live", failed)
+        assertEquals(listOf(failed), destroyed)
+        assertSame(movie, pool.acquire("movie"))
+        assertNotSame(failed, pool.acquire("live"))
+    }
 }

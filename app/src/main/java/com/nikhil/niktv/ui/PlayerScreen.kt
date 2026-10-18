@@ -290,7 +290,7 @@ private fun PlaybackEngine.playerEngineLabel(): String = when (this) {
     else -> "ExoPlayer"
 }
 
-private fun PlaybackEngine.resolvePlayerEngine(
+internal fun PlaybackEngine.resolvePlayerEngine(
     context: Context,
     playbackScope: String
 ): PlaybackEngine = when (this) {
@@ -342,6 +342,8 @@ fun PlayerScreen(
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null,
     onPlaybackIntentChanged: (Boolean) -> Unit = {},
+    onReauthenticate: ((Long) -> Unit)? = null,
+    reauthenticating: Boolean = false,
     onVideoFrameRendered: () -> Unit = {},
     onVideoFramesRendered: ((Int) -> Unit)? = null
 ) {
@@ -463,6 +465,8 @@ fun PlayerScreen(
             initialExternalSubtitleFile = externalSubtitleFile,
             onRetry = onRetry,
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
+            onReauthenticate = onReauthenticate,
+            reauthenticating = reauthenticating,
             queueHasMore = queueHasMore,
             queueLoadingMore = queueLoadingMore,
             onLoadMoreQueue = onLoadMoreQueue,
@@ -544,6 +548,7 @@ fun PlayerScreen(
     var pictureEditorVisible by remember { mutableStateOf(false) }
     var pictureModePickerVisible by remember { mutableStateOf(false) }
     var playerPickerVisible by remember(media.progressKey) { mutableStateOf(false) }
+    var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible
@@ -613,7 +618,7 @@ fun PlayerScreen(
     }
 
     var isPlaying by remember(media.progressKey) { mutableStateOf(false) }
-    var playbackRequested by remember(media.progressKey) { mutableStateOf(media.playWhenReady) }
+    var playbackRequested by remember(media.progressKey, media.playbackAttemptId) { mutableStateOf(media.playWhenReady) }
     var playbackState by remember(media.progressKey) { mutableIntStateOf(Player.STATE_IDLE) }
     var playbackHasBeenReady by remember(media.progressKey) { mutableStateOf(false) }
     var bufferingIndicatorVisible by remember(media.progressKey) { mutableStateOf(true) }
@@ -690,6 +695,7 @@ fun PlayerScreen(
     }
     val errorBackFocusRequester = remember(media.progressKey) { FocusRequester() }
     val errorRetryFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val errorPlayerFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val pipActivity = activity as? MainActivity
     val pipAvailable = remember(context) {
@@ -1513,9 +1519,9 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(playbackError, startupTimedOut, media.progressKey) {
-        if (playbackError != null || startupTimedOut) {
+        if ((playbackError != null || startupTimedOut) && !currentPlayerOptionsOpen) {
             delay(120L)
-            runCatching { errorRetryFocusRequester.requestFocus() }
+            if (!currentPlayerOptionsOpen) runCatching { errorRetryFocusRequester.requestFocus() }
         }
     }
     fun showControlsAndFocusPlayPause() {
@@ -2713,18 +2719,28 @@ PlayerChromeIconButton(
             onDismiss = {
                 playerPickerVisible = false
                 controlsVisible = true
-                coroutineScope.launch { delay(80L); runCatching { playerSwitchFocusRequester.requestFocus() } }
+                val origin = if (playerPickerFromError) errorPlayerFocusRequester else playerSwitchFocusRequester
+                playerPickerFromError = false
+                coroutineScope.launch { delay(80L); runCatching { origin.requestFocus() } }
             },
             onSelect = { selectedEngine ->
+                val fromError = playerPickerFromError
+                playerPickerFromError = false
                 playerPickerVisible = false
                 controlsVisible = true
-                if (selectedEngine != selectedPlayerChoice.pickerChoice()) {
+                if (fromError && selectedEngine.resolvePlayerEngine(context, playbackScope) == effectiveEngine) {
+                    selectedPlayerChoice = selectedEngine
+                    onPlaybackEngineChanged(selectedEngine)
+                    onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
+                } else if (selectedEngine != selectedPlayerChoice.pickerChoice()) {
                     restorePlayerSwitchFocus = true
                     selectedPlayerChoice = selectedEngine
                     modeFeedback = "Player · ${selectedEngine.playerChoiceLabel()}"
                     engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
                     onPlaybackEngineChanged(selectedEngine)
                     sessionEngineOverride = selectedEngine.resolvePlayerEngine(context, playbackScope)
+                } else if (fromError) {
+                    onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                 } else {
                     coroutineScope.launch { delay(80L); runCatching { playerSwitchFocusRequester.requestFocus() } }
                 }
@@ -2836,18 +2852,16 @@ PlayerChromeIconButton(
                             onRetry(playbackRestartPosition(media.catalogType, player.currentPosition))
                         },
                         onNext = onPlayNext,
-                        alternatePlayerLabel = if (vlcHeaderOptions(media.streamRequestHeaders) != null) "VLC"
-                            else if (effectiveEngine == PlaybackEngine.MPV) "ExoPlayer" else "MPV",
-                        showAlternatePlayer = media.nativeSabr == null &&
-                            (vlcHeaderOptions(media.streamRequestHeaders) != null || mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)),
+                        showAlternatePlayer = media.nativeSabr == null,
                         onSwitchPlayer = {
-                            val selectedEngine = if (vlcHeaderOptions(media.streamRequestHeaders) != null) PlaybackEngine.VLC
-                                else if (effectiveEngine == PlaybackEngine.MPV) PlaybackEngine.MEDIA3 else PlaybackEngine.MPV
-                            selectedPlayerChoice = selectedEngine
-                            engineSwitchResumePosition = playbackRestartPosition(media.catalogType, player.currentPosition)
-                            onPlaybackEngineChanged(selectedEngine)
-                            sessionEngineOverride = selectedEngine
+                            playerPickerFromError = true
+                            playerPickerVisible = true
                         },
+                        switchPlayerModifier = Modifier.focusRequester(errorPlayerFocusRequester),
+                        onReauthenticate = onReauthenticate?.let { authenticate ->
+                            { authenticate(playbackRestartPosition(media.catalogType, player.currentPosition)) }
+                        },
+                        reauthenticating = reauthenticating,
                         retryModifier = Modifier.focusRequester(errorRetryFocusRequester)
                             .playerControlFocus(RoundedCornerShape(12.dp)) { controlsFocused = it }
                     )

@@ -76,6 +76,11 @@ class PlaybackRegressionTest {
         val activity = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
             .putExtra("engine", engine).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         try {
+            await("Error must offer the full player chooser") {
+                find(instrumentation.uiAutomation.rootInActiveWindow, "Choose player") != null
+            }
+            var chooser = find(instrumentation.uiAutomation.rootInActiveWindow, "Choose player")
+            while (chooser != null && !chooser.performAction(AccessibilityNodeInfo.ACTION_CLICK)) chooser = chooser.parent
             await("A startup error must offer $targetLabel") {
                 find(instrumentation.uiAutomation.rootInActiveWindow, targetLabel) != null
             }
@@ -93,12 +98,94 @@ class PlaybackRegressionTest {
             assertEquals(0, PlaybackRegressionActivity.automaticRetries)
         } finally { instrumentation.runOnMainSync { activity.finish() }; file.delete() }
     }
-    @Test fun media3ErrorCanSwitchToVlcWithoutLosingResume() = exerciseEngineSwitch("MEDIA3", "Try VLC")
-    @Test fun vlcErrorCanSwitchToMedia3WithoutLosingPendingResume() = exerciseEngineSwitch("VLC", "Try ExoPlayer")
+    @Test fun media3ErrorCanSwitchToVlcWithoutLosingResume() = exerciseEngineSwitch("MEDIA3", "VLC")
+    @Test fun vlcErrorCanSwitchToMedia3WithoutLosingPendingResume() = exerciseEngineSwitch("VLC", "ExoPlayer")
 
     @Test fun testMedia3SameUrlRetry() = exercise("MEDIA3")
     @Test fun testFlowSameUrlRetry() = exercise("FLOW")
-    @Test fun flowErrorCanSwitchToVlcWithoutLosingResume() = exerciseEngineSwitch("FLOW", "Try VLC")
+    @Test fun flowErrorCanSwitchToVlcWithoutLosingResume() = exerciseEngineSwitch("FLOW", "VLC")
     @Test fun testVlcManualRetryAfterAutomaticAttempt() = exercise("VLC")
+
+    @Test fun vlcExplicitRetryResetsPausedIntentForSameMedia() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val file = File(context.cacheDir, "retry.wav")
+        fixture(file)
+        val activity = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
+            .putExtra("engine", "VLC").putExtra("playWhenReady", false)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            instrumentation.waitForIdleSync()
+            Thread.sleep(1000)
+            assertTrue("Initial paused session must not advance", PlaybackRegressionActivity.progress <= 2500L)
+            instrumentation.runOnMainSync { PlaybackRegressionActivity.retryNow!!.invoke() }
+            await("Explicit same-media retry must adopt the new play intent") {
+                PlaybackRegressionActivity.progress > 3500L
+            }
+            assertEquals(1, PlaybackRegressionActivity.retries)
+        } finally { instrumentation.runOnMainSync { activity.finish() }; file.delete() }
+    }
+
+    @Test fun reauthenticateIsExplicitAndSeparateFromRetryAndAutomaticAuthorization() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val file = File(context.cacheDir, "retry.wav")
+        file.delete()
+        val activity = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
+            .putExtra("engine", "MEDIA3").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            await("Failure offers an explicit session refresh") {
+                find(instrumentation.uiAutomation.rootInActiveWindow, "Reauthenticate") != null
+            }
+            assertEquals(0, PlaybackRegressionActivity.reauthentications)
+            fixture(file)
+            var node = find(instrumentation.uiAutomation.rootInActiveWindow, "Reauthenticate")
+            var clicked = false
+            while (node != null && !clicked) {
+                clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                node = node.parent
+            }
+            assertTrue(clicked)
+            await("Explicit session-refresh callback runs once") { PlaybackRegressionActivity.reauthentications == 1 }
+            await("Session refresh retains movie resume") { PlaybackRegressionActivity.progress >= 3500L }
+            assertEquals(0, PlaybackRegressionActivity.retries)
+            assertEquals(0, PlaybackRegressionActivity.automaticRetries)
+        } finally { instrumentation.runOnMainSync { activity.finish() }; file.delete() }
+    }
+
+    @Test fun errorChooserListsSupportedEnginesAndBackRestoresChoosePlayerFocus() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        instrumentation.setInTouchMode(false)
+        File(context.cacheDir, "retry.wav").delete()
+        val activity = instrumentation.startActivitySync(Intent(context, PlaybackRegressionActivity::class.java)
+            .putExtra("engine", "MEDIA3").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            await("Error shows Choose player") {
+                find(instrumentation.uiAutomation.rootInActiveWindow, "Choose player") != null
+            }
+            var node = find(instrumentation.uiAutomation.rootInActiveWindow, "Choose player")
+            var clicked = false
+            while (node != null && !clicked) {
+                clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                node = node.parent
+            }
+            assertTrue(clicked)
+            await("All device-supported engines are offered") {
+                playerPickerOptions(android.os.Build.VERSION.SDK_INT).all {
+                    find(instrumentation.uiAutomation.rootInActiveWindow, it.playerChoiceLabel()) != null
+                }
+            }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            Thread.sleep(250)
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("OK reopens chooser from restored error-button focus") {
+                find(instrumentation.uiAutomation.rootInActiveWindow, "Flow") != null
+            }
+            assertEquals(0, PlaybackRegressionActivity.retries)
+            assertEquals(0, PlaybackRegressionActivity.reauthentications)
+            assertEquals(0, PlaybackRegressionActivity.enginePreferenceChanges)
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
 }
 

@@ -21,6 +21,11 @@ internal class VlcPlaybackSession private constructor(
     private val closing = AtomicBoolean()
     private val closed = CompletableDeferred<Pair<Long, Long>>()
 
+    fun retireAfterFailure() {
+        // A fresh MediaPlayer alone still shares LibVLC's engine-level state.
+        pool.invalidate(options, lib)
+    }
+
     fun command(action: (MediaPlayer) -> Unit) {
         if (closing.get()) return
         NativePlaybackWorker.scope.launch {
@@ -70,6 +75,7 @@ internal class VlcPlaybackSession private constructor(
                     android.util.Log.i("NikTvPlayback", "VLC creation elapsedMs=${SystemClock.elapsedRealtime() - started}")
                 }
             } catch (failure: Throwable) {
+                pool.invalidate(options, lib)
                 pool.release(options, lib)
                 throw failure
             }
