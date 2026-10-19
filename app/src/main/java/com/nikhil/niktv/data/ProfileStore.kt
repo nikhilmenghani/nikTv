@@ -96,6 +96,54 @@ class ProfileStore(private val context: Context) {
                 ?: recent
         }
     }
+    private val requestedRecommendationsKey = stringPreferencesKey("requested_recommendations_v1")
+    val requestedRecommendations: Flow<List<RecentItem>> = context.dataStore.data.map { prefs ->
+        prefs[requestedRecommendationsKey]?.let {
+            runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull()
+        }.orEmpty()
+    }
+    suspend fun requestRecommendations(seed: RecentItem, category: String) = context.dataStore.edit { prefs ->
+        val seeds = prefs[requestedRecommendationsKey]?.let {
+            runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull()
+        }.orEmpty()
+        prefs[requestedRecommendationsKey] = Json.encodeToString(listOf(seed) + seeds.filterNot {
+            it.profileKey == seed.profileKey && it.kind == seed.kind && it.media.id == seed.media.id
+        })
+        val dismissed = prefs[dismissedRecommendationsKey]?.let {
+            runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
+        }.orEmpty()
+        prefs[dismissedRecommendationsKey] = Json.encodeToString(dismissed +
+            (seed.profileKey.orEmpty() to (dismissed[seed.profileKey].orEmpty() - category)))
+    }
+
+    private val dismissedRecommendationsKey = stringPreferencesKey("dismissed_recommendations_v1")
+    val dismissedRecommendations: Flow<Map<String, Set<String>>> = context.dataStore.data.map { prefs ->
+        prefs[dismissedRecommendationsKey]?.let {
+            runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
+        }.orEmpty()
+    }
+    suspend fun dismissRecommendation(profile: String, category: String) = context.dataStore.edit { prefs ->
+        val current = prefs[dismissedRecommendationsKey]?.let {
+            runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
+        }.orEmpty()
+        prefs[dismissedRecommendationsKey] = Json.encodeToString(
+            current + (profile to (current[profile].orEmpty() + category)))
+    }
+
+    private val recommendationProgressKey = stringPreferencesKey("recommendation_progress_v1")
+    val recommendationProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
+        prefs[recommendationProgressKey]?.let {
+            runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull()
+        }.orEmpty()
+    }
+    suspend fun saveRecommendationProgress(progress: PlaybackProgress) = context.dataStore.edit { prefs ->
+        val current = prefs[recommendationProgressKey]?.let {
+            runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull()
+        }.orEmpty()
+        prefs[recommendationProgressKey] = Json.encodeToString(
+            (listOf(progress) + current.filterNot { it.key == progress.key }).take(500))
+    }
+
     val playbackProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
         prefs[progressKey]?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
     }
@@ -468,6 +516,7 @@ class ProfileStore(private val context: Context) {
         it.remove(browseLayoutsKey)
         it.remove(modernUiEnabledKey)
         it.remove(tmdbMappingsKey)
+        it.remove(recommendationProgressKey)
     }
 
     private fun decodeProfiles(raw: String?, legacy: String?): List<PortalProfile> =

@@ -167,6 +167,7 @@ internal fun ModernBrowseScreen(
     openRecent: (RecentItem) -> Unit,
     openSeriesFromHome: (MediaItem) -> Unit,
     removeRecent: (RecentItem) -> Unit,
+    dismissRecommendation: (com.nikhil.niktv.data.HistoryRecommendationRow) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     markEpisodeWatched: (WatchedSeries, MediaItem) -> Unit,
     clearRecent: (FavoriteKind) -> Unit,
@@ -228,7 +229,8 @@ internal fun ModernBrowseScreen(
             openSeries = openSeriesFromHome,
             clearRecentChannels = { clearRecent(FavoriteKind.CHANNEL) },
             openWatchedEpisode = openWatchedEpisode,
-            dismissWatchedEpisode = dismissWatchedEpisode,
+            dismissRecommendation = dismissRecommendation,
+                            dismissWatchedEpisode = dismissWatchedEpisode,
                             markEpisodeWatched = markEpisodeWatched,
             openTmdbSection = openModernTmdbSection,
             openIptvCategory = openModernIptvCategory,
@@ -866,6 +868,16 @@ internal fun ModernBrowseScreen(
                             toggleFavoriteEntry(FavoriteItem(recent.kind, recent.media, recent.series))
                         }
                     )
+                }
+
+                if (state.historyRecommendations.isEmpty()) state.historyRecommendationsMessage?.let { message ->
+                    item("history-recommendations-status", span = gridSpan) { HistoryRecommendationStatus(message) }
+                }
+                state.historyRecommendations.filter { it.profile == state.session?.profile?.cacheKey() }.forEach { row ->
+                    item("history-recommendations-${row.key}", span = gridSpan) {
+                        HistoryRecommendationRail(row, openTrendingMovie, openTrendingSeries, dismiss = { dismissRecommendation(row) },
+                            favorites = state.favorites, toggleFavorite = toggleFavoriteEntry)
+                    }
                 }
 
                 val showTrendingMovies = TmdbHomeSection.TRENDING_MOVIES in selectedTmdbSections && (

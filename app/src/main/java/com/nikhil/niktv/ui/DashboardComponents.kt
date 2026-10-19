@@ -601,6 +601,10 @@ internal fun ModernPosterCard(
     footer: (@Composable () -> Unit)? = null
 ) {
     val returningTile = rememberReturningTile(onClick)
+    val recommendationType = LocalRecommendationTypeFor.current?.invoke(item, null)
+    val recommendationAction = LocalShowRecommendations.current.takeIf {
+        recommendationType in setOf(com.nikhil.niktv.model.CatalogType.MOVIES, com.nikhil.niktv.model.CatalogType.SERIES)
+    }
 
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -656,7 +660,7 @@ internal fun ModernPosterCard(
             .onFocusChanged { focused = it.isFocused }
             .remoteCombinedClickable(
                 onClick = returningTile.open,
-                onLongClick = if (toggleFavorite != null || removeAction != null) {
+                onLongClick = if (toggleFavorite != null || removeAction != null || recommendationAction != null) {
                     { menuOpen = true }
                 } else onLongClick,
                 interactionSource = interactionSource,
@@ -759,6 +763,7 @@ internal fun ModernPosterCard(
             containerColor = Color(0xFF202020),
             shape = RoundedCornerShape(12.dp)
         ) {
+            ShowRecommendationsMenuItem(item, dismiss = { menuOpen = false })
             toggleFavorite?.let { action ->
                 NikDropdownMenuItem(
                     text = { Text(if (isFavorite) "Remove from My List" else "Add to My List") },
@@ -791,6 +796,10 @@ internal fun ModernMediaListCard(
     channelStyle: Boolean = false
 ) {
     val returningTile = rememberReturningTile(onClick)
+    val recommendationType = LocalRecommendationTypeFor.current?.invoke(item, null)
+    val recommendationAction = LocalShowRecommendations.current.takeIf {
+        recommendationType in setOf(com.nikhil.niktv.model.CatalogType.MOVIES, com.nikhil.niktv.model.CatalogType.SERIES)
+    }
 
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -1113,6 +1122,7 @@ internal fun ModernMediaListCard(
             containerColor = Color(0xFF202020),
             shape = RoundedCornerShape(12.dp)
         ) {
+            if (!channelStyle) ShowRecommendationsMenuItem(item, dismiss = { menuOpen = false })
             NikDropdownMenuItem(
                 text = {
                     Text(

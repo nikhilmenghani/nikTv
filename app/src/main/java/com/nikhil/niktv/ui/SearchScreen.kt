@@ -2030,6 +2030,7 @@ private fun ModernSearchMediaResultRow(
         }
 
         SearchFavoriteMenu(
+            item = item.copy(searchResultType = type),
             expanded = menuOpen,
             isFavorite = isFavorite,
             onDismiss = { menuOpen = false },
@@ -2053,7 +2054,7 @@ private fun ModernSearchPosterResultCard(
     modifier: Modifier = Modifier
 ) {
     ModernCompactMediaCard(
-        item = item,
+        item = item.copy(searchResultType = type),
         subtitle = categoryTitle.orEmpty(),
         onClick = onClick,
         isFavorite = isFavorite,
@@ -2069,6 +2070,7 @@ private fun ModernSearchPosterResultCard(
 
 @Composable
 private fun SearchFavoriteMenu(
+    item: MediaItem? = null,
     expanded: Boolean,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
@@ -2080,6 +2082,7 @@ private fun SearchFavoriteMenu(
         containerColor = SearchRaised,
         shape = RoundedCornerShape(12.dp)
     ) {
+        item?.let { ShowRecommendationsMenuItem(it, dismiss = onDismiss) }
         NikDropdownMenuItem(
             text = {
                 Text(

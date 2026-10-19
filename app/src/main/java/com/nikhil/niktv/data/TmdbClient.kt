@@ -21,6 +21,7 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+@kotlinx.serialization.Serializable
 data class TmdbMovie(
     val id: Int,
     val title: String,
@@ -48,6 +49,7 @@ data class TmdbMovie(
 internal fun TmdbMovie.isReleased(today: String = currentTmdbDate()): Boolean =
     releaseDate.isNullOrBlank() || releaseDate <= today
 
+@kotlinx.serialization.Serializable
 data class TmdbSeries(
     val id: Int,
     val name: String,
@@ -322,20 +324,14 @@ class TmdbClient {
             val root = execute("/3/tv/$id", emptyMap())
             return@withContext root.toTmdbSeries()
         }
-        val queries = listOf(
-            item.title.substringAfter(':').substringBefore(" - ").trim(),
-            item.title.substringBefore(" - ").trim(),
-            item.title.trim(),
-            // Some IPTV catalogs publish India's Got Latent as "Latest".
-            // Search the intended title, but still require an exact normalized
-            // TMDB title match below before accepting it.
-            item.title.replace(Regex("(?i)\\blatest\\b"), "Latent").trim()
-        ).filter { it.isNotBlank() }.distinct()
+        val lookupTitle = providerTmdbTitle(item.title)
+        val queries = listOf(lookupTitle,
+            lookupTitle.replace(Regex("(?i)\\blatest\\b"), "Latent"))
+            .filter { it.isNotBlank() }.distinct()
         for (query in queries) {
             val wanted = query.tmdbLookupTitle()
-            fetchSeries("/3/search/tv", 8, mapOf("query" to wanted)).firstOrNull { candidate ->
-                candidate.name.tmdbLookupTitle() == wanted || candidate.originalName.tmdbLookupTitle() == wanted
-            }?.let { return@withContext it }
+            unambiguousTmdbMatch(query, fetchSeries("/3/search/tv", 20, mapOf("query" to wanted)),
+                { listOf(it.name, it.originalName) }, { it.firstAirYear }, { it.id })?.let { return@withContext it }
         }
         null
     }
@@ -346,19 +342,21 @@ class TmdbClient {
             val root = execute("/3/movie/$id", emptyMap())
             return@withContext root.toTmdbMovie()
         }
-        val queries = listOf(
-            item.title.substringAfter(':').substringBefore(" - ").trim(),
-            item.title.substringBefore(" - ").trim(),
-            item.title.trim()
-        ).filter { it.isNotBlank() }.distinct()
+        val queries = listOf(providerTmdbTitle(item.title)).filter { it.isNotBlank() }
         for (query in queries) {
             val wanted = query.tmdbLookupTitle()
-            fetchMovies("/3/search/movie", 8, mapOf("query" to wanted)).firstOrNull { candidate ->
-                candidate.title.tmdbLookupTitle() == wanted ||
-                    candidate.originalTitle.tmdbLookupTitle() == wanted
-            }?.let { return@withContext it }
+            unambiguousTmdbMatch(query, fetchMovies("/3/search/movie", 20, mapOf("query" to wanted)),
+                { listOf(it.title, it.originalTitle) }, { it.releaseYear }, { it.id })?.let { return@withContext it }
         }
         null
+    }
+
+    suspend fun recommendedMovies(id: Int): List<TmdbMovie> = withContext(Dispatchers.IO) {
+        fetchMovies("/3/movie/$id/recommendations", 20).filter { it.isReleased() }
+    }
+
+    suspend fun recommendedSeries(id: Int): List<TmdbSeries> = withContext(Dispatchers.IO) {
+        fetchSeries("/3/tv/$id/recommendations", 20).filter { it.isReleased() }
     }
 
     suspend fun castFor(type: com.nikhil.niktv.model.CatalogType, tmdbId: Int): List<String> =
@@ -518,6 +516,7 @@ class TmdbClient {
         }
             .mapNotNull { element ->
                 val obj = element.jsonObject
+                if (obj["adult"]?.jsonPrimitive?.contentOrNull == "true") return@mapNotNull null
                 val id = obj["id"]?.jsonPrimitive?.intOrNull
                     ?: return@mapNotNull null
                 val title = obj["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
@@ -562,6 +561,7 @@ class TmdbClient {
         }
             .mapNotNull { element ->
                 val obj = element.jsonObject
+                if (obj["adult"]?.jsonPrimitive?.contentOrNull == "true") return@mapNotNull null
                 val id = obj["id"]?.jsonPrimitive?.intOrNull
                     ?: return@mapNotNull null
                 val name = obj["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
@@ -768,7 +768,7 @@ private val mediaQualityPattern = Regex(
 private val nonAlphaNumericPattern = Regex("[^\\p{L}\\p{N}]+")
 private val repeatedWhitespacePattern = Regex("\\s+")
 
-private fun String.tmdbLookupTitle(): String =
+internal fun String.tmdbLookupTitle(): String =
     Normalizer.normalize(lowercase(), Normalizer.Form.NFD)
         .replace(tmdbDiacriticPattern, "")
         .replace(tmdbYearPattern, " ")

@@ -114,6 +114,7 @@ internal fun NewEpisodesSection(
                                         profileKey = selected.watched.profileKey, categoryTitle = selected.watched.categoryTitle)
                                     CompactNewEpisodeRow(
                                         episode = episode,
+                                        series = selected.watched.series,
                                         isFavorite = favorites.any { it.key == favorite.key },
                                         modifier = if (episode.id == orderedEpisodes.first().id) Modifier.focusRequester(firstFocus) else Modifier,
                                         play = { play(selected, episode) },
@@ -191,7 +192,7 @@ private fun MediaItem.newEpisodeLabel(): String = listOfNotNull(
 
 @Composable
 private fun CompactNewEpisodeRow(
-    episode: MediaItem, isFavorite: Boolean, modifier: Modifier,
+    episode: MediaItem, series: MediaItem, isFavorite: Boolean, modifier: Modifier,
     play: () -> Unit, favorite: () -> Unit, markWatched: () -> Unit, clear: () -> Unit, openSeries: () -> Unit
 ) {
     var menuOpen by remember(episode.id) { mutableStateOf(false) }
@@ -216,6 +217,7 @@ private fun CompactNewEpisodeRow(
             }
         }
         ModernTileActionsMenu(menuOpen, isFavorite, { menuOpen = false }, favorite,
+            recommendationItem = series, trailerSeries = true,
             openSeries = openSeries, markWatched = markWatched, clear = clear)
     }
 }

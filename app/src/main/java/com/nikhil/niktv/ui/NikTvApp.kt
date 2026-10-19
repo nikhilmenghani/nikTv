@@ -516,6 +516,15 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalShowRecommendations provides vm::showRecommendationsOnHome,
+        LocalRecommendationTypeFor provides vm::recommendationTypeFor) {
+        NikTvAppContent(vm)
+    }
+}
+
+@Composable
+private fun NikTvAppContent(vm: NikTvViewModel) {
     val pairingInvite = com.nikhil.niktv.data.PairingInvites.pending
     LaunchedEffect(pairingInvite) {
         if (pairingInvite != null) vm.openSettings()
@@ -765,6 +774,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
                     openRecent = vm::openRecent,
                     openSeriesFromHome = vm::openSeriesFromHome,
                     removeRecent = vm::removeRecent,
+                    dismissRecommendation = vm::dismissRecommendation,
                     dismissWatchedEpisode = vm::dismissWatchedEpisode,
                     markEpisodeWatched = vm::markEpisodeWatched,
                     clearRecent = vm::clearRecent,

@@ -59,6 +59,8 @@ data class NikTvState(
     val rawCategoriesByType: Map<CatalogType, List<Category>> = emptyMap(),
     val selectedCategory: Category? = null,
     val items: List<MediaItem> = emptyList(),
+    internal val historyRecommendations: List<com.nikhil.niktv.data.HistoryRecommendationRow> = emptyList(),
+    val historyRecommendationsMessage: String? = "Watch a movie or show to get personal recommendations.",
     val trendingMovies: List<TrendingMovie> = emptyList(),
     val trendingMoviesLoading: Boolean = false,
     val trendingMoviesError: String? = null,
@@ -186,6 +188,15 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val portal = StalkerPortalClient(application)
     @Volatile private var catalogueTitleIndex: CatalogueTitleIndex? = null
     private val tmdb = TmdbClient()
+    private val mediaIdentities = com.nikhil.niktv.data.MediaIdentityRepository(application, tmdb)
+    private val historyRecommendations = com.nikhil.niktv.data.HistoryRecommendations(application, tmdb, mediaIdentities)
+    private var recommendationJob: Job? = null
+    private var recommendationFingerprint: String? = null
+    private var requestedRecommendationSeeds: List<RecentItem> = emptyList()
+    private var dismissedRecommendationCategories: Map<String, Set<String>> = emptyMap()
+    private var recommendationProfile: String? = null
+    private var recommendationProgress: List<PlaybackProgress> = emptyList()
+    private val artworkEnrichmentSlots = kotlinx.coroutines.sync.Semaphore(3)
     private val tmdbAvailabilityCatalogs = mutableMapOf<Pair<String, CatalogType>, SearchCatalogCache>()
     private val tmdbAvailability = com.nikhil.niktv.data.TmdbAvailabilityRepository(application)
     private var tmdbAvailabilityJob: Job? = null
@@ -246,7 +257,24 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             allRecentlyPlayed = recent
             refreshProfileLibrary()
         } }
-        viewModelScope.launch { store.playbackProgress.collect { progress -> _state.update { it.copy(playbackProgress = progress) } } }
+        viewModelScope.launch { store.playbackProgress.collect { progress ->
+            _state.update { it.copy(playbackProgress = progress) }
+            scheduleHistoryRecommendations()
+        } }
+        viewModelScope.launch { store.requestedRecommendations.collect {
+            requestedRecommendationSeeds = it
+            recommendationFingerprint = null
+            scheduleHistoryRecommendations()
+        } }
+        viewModelScope.launch { store.dismissedRecommendations.collect {
+            dismissedRecommendationCategories = it
+            recommendationFingerprint = null
+            scheduleHistoryRecommendations()
+        } }
+        viewModelScope.launch { store.recommendationProgress.collect {
+            recommendationProgress = it
+            scheduleHistoryRecommendations()
+        } }
         viewModelScope.launch { store.playbackUrls.collect { urls -> _state.update { it.copy(playbackUrls = urls) } } }
         viewModelScope.launch { store.offlineDownloads.collect { downloads ->
             _state.update { it.copy(offlineDownloads = downloads) }
@@ -700,6 +728,123 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 tmdbDashboardConfigs["$profileKey|${surface.name}"].orEmpty()
             }
         ) }
+        scheduleHistoryRecommendations()
+    }
+
+    fun recommendationTypeFor(item: MediaItem, requestedType: CatalogType?): CatalogType? {
+        val snapshot = _state.value
+        val profile = snapshot.session?.profile?.cacheKey() ?: return null
+        val recent = snapshot.recentlyPlayed.firstOrNull { it.profileKey == profile && it.media.id == item.id }
+        val knownKind = recent?.kind ?: snapshot.favorites.firstOrNull {
+            it.profileKey == profile && it.media.id == item.id
+        }?.kind
+        return when {
+            item.searchResultType == SearchContentType.SERIES -> CatalogType.SERIES
+            item.searchResultType == SearchContentType.MOVIES -> CatalogType.MOVIES
+            item.searchResultType == SearchContentType.LIVE_TV -> CatalogType.LIVE_TV
+            item.id.startsWith("tmdb-series:") -> CatalogType.SERIES
+            item.id.startsWith("tmdb-movie:") -> CatalogType.MOVIES
+            knownKind == FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
+            requestedType != null -> requestedType
+            knownKind == FavoriteKind.SERIES -> CatalogType.SERIES
+            knownKind == FavoriteKind.MOVIE -> CatalogType.MOVIES
+            else -> snapshot.selectedType
+        }
+    }
+
+    fun showRecommendationsOnHome(item: MediaItem, requestedType: CatalogType?) {
+        val profile = _state.value.session?.profile?.cacheKey() ?: return
+        val type = recommendationTypeFor(item, requestedType) ?: return
+        if (type !in setOf(CatalogType.MOVIES, CatalogType.SERIES) || item.isAdult || item.episodeNumber != null) return
+        viewModelScope.launch {
+            try {
+                val identity = mediaIdentities.resolve(profile, type, item)
+                if (identity?.tmdbId == null) {
+                    android.widget.Toast.makeText(getApplication(), "Could not match this title to TMDB.", android.widget.Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                val category = "${identity.type}:${identity.tmdbId}"
+                val seed = RecentItem(if (type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
+                    item, profileKey = profile)
+                store.requestRecommendations(seed, category)
+                android.widget.Toast.makeText(getApplication(), "Recommendations added to Home", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (error: Exception) {
+                  Log.w("NikTvRecommendations", "Could not add recommendation source", error)
+                  android.widget.Toast.makeText(getApplication(), "Could not add recommendations. Please try again.", android.widget.Toast.LENGTH_LONG).show()
+              }
+        }
+    }
+
+    fun dismissRecommendation(row: com.nikhil.niktv.data.HistoryRecommendationRow) {
+        if (_state.value.session?.profile?.cacheKey() != row.profile) return
+        recommendationJob?.cancel()
+        dismissedRecommendationCategories = dismissedRecommendationCategories +
+            (row.profile to (dismissedRecommendationCategories[row.profile].orEmpty() + row.key))
+        _state.update { it.copy(historyRecommendations = it.historyRecommendations.filterNot { entry ->
+            entry.profile == row.profile && entry.key == row.key
+        }) }
+        viewModelScope.launch { store.dismissRecommendation(row.profile, row.key) }
+    }
+
+    private fun scheduleHistoryRecommendations() {
+        val snapshot = _state.value
+        val session = snapshot.session
+        val profile = session?.profile?.cacheKey()
+        if (profile != recommendationProfile) {
+            recommendationJob?.cancel()
+            recommendationProfile = profile
+            recommendationFingerprint = null
+            _state.update { it.copy(historyRecommendations = emptyList()) }
+        }
+        if (profile == null || session == null) return
+        val progress = (recommendationProgress + snapshot.playbackProgress).groupBy { it.key }
+            .mapValues { (_, entries) -> entries.maxBy { it.positionMillis } }
+        val watched = com.nikhil.niktv.data.recommendationSeeds(profile, snapshot.recentlyPlayed, limit = 100) { recent ->
+            val type = if (recent.kind == FavoriteKind.MOVIE) CatalogType.MOVIES else CatalogType.SERIES
+            val episode = recent.lastPlayed ?: recent.media
+            val direct = progress[progressKeyFor(session.profile, episode, type,
+                if (type == CatalogType.SERIES) recent.media else null)]
+                ?: progress[legacyProgressKeyFor(episode, type)]
+            if (type == CatalogType.SERIES && (direct == null ||
+                !com.nikhil.niktv.data.meaningfulViewing(direct.positionMillis, direct.durationMillis)))
+                com.nikhil.niktv.data.seriesRecommendationProgress(profile, recent.media.id, progress.values) ?: direct
+            else direct
+        }
+        val requested = requestedRecommendationSeeds.filter { it.profileKey == profile }
+        val seeds = (requested + watched.take(3)).distinctBy { "${it.kind}:${it.media.id}" }
+        val fingerprint = profile + ":${tmdb.configured}:" + (requested + watched).joinToString { "${it.kind}:${it.media.id}:${it.media.title}:${it.media.externalTmdbId}" }
+        if (fingerprint == recommendationFingerprint && recommendationJob?.isCancelled != true) return
+        recommendationFingerprint = fingerprint
+        recommendationJob?.cancel()
+        recommendationJob = viewModelScope.launch {
+            if (seeds.isEmpty()) {
+                _state.update { it.copy(historyRecommendations = emptyList(),
+                    historyRecommendationsMessage = "Watch 10 minutes of a movie or show, or 20% with a 2-minute minimum. Recommendations use this IPTV profile's history.") }
+                return@launch
+            }
+            _state.update { it.copy(historyRecommendationsMessage = "Finding recommendations…") }
+            delay(750)
+            try {
+                val requestedIds = requested.mapNotNull { seed ->
+                    val type = if (seed.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+                    mediaIdentities.cached(profile, type, seed.media)?.tmdbId?.let { "$type:$it" }
+                }.toSet()
+                val rows = historyRecommendations.load(profile, seeds, watched,
+                    dismissedRecommendationCategories[profile].orEmpty(), requestedIds)
+                ensureActive()
+                _state.update { if (it.session?.profile?.cacheKey() == profile)
+                    it.copy(historyRecommendations = rows, historyRecommendationsMessage =
+                        if (rows.isEmpty()) "No recommendations yet: your watched titles could not be matched to TMDB, or returned no related titles."
+                        else null) else it }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (error: Exception) {
+                recommendationFingerprint = null
+                if (_state.value.session?.profile?.cacheKey() == profile)
+                    _state.update { it.copy(historyRecommendationsMessage = "Recommendations are temporarily unavailable. Reopen Home to retry.") }
+                Log.w("NikTvRecommendations", "Could not refresh recommendations", error)
+            }
+        }
     }
 
     private suspend fun loadProfileLibrary(profileKey: String) {
@@ -3706,6 +3851,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadDashboardDiscovery(forceRefresh: Boolean = false) {
+        scheduleHistoryRecommendations()
         // Tile-first mode intentionally fetches TMDB rows only on destination open.
         if (_state.value.modernUiEnabled) return
         loadTrendingMovies(forceRefresh)
@@ -4073,10 +4219,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             directFullscreen = true,
             requestId = requestId
         )
-        // A playable stream only proves that the IPTV entry exists; it does
-        // not prove that a manually chosen fuzzy-title result is the same
-        // TMDB movie. Remember only provider-supplied exact TMDB identities.
-        if (resolved.externalTmdbId == movie.id) {
+        // Persist only authoritative provider IDs or an explicit user selection;
+        // automatically selected fuzzy candidates do not establish identity.
+        if (resolved.externalTmdbId == movie.id || confirmedByUser) {
+            mediaIdentities.save(com.nikhil.niktv.data.MediaIdentity(session.profile.cacheKey(),
+                CatalogType.MOVIES, resolved.id, resolved.title, movie = movie,
+                method = if (confirmedByUser) "confirmed" else "provider"))
             store.saveTmdbMapping(
                 TmdbIptvMapping(
                     profileKey = session.profile.cacheKey(),
@@ -4212,6 +4360,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         loadSeriesEpisodes(displaySeries)
+        if (confirmedByUser || resolved.externalTmdbId == series.id) {
+            mediaIdentities.save(com.nikhil.niktv.data.MediaIdentity(session.profile.cacheKey(),
+                CatalogType.SERIES, resolved.id, resolved.title, series = series,
+                method = if (confirmedByUser) "confirmed" else "provider"))
+        }
         // Persist only after the provider accepts this id as a series container
         // and returns its episode structure.
         store.saveTmdbMapping(
@@ -4327,31 +4480,38 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun enrichCatalogArtwork(session: PortalSession, type: CatalogType) = coroutineScope {
         if (!tmdb.configured) return@coroutineScope
         val profileKey = session.profile.cacheKey()
-        val cache = _state.value.browseCachesByType[type] ?: return@coroutineScope
-        val targets = cache.itemsByCategory.values.flatten()
-            .distinctBy { it.id }
-            .filterNot { it.logo.orEmpty().startsWith("https://image.tmdb.org/") }
-            .take(30)
-
-        val artwork = targets.map { media ->
-            async { media.id to runCatching { tmdb.artworkFor(media, type) }.getOrNull() }
-        }.awaitAll().mapNotNull { (id, logo) -> logo?.let { id to it } }.toMap()
-        if (artwork.isEmpty() || _state.value.session?.profile?.cacheKey() != profileKey) return@coroutineScope
-
-        val enrichedItems = cache.itemsByCategory.mapValues { (_, items) ->
-            items.map { media -> artwork[media.id]?.let { media.copy(logo = it) } ?: media }
+        val snapshot = _state.value
+        val cached = snapshot.browseCachesByType[type] ?: return@coroutineScope
+        val targets = ((if (snapshot.selectedType == type) snapshot.items else emptyList()) +
+            cached.itemsByCategory.values.flatten()).distinctBy { it.id }
+            .filterNot { it.logo.orEmpty().startsWith("https://image.tmdb.org/") }.take(30)
+        targets.map { media -> async {
+            artworkEnrichmentSlots.acquire()
+            try {
+                val identity = try { mediaIdentities.resolve(profileKey, type, media) }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
+                val logo = identity?.artwork ?: return@async
+                if (_state.value.session?.profile?.cacheKey() != profileKey) return@async
+                // Publish each completed title immediately; never wait for the slowest lookup.
+                _state.update { current ->
+                    if (current.session?.profile?.cacheKey() != profileKey) current else {
+                        val cache = current.browseCachesByType[type] ?: return@update current
+                        fun enrich(items: List<MediaItem>) = items.map {
+                            if (it.id == media.id && it.title == media.title) it.copy(logo = logo) else it
+                        }
+                        val updated = cache.copy(itemsByCategory = cache.itemsByCategory.mapValues { enrich(it.value) })
+                        current.copy(items = if (current.selectedType == type) enrich(current.items) else current.items,
+                            browseCachesByType = current.browseCachesByType + (type to updated),
+                            browseCache = if (current.browseCache?.type == type) updated else current.browseCache)
+                    }
+                }
+            } finally { artworkEnrichmentSlots.release() }
+        } }.awaitAll()
+        if (_state.value.session?.profile?.cacheKey() == profileKey) {
+            _state.value.browseCachesByType[type]?.let { store.saveBrowseCatalog(it) }
+            prefetchArtwork(getApplication(), _state.value.items, limit = 10)
         }
-        val enrichedCache = cache.copy(itemsByCategory = enrichedItems)
-        store.saveBrowseCatalog(enrichedCache)
-        _state.update { current ->
-            if (current.session?.profile?.cacheKey() != profileKey) current
-            else current.copy(
-                items = enrichedItems[current.selectedCategory?.id] ?: current.items,
-                browseCache = enrichedCache,
-                browseCachesByType = current.browseCachesByType + (type to enrichedCache)
-            )
-        }
-        prefetchArtwork(getApplication(), enrichedItems.values.flatten(), limit = 10)
     }
 
     /** Enriches one deliberately focused IPTV title without scanning the surrounding catalog. */
@@ -4389,42 +4549,43 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val category = snapshot.modernIptvCategory?.takeIf { it.type == type } ?: return
         val metadata = runCatching {
             when (type) {
-                CatalogType.MOVIES -> tmdb.confidentlyMatchMovie(item)?.asMediaItem()
-                CatalogType.SERIES -> tmdb.confidentlyMatchSeries(item)?.asMediaItem()
+                CatalogType.MOVIES -> mediaIdentities.resolve(profileKey, type, item)?.movie?.asMediaItem()
+                CatalogType.SERIES -> mediaIdentities.resolve(profileKey, type, item)?.series?.asMediaItem()
                 else -> null
             }
         }.getOrNull() ?: return
+        // Poster/description are usable now; credits must not hold up the visible card.
+        publishFocusedMetadata(profileKey, type, category.id, item.id, metadata, emptyList())
         val matchedTmdbId = metadata.id.substringAfter(':').toIntOrNull()
         val cast = matchedTmdbId?.let { id ->
-            runCatching { tmdb.castFor(type, id) }.getOrDefault(emptyList())
+            try { tmdb.castFor(type, id) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { emptyList() }
         }.orEmpty()
+        if (cast.isNotEmpty()) publishFocusedMetadata(profileKey, type, category.id, item.id, metadata, cast)
+    }
 
-        val enriched = item.copy(
-            logo = item.logo ?: metadata.logo,
-            description = metadata.description ?: item.description,
-            externalTmdbId = matchedTmdbId ?: item.externalTmdbId,
-            cast = cast.ifEmpty { item.cast }
-        )
-        if (enriched == item) return
-
-        val currentCache = _state.value.browseCachesByType[type] ?: return
-        val categoryItems = currentCache.itemsByCategory[category.id].orEmpty()
-        if (categoryItems.none { it.id == item.id }) return
-        val updatedItems = categoryItems.map { existing ->
-            if (existing.id == item.id) enriched else existing
-        }
-        val updatedCache = currentCache.copy(
-            itemsByCategory = currentCache.itemsByCategory + (category.id to updatedItems)
-        )
-        store.saveBrowseCatalog(updatedCache)
+    private suspend fun publishFocusedMetadata(profile: String, type: CatalogType, categoryId: String,
+        itemId: String, metadata: MediaItem, cast: List<String>) {
         _state.update { current ->
-            if (current.session?.profile?.cacheKey() != profileKey) current
-            else current.copy(
-                items = if (current.modernIptvCategory?.id == category.id) updatedItems else current.items,
-                browseCache = if (current.browseCache?.type == type) updatedCache else current.browseCache,
-                browseCachesByType = current.browseCachesByType + (type to updatedCache)
-            )
+            if (current.session?.profile?.cacheKey() != profile) current else {
+                val cache = current.browseCachesByType[type] ?: return@update current
+                fun enrich(items: List<MediaItem>) = items.map { existing ->
+                    if (existing.id != itemId) existing else existing.copy(
+                        logo = metadata.logo ?: existing.logo,
+                        description = metadata.description ?: existing.description,
+                        cast = cast.ifEmpty { existing.cast })
+                }
+                val updated = cache.copy(itemsByCategory = cache.itemsByCategory +
+                    (categoryId to enrich(cache.itemsByCategory[categoryId].orEmpty())))
+                current.copy(items = if (current.modernIptvCategory?.id == categoryId)
+                    enrich(current.items) else current.items,
+                    browseCache = if (current.browseCache?.type == type) updated else current.browseCache,
+                    browseCachesByType = current.browseCachesByType + (type to updated))
+            }
         }
+        if (_state.value.session?.profile?.cacheKey() == profile)
+            _state.value.browseCachesByType[type]?.let { store.saveBrowseCatalog(it) }
     }
 
     private suspend fun resolveInitialTmdbMovieCandidates(
@@ -6486,6 +6647,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
             _state.update { it.copy(playbackProgress = updated) }
             store.savePlaybackProgress(updated)
+            if (com.nikhil.niktv.data.meaningfulViewing(positionMillis, durationMillis)) {
+                val previous = recommendationProgress.firstOrNull { it.key == key }
+                if (previous == null || positionMillis / 60_000 != previous.positionMillis / 60_000 ||
+                    (durationMillis > 0 && positionMillis >= durationMillis - 5_000)) {
+                    store.saveRecommendationProgress(PlaybackProgress(key, positionMillis, durationMillis))
+                }
+            }
         }
     }
 
@@ -6671,6 +6839,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(recentlyPlayed = updated) }
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
         store.saveRecentlyPlayed(allRecentlyPlayed)
+        if (type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) viewModelScope.launch {
+            try {
+                mediaIdentities.resolve(profileKey, type, if (type == CatalogType.SERIES) series ?: item else item)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (_: Exception) { /* Retry on a later metadata/history request. */ }
+        }
+        scheduleHistoryRecommendations()
     }
 
     fun closeSeries() = task {
@@ -7662,7 +7837,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return thisEpisode > otherEpisode
     }
     fun dismissError() = _state.update { it.copy(error = null) }
-    fun logout() = viewModelScope.launch { store.clear(); _state.value = NikTvState(restoring = false) }
+    fun logout() = viewModelScope.launch {
+        recommendationJob?.cancel()
+        recommendationFingerprint = null
+        recommendationProgress = emptyList()
+        mediaIdentities.clear()
+        store.clear()
+        _state.value = NikTvState(restoring = false)
+    }
 
     private fun playbackTask(requestId: Long, block: suspend () -> Unit) {
         viewModelScope.launch {

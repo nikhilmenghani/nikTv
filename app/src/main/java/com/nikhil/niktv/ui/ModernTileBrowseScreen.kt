@@ -260,6 +260,7 @@ internal fun ModernTileBrowseScreen(
     openSeries: (MediaItem) -> Unit,
     clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    dismissRecommendation: (com.nikhil.niktv.data.HistoryRecommendationRow) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     markEpisodeWatched: (WatchedSeries, MediaItem) -> Unit,
     openTmdbSection: (TmdbHomeSection) -> Unit,
@@ -359,11 +360,14 @@ internal fun ModernTileBrowseScreen(
                             state = state,
                             refreshLiveProgramme = refreshLiveProgramme,
                             dashboardSurface = dashboardSurface,
+                            openRecommendedMovie = openTmdbMovie,
+                            openRecommendedSeries = openTmdbSeries,
                             openRecent = openRecent,
                             removeRecent = removeRecent,
                             openSeries = openSeries,
                             clearRecentChannels = clearRecentChannels,
                             openWatchedEpisode = openWatchedEpisode,
+                            dismissRecommendation = dismissRecommendation,
                             dismissWatchedEpisode = dismissWatchedEpisode,
                             markEpisodeWatched = markEpisodeWatched,
                             toggleFavorite = toggleFavorite,
@@ -566,6 +570,8 @@ private fun ModernNavButton(
 @Composable
 private fun ModernDestinationHub(
     state: NikTvState,
+    openRecommendedMovie: (TrendingMovie) -> Unit,
+    openRecommendedSeries: (TrendingSeries) -> Unit,
     refreshLiveProgramme: (MediaItem) -> Unit,
     dashboardSurface: DashboardSurface,
     openRecent: (RecentItem) -> Unit,
@@ -573,6 +579,7 @@ private fun ModernDestinationHub(
     openSeries: (MediaItem) -> Unit,
     clearRecentChannels: () -> Unit,
     openWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
+    dismissRecommendation: (com.nikhil.niktv.data.HistoryRecommendationRow) -> Unit,
     dismissWatchedEpisode: (WatchedSeries, MediaItem) -> Unit,
     markEpisodeWatched: (WatchedSeries, MediaItem) -> Unit,
     toggleFavorite: (FavoriteItem) -> Unit,
@@ -969,6 +976,18 @@ private fun ModernDestinationHub(
 
         }
 
+        if (dashboardSurface == DashboardSurface.HOME) {
+            if (state.historyRecommendations.isEmpty()) state.historyRecommendationsMessage?.let { message ->
+                item("history-recommendations-status", span = fullSpan) { HistoryRecommendationStatus(message, compact = true) }
+            }
+            state.historyRecommendations.filter { it.profile == state.session?.profile?.cacheKey() }.forEach { row ->
+                item("history-recommendations-${row.key}", span = fullSpan) {
+                    HistoryRecommendationRail(row, openRecommendedMovie, openRecommendedSeries, dismiss = { dismissRecommendation(row) },
+                        favorites = state.favorites, toggleFavorite = toggleFavorite, compact = true)
+                }
+            }
+        }
+
         if (tmdbSections.isNotEmpty()) {
             item("tmdb-heading", span = fullSpan) {
                 ModernHubSectionHeading("TMDB collections")
@@ -1344,7 +1363,7 @@ private fun NikTvState.modernVisibleIptvCategories(
 }
 
 @Composable
-private fun ModernHubSectionHeading(
+internal fun ModernHubSectionHeading(
     title: String
 ) {
     Text(
@@ -2113,14 +2132,7 @@ private fun ModernContinueRow(
     Column(Modifier.fillMaxWidth()
         .onFocusChanged { if (it.hasFocus) onRowFocused() }
         .focusGroup()) {
-    LazyRow(
-        state = listState,
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(20.dp),
-        // The dashboard grid supplies the leading inset, matching Live TV.
-        // Preserve trailing scroll room and enough bottom space for focus scale.
-        contentPadding = PaddingValues(start = 0.dp, top = 18.dp, end = 18.dp, bottom = 26.dp)
-    ) {
+    CompactHomeMediaRow(listState) {
         items(
             items = recents,
             key = { "modern-recent-${it.key}" }
@@ -2181,6 +2193,18 @@ private fun ModernContinueRow(
     }
     }
 
+}
+
+/** Shared Home rail geometry for Continue Watching and recommendations. */
+@Composable
+internal fun CompactHomeMediaRow(
+    state: androidx.compose.foundation.lazy.LazyListState,
+    content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit
+) {
+    LazyRow(state = state, modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(start = 0.dp, top = 18.dp, end = 18.dp, bottom = 26.dp),
+        content = content)
 }
 
 @Composable
@@ -2474,7 +2498,7 @@ internal fun ModernCompactMediaCard(
             toggleFavorite = onFavorite,
             openSeries = onOpenSeries,
             trailerItem = item.takeUnless { it.episodeNumber != null },
-            trailerSeries = onOpenSeries != null,
+            trailerSeries = onOpenSeries != null || subtitle.startsWith("Series"),
             onTrailerReturned = returningTile.requestFocus,
             markWatched = onMarkWatched,
             clear = onClear
@@ -2499,6 +2523,7 @@ internal fun ModernTileActionsMenu(
     refreshProgramme: (() -> Unit)? = null,
     refreshMatches: (() -> Unit)? = null,
     markWatched: (() -> Unit)? = null,
+    recommendationItem: MediaItem? = null,
     trailerItem: MediaItem? = null,
     trailerSeries: Boolean = false,
     onTrailerReturned: (() -> Boolean)? = null
@@ -2538,6 +2563,10 @@ internal fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        (recommendationItem ?: trailerItem)?.let { item ->
+            ShowRecommendationsMenuItem(item,
+                if (trailerSeries) CatalogType.SERIES else null, dismiss)
+        }
         trailerItem?.takeUnless { it.isAdult }?.let {
             NikDropdownMenuItem(text = { Text("Watch trailer") },
                 leadingIcon = { Icon(Icons.Default.SmartDisplay, null) },
@@ -3275,6 +3304,16 @@ private fun ModernIptvCollection(
             ?: 0,
         initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
     ) }
+    LaunchedEffect(gridState, displayedItems) {
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collectLatest { lastVisible ->
+                if (lastVisible >= 0) {
+                    delay(120)
+                    com.nikhil.niktv.data.prefetchArtwork(context,
+                        displayedItems.drop(lastVisible + 1).take(8), limit = 8)
+                }
+            }
+    }
     LaunchedEffect(viewportKey, visitId, displayedItems.isNotEmpty(), state.loading) {
         if (!initialTilesPositioned && displayedItems.isNotEmpty() && !state.loading) {
             gridState.scrollToItem(0, 0)
