@@ -130,6 +130,16 @@ class ProfileStore(private val context: Context) {
             current + (profile to (current[profile].orEmpty() + category)))
     }
 
+    suspend fun restoreRecommendation(profile: String, category: String) = context.dataStore.edit { prefs ->
+        val current = prefs[dismissedRecommendationsKey]?.let {
+            runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
+        }.orEmpty()
+        if (category in current[profile].orEmpty()) {
+            prefs[dismissedRecommendationsKey] = Json.encodeToString(
+                current + (profile to (current[profile].orEmpty() - category)))
+        }
+    }
+
     private val recommendationProgressKey = stringPreferencesKey("recommendation_progress_v1")
     val recommendationProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
         prefs[recommendationProgressKey]?.let {

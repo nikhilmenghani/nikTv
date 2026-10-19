@@ -2,6 +2,10 @@
 
 Clean-room Kotlin/Jetpack Compose IPTV client for authorized Stalker/MAG portals.
 
+Samsung TV development lives in [tizen/](tizen/README.md), a separate Tizen web
+application targeting the 2017 MU6300. The initial prototype tests AVPlay and
+remote navigation; portal and catalog features are not yet ported.
+
 ## MVP features
 
 - Portal URL, profile name, and MAC-address onboarding

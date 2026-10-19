@@ -6668,6 +6668,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun savePlaybackProgress(key: String, positionMillis: Long, durationMillis: Long) {
         if (key.isBlank()) return
+        val snapshot = _state.value
+        val playing = snapshot.nowPlaying?.takeIf { it.progressKey == key }
+        val profile = snapshot.session?.profile?.cacheKey()
         viewModelScope.launch {
             val current = _state.value.playbackProgress
             val updated = if (durationMillis > 0L && positionMillis >= durationMillis - 5_000L) {
@@ -6683,6 +6686,20 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 if (previous == null || positionMillis / 60_000 != previous.positionMillis / 60_000 ||
                     (durationMillis > 0 && positionMillis >= durationMillis - 5_000)) {
                     store.saveRecommendationProgress(PlaybackProgress(key, positionMillis, durationMillis))
+                }
+                if (playing != null && profile != null && dismissedRecommendationCategories[profile].orEmpty().isNotEmpty()) {
+                    try {
+                        val identity = when (playing.catalogType) {
+                            CatalogType.MOVIES -> mediaIdentities.resolve(profile, CatalogType.MOVIES, playing.media)
+                            CatalogType.SERIES -> playing.series?.let { mediaIdentities.resolve(profile, CatalogType.SERIES, it) }
+                            CatalogType.LIVE_TV -> com.nikhil.niktv.data.liveProgrammeRecommendationItem(playing.media, System.currentTimeMillis())?.let { programme ->
+                                com.nikhil.niktv.data.resolveLiveProgrammeRecommendation(programme) { type, item -> mediaIdentities.resolve(profile, type, item) }
+                            }
+                            else -> null
+                        }
+                        identity?.tmdbId?.let { store.restoreRecommendation(profile, "${identity.type}:$it") }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                      catch (error: Exception) { Log.w("NikTvRecommendations", "Could not restore watched recommendation source", error) }
                 }
             }
         }

@@ -1789,7 +1789,7 @@ private fun ModernDestinationTile(
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    val focusProgress by animateFloatAsState(
+    val focusProgress = animateFloatAsState(
         targetValue = if (focused || pinMenuOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 170),
         label = "modernDestinationProfileFocus"
@@ -1800,8 +1800,8 @@ private fun ModernDestinationTile(
         label = "modernDestinationTouchPress"
     )
     val visualProgress =
-        if (isTv) focusProgress
-        else maxOf(focusProgress, pressProgress)
+        if (isTv) 0f
+        else maxOf(focusProgress.value, pressProgress)
     val active = focused || pressed
     val scale =
         1f + (
@@ -1837,7 +1837,7 @@ private fun ModernDestinationTile(
         Surface(
             modifier = returningTile.modifier.then(modifier)
                 .fillMaxWidth()
-            .zIndex(visualProgress)
+            .zIndex(if (isTv) { if (focused || pinMenuOpen) 1f else 0f } else visualProgress)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -1861,6 +1861,7 @@ private fun ModernDestinationTile(
                     else ModernBrandAccent.copy(alpha = 0.18f)
             )
                 .clip(shape)
+                .tileFocusOutline(isTv, focusProgress, shape, Color(0xFF35383F), 3.dp)
                 .onFocusChanged {
                     focused = it.isFocused
                 }
@@ -1871,7 +1872,7 @@ private fun ModernDestinationTile(
                 ),
             shape = shape,
             color = Color.Transparent,
-            border = BorderStroke(
+            border = if (isTv) null else BorderStroke(
                 when {
                     isTv && focused -> 3.dp
                     !isTv && focused -> 2.dp
@@ -1917,8 +1918,8 @@ private fun ModernDestinationTile(
                             }
                         )
                         .graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
+                            scaleX = if (isTv) 1f + .04f * focusProgress.value else iconScale
+                            scaleY = scaleX
                         },
                     shape = RoundedCornerShape(if (isTv) 14.dp else 12.dp),
                     color = ModernBrandAccent.copy(alpha = 0.13f)
@@ -2247,7 +2248,7 @@ internal fun ModernCompactMediaCard(
     ) * if (isTv) homeCardScale else 1f).coerceAtLeast(1f).dp
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    val focusProgress by animateFloatAsState(
+    val focusProgress = animateFloatAsState(
         targetValue = if (focused || menuOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 170),
         label = "modernCompactProfileFocus"
@@ -2258,8 +2259,8 @@ internal fun ModernCompactMediaCard(
         label = "modernCompactTouchPress"
     )
     val visualProgress =
-        if (remoteNavigationActive) focusProgress else pressProgress
-    val remoteFocusScale by animateFloatAsState(
+        if (remoteNavigationActive) 0f else pressProgress
+    val remoteFocusScale = animateFloatAsState(
         targetValue = if (remoteNavigationActive && (focused || menuOpen)) 1.06f else 1f,
         animationSpec = tween(170, easing = FastOutSlowInEasing),
         label = "modernCompactTvFocusScale"
@@ -2307,7 +2308,7 @@ internal fun ModernCompactMediaCard(
         modifier = modifier.then(returningTile.modifier)
             .width(collectionPosterWidth * focusEnvelopeScale)
             .aspectRatio(2f / 3f)
-            .zIndex(if (focused) 2f else visualProgress)
+            .zIndex(if (remoteNavigationActive) { if (focused || menuOpen) 2f else 0f } else visualProgress)
             .touchTileShadow(isTv = isTv,
                 elevation =
                     (
@@ -2342,12 +2343,14 @@ internal fun ModernCompactMediaCard(
                 .width(collectionPosterWidth)
                 .aspectRatio(2f / 3f)
                 .graphicsLayer {
-                    scaleX = remoteFocusScale
-                    scaleY = remoteFocusScale
-                },
+                    scaleX = remoteFocusScale.value
+                    scaleY = scaleX
+                }
+                .tileFocusOutline(remoteNavigationActive, focusProgress, shape,
+                    Color(0xFF30343B), if (isTv) 3.dp else 2.dp),
             shape = shape,
             color = Color(0xFF202020),
-            border = BorderStroke(
+            border = if (remoteNavigationActive) null else BorderStroke(
                 when {
                     remoteNavigationActive && focused -> if (isTv) 3.dp else 2.dp
                     else -> 1.dp
@@ -2666,7 +2669,7 @@ internal fun ModernTileActionsMenu(
  */
 private fun Modifier.modernGridVerticalFocus(
     enabled: Boolean,
-    index: Int,
+    index: () -> Int,
     columns: Int,
     itemCount: Int,
     moveFocus: (Int) -> Unit
@@ -2678,10 +2681,12 @@ private fun Modifier.modernGridVerticalFocus(
             return@onPreviewKeyEvent false
         }
 
+        val currentIndex = index()
+        if (currentIndex < 0) return@onPreviewKeyEvent false
         val targetIndex =
             when (event.key) {
-                Key.DirectionDown -> index + columns
-                Key.DirectionUp -> index - columns
+                Key.DirectionDown -> currentIndex + columns
+                Key.DirectionUp -> currentIndex - columns
                 else -> return@onPreviewKeyEvent false
             }
 
@@ -2770,34 +2775,19 @@ private fun ModernTmdbCollection(
     var focusedPosterIndex by remember(section) {
         mutableIntStateOf(-1)
     }
-    val focusedTmdbDetails: Pair<MediaItem, String>? = if (section.series) {
-        state.modernTmdbSeries.getOrNull(focusedPosterIndex)?.let { entry ->
-            entry.tmdb.asMediaItem() to buildList {
-                entry.tmdb.firstAirYear?.let { add(it.toString()) }
-                entry.tmdb.voteAverage?.takeIf { it > 0.0 }?.let {
-                    add("★ ${String.format(java.util.Locale.US, "%.1f", it)}")
+    val currentTmdbFocusItems by rememberUpdatedState(
+        if (section.series) state.modernTmdbSeries.map { it.tmdb.asMediaItem() }
+        else state.modernTmdbMovies.map { it.tmdb.asMediaItem() })
+    val currentEnrichTmdbFocus by rememberUpdatedState(enrichFocusedMetadata)
+    LaunchedEffect(section) {
+        snapshotFlow { currentTmdbFocusItems.getOrNull(focusedPosterIndex)?.id }.collectLatest { id ->
+            if (id != null) {
+                delay(450L)
+                currentTmdbFocusItems.firstOrNull { it.id == id }?.let {
+                    currentEnrichTmdbFocus(it, if (section.series) CatalogType.SERIES else CatalogType.MOVIES)
                 }
-                add("Series")
-            }.joinToString(" · ")
+            }
         }
-    } else {
-        state.modernTmdbMovies.getOrNull(focusedPosterIndex)?.let { entry ->
-            entry.tmdb.asMediaItem() to buildList {
-                entry.tmdb.releaseYear?.let { add(it.toString()) }
-                entry.tmdb.voteAverage?.takeIf { it > 0.0 }?.let {
-                    add("★ ${String.format(java.util.Locale.US, "%.1f", it)}")
-                }
-                add("Movie")
-            }.joinToString(" · ")
-        }
-    }
-    LaunchedEffect(section, focusedTmdbDetails?.first?.id) {
-        val media = focusedTmdbDetails?.first ?: return@LaunchedEffect
-        delay(450L)
-        enrichFocusedMetadata(
-            media,
-            if (section.series) CatalogType.SERIES else CatalogType.MOVIES
-        )
     }
 
     // The destination's saveable scope retains the viewport across playback
@@ -2833,7 +2823,9 @@ private fun ModernTmdbCollection(
                     FocusRequester()
                 }
             focusMoveJob?.cancel()
-            focusMoveJob = focusScope.launch {
+            if (gridState.focusVisibleTile(targetIndex, targetRequester)) {
+                focusMoveJob = null
+            } else focusMoveJob = focusScope.launch {
                 val targetGridIndex = targetIndex
                 val targetInfo = gridState.layoutInfo.visibleItemsInfo
                     .firstOrNull { it.index == targetGridIndex }
@@ -2862,7 +2854,7 @@ private fun ModernTmdbCollection(
                             )
                         }
                     } else {
-                        gridState.scrollToItem(targetGridIndex)
+                        gridState.revealTileRow(targetGridIndex, columns)
                     }
                     withTimeoutOrNull(1_000L) {
                         snapshotFlow {
@@ -2872,17 +2864,13 @@ private fun ModernTmdbCollection(
                         }.first { it }
                     }
                 }
-                withFrameNanos { }
-                // visibleItemsInfo updates before the focus target's modifier
-                // is fully attached on some Fire TV/Compose combinations.
-                delay(40L)
-                repeat(3) { attempt ->
+                repeat(6) {
                     if (runCatching {
                             targetRequester.requestFocus()
                         }.getOrDefault(false)) {
                         return@launch
                     }
-                    delay(40L * (attempt + 1))
+                    withFrameNanos { }
                 }
             }
         }
@@ -2921,8 +2909,8 @@ private fun ModernTmdbCollection(
             .weight(1f)
             .fillMaxWidth()
             .modernGridVerticalFocus(
-                enabled = focusedPosterIndex >= 0,
-                index = focusedPosterIndex,
+                enabled = remoteNavigationActive,
+                index = { focusedPosterIndex },
                 columns = columns,
                 itemCount = count,
                 moveFocus = moveFocusToIndex
@@ -3256,7 +3244,7 @@ private fun ModernIptvCollection(
     }
     val columns = when {
         isLiveTv && isPhone -> 1
-        isLiveTv && isTv -> 2
+        isLiveTv && isTv -> 3
         isLiveTv && configuration.screenWidthDp >= 800 -> 3
         isLiveTv -> 2
         else -> modernCollectionPosterColumns(configuration, isTv)
@@ -3281,14 +3269,17 @@ private fun ModernIptvCollection(
     var focusedPosterIndex by remember(category.id) {
         mutableIntStateOf(-1)
     }
-    val focusedMedia = displayedItems.getOrNull(focusedPosterIndex)
-    LaunchedEffect(category.id, category.type, focusedMedia?.id) {
-        val media = focusedMedia ?: return@LaunchedEffect
+    val currentMetadataItems by rememberUpdatedState(displayedItems)
+    val currentEnrichMetadata by rememberUpdatedState(enrichFocusedMetadata)
+    LaunchedEffect(category.id, category.type) {
         if (category.type in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
-            // D-pad users often cross several cards quickly. Only enrich the
-            // title they settle on, and cancellation follows focus changes.
-            delay(450L)
-            enrichFocusedMetadata(media, category.type)
+            snapshotFlow { currentMetadataItems.getOrNull(focusedPosterIndex)?.id }.collectLatest { id ->
+                if (id != null) {
+                    // Rapid focus changes only enrich the title the user settles on.
+                    delay(450L)
+                    currentMetadataItems.firstOrNull { it.id == id }?.let { currentEnrichMetadata(it, category.type) }
+                }
+            }
         }
     }
     val viewportKey = "$profileKey:${category.type.name}:${category.id}"
@@ -3305,7 +3296,9 @@ private fun ModernIptvCollection(
             ?: 0,
         initialFirstVisibleItemScrollOffset = restoredViewport?.offset ?: 0
     ) }
-    LaunchedEffect(gridState, displayedItems) {
+    LaunchedEffect(gridState, displayedItems, isLiveTv) {
+        // Live tiles draw a channel/programme card; provider logos are intentionally hidden.
+        if (isLiveTv) return@LaunchedEffect
         snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collectLatest { lastVisible ->
                 if (lastVisible >= 0) {
@@ -3393,7 +3386,10 @@ private fun ModernIptvCollection(
             focusMoveInProgress = true
             focusedPosterIndex = targetIndex
             focusMoveJob?.cancel()
-            focusMoveJob = focusScope.launch {
+            if (gridState.focusVisibleTile(targetIndex, targetRequester)) {
+                focusMoveJob = null
+                focusMoveInProgress = false
+            } else focusMoveJob = focusScope.launch {
                 try {
                 // Hold focus inside this grid while its lazy rows are recycled.
                 // Otherwise removal of the source tile sends focus to Profile.
@@ -3425,7 +3421,7 @@ private fun ModernIptvCollection(
                             )
                         }
                     } else {
-                        gridState.scrollToItem(targetGridIndex)
+                        gridState.revealTileRow(targetGridIndex, columns)
                     }
                     withTimeoutOrNull(1_000L) {
                         snapshotFlow {
@@ -3435,15 +3431,13 @@ private fun ModernIptvCollection(
                         }.first { it }
                     }
                 }
-                withFrameNanos { }
-                delay(40L)
-                repeat(3) { attempt ->
+                repeat(6) {
                     if (runCatching {
                             targetRequester.requestFocus()
                         }.getOrDefault(false)) {
                         return@launch
                     }
-                    delay(40L * (attempt + 1))
+                    withFrameNanos { }
                 }
                 } finally {
                     if (focusMoveGeneration == generation) focusMoveInProgress = false
@@ -3671,8 +3665,8 @@ private fun ModernIptvCollection(
                 }
             }
             .modernGridVerticalFocus(
-                enabled = focusedPosterIndex >= 0,
-                index = focusedPosterIndex,
+                enabled = remoteNavigationActive,
+                index = { focusedPosterIndex },
                 columns = columns,
                 itemCount = focusIds.size,
                 moveFocus = moveFocusToIndex
@@ -3681,14 +3675,14 @@ private fun ModernIptvCollection(
         contentPadding = PaddingValues(
             start = if (isTv) 24.dp else 18.dp,
             end = if (isTv) 24.dp else 18.dp,
-            top = 16.dp,
-            bottom = 54.dp
+            top = if (isLiveTv && isTv) 12.dp else 16.dp,
+            bottom = if (isLiveTv && isTv) 24.dp else 54.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isLiveTv) { if (isTv) 12.dp else 8.dp } else if (isTv) 28.dp else 16.dp
+            if (isLiveTv) { if (isTv) 10.dp else 8.dp } else if (isTv) 28.dp else 16.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
-            if (isLiveTv && isTv) 14.dp else if (isTv) 20.dp else 12.dp
+            if (isLiveTv && isTv) 12.dp else if (isTv) 20.dp else 12.dp
         )
     ) {
         gridItemsIndexed(
@@ -3760,7 +3754,8 @@ private fun ModernIptvCollection(
                         else openItem(media)
                     },
                     modifier = tileModifier,
-                    isTv = isTv
+                    isTv = isTv,
+                    compact = isTv
                 )
             } else ModernCollectionPoster(
                 item = media,
@@ -4008,6 +4003,7 @@ internal fun ModernLiveChannelTile(
     onClear: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     isTv: Boolean,
+    compact: Boolean = false,
     onFocusChange: (Boolean) -> Unit = {},
     onMenuVisibilityChange: (Boolean) -> Unit = {}
 ) {
@@ -4017,7 +4013,8 @@ internal fun ModernLiveChannelTile(
     var menuOpen by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val isPhone = !isTv && configuration.smallestScreenWidthDp < 600
-    val shape = RoundedCornerShape(if (isPhone) 14.dp else 16.dp)
+    val compactTv = isTv && compact
+    val shape = RoundedCornerShape(if (isPhone || compactTv) 14.dp else 16.dp)
     val interactionSource = remember { MutableInteractionSource() }
     val palette = remember(item.id, item.title) {
         destinationPalette("live:${item.id}:${item.title}")
@@ -4062,7 +4059,8 @@ internal fun ModernLiveChannelTile(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
                 .then(
-                    if (isPhone) Modifier.height(104.dp)
+                    if (compactTv) Modifier.height(((if (xtream) 100f else 82f) * configuration.fontScale.coerceAtLeast(1f)).dp)
+                    else if (isPhone) Modifier.height(104.dp)
                     else Modifier.height(if (xtream) { if (isTv) 116.dp else 124.dp } else if (isTv) 96.dp else 104.dp)
                 )
                 .onFocusChanged {
@@ -4114,13 +4112,13 @@ internal fun ModernLiveChannelTile(
                 Row(
                     Modifier.fillMaxSize()
                         .align(Alignment.Center).padding(
-                        start = 12.dp,
-                        end = 12.dp,
-                        top = 10.dp,
-                        bottom = 22.dp
+                        start = if (compactTv) 10.dp else 12.dp,
+                        end = if (compactTv) 10.dp else 12.dp,
+                        top = if (compactTv) 8.dp else 10.dp,
+                        bottom = if (compactTv) 16.dp else 22.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(if (compactTv) 8.dp else 10.dp)
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         presentation.context?.let {
@@ -4295,7 +4293,7 @@ private fun ModernCollectionPoster(
         LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    val focusProgress by animateFloatAsState(
+    val focusProgress = animateFloatAsState(
         targetValue = if (focused || menuOpen) 1f else 0f,
         animationSpec = tween(durationMillis = 170),
         label = "modernPosterProfileFocus"
@@ -4306,8 +4304,8 @@ private fun ModernCollectionPoster(
         label = "modernPosterTouchPress"
     )
     val visualProgress =
-        if (remoteNavigationActive) focusProgress else pressProgress
-    val remoteFocusScale by animateFloatAsState(
+        if (remoteNavigationActive) 0f else pressProgress
+    val remoteFocusScale = animateFloatAsState(
         targetValue = if (remoteNavigationActive && (focused || menuOpen)) 1.06f else 1f,
         animationSpec = tween(durationMillis = 170),
         label = "modernCollectionRemoteFocusScale"
@@ -4337,7 +4335,7 @@ private fun ModernCollectionPoster(
     Box(
         modifier.then(returningTile.modifier)
             .fillMaxWidth()
-            .zIndex(if (focused) 2f else visualProgress)
+            .zIndex(if (remoteNavigationActive) { if (focused || menuOpen) 2f else 0f } else visualProgress)
     ) {
         /*
          * SINGLE_ACTIVATION_SURFACE_V26
@@ -4368,9 +4366,11 @@ private fun ModernCollectionPoster(
             modifier = Modifier
                 .fillMaxWidth(1f / focusEnvelopeScale)
                 .graphicsLayer {
-                    scaleX = remoteFocusScale
-                    scaleY = remoteFocusScale
+                    scaleX = remoteFocusScale.value
+                    scaleY = scaleX
                 }
+                .tileFocusOutline(remoteNavigationActive, focusProgress, shape,
+                    Color(0xFF30343B), if (isTv) 3.dp else 2.dp)
                 .touchTileShadow(isTv = isTv,
                     elevation =
                         (
@@ -4391,7 +4391,7 @@ private fun ModernCollectionPoster(
                 ),
             shape = shape,
             color = Color(0xFF202020),
-            border = BorderStroke(
+            border = if (remoteNavigationActive) null else BorderStroke(
                 when {
                     remoteNavigationActive && (focused || menuOpen) -> if (isTv) 3.dp else 2.dp
                     else -> 1.dp

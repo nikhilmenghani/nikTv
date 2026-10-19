@@ -32,5 +32,10 @@ class RequestedRecommendationsTest {
         assertEquals(beforeRecent, reopened.recentlyPlayed.first())
         store.dismissRecommendation("a", "MOVIES:42")
         assertTrue("MOVIES:42" in reopened.dismissedRecommendations.first()["a"].orEmpty())
+        store.restoreRecommendation("a", "MOVIES:42")
+        store.restoreRecommendation("a", "MOVIES:42")
+        assertFalse("MOVIES:42" in reopened.dismissedRecommendations.first()["a"].orEmpty())
+        assertTrue("MOVIES:42" in reopened.dismissedRecommendations.first()["b"].orEmpty())
+        assertEquals(listOf(seed), reopened.requestedRecommendations.first())
     }
 }

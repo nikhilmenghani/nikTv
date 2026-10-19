@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://niktv.local/tizen" version="0.1.1" viewmodes="maximized">
+  <tizen:application id="NikTVTizen.NikTV" package="NikTVTizen" required_version="3.0"/>
+  <name>NikTV Preview</name>
+  <content src="index.html"/>
+  <icon src="icon.png"/>
+  <tizen:profile name="tv-samsung"/>
+  <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+  <tizen:privilege name="http://developer.samsung.com/privilege/drmplay"/>
+  <access origin="*" subdomains="true"/>
+  <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+</widget>
