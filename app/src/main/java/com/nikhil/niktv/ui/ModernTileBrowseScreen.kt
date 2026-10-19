@@ -2524,6 +2524,7 @@ internal fun ModernTileActionsMenu(
     refreshMatches: (() -> Unit)? = null,
     markWatched: (() -> Unit)? = null,
     recommendationItem: MediaItem? = null,
+    recommendationType: CatalogType? = null,
     trailerItem: MediaItem? = null,
     trailerSeries: Boolean = false,
     onTrailerReturned: (() -> Boolean)? = null
@@ -2565,7 +2566,7 @@ internal fun ModernTileActionsMenu(
     ) {
         (recommendationItem ?: trailerItem)?.let { item ->
             ShowRecommendationsMenuItem(item,
-                if (trailerSeries) CatalogType.SERIES else null, dismiss)
+                recommendationType ?: if (trailerSeries) CatalogType.SERIES else null, dismiss)
         }
         trailerItem?.takeUnless { it.isAdult }?.let {
             NikDropdownMenuItem(text = { Text("Watch trailer") },
@@ -4252,7 +4253,9 @@ internal fun ModernLiveChannelTile(
             clear = onClear,
             isPinned = isPinned,
             togglePin = onTogglePin,
-            refreshProgramme = onRefreshProgramme
+            refreshProgramme = onRefreshProgramme,
+            recommendationItem = item,
+            recommendationType = CatalogType.LIVE_TV
         )
     }
 }

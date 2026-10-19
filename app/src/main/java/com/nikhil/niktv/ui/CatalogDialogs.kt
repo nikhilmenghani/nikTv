@@ -953,6 +953,10 @@ internal fun SeriesHeroActionIcon(
     var focused by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val captionPosition = remember(density) {
+        FocusCaptionPositionProvider(with(density) { 4.dp.roundToPx() }, with(density) { 16.dp.roundToPx() })
+    }
     val showFocusHint = context.usesRemoteNavigation(configuration) && focused
 
     Box(
@@ -971,11 +975,12 @@ internal fun SeriesHeroActionIcon(
         }
 
         if (showFocusHint) {
+            androidx.compose.ui.window.Popup(
+                popupPositionProvider = captionPosition,
+                properties = androidx.compose.ui.window.PopupProperties(focusable = false)
+            ) {
             Surface(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .wrapContentWidth(unbounded = true)
-                    .offset(y = 52.dp),
+                modifier = Modifier.widthIn(max = minOf(320.dp, (configuration.screenWidthDp - 32).coerceAtLeast(1).dp)),
                 shape = RoundedCornerShape(8.dp),
                 color = Color(0xF2111111),
                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
@@ -985,8 +990,9 @@ internal fun SeriesHeroActionIcon(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     color = Color.White,
                     style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1
+                    softWrap = true
                 )
+            }
             }
         }
     }

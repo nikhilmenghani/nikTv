@@ -1892,6 +1892,7 @@ private fun ModernSearchLiveResultRow(
         }
 
         SearchFavoriteMenu(
+            item = item.copy(searchResultType = SearchContentType.LIVE_TV),
             expanded = menuOpen,
             isFavorite = isFavorite,
             onDismiss = { menuOpen = false },

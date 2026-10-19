@@ -755,6 +755,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun showRecommendationsOnHome(item: MediaItem, requestedType: CatalogType?) {
         val profile = _state.value.session?.profile?.cacheKey() ?: return
         val type = recommendationTypeFor(item, requestedType) ?: return
+        if (type == CatalogType.LIVE_TV) {
+            showLiveProgrammeRecommendations(item, profile)
+            return
+        }
         if (type !in setOf(CatalogType.MOVIES, CatalogType.SERIES) || item.isAdult || item.episodeNumber != null) return
         viewModelScope.launch {
             try {
@@ -771,6 +775,33 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
               catch (error: Exception) {
                   Log.w("NikTvRecommendations", "Could not add recommendation source", error)
+                  android.widget.Toast.makeText(getApplication(), "Could not add recommendations. Please try again.", android.widget.Toast.LENGTH_LONG).show()
+              }
+        }
+    }
+
+    private fun showLiveProgrammeRecommendations(channel: MediaItem, profile: String) {
+        val programme = com.nikhil.niktv.data.liveProgrammeRecommendationItem(channel, System.currentTimeMillis())
+        if (programme == null) {
+            android.widget.Toast.makeText(getApplication(), "No current programme information available.", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val identity = com.nikhil.niktv.data.resolveLiveProgrammeRecommendation(programme) { type, item ->
+                    mediaIdentities.resolve(profile, type, item)
+                }
+                if (identity?.tmdbId == null) {
+                    android.widget.Toast.makeText(getApplication(), "Could not find a clear TMDB match for this programme.", android.widget.Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                val seed = RecentItem(if (identity.type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
+                    programme, profileKey = profile)
+                store.requestRecommendations(seed, "${identity.type}:${identity.tmdbId}")
+                android.widget.Toast.makeText(getApplication(), "Recommendations added to Home", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (error: Exception) {
+                  Log.w("NikTvRecommendations", "Could not add live programme recommendation source", error)
                   android.widget.Toast.makeText(getApplication(), "Could not add recommendations. Please try again.", android.widget.Toast.LENGTH_LONG).show()
               }
         }

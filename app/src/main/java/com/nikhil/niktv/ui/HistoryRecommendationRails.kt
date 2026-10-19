@@ -6,6 +6,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import com.nikhil.niktv.data.HistoryRecommendationRow
 import com.nikhil.niktv.data.TrendingMovie
 import com.nikhil.niktv.data.TrendingSeries
@@ -91,10 +94,21 @@ internal fun ShowRecommendationsMenuItem(item: MediaItem,
     type: com.nikhil.niktv.model.CatalogType? = null, dismiss: () -> Unit) {
     val action = LocalShowRecommendations.current
     val resolvedType = LocalRecommendationTypeFor.current?.invoke(item, type)
+    if (resolvedType == com.nikhil.niktv.model.CatalogType.LIVE_TV) {
+        val programme = rememberCurrentLiveProgramme(item).value
+        if (action != null && programme != null &&
+            com.nikhil.niktv.data.liveProgrammeRecommendationItem(item, System.currentTimeMillis()) != null) {
+            NikDropdownMenuItem(text = { Text("Show Related") },
+                leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+                onClick = { dismiss(); action(item, resolvedType) })
+        }
+        return
+    }
     if (resolvedType in setOf(com.nikhil.niktv.model.CatalogType.MOVIES, com.nikhil.niktv.model.CatalogType.SERIES) && action != null && !item.isAdult && item.channelNumber == null &&
         item.liveProgramme == null && item.episodeNumber == null &&
         type != com.nikhil.niktv.model.CatalogType.LIVE_TV) {
-        NikDropdownMenuItem(text = { Text("Show recommendations on Home") },
+        NikDropdownMenuItem(text = { Text("Show Related") },
+                leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
             onClick = { dismiss(); action(item, resolvedType) })
     }
 }

@@ -1219,7 +1219,9 @@ internal fun PlayerQueueOverlay(
                     clear = null,
                     isPinned = item.id in pinnedIds,
                     togglePin = onTogglePin?.let { pin -> { pin(item) } },
-                    refreshProgramme = onRefreshProgramme?.let { refresh -> { refresh(item) } }
+                    refreshProgramme = onRefreshProgramme?.let { refresh -> { refresh(item) } },
+                    recommendationItem = item,
+                    recommendationType = com.nikhil.niktv.model.CatalogType.LIVE_TV
                 )
             }
         }
