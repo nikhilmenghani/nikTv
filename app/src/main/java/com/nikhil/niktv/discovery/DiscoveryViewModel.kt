@@ -75,6 +75,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         }
     }
     fun rotate(delta: Int) { _state.update { if (it.heroes.isEmpty()) it else it.copy(heroIndex = Math.floorMod(it.heroIndex + delta, it.heroes.size)) } }
+    suspend fun actorCredits(person: DiscoveryPerson, stale: (List<DiscoveryCard>) -> Unit) = repository.actorCredits(person, stale)
     fun openDetails(card: DiscoveryCard) { stack.add(card); showDetails(card) }
     fun closeDetails() {
         if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex)

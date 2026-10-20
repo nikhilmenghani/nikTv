@@ -97,6 +97,7 @@ data class NikTvState(
     val restoring: Boolean = true,
     val settingsOpen: Boolean = false,
     val selectedSeries: MediaItem? = null,
+    val providerMovieDetails: com.nikhil.niktv.discovery.ProviderMovieDetails? = null,
     val useTmdbEpisodeMetadata: Boolean = true,
     val tmdbEpisodeCacheRefreshing: Boolean = false,
     val fullSearchItems: List<MediaItem>? = null,
@@ -393,7 +394,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
         catalogueTitleIndex = null
-        _state.update { it.copy(savedProfile = profile) }
+        _state.update { it.copy(savedProfile = profile, providerMovieDetails = null) }
         updateProfileLoad(0.08f, "Authenticating ${profile.name}…")
         val session = authenticateProfileForOpening(profile)
         updateProfileLoad(0.24f, "Authentication complete")
@@ -403,6 +404,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 session = session,
                 savedProfile = session.profile,
                 homeOpen = true,
+                discoverySurface = DashboardSurface.HOME,
+                favoritesOpen = false,
+                settingsOpen = false,
+                offlineDownloadsOpen = false,
                 items = emptyList(),
                 categories = emptyList(),
                 rawCategoriesByType = emptyMap(),
@@ -4960,6 +4965,38 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Catalog entry only; player queue navigation continues to call openMedia directly. */
+    fun openCatalogDetails(item: MediaItem, queue: List<MediaItem> = listOf(item), filter: PlaybackQueueFilter? = null) {
+        if (_state.value.selectedType != CatalogType.MOVIES || _state.value.selectedSeries != null) {
+            if (filter != null) openMediaInContext(item, queue, filter) else openMedia(item)
+            return
+        }
+        openProviderMovieDetails(item, queue, filter)
+    }
+    fun openProviderMovieDetails(item: MediaItem, queue: List<MediaItem> = listOf(item), filter: PlaybackQueueFilter? = null) {
+        val profile = _state.value.session?.profile?.cacheKey() ?: return
+        if (gateAdultAction(item, CatalogType.MOVIES) {
+                if (_state.value.session?.profile?.cacheKey() == profile) openProviderMovieDetails(item, queue, filter)
+            }) return
+        _state.update { it.copy(providerMovieDetails = com.nikhil.niktv.discovery.ProviderMovieDetails(profile, item, queue, filter)) }
+    }
+    fun closeProviderMovieDetails() = _state.update { it.copy(providerMovieDetails = null) }
+    fun playProviderMovieDetails() {
+        val selected = _state.value.providerMovieDetails ?: return
+        if (_state.value.session?.profile?.cacheKey() != selected.profile) return
+        if (gateAdultAction(selected.item, CatalogType.MOVIES) {
+                if (_state.value.providerMovieDetails === selected) playProviderMovieDetails()
+            }) return
+        val request = beginPlaybackRequest()
+        playbackNavigationIndex = null
+        navigationCursor.select(request, selected.queue.map { it.id }, selected.item.id)
+        playbackTask(request) {
+            if (_state.value.session?.profile?.cacheKey() != selected.profile) return@playbackTask
+            playInternal(selected.item, CatalogType.MOVIES, null, selected.queue,
+                directFullscreen = true, requestId = request, queueFilter = selected.filter)
+        }
+    }
+
     fun openMedia(item: MediaItem) {
         if (gateAdultAction(item, _state.value.selectedType) { openMedia(item) }) return
         navigationCursor.cancel()
@@ -6758,9 +6795,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val pinnedOrder = playing.queueFilter?.pinnedIds ?: IptvPinPreferences.pinnedChannelOrder(
             getApplication(), profileKey, categoryId
         )
-        val byId = providerOrder.associateBy { it.id }
-        val pinned = pinnedOrder.mapNotNull(byId::get)
-        return pinned + providerOrder
+        return orderedPlayerQueue(providerOrder, pinnedOrder)
     }
 
     /**
@@ -7417,7 +7452,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
         catalogueTitleIndex = null
-        _state.update { it.copy(savedProfile = profile) }
+        _state.update { it.copy(savedProfile = profile, providerMovieDetails = null) }
         updateProfileLoad(0.04f, "Loading ${profile.name}…")
         store.activate(profile)
         // Reuse a saved session for local browsing while renewing it in the background.
@@ -7427,7 +7462,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { current -> current.copy(session = session, savedProfile = profile, settingsOpen = false, profileEditorOpen = false,
             modernIptvCategory = null, modernTmdbSection = null, selectedCategory = null, playbackReturnFocusId = null,
             searchQuery = "", searchResults = emptyList(), searchLocalLoading = false, searchServerLoading = false,
-            searchOpen = false, favoritesOpen = false, homeOpen = true, categories = emptyList(), rawCategoriesByType = emptyMap(),
+            searchOpen = false, favoritesOpen = false, homeOpen = true,
+            discoverySurface = DashboardSurface.HOME, offlineDownloadsOpen = false,
+            categories = emptyList(), rawCategoriesByType = emptyMap(),
             categoryManagerOpen = false, items = emptyList(),
             selectedSeries = null, browseCache = null, browseCachesByType = emptyMap(), fullSearchItems = null, playbackUrls = emptyList(),
             trendingMovies = emptyList(), trendingMoviesLoading = false, trendingMoviesError = null,

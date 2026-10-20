@@ -522,6 +522,17 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
         com.nikhil.niktv.discovery.LocalDownloadDiscoveryEpisode provides vm::downloadDiscoveryEpisode,
         com.nikhil.niktv.discovery.LocalRefreshDiscoveryMatches provides vm::refreshDiscoveryMatches,
         com.nikhil.niktv.discovery.LocalOpenDiscoverySeries provides { vm.openSeriesFromHome(it) },
+        com.nikhil.niktv.discovery.LocalProviderDetailNavigation provides com.nikhil.niktv.discovery.ProviderDetailNavigation(
+            openDiscovery = vm::openDiscovery,
+            classic = { label -> when (label) {
+                "Home" -> vm.openHome(); "Live TV" -> vm.openCatalogType(CatalogType.LIVE_TV)
+                "Movies" -> vm.openCatalogType(CatalogType.MOVIES); "Series" -> vm.openCatalogType(CatalogType.SERIES)
+                "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
+                "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileSwitcher()
+            } }, favorite = { vm.toggleFavorite(it) }, playEpisode = vm::openDiscoveryEpisode,
+            recent = vm::openRecent, watched = vm::openWatchedEpisode, category = vm::openModernIptvCategory,
+            section = vm::openModernTmdbSection, removeRecent = vm::removeRecent,
+            markWatched = vm::markEpisodeWatched, dismissEpisode = vm::dismissWatchedEpisode, playProvider = vm::openMediaInContext),
         LocalShowRecommendations provides vm::showRecommendationsOnHome,
         LocalRecommendationTypeFor provides vm::recommendationTypeFor) {
         NikTvAppContent(vm)
@@ -763,8 +774,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     state = state,
                     selectType = vm::openCatalogType,
                     selectCategory = vm::loadCategory,
-                    play = vm::openMedia,
-                    playInContext = vm::openMediaInContext,
+                    play = { vm.openCatalogDetails(it) },
+                    playInContext = { item, queue, filter -> vm.openCatalogDetails(item, queue, filter) },
                     openTrendingMovie = vm::openTrendingMovie,
                     selectTmdbMovieMatch = vm::selectTmdbMovieMatch,
                     closeTmdbMovieMatches = vm::closeTmdbMovieMatches,
@@ -776,14 +787,14 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     openFavorites = vm::openFavorites,
                     closeFavorites = vm::closeFavorites,
                     openHome = vm::openHome,
-                    openRecent = vm::openRecent,
+                    openRecent = { recent -> if (recent.kind == FavoriteKind.MOVIE) vm.openProviderMovieDetails(recent.media) else vm.openRecent(recent) },
                     openSeriesFromHome = vm::openSeriesFromHome,
                     removeRecent = vm::removeRecent,
                     dismissRecommendation = vm::dismissRecommendation,
                     dismissWatchedEpisode = vm::dismissWatchedEpisode,
                     markEpisodeWatched = vm::markEpisodeWatched,
                     clearRecent = vm::clearRecent,
-                    openFavorite = vm::openFavorite,
+                    openFavorite = { favorite -> if (favorite.kind == FavoriteKind.MOVIE && favorite.source != FavoriteSource.TMDB) vm.openProviderMovieDetails(favorite.media) else vm.openFavorite(favorite) },
                     toggleFavorite = vm::toggleFavorite,
                     toggleFavoriteEntry = { vm.toggleFavorite(it) },
                     openSettings = vm::openSettings,
@@ -815,7 +826,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,search = vm::search
                     ,useRecentSearch = vm::useRecentSearch
                     ,deleteRecentSearch = vm::deleteRecentSearch
-                    ,openSearchResult = vm::openSearchResult
+                    ,openSearchResult = { item -> if ((item.searchResultType ?: state.searchType) == SearchContentType.MOVIES) vm.openProviderMovieDetails(item) else vm.openSearchResult(item) }
                     ,loadMoreSearch = vm::loadMoreSearch
                     ,loadMoreCatalog = vm::loadMoreCatalog
                     ,loadMoreEpisodes = vm::loadMoreEpisodes
@@ -847,6 +858,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,closeOfflineDownloads = vm::closeOfflineDownloads
                     ,playOfflineDownload = vm::playOfflineDownload
                     ,playRecording = vm::playRecording
+                    ,playProviderMovie = vm::playProviderMovieDetails
+                    ,closeProviderMovie = vm::closeProviderMovieDetails
                 )
             }
             }

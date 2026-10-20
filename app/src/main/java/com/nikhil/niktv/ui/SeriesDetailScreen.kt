@@ -135,7 +135,9 @@ internal fun ModernSeriesDetailScreen(
     openSearch: () -> Unit,
     openSettings: () -> Unit,
     refreshCatalog: () -> Unit,
-    loadMoreEpisodes: () -> Unit
+    loadMoreEpisodes: () -> Unit,
+    openTmdbMovie: (TrendingMovie) -> Unit,
+    openTmdbSeries: (TrendingSeries) -> Unit
 ) {
     val series = state.selectedSeries ?: return
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
@@ -152,6 +154,9 @@ internal fun ModernSeriesDetailScreen(
     val episodeSearchRequester = remember(series.id) { FocusRequester() }
     val episodeSearchCloseRequester = remember(series.id) { FocusRequester() }
     val entryEpisodeRequester = remember(series.id) { FocusRequester() }
+    val firstEpisodeRequester = remember(series.id) { FocusRequester() }
+    val detailPlayRequester = remember(series.id) { FocusRequester() }
+    val detailScope = rememberCoroutineScope()
     val episodeFocusParkingRequester = remember(series.id) { FocusRequester() }
     val heroActionRequesters = remember(series.id) { List(3) { FocusRequester() } }
     val episodeListState = key(series.id) { rememberLazyListState() }
@@ -273,6 +278,16 @@ internal fun ModernSeriesDetailScreen(
 
     LaunchedEffect(remoteNavigationActive, series.id, episodeIds, state.loading, entryPlaybackReturnFocusId) {
         if (!remoteNavigationActive && pendingPlaybackReturnId == null) return@LaunchedEffect
+        if (pendingPlaybackReturnId == null && !initialEpisodeFocusComplete) {
+            repeat(12) {
+                withFrameNanos { }
+                if (runCatching { (if (primaryEpisodeToPlay == null) heroActionRequesters[0] else detailPlayRequester).requestFocus() }.getOrDefault(false)) {
+                    initialEpisodeFocusComplete = true
+                    return@LaunchedEffect
+                }
+            }
+            return@LaunchedEffect
+        }
         val target = entryFocusTarget ?: return@LaunchedEffect
         if (target is SeriesEpisodeEntryFocus.Episode && pendingPlaybackReturnId == null && focusedEpisodeId != null) {
             // Do not steal a selection the user reached before the entry effect ran.
@@ -320,7 +335,7 @@ internal fun ModernSeriesDetailScreen(
             .onPreviewKeyEvent { event ->
                 // Hold the entry cursor inside this screen while there is no episode
                 // to select. Back continues through the normal navigation handler.
-                remoteNavigationActive && entryFocusTarget == SeriesEpisodeEntryFocus.Loading &&
+                remoteNavigationActive && pendingPlaybackReturnId != null && entryFocusTarget == SeriesEpisodeEntryFocus.Loading &&
                     event.key in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)
             }
             .focusable(remoteNavigationActive)
@@ -331,170 +346,40 @@ internal fun ModernSeriesDetailScreen(
             contentPadding = PaddingValues(bottom = 64.dp)
         ) {
             item("series-hero") {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(if (compactPortrait) 230.dp else 286.dp)
-                ) {
-                    val backdropUrl = series.logo
-                    if (!backdropUrl.isNullOrBlank()) {
-                        SubcomposeAsyncImage(
-                            model = artworkRequest(LocalContext.current, series),
-                            contentDescription = series.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight()
-                        )
-                    } else {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight()
-                                .background(Brush.radialGradient(listOf(Color(0xFF1E293B), Color(0xFF090909))))
-                        )
-                    }
-
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0x99000000),
-                                        Color(0x22000000),
-                                        Color(0xDD090909),
-                                        Color(0xFF090909)
-                                    )
-                                )
-                            )
-                    )
-
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SeriesHeroActionIcon(
-                            icon = Icons.AutoMirrored.Filled.ArrowBack,
-                            description = "Back to browse",
-                            onClick = closeSeries,
-                            modifier = Modifier.focusRequester(heroActionRequesters[0]).focusProperties { right = heroActionRequesters[1] }
-                        )
-                        Spacer(Modifier.weight(1f))
-                        SeriesHeroActionIcon(
-                            icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            description = if (isFavorite) "Remove series from My List" else "Add series to My List",
-                            onClick = { toggleFavorite(series) },
-                            tint = if (isFavorite) MaterialTheme.colorScheme.primary else Color.White,
-                            modifier = Modifier.focusRequester(heroActionRequesters[1]).focusProperties { left = heroActionRequesters[0]; right = heroActionRequesters[2] }
-                        )
+                com.nikhil.niktv.discovery.ProviderDetailHeader(series, CatalogType.SERIES, state,
+                    play = { primaryEpisodeToPlay?.let(play) }, close = closeSeries,
+                    favorite = { toggleFavorite(series) }, isFavorite = isFavorite,
+                    openTmdbMovie = openTmdbMovie, openTmdbSeries = openTmdbSeries,
+                    playLabel = if (primaryEpisodeToPlay == null) "Loading episodes…" else if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}" else if (episodeSortDescending) "Play latest" else "Start series",
+                    playEnabled = primaryEpisodeToPlay != null,
+                    playRequester = detailPlayRequester, backRequester = heroActionRequesters[0],
+                    down = {
+                        detailScope.launch {
+                            if (filteredEpisodes.isNotEmpty()) {
+                                episodeListState.scrollToItem(2)
+                                repeat(12) { withFrameNanos { }; if (runCatching { firstEpisodeRequester.requestFocus() }.getOrDefault(false)) return@launch }
+                            }
+                        }
+                    }, tools = {
+                        com.nikhil.niktv.discovery.DiscoveryAction(
+                            if (isWatched) "Following" else "Notify me", Icons.Default.Notifications,
+                            selected = isWatched, onClick = toggleSeriesWatch)
                         Box {
-                            SeriesHeroActionIcon(
-                                icon = Icons.Default.MoreVert,
-                                description = "More series options",
-                                onClick = { moreActionsExpanded = true },
-                                modifier = Modifier.focusRequester(heroActionRequesters[2]).focusProperties { left = heroActionRequesters[1] }
-                            )
-                            DropdownMenu(
-                                expanded = moreActionsExpanded,
-                                onDismissRequest = { moreActionsExpanded = false },
-                                modifier = Modifier.widthIn(min = 240.dp)
-                            ) {
-                                NikDropdownMenuItem(
-                                    text = { Text(if (isWatched) "Stop new episode alerts" else "Notify me of new episodes") },
-                                    leadingIcon = { Icon(if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone, null) },
-                                    onClick = { toggleSeriesWatch(); moreActionsExpanded = false }
-                                )
-                                NikDropdownMenuItem(
-                                    text = { Text("Refresh episodes") },
-                                    leadingIcon = { Icon(Icons.Default.Refresh, null) },
-                                    onClick = { refreshCatalog(); moreActionsExpanded = false }
-                                )
-                                NikDropdownMenuItem(
-                                    text = { Text(if (state.useTmdbEpisodeMetadata) "Use IPTV episode details" else "Use TMDB episode details") },
-                                    leadingIcon = { Icon(if (state.useTmdbEpisodeMetadata) Icons.Default.ToggleOn else Icons.Default.ToggleOff, null) },
-                                    onClick = { setUseTmdbEpisodeMetadata(!state.useTmdbEpisodeMetadata); moreActionsExpanded = false }
-                                )
-                                NikDropdownMenuItem(
-                                    text = { Text(if (state.tmdbEpisodeCacheRefreshing) "Refreshing episode details…" else "Refresh TMDB episode details") },
-                                    leadingIcon = { Icon(Icons.Default.Cached, null) },
-                                    enabled = !state.tmdbEpisodeCacheRefreshing,
-                                    onClick = { refreshTmdbEpisodeCache(); moreActionsExpanded = false }
-                                )
-                                NikDropdownMenuItem(
-                                    text = { Text("Series settings") },
-                                    leadingIcon = { Icon(Icons.Default.Settings, null) },
-                                    onClick = { openSettings(); moreActionsExpanded = false }
-                                )
+                            com.nikhil.niktv.discovery.DiscoveryAction("Series options", Icons.Default.MoreHoriz, iconOnly = true) { moreActionsExpanded = true }
+                            DropdownMenu(moreActionsExpanded, { moreActionsExpanded = false }) {
+                                NikDropdownMenuItem(text = { Text("Refresh episodes") }, leadingIcon = { Icon(Icons.Default.Refresh, null) },
+                                    onClick = { moreActionsExpanded = false; refreshCatalog() })
+                                NikDropdownMenuItem(text = { Text(if (state.useTmdbEpisodeMetadata) "Use IPTV episode details" else "Use TMDB episode details") },
+                                    leadingIcon = { Icon(Icons.Default.Info, null) },
+                                    onClick = { moreActionsExpanded = false; setUseTmdbEpisodeMetadata(!state.useTmdbEpisodeMetadata) })
+                                NikDropdownMenuItem(text = { Text(if (state.tmdbEpisodeCacheRefreshing) "Refreshing episode details…" else "Refresh TMDB episode details") },
+                                    leadingIcon = { Icon(Icons.Default.Cached, null) }, enabled = !state.tmdbEpisodeCacheRefreshing,
+                                    onClick = { moreActionsExpanded = false; refreshTmdbEpisodeCache() })
+                                NikDropdownMenuItem(text = { Text("Series settings") }, leadingIcon = { Icon(Icons.Default.Settings, null) },
+                                    onClick = { moreActionsExpanded = false; openSettings() })
                             }
                         }
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = series.title,
-                            style = if (mobileEpisodeLayout) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White,
-                            maxLines = 3,
-                            overflow = TextOverflow.Visible
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
-                            ) {
-                                Text(
-                                    text = "SERIES",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                            if (availableSeasons.isNotEmpty()) {
-                                Text(
-                                    text = "${availableSeasons.size} ${if (availableSeasons.size == 1) "Season" else "Seasons"}",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Color.LightGray
-                                )
-                                Text("•", color = Color.Gray)
-                            }
-                            Text(
-                                text = "${state.items.size} ${if (state.items.size == 1) "episode" else "episodes"}${selectedSeason?.let { " in Season $it" }.orEmpty()}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = Color.LightGray
-                            )
-                        }
-
-                        if (!series.description.isNullOrBlank() && !mobileEpisodeLayout) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = series.description,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.8f),
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        Spacer(Modifier.height(4.dp))
-                    }
-                }
+                    })
             }
 
             item("series-controls") {
@@ -504,29 +389,6 @@ internal fun ModernSeriesDetailScreen(
                         .padding(horizontal = if (mobileEpisodeLayout) 14.dp else 24.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (primaryEpisodeToPlay != null) {
-                            NikTvPrimaryActionButton(
-                                onClick = { play(primaryEpisodeToPlay) },
-                                modifier = Modifier.height(42.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp)
-                            ) {
-                                Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}"
-                                    else if (episodeSortDescending) "Play latest" else "Start series",
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
                     if (availableSeasons.size > 1) {
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -657,6 +519,7 @@ internal fun ModernSeriesDetailScreen(
                         onRemoveDownload = { removeOfflineDownload(episode, CatalogType.SERIES) },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .then(if (episode.id == filteredEpisodes.firstOrNull()?.id) Modifier.focusRequester(firstEpisodeRequester) else Modifier)
                             .then(if ((entryFocusTarget as? SeriesEpisodeEntryFocus.Episode)?.id == episode.id) {
                                 Modifier.focusRequester(entryEpisodeRequester)
                             } else Modifier)

@@ -811,8 +811,7 @@ internal fun PlayerQueueOverlay(
 
     val scope = rememberCoroutineScope()
     val uniqueItems = remember(items, pinnedIds) {
-        val originals = items.distinctBy { it.id }
-        pinnedIds.mapNotNull { id -> originals.firstOrNull { it.id == id } } + originals
+        orderedPlayerQueue(items, pinnedIds)
     }
     fun entryKey(index: Int) = "$index:${uniqueItems[index].id}"
     val isEpisodeQueue = uniqueItems.any {

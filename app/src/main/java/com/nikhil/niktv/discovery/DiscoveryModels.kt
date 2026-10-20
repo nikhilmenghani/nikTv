@@ -29,7 +29,7 @@ internal fun TmdbMovie.discovery() = DiscoveryCard(id, false, title, overview, p
 internal fun TmdbSeries.discovery() = DiscoveryCard(id, true, name, overview, posterUrl, backdropUrl, firstAirDate, voteAverage, genres, adult = adult)
 
 @Serializable
-internal data class DiscoveryPerson(val name: String, val role: String = "", val portrait: String? = null)
+internal data class DiscoveryPerson(val name: String, val role: String = "", val portrait: String? = null, val id: Int? = null)
 @Serializable
 internal data class DiscoveryReview(val author: String, val text: String)
 @Serializable

@@ -81,6 +81,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
@@ -2537,7 +2538,8 @@ internal fun ModernTileActionsMenu(
     trailerItem: MediaItem? = null,
     trailerSeries: Boolean = false,
     onTrailerReturned: (() -> Boolean)? = null,
-    extraActions: List<Pair<String, () -> Unit>> = emptyList()
+    playAction: (() -> Unit)? = null,
+    downloadAction: (() -> Unit)? = null
 ) {
     val trailerContext = LocalContext.current
     var trailerOpen by remember(trailerItem?.id) { mutableStateOf(false) }
@@ -2574,8 +2576,14 @@ internal fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
-        extraActions.forEach { (label, action) ->
-            NikDropdownMenuItem(text = { Text(label) }, onClick = { dismiss(); action() })
+        playAction?.let { action ->
+            NikDropdownMenuItem(text = { Text("Play") },
+                leadingIcon = { Icon(Icons.Default.PlayArrow, null) },
+                onClick = { dismiss(); action() })
+        }
+        downloadAction?.let { action ->
+            NikDropdownMenuItem(text = { Text("Download") }, leadingIcon = { Icon(Icons.Default.Download, null) },
+                onClick = { dismiss(); action() })
         }
         (recommendationItem ?: trailerItem)?.let { item ->
             ShowRecommendationsMenuItem(item,

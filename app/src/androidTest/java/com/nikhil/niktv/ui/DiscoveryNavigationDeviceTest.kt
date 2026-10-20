@@ -319,9 +319,10 @@ class DiscoveryNavigationDeviceTest {
             holdCenter()
             await("Long-press release opens the menu without selecting Play") { text("Watch trailer") != null }
             assertEquals(0, plays); assertEquals(0, favorites); assertEquals(0, refreshes); assertEquals(0, related)
-            listOf("Play", "Info", "Show Related", "Watch trailer", "Refresh IPTV matches", "View description", "Add to My List").forEach {
+            listOf("Play", "Show Related", "Watch trailer", "Refresh IPTV matches", "View description", "Add to My List").forEach {
                 assertNotNull("Legacy menu action retained: $it", text(it))
             }
+            assertNull("Opening the tile already provides Info", text("Info"))
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             await("Menu dismissal restores its originating tile") { focused("Fixture title 2") && text("Watch trailer") == null }
             holdCenter(); await("Manual refresh menu") { text("Refresh IPTV matches") != null }

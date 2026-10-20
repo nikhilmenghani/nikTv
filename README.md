@@ -8,8 +8,9 @@ remote navigation; portal and catalog features are not yet ported.
 
 ## Discovery UI trial
 
-Home 2, Movies 2 and Series 2 are additive navigation entries. The original screens
-remain the default. The trial uses released TMDB discovery titles, compact artwork
+Home 2 opens by default after choosing or switching a profile. Movies 2 and Series 2
+remain separate navigation entries, and the original screens are accessible through
+Browse. The new UI uses released TMDB discovery titles, compact artwork
 rows and full information pages; IPTV availability is checked only when the user
 requests playback or a download. Trial section preferences are separate from the
 original Home configuration. See [the working design and verification notes](docs/tv-browsing-motion-plan.md).

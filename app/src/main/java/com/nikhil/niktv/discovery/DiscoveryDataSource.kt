@@ -10,4 +10,5 @@ internal interface DiscoveryDataSource {
     suspend fun collection(id: Int): List<DiscoveryCard>
     suspend fun reviews(card: DiscoveryCard): List<DiscoveryReview>
     suspend fun episodes(card: DiscoveryCard, season: Int): List<DiscoveryEpisode>
+    suspend fun actorCredits(person: DiscoveryPerson, stale: (List<DiscoveryCard>) -> Unit = {}): List<DiscoveryCard> = emptyList()
 }

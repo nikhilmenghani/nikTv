@@ -207,7 +207,9 @@ internal fun CatalogScreen(
     closeOfflineDownloads: () -> Unit,
     playOfflineDownload: (OfflineMediaDownload) -> Unit,
     playRecording: (RecordedLiveTvMedia) -> Unit,
-    playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null
+    playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null,
+    playProviderMovie: () -> Unit,
+    closeProviderMovie: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -227,6 +229,8 @@ internal fun CatalogScreen(
     val previewVisible = state.discoverySurface != null && !state.settingsOpen && !state.searchOpen &&
         !state.favoritesOpen && !state.offlineDownloadsOpen && state.selectedSeries == null &&
         state.movieMatchSelection == null && state.seriesMatchSelection == null && !modernSectionOpen
+    val previewProviderCategory = state.discoverySurface != null && state.modernIptvCategory?.type in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
+        state.selectedSeries == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && !state.offlineDownloadsOpen
 
     fun openDownloadsPane() {
         libraryPane = LibraryPane.DOWNLOADS
@@ -379,7 +383,7 @@ internal fun CatalogScreen(
                     openSettings = openSettings,
                     closeFavorites = closeFavorites
                 )
-                state.selectedSeries != null -> ModernSeriesDetailScreen(
+                state.selectedSeries != null -> StableTileFocusViewport { ModernSeriesDetailScreen(
                     state = state,
                     play = play,
                     closeSeries = closeSeries,
@@ -393,8 +397,9 @@ internal fun CatalogScreen(
                     openSearch = openSearch,
                     openSettings = openSettings,
                     refreshCatalog = refreshCatalog,
-                    loadMoreEpisodes = loadMoreEpisodes
-                )
+                    loadMoreEpisodes = loadMoreEpisodes,
+                    openTmdbMovie = openTrendingMovie, openTmdbSeries = openTrendingSeries
+                ) }
                 previewVisible -> browseStateHolder.SaveableStateProvider("discovery2:${state.savedProfile?.cacheKey()}:${state.discoverySurface}") {
                     com.nikhil.niktv.discovery.DiscoveryPreviewScreen(
                     app = state, surface = requireNotNull(state.discoverySurface), selectSurface = openTrial,
@@ -409,6 +414,16 @@ internal fun CatalogScreen(
                     toggleFavorite = toggleFavoriteEntry, openCategory = openModernIptvCategory, openSection = openModernTmdbSection,
                     removeRecent = removeRecent, markWatched = markEpisodeWatched, dismissEpisode = dismissWatchedEpisode
                     )
+                }
+                previewProviderCategory -> browseStateHolder.SaveableStateProvider("provider-trial:${state.savedProfile?.cacheKey()}:${state.modernIptvCategory?.id}:${state.modernIptvCategoryOpenId}") {
+                    com.nikhil.niktv.discovery.DiscoveryProviderCategory(state, requireNotNull(state.modernIptvCategory),
+                        close = closeModernSection, selectSurface = openTrial,
+                        classic = { label -> when (label) {
+                            "Home" -> openHome(); "Movies" -> selectType(CatalogType.MOVIES); "Series" -> selectType(CatalogType.SERIES)
+                            "Live TV" -> selectType(CatalogType.LIVE_TV); "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
+                            "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
+                        } }, open = { item, queue, filter -> playInContext?.invoke(item, queue, filter) ?: play(item) },
+                        favorite = toggleFavoriteEntry, more = loadMoreCatalog, refresh = refreshCatalog, download = downloadForOffline)
                 }
                 else -> browseStateHolder.SaveableStateProvider(browseStateKey) { ModernBrowseScreen(
                     state = state,
@@ -458,7 +473,7 @@ internal fun CatalogScreen(
         }
     }
 
-    if (previewVisible) {
+    if (previewVisible || previewProviderCategory || state.selectedSeries != null) {
         MainContent(Modifier.fillMaxSize())
     } else if (wide || isTv) {
         Row(
@@ -539,6 +554,12 @@ internal fun CatalogScreen(
         }
     }
 
+    state.providerMovieDetails?.takeIf { it.profile == state.savedProfile?.cacheKey() && it.profile == state.session?.profile?.cacheKey() && state.nowPlaying == null &&
+        state.movieMatchSelection == null && state.seriesMatchSelection == null && (state.selectedSeries == null || state.searchOpen || state.favoritesOpen) }?.let { selected ->
+        com.nikhil.niktv.discovery.ProviderMovieDetailDialog(state, selected, playProviderMovie, closeProviderMovie,
+            favorite = toggleFavoriteEntry, download = downloadForOffline, removeDownload = removeOfflineDownload,
+            openTmdbMovie = openTrendingMovie, openTmdbSeries = openTrendingSeries)
+    }
     if (exitConfirmationOpen) {
         AlertDialog(
             onDismissRequest = { exitConfirmationOpen = false },

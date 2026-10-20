@@ -2,13 +2,13 @@
 
 Status: **Isolated Home 2 / Movies 2 / Series 2 trial implemented; verification results and remaining limits recorded.**
 
-Last updated: 2026-10-19
+Last updated: 2026-10-20
 
 This document retains the original exploration notes below. The user accepted the implementation plan on 2026-10-19; the accepted decisions in this section supersede pending proposals in the original notes. Keep recording verification and future refinements here.
 
 ## Accepted implementation decisions
 
-- Preserve the original Home, Movies and Series screens and default startup. Add separate Home 2, Movies 2 and Series 2 entries, sharing a compact trial top bar.
+- Preserve the original Home, Movies and Series screens. Home 2 is the default after profile selection or switching (updated 2026-10-20); Movies 2 and Series 2 remain separate entries, sharing a compact top bar.
 - Include new full movie and series detail pages, responsive phone/portrait layouts, touch gestures and D-pad navigation.
 - Discovery includes released TMDB titles only (unknown/future dates excluded). IPTV lookup happens only after an explicit Play/episode/download action; no automatic match counts.
 - Home 2 puts Continue Watching and New Episodes before daily rankings and personalized/configured discovery rows. Trial customization is profile/surface specific and independent of classic settings.
@@ -161,3 +161,16 @@ Use a single cancellable owner for vertical reveal/alignment/focus, including ra
 Early-focus refinement: partially visible destinations receive focus once fully revealed, concurrently with row alignment rather than after spring completion. A Fire TV fixture asserted focus during active scrolling (191 ms in one run); all five device cases passed. Cancellation tests and both APK builds passed. See verification document for measurement limits.
 
 Tablet observation: minimum-reveal relocation could still compete with explicit vertical alignment and produce a small reverse movement. During an active explicit transition, suppress implicit relocation only for the vertical list; restore the standard minimum-reveal policy inside every horizontal discovery row. Focus composed destinations immediately. Tablet motion fixture measured 12 ms and no rebound; warm actual-page samples were modestly better but do not establish zero stutter. A separate popup-action regression failed and remains explicitly recorded rather than counted as navigation success.
+
+### IPTV adoption
+
+User approved replacing the series detail presentation and adding IPTV movie details using the discovery design. Provider categories reached from the trial use the compact adaptive layout; Live TV/player UI remain outside this change. Enrichment is public cached TMDB metadata; selected provider identities, queue contexts and episode controls remain authoritative. See discovery-trial-verification.md for focused cache/privacy/return-focus results and explicit limitations. Installations for this step are limited to Samsung and tablet.
+
+## Modern Home as profile landing — 2026-10-20
+
+Home 2 is now the default after selecting or switching a profile, superseding the
+earlier decision to retain the original startup Home. The profile chooser remains
+the cold-launch entry. Explicit original Home navigation still opens the original
+screen, and Movies 2 / Series 2 remain separate destinations. Both authenticated
+and cached-session profile entry reset the discovery route to HOME and dismiss
+destination overlays so a previous screen cannot hide the new landing page.

@@ -79,6 +79,7 @@ internal fun DiscoveryPreviewScreen(
     val downloadEpisode = LocalDownloadDiscoveryEpisode.current
     val refreshDiscoveryMatches = LocalRefreshDiscoveryMatches.current
     val openProviderSeries = LocalOpenDiscoverySeries.current
+    val providerNavigation = LocalProviderDetailNavigation.current
     val configuration = LocalConfiguration.current
     val phone = configuration.smallestScreenWidthDp < 600 && !context.isTvLikeDevice(configuration)
     val landscape = !phone
@@ -89,6 +90,9 @@ internal fun DiscoveryPreviewScreen(
     val localScope = rememberCoroutineScope()
     var configure by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var actor by remember(profile, surface) { mutableStateOf<DiscoveryPerson?>(null) }
+    var actorOrigin by remember(profile, surface) { mutableStateOf<String?>(null) }
+    var actorFocusOrigin by remember(profile, surface) { mutableStateOf<String?>(null) }
     var tilePopupOpen by remember { mutableStateOf(false) }
     var foreground by remember { mutableStateOf(true) }
     var contentFocused by remember { mutableStateOf(false) }
@@ -125,6 +129,19 @@ internal fun DiscoveryPreviewScreen(
         routeOrigins = (routeOrigins + ((state.detail?.key ?: "landing") to origin)) - card.key
         vm.openDetails(card)
     }
+    fun dismissActor() {
+        actor = null
+        val key = actorFocusOrigin
+        returningTo = key
+        if (key != null) actorOrigin?.let { routeOrigins = routeOrigins + (it to key) }
+        localScope.launch {
+            repeat(60) {
+                withFrameNanos { }
+                if (hostView.hasWindowFocus() && runCatching { returnRequesters[key]?.requestFocus() == true }.getOrDefault(false)) return@launch
+            }
+        }
+    }
+    LaunchedEffect(state.detail?.key) { if (state.detail == null) actor = null }
     fun favorite(card: DiscoveryCard) = FavoriteItem(if (card.series) FavoriteKind.SERIES else FavoriteKind.MOVIE,
         card.media, profileKey = profile, source = FavoriteSource.TMDB)
     fun cardEntry(card: DiscoveryCard, row: String) = RailEntry("$row:${card.key}", card.title, card.poster, card,
@@ -140,7 +157,7 @@ internal fun DiscoveryPreviewScreen(
                 refreshMatches = refreshDiscoveryMatches?.let { refresh -> { refresh(card) } },
                 viewDescription = card.overview?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
                 openSeries = if (card.series) ({ playCard(card) }) else null,
-                extraActions = listOf("Play" to { playCard(card) }, "Info" to { details(card, "$row:${card.key}") }))
+                playAction = { playCard(card) })
             if (descriptionOpen) FullDescriptionDialog(card.title, card.overview.orEmpty()) { descriptionOpen = false; restore() }
         })
     val rails = buildList {
@@ -164,7 +181,7 @@ internal fun DiscoveryPreviewScreen(
                             trailerItem = recent.media.takeUnless { it.episodeNumber != null }, trailerSeries = recent.kind == FavoriteKind.SERIES,
                             recommendationItem = recent.media, recommendationType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                             viewDescription = recent.media.description?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
-                            onTrailerReturned = restore, extraActions = listOf("Play" to { openRecent(recent) }))
+                            onTrailerReturned = restore, playAction = { (providerNavigation?.recent ?: openRecent)(recent) })
                         if (descriptionOpen) FullDescriptionDialog(recent.media.title, recent.media.description.orEmpty()) { descriptionOpen = false; restore() }
                     })
             }))
@@ -184,7 +201,7 @@ internal fun DiscoveryPreviewScreen(
                                 recommendationItem = group.watched.series, recommendationType = CatalogType.SERIES, trailerSeries = true,
                                 openSeries = openProviderSeries?.let { open -> { open(group.watched.series) } },
                                 viewDescription = episode.description?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
-                                onTrailerReturned = restore, extraActions = listOf("Play" to { openWatched(group.watched, episode) }))
+                                onTrailerReturned = restore, playAction = { openWatched(group.watched, episode) })
                             if (descriptionOpen) FullDescriptionDialog(episode.title, episode.description.orEmpty()) { descriptionOpen = false; restore() }
                         })
                 }))
@@ -215,37 +232,22 @@ internal fun DiscoveryPreviewScreen(
         val screenHeight = maxHeight
         DiscoveryBackdrop(displayed, reduceMotion)
         Column(Modifier.fillMaxSize()) {
-            val tabsState = rememberLazyListState()
-            LaunchedEffect(surface, configuration.screenWidthDp, configuration.fontScale) {
-                tabsState.scrollToItem(trialSurfaces.indexOf(surface).coerceAtLeast(0))
-            }
-            // Phones reserve a separate, full-width destination row. Tablet/TV keep the compact header.
-            Column(Modifier.fillMaxWidth().background(Background.copy(alpha = .82f))) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = if (landscape) 24.dp else 8.dp, vertical = 4.dp),
+            if (!phone) {
+                DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
+                    back = { if (state.detail != null) vm.closeDetails() else exit() },
+                    select = { tab -> if (tab != surface) selectSurface(tab) else if (state.detail != null) vm.closeDetails() },
+                    classic = classic, headerFocus = { contentFocused = false }, menu = menu,
+                    changeMenu = { menu = it }, customize = { configure = true })
+            } else Column(Modifier.fillMaxWidth().background(Background.copy(alpha = .82f))) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DiscoveryAction("Back", icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { if (state.detail != null) vm.closeDetails() else exit() }
-                    if (phone) {
-                        Text("NikTV 2", Modifier.weight(1f).padding(start = 8.dp), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                    } else {
-                        DiscoveryLazyRow(Modifier.weight(1f), state = tabsState, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            items(trialSurfaces) { tab -> DiscoveryAction(tab.trialTitle(), selected = tab == surface,
-                                modifier = if (tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
-                                onFocus = { contentFocused = false }) { if (tab != surface) selectSurface(tab) else if (state.detail != null) vm.closeDetails() } }
-                        }
-                        DiscoveryAction("Live TV", Icons.Default.LiveTv) { classic("Live TV") }
-                    }
+                    DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { if (state.detail != null) vm.closeDetails() else exit() }
+                    Image(androidx.compose.ui.res.painterResource(com.nikhil.niktv.R.drawable.niktv_logo_foreground), "NikTV", Modifier.padding(start = 8.dp).size(36.dp))
+                    Spacer(Modifier.weight(1f))
                     DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
-                    Box {
-                        DiscoveryAction("Browse menu", Icons.Default.MoreHoriz, iconOnly = true) { menu = true }
-                        DropdownMenu(menu, { menu = false }) {
-                            listOf("Home", "Live TV", "Movies", "Series", "My List", "Offline", "Settings", "Profile").forEach { label ->
-                                DropdownMenuItem(text = { Text(label) }, onClick = { menu = false; classic(label) })
-                            }
-                            DropdownMenuItem(text = { Text("Customize ${surface.trialTitle()}") }, onClick = { menu = false; configure = true })
-                        }
-                    }
+                    DiscoveryBrowseMenu(menu, { menu = it }, surface, classic, { configure = true })
                 }
-                if (phone) Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     trialSurfaces.forEach { tab ->
                         DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"), horizontalPadding = 4.dp,
                             selected = tab == surface, modifier = Modifier.weight(1f).heightIn(min = 48.dp)
@@ -302,12 +304,26 @@ internal fun DiscoveryPreviewScreen(
                 val focusHandlers = remember { mutableMapOf<Int, () -> Boolean>() }
                 var move by remember { mutableStateOf<Job?>(null) }
                 var requestedRow by remember { mutableIntStateOf(0) }
+                val firstRailIndex = if (state.detail?.series == true) 2 else 1
+                val castIndex = firstRailIndex + visibleRails.size + 1 + if (state.details?.collection != null) 1 else 0
+                val navigationRows = buildList {
+                    add(0)
+                    if (state.detail?.series == true && state.details?.seasons?.isNotEmpty() == true) add(1)
+                    visibleRails.forEachIndexed { i, row -> if (row.entries.isNotEmpty()) add(firstRailIndex + i) }
+                    if (state.detail != null && state.details?.cast?.any { (it.id ?: 0) > 0 } == true) add(castIndex)
+                }
                 fun focusRow(index: Int) {
                     requestedRow = index
                     move = coordinator.move(listState, index, reduceMotion) {
                         if (index <= 0) runCatching { playRequester.requestFocus() }.getOrDefault(false)
                         else focusHandlers[index]?.invoke() == true
                     }
+                }
+                fun moveRow(index: Int, delta: Int): Boolean {
+                    val current = if (move?.isActive == true) requestedRow else index
+                    val next = adjacentDiscoveryRow(current, delta, navigationRows) ?: return false
+                    focusRow(next)
+                    return true
                 }
                 DiscoveryVerticalFocusViewport(coordinator) {
                 LazyColumn(Modifier.fillMaxSize().pointerInput(Unit) {
@@ -327,7 +343,7 @@ internal fun DiscoveryPreviewScreen(
                             play = { displayed?.let { returningTo = playOrigin; routeOrigins = routeOrigins + (routeIdentity to playOrigin); playCard(it) } },
                             add = { displayed?.let { toggleFavorite(favorite(it)) } },
                             info = { displayed?.let { details(it, origin) } },
-                            onFocus = { contentFocused = true; focusedRow = "hero" }, onDown = { focusRow(1) },
+                            onFocus = { contentFocused = true; focusedRow = "hero" }, onDown = { moveRow(0, 1) },
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
                             index = state.heroIndex, count = state.heroes.size)
                         state.errors.filterKeys { it == "detail" }.values.forEach { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray, fontSize = 13.sp) }
@@ -387,19 +403,15 @@ internal fun DiscoveryPreviewScreen(
                         val width = if (landscape) minOf(((configuration.screenWidthDp - 64) / 7.4f - 12).dp.coerceIn(92.dp, 132.dp),
                             ((screenHeight.value - 224) / 3f).dp.coerceIn(88.dp, 132.dp))
                             else ((configuration.screenWidthDp - 40) / 3.15f - 10).dp.coerceIn(88.dp, 120.dp)
-                        DiscoveryRail(row, width, reduceMotion, returnRequesters,
+                        DiscoveryRail(row, width, reduceMotion, returnRequesters, navigationIndex = index,
                             popupChanged = { tilePopupOpen = it },
                             prefetch = foreground && !scrolling && anchorIndex == index,
                             skeleton = row.section?.let { it !in state.feeds && "feed:${it.name}" !in state.errors } == true,
                             register = { handler -> focusHandlers[index] = handler }, unregister = { focusHandlers.remove(index) },
                             focused = { entry -> contentFocused = true; returningTo = entry.key; routeOrigins = routeOrigins + (routeIdentity to entry.key); alignFocusedRow(row.key, index) },
                             present = { entry -> entry.card?.let { featured = it } },
-                            move = { delta ->
-                                val destination = (if (move?.isActive == true) requestedRow else index) + delta
-                                val lastRow = visibleRails.size + if (state.detail?.series == true) 1 else 0
-                                if (destination > lastRow) false
-                                else { focusRow(destination.coerceAtLeast(0)); true }
-                            }, viewAll = row.section?.let { section -> { returningTo = "${row.key}:all"; openSection(section) } })
+                            move = { delta -> moveRow(index, delta) },
+                            viewAll = row.section?.let { section -> { returningTo = "${row.key}:all"; openSection(section) } })
                         if (row.entries.isEmpty()) {
                             val key = "feed:${row.section?.name}"
                             if (key in state.errors) DiscoveryAction("Retry ${row.title}", modifier = Modifier.padding(start = 24.dp)) { row.section?.let { vm.loadFeed(it, true) } }
@@ -423,15 +435,46 @@ internal fun DiscoveryPreviewScreen(
                             }
                             DiscoverySupplementStatus("collection", state, vm)
                         } }
-                        val people = state.details?.cast.orEmpty()
+                        val people = state.details?.cast.orEmpty().distinctBy { it.id ?: it.name }
                         if (people.isNotEmpty()) item("cast") {
+                            val detailKey = state.detail?.key.orEmpty()
+                            var selected by rememberSaveable(detailKey) { mutableStateOf<String?>(null) }
+                            fun personKey(person: DiscoveryPerson) = "cast:$detailKey:${person.id ?: person.name}"
+                            val currentPeople by rememberUpdatedState(people)
+                            DisposableEffect(castIndex, detailKey) {
+                                focusHandlers[castIndex] = {
+                                    val key = selected?.takeIf { key -> currentPeople.any { personKey(it) == key } }
+                                        ?: currentPeople.firstOrNull { (it.id ?: 0) > 0 }?.let(::personKey)
+                                    runCatching { returnRequesters[key]?.requestFocus() == true }.getOrDefault(false)
+                                }
+                                onDispose { focusHandlers.remove(castIndex) }
+                            }
                             Text("Cast", Modifier.padding(start = 24.dp, top = 18.dp), color = Color.White, fontWeight = FontWeight.Bold)
-                            DiscoveryLazyRow(contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                items(people, key = { "${it.name}:${it.role}" }) { person ->
-                                    Column(Modifier.width(90.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            DiscoveryLazyRow(Modifier.onPreviewKeyEvent {
+                                if (it.type == KeyEventType.KeyDown && it.key in listOf(Key.DirectionUp, Key.DirectionDown))
+                                    moveRow(castIndex, if (it.key == Key.DirectionUp) -1 else 1) else false
+                            }, contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                items(people, key = { personKey(it) }) { person ->
+                                    val key = personKey(person)
+                                    val requester = remember(key) { returnRequesters.getOrPut(key) { FocusRequester() } }
+                                    var focused by remember { mutableStateOf(false) }
+                                    Surface(onClick = { if (person.id != null) { actorOrigin = detailKey; actorFocusOrigin = key; actor = person } },
+                                        enabled = (person.id ?: 0) > 0,
+                                        modifier = Modifier.width(102.dp).focusRequester(requester).onFocusChanged {
+                                            focused = it.isFocused
+                                            if (it.isFocused) {
+                                                selected = key; returningTo = key
+                                                routeOrigins = routeOrigins + (routeIdentity to key)
+                                                contentFocused = true; alignFocusedRow("cast", castIndex)
+                                            }
+                                        }, shape = RoundedCornerShape(12.dp),
+                                        color = if (focused) Color(0xFF303641) else Color.Transparent,
+                                        border = if (focused) BorderStroke(2.dp, Color.White) else null) {
+                                    Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                         AsyncImage(person.portrait, person.name, Modifier.size(80.dp).clip(CircleShape).background(Color(0xFF20232A)), contentScale = ContentScale.Crop)
                                         Text(person.name, color = Color.White, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         Text(person.role, color = Color.Gray, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    }
                                     }
                                 }
                             }
@@ -469,6 +512,14 @@ internal fun DiscoveryPreviewScreen(
             }
         }
     }
+    }
+    actor?.takeIf { actorOrigin == state.detail?.key }?.let { person ->
+        saved.SaveableStateProvider("actor:$profile:${person.id}:$actorOrigin") {
+            DiscoveryActorDialog(person, load = vm::actorCredits, close = ::dismissActor, reduceMotion = reduceMotion, open = { card ->
+                if (card.key == actorOrigin) dismissActor()
+                else details(card, "actor:${person.id}:${card.key}")
+            })
+        }
     }
     if (configure) AlertDialog(onDismissRequest = { configure = false }, title = { Text("Customize ${surface.trialTitle()}") },
         text = { LazyColumn(Modifier.heightIn(max = 400.dp)) {
@@ -524,7 +575,7 @@ private fun DiscoverySupplementStatus(section: String, state: DiscoveryState, vm
 }
 
 @Composable
-private fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean) {
+internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean) {
     val context = LocalContext.current
     var ready by remember { mutableStateOf<String?>(null) }
     val requested = card?.backdrop?.let { thumbnailArtworkUrl(it, 1280) }
@@ -541,10 +592,11 @@ private fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean) {
 }
 
 @Composable
-private fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landscape: Boolean, compact: Boolean, detail: Boolean, loading: Boolean,
+internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landscape: Boolean, compact: Boolean, detail: Boolean, loading: Boolean,
     inList: Boolean, playRequester: FocusRequester, infoRequester: FocusRequester,
     play: () -> Unit, add: () -> Unit, info: () -> Unit, onFocus: () -> Unit, onDown: () -> Unit,
-    previous: () -> Unit, next: () -> Unit, carousel: Boolean, index: Int, count: Int) {
+    previous: () -> Unit, next: () -> Unit, carousel: Boolean, index: Int, count: Int,
+    playLabel: String = "Play", playEnabled: Boolean = true) {
     var drag by remember { mutableFloatStateOf(0f) }
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     Column(Modifier.fillMaxWidth().heightIn(min = height).padding(horizontal = if (landscape) 32.dp else 18.dp, vertical = if (compact) 8.dp else 16.dp)
@@ -568,8 +620,8 @@ private fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landscap
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false }) {
-            DiscoveryAction("Play", Icons.Default.PlayArrow, selected = true,
-                modifier = Modifier.focusRequester(playRequester), enabled = card != null, onFocus = onFocus, onClick = play)
+            DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true,
+                modifier = Modifier.focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
                 iconOnly = !detail, enabled = card != null, onFocus = onFocus, onClick = add)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
@@ -592,7 +644,7 @@ private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Uni
 }
 
 @Composable
-private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>,
+private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>, navigationIndex: Int,
     popupChanged: (Boolean) -> Unit,
     prefetch: Boolean, skeleton: Boolean,
     register: (() -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
@@ -607,7 +659,7 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
     var focusedCard by remember { mutableStateOf<RailEntry?>(null) }
     LaunchedEffect(focusedCard?.key) { delay(150); focusedCard?.let(present) }
     val entries by rememberUpdatedState(row.entries)
-    DisposableEffect(row.key) {
+    DisposableEffect(row.key, navigationIndex) {
         register {
             val key = selected?.takeIf { it == "${row.key}:all" || entries.any { entry -> entry.key == it } } ?: entries.firstOrNull()?.key
             key != null && runCatching { requesters[key]?.requestFocus() == true }.getOrDefault(false)
@@ -714,14 +766,14 @@ internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: Stri
 }
 
 @Composable
-private fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     selected: Boolean = false, iconOnly: Boolean = false, modifier: Modifier = Modifier, enabled: Boolean = true,
     visualLabel: String = label, horizontalPadding: Dp = 14.dp,
     onFocus: () -> Unit = {}, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 40.dp)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() },
-        shape = RoundedCornerShape(22.dp), color = if (focused) Color.White else if (selected) Accent else Color(0xFF242831).copy(alpha = .85f),
+        shape = RoundedCornerShape(10.dp), color = if (focused) Color.White else if (selected) Accent else Color(0xFF242831).copy(alpha = .85f),
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
         contentColor = if (focused) Color.Black else Color.White) {
         Row(Modifier.padding(horizontal = if (iconOnly) 10.dp else horizontalPadding, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {

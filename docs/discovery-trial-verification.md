@@ -230,3 +230,71 @@ Normal APK build succeeded: discovery-adjacent-carousel-build.log (1m29s), using
 New UI only: `DiscoveryPosterTile` retains its existing poster widths/aspect ratios, focus treatment and 3 dp red progress bar. Title/subtitle are now inside the bottom of the artwork over a static dark gradient, with typography/padding scaled for the compact posters rather than copied at the original UI's larger physical size. Both text fields wrap instead of using the previous two-line title/one-line subtitle ellipsis. The red bar remains the last overlay and text is inset above it. Missing-artwork cards retain their icon and use the same overlay text. Original UI components were not changed. Device testing is left to the user as requested; build/install result follows.
 
 Normal APK assembly succeeded in 40s (discovery-compact-overlay-build.log). Existing normal assembleDebug command/flags; no unit suite, lint or device navigation tests rerun for this reversible styling change. No commit/push.
+
+## Discovery menu cleanup
+
+Removed redundant Info from discovery card long-press menus (opening the card already opens full details). Replaced generic extra actions with an optional typed Play callback rendered with the standard PlayArrow icon; discovery cards, Continue Watching and New Episodes use it, while legacy callers retain the null default. Updated the existing menu expectation to omit Info and assert its absence. Normal APK build passed in 56s (`discovery-menu-play-icon-build.log`); no instrumentation/unit suite or lint rerun for this small menu presentation change. Device testing left to the user, and Fire TV update installed. No commit/push in this follow-up.
+
+## Cast navigation and actor discovery
+
+New detail pages now retain TMDB person IDs and present cast cards as themed focusable actions. Explicit row navigation includes cast and skips non-focusable supplemental/loading sections; changing rail indexes re-registers their requesters. D-pad Left/Right uses the cast row's normal minimum-reveal policy. Selecting a person opens a themed movie/series grid, with ordinary detail-page actions for each result. Back can return from a selected title to the actor grid, then to the originating cast card. Missing/invalid IDs do not dispatch ambiguous name-based lookups.
+
+Actor data uses TMDB combined cast credits on explicit selection only. It excludes unknown/future dates, sensitive titles and crew-only credits, deduplicates by movie/series identity and bounds results to 60. Public data uses the existing 24-hour metadata TTL, shared two-request concurrency and 10 MiB disk cache. Detail cache keys move to v2 so existing details acquire person IDs; old serialized cast entries remain compatible. No provider search/stream opens from cast browsing. Modal selection/route changes cancel lookups and reject canceled results; existing detail/playback callbacks remain in use.
+
+Focused verification command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests '*DiscoveryActorCreditsTest' --tests '*DiscoveryMotionTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+Final source build succeeded in 1m5s (`discovery-cast-navigation-final-build.log`), with **6/6 unit tests passed**: four actor parsing/navigation/bounds/serialization cases and two scroll cancellation cases. No instrumentation suite or lint rerun; runtime cast navigation remains for user device testing. The existing unrelated popup-action test failure remains unresolved. Fire TV update installed; tablet was only captured on request and remains in Brody's TV. Screenshot stored outside Git (`tablet-current-cast-request.png`). No commit/push for this follow-up.
+
+## NikTV-themed floating navigation
+
+The trial's tablet/TV header now uses the reference's floating pill composition with NikTV branding, Search, Home/Movies/Series, Live TV, My List and the existing Browse menu. A separate rounded clock/profile control uses the active profile initial and opens profile switching. NikTV red selected actions, white D-pad focus and rounded popup items remain the app's own components. Trial labels display Home/Movies/Series but retain Home 2/Movies 2/Series 2 semantic identities and routes; original destinations remain available through Browse. The active tab keeps its Down-to-Play focus path. A horizontally scrollable destination row accommodates narrow tablets/larger labels. Phone navigation retains its separate two-row layout.
+
+Clock updates once per minute in its own composable; no feed reload or provider request is attached. This header change does not alter playback or discovery matching. Build/install result follows. Device navigation checks are left to the user; tablet remains in the reference app.
+
+Normal APK assembly passed in 59s (discovery-pill-navigation-build.log), using the existing :app:assembleDebug command/flags. No additional test suite or lint run for this header presentation change; prior six actor/motion unit tests remain the latest focused test results. Fire TV installation completed for user validation. No commit/push.
+
+## Logo-only header and squarer trial controls
+
+Removed the redundant NikTV wordmark text beside the header logo (including the phone title text), using a 36 dp logo with an accessibility label. Trial actions now use the original settings UI's 10 dp rounded-rectangle corner radius instead of 22 dp pills. The tablet/TV navigation container and clock/profile control use 10 dp corners, with an 8 dp profile initial square. Existing red selection, white focus, button sizes, callbacks and poster/progress-bar styling remain. Original UI components were not edited. Samsung is the preview target; no navigation tests are run at the user's request.
+
+Normal assembleDebug build passed in 51s (discovery-square-controls-build.log). No unit suite or lint rerun for this reversible styling change. Samsung preview build installed; no Fire TV/tablet installation or commit/push in this follow-up.
+
+## IPTV movie/series details and provider categories
+
+User approved applying the trial design to IPTV titles and replacing the existing series presentation. IPTV movies now open a dedicated full-screen detail page from catalog, search, recent and provider-favorite selections; Play retains the selected provider item, profile, visible queue/filter and duplicate occurrence context. Player-side channel/episode navigation still uses the existing direct playback callbacks. The movie detail selection remains in ViewModel state for return from playback and is cleared/hidden across profile changes. Parental gates apply before opening/playing and delayed PIN callbacks are selection/profile guarded.
+
+IPTV series now use the shared discovery hero, metadata, cast and recommendations presentation above the existing provider episode controls. Initial entry targets the header action; playback return retains the existing episode restoration path. Provider seasons/episode IDs, newest/oldest ordering, episode search, pagination, downloads/removal, description, resume, notification subscription, provider/TMDB episode-details toggle and refresh remain connected to their existing callbacks. The redundant old hero and extra primary Play control were removed. Loading episodes disables the primary action rather than exposing a no-op.
+
+Within the trial, IPTV movie/series categories use compact discovery posters, the new adaptive header, local loaded-title search, contextual menus and existing catalog pagination/cache. Empty queries auto-load near the boundary; filtered searches expose an explicit Load more control. Poster selection opens details; explicit Play remains a direct action. Live TV and player UI are not redesigned. Original category destinations remain accessible through Browse.
+
+Provider metadata matching uses existing conservative TMDB matching or a trusted provider TMDB ID. Cached presentation hints (including no-match results) expire after six hours; public detail metadata remains cached for 24 hours in the shared 10 MiB discovery cache. IDs/types/years separate cache lookups; stale data survives refresh failure. Only public TMDB records are serialized: provider IDs, commands and potentially credential-bearing artwork URLs stay out of the shared metadata cache. Raw provider artwork/title/description remain an in-memory fallback, with Play available when TMDB metadata cannot be matched or fetched. Actor and related-title browsing uses the existing discovery callbacks; no automatic IPTV matching is introduced while browsing metadata.
+
+Focused verification command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests '*ProviderMetadataTest' --tests '*SeriesEpisodeEntryFocusTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+`provider-details-queue-verification.log`: build passed in 44s; **13 tests passed** (seven metadata cache/privacy/queue cases and six existing episode-return-focus cases). Earlier compilation caught two missing imports, corrected before passing builds (`provider-new-details-final-build.log` failed; retry passed). `provider-details-final-verification.log` also passed the preceding 11-test set. A final presentation-only adjustment preserves the actor grid behind a selected related detail page and adds a no-match explanation; APK assembly is logged in `provider-details-install-build.log`. No full suite, lint or private-provider playback tests run for this follow-up. Device behavior/performance is left for user testing; tests verify cache semantics and navigation policies, not end-to-end playback or measured latency.
+
+Installation scope is explicitly **Samsung and Xiaomi tablet only**. Fire TV must remain untouched until separately requested. No commit/push.
+
+Final presentation APK assembly passed in 38s (provider-details-install-build.log). Verified package updates: Samsung 2026-10-19 23:31:33 and Xiaomi tablet 2026-10-19 23:31:34. Both installs used -r and preserved app data; apps were not launched or navigated after installation. Fire TV received no install or input commands for this work.
+## Modern Home default — 2026-10-20
+
+Profile authentication and cached-session switching now select `DashboardSurface.HOME`
+and clear destination overlays. The profile chooser and explicit classic destinations
+remain available. README and the working plan reflect the new default.
+
+Targeted verification:
+`./gradlew.bat :app:testDebugUnitTest --tests '*DiscoveryViewModelTest' --tests '*CatalogBackNavigationTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'`
+passed in 1m 5s: 18 tests, zero failures/errors, APK assembly successful.
+These existing tests cover discovery state/profile isolation and back-navigation
+policy; the two profile-entry assignments were reviewed directly. No new device
+interaction or full-suite/lint pass is claimed for this small routing change.
+Log: `D:/workspace/niktv-playback-tests/modern-home-default-verification.log`.
+Samsung update succeeded using `adb install -r`. Tablet installation was not completed: the wireless transport disappeared, reconnected, then went offline again during streamed installation; the non-streaming retry also reported device offline. Fire TV was left unchanged. No apps were launched or navigation/playback tests performed after installation.
