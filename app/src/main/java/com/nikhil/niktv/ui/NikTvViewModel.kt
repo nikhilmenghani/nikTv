@@ -46,6 +46,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.NonCancellable
 
 data class NikTvState(
+    val discoverySurface: DashboardSurface? = null,
+    val discoveryMatchCounts: Map<String, Int> = emptyMap(),
     val parentalControlsEnabled: Boolean = true,
     val parentalRelockMinutes: Int = 5,
     val parentalPrompt: String? = null,
@@ -909,6 +911,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openCatalogType(type: CatalogType) {
         _state.update { current ->
             current.copy(
+                discoverySurface = null,
                 modernTmdbSection = null,
                 modernIptvCategory = null,
                 modernSectionOriginHome = false,
@@ -3740,20 +3743,34 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         updateModernTmdbAvailability(session, type, forceId = id)
     }
 
+    /** One user-requested preview-tile lookup; never starts during browsing or hero rotation. */
+    internal fun refreshDiscoveryMatches(card: com.nikhil.niktv.discovery.DiscoveryCard) {
+        val session = _state.value.session ?: return
+        if (_state.value.discoverySurface == null) return
+        updateModernTmdbAvailability(session, if (card.series) CatalogType.SERIES else CatalogType.MOVIES,
+            forceId = card.id, discoveryCard = card)
+    }
+
     private fun updateModernTmdbAvailability(
         session: PortalSession,
         type: CatalogType,
-        forceId: Int? = null
+        forceId: Int? = null,
+        discoveryCard: com.nikhil.niktv.discovery.DiscoveryCard? = null
     ) {
         tmdbAvailabilityJob?.cancel()
         val profileKey = session.profile.cacheKey()
-        val section = _state.value.modernTmdbSection ?: return
+        val section = _state.value.modernTmdbSection
+        val trialSurface = _state.value.discoverySurface
+        if (discoveryCard == null && section == null || discoveryCard != null && trialSurface == null) return
+        fun accepts(current: NikTvState) = current.session?.profile?.cacheKey() == profileKey &&
+            if (discoveryCard == null) current.modernTmdbSection == section
+            else current.discoverySurface == trialSurface
         if (forceId == null) {
             // Browsing only paints saved badges. Provider checks are user initiated.
             tmdbAvailabilityJob = viewModelScope.launch {
                 val saved = tmdbAvailability.read(profileKey, type).entries.mapValues { it.value.matches }
                 _state.update { current ->
-                    if (current.session?.profile?.cacheKey() != profileKey || current.modernTmdbSection != section) current
+                    if (!accepts(current)) current
                     else if (type == CatalogType.MOVIES) current.copy(modernTmdbMovieMatches = saved)
                     else current.copy(modernTmdbSeriesMatches = saved)
                 }
@@ -3763,16 +3780,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         tmdbAvailabilityJob = viewModelScope.launch {
             while (isActive) {
                 val snapshot = _state.value
-                if (snapshot.session?.profile?.cacheKey() != profileKey ||
-                    snapshot.modernTmdbSection != section || snapshot.nowPlaying != null) return@launch
+                if (!accepts(snapshot) || snapshot.nowPlaying != null) return@launch
+                val movieEntries = discoveryCard?.takeUnless { it.series }?.let { listOf(TrendingMovie(it.movie())) }
+                    ?: snapshot.modernTmdbMovies
+                val seriesEntries = discoveryCard?.takeIf { it.series }?.let { listOf(TrendingSeries(it.show())) }
+                    ?: snapshot.modernTmdbSeries
                 val interval = snapshot.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L
                 val now = System.currentTimeMillis()
                 val saved = tmdbAvailability.read(profileKey, type).entries
-                val ids = if (type == CatalogType.MOVIES) snapshot.modernTmdbMovies.map { it.tmdb.id }
-                    else snapshot.modernTmdbSeries.map { it.tmdb.id }
+                val ids = if (type == CatalogType.MOVIES) movieEntries.map { it.tmdb.id }
+                    else seriesEntries.map { it.tmdb.id }
                 val cachedMatches = saved.filterKeys { it in ids }.mapValues { it.value.matches }
                 _state.update { current ->
-                    if (current.session?.profile?.cacheKey() != profileKey || current.modernTmdbSection != section) current
+                    if (!accepts(current)) current
                     else if (type == CatalogType.MOVIES) current.copy(
                         modernTmdbMovieMatches = current.modernTmdbMovieMatches + cachedMatches)
                     else current.copy(modernTmdbSeriesMatches = current.modernTmdbSeriesMatches + cachedMatches)
@@ -3806,20 +3826,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }.getOrElse { error ->
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                        if (manualId != null) _state.update { it.copy(error = error.message ?: "Could not refresh IPTV matches") }
+                        if (manualId != null) _state.update { if (accepts(it)) it.copy(error = error.message ?: "Could not refresh IPTV matches") else it }
                         return@launch
                     }
                 } else null
                 if (catalog != null) tmdbAvailabilityCatalogs[profileKey to type] = catalog
                 for (id in pending) {
                     val current = _state.value
-                    if (current.session?.profile?.cacheKey() != profileKey ||
-                        current.modernTmdbSection != section || current.nowPlaying != null) return@launch
+                    if (!accepts(current) || current.nowPlaying != null) return@launch
                     val title = if (type == CatalogType.MOVIES)
-                        snapshot.modernTmdbMovies.first { it.tmdb.id == id }.tmdb.title
-                        else snapshot.modernTmdbSeries.first { it.tmdb.id == id }.tmdb.name
+                        movieEntries.first { it.tmdb.id == id }.tmdb.title
+                        else seriesEntries.first { it.tmdb.id == id }.tmdb.name
                     val matchingSeries = if (type == CatalogType.SERIES) {
-                        val original = snapshot.modernTmdbSeries.first { it.tmdb.id == id }.tmdb
+                        val original = seriesEntries.first { it.tmdb.id == id }.tmdb
                         try { tmdb.withSeriesAliases(original) } catch (error: Exception) {
                             kotlinx.coroutines.currentCoroutineContext().ensureActive()
                             original
@@ -3855,20 +3874,23 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }.getOrElse { error ->
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                        if (manualId != null) _state.update { it.copy(error = error.message ?: "Could not refresh IPTV matches") }
+                        if (manualId != null) _state.update { if (accepts(it)) it.copy(error = error.message ?: "Could not refresh IPTV matches") else it }
                         delay(2_000L)
                         continue
                     }
                     val found = withContext(Dispatchers.Default) {
                         if (type == CatalogType.MOVIES) rankTmdbMovieMatches(
-                            snapshot.modernTmdbMovies.first { it.tmdb.id == id }.tmdb, candidates)
+                            movieEntries.first { it.tmdb.id == id }.tmdb, candidates)
                         else rankTmdbSeriesMatches(requireNotNull(matchingSeries), candidates)
                     }
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!accepts(_state.value)) return@launch
                     tmdbAvailability.save(profileKey, type, id,
                         TmdbAvailabilityEntry(System.currentTimeMillis(), found, matchingVersion = 4))
                     _state.update { latest ->
-                        if (latest.session?.profile?.cacheKey() != profileKey || latest.modernTmdbSection != section) latest
+                        if (!accepts(latest)) latest
+                        else if (discoveryCard != null) latest.copy(discoveryMatchCounts = latest.discoveryMatchCounts +
+                            (com.nikhil.niktv.discovery.discoveryAvailabilityKey(profileKey, discoveryCard) to found.size))
                         else if (type == CatalogType.MOVIES) latest.copy(
                             modernTmdbMovieMatches = latest.modernTmdbMovieMatches + (id to found))
                         else latest.copy(modernTmdbSeriesMatches = latest.modernTmdbSeriesMatches + (id to found))
@@ -4332,6 +4354,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectTmdbSeriesMatch(item: MediaItem) = task {
+        pendingDiscoveryEpisode?.takeIf { it.card.id == _state.value.seriesMatchSelection?.id &&
+            latestPlaybackRequest.isCurrent(it.request) }?.let { intent ->
+            playDiscoveryEpisode(intent, item, confirmedByUser = true)
+            return@task
+        }
         if (isAdultMedia(item, CatalogType.SERIES) && !authorizeParental()) return@task
         val session = requireNotNull(_state.value.session)
         val series = requireNotNull(_state.value.seriesMatchSelection)
@@ -4339,6 +4366,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeTmdbSeriesMatches() = _state.update {
+        pendingDiscoveryEpisode = null
         it.copy(seriesMatchSelection = null, seriesMatchCandidates = emptyList())
     }
 
@@ -6233,6 +6261,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private fun beginPlaybackRequest(): Long {
+        pendingDiscoveryEpisode = null
         portal.prioritizePlayback()
         navigationCursor.cancel()
         return latestPlaybackRequest.begin()
@@ -7493,6 +7522,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openHome() {
         cancelPendingPlayback()
         _state.update { it.copy(
+            discoverySurface = null,
             homeOpen = true,
             favoritesOpen = false,
             settingsOpen = false,
@@ -7518,6 +7548,66 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         loadDashboardDiscovery()
     }
     fun closeHome() = _state.update { it.copy(homeOpen = false) }
+
+    /** Trial routes deliberately do not call loadDashboardDiscovery or resolve any provider title. */
+    fun openDiscovery(surface: DashboardSurface) {
+        cancelPendingPlayback()
+        _state.update { it.copy(discoverySurface = surface, homeOpen = true, favoritesOpen = false,
+            settingsOpen = false, searchOpen = false, offlineDownloadsOpen = false,
+            selectedSeries = null, modernTmdbSection = null, modernIptvCategory = null) }
+    }
+    fun closeDiscovery() = _state.update { it.copy(discoverySurface = null) }
+
+    private data class PendingDiscoveryEpisode(val card: com.nikhil.niktv.discovery.DiscoveryCard,
+        val season: Int, val number: Int, val profile: String, val request: Long, val download: Boolean = false)
+    private var pendingDiscoveryEpisode: PendingDiscoveryEpisode? = null
+
+    internal fun openDiscoveryEpisode(card: com.nikhil.niktv.discovery.DiscoveryCard, season: Int, episode: Int) =
+        requestDiscoveryEpisode(card, season, episode, false)
+    internal fun downloadDiscoveryEpisode(card: com.nikhil.niktv.discovery.DiscoveryCard, season: Int, episode: Int) =
+        requestDiscoveryEpisode(card, season, episode, true)
+    private fun requestDiscoveryEpisode(card: com.nikhil.niktv.discovery.DiscoveryCard, season: Int, episode: Int, download: Boolean) {
+        val session = _state.value.session ?: return
+        val requestId = beginPlaybackRequest()
+        val intent = PendingDiscoveryEpisode(card, season, episode, session.profile.cacheKey(), requestId, download)
+        pendingDiscoveryEpisode = intent
+        playbackTask(requestId) {
+            val saved = store.tmdbMappings.first().firstOrNull {
+                it.profileKey == intent.profile && it.type == CatalogType.SERIES && it.tmdbId == card.id &&
+                    (it.confirmedByUser || it.media.externalTmdbId == card.id)
+            }
+            val candidates = saved?.let { listOf(it.media) }
+                ?: resolveInitialTmdbSeriesCandidates(session, TrendingSeries(card.show()))
+            if (!latestPlaybackRequest.isCurrent(intent.request) || _state.value.session?.profile?.cacheKey() != intent.profile) return@playbackTask
+            if (candidates.size > 1) {
+                _state.update { it.copy(seriesMatchSelection = card.show(), seriesMatchCandidates = candidates) }
+            } else {
+                val series = candidates.singleOrNull() ?: resolveTmdbSeriesMovieFallback(session, card.show())
+                    ?: error("This series was not found in the current IPTV profile.")
+                playDiscoveryEpisode(intent, series, confirmedByUser = saved?.confirmedByUser == true)
+            }
+        }
+    }
+
+    private suspend fun playDiscoveryEpisode(intent: PendingDiscoveryEpisode, resolved: MediaItem, confirmedByUser: Boolean) {
+        if (!latestPlaybackRequest.isCurrent(intent.request)) return
+        val session = _state.value.session?.takeIf { it.profile.cacheKey() == intent.profile } ?: return
+        if (isAdultMedia(resolved, CatalogType.SERIES) && !authorizeParental()) return
+        if (!latestPlaybackRequest.isCurrent(intent.request) || _state.value.session?.profile?.cacheKey() != intent.profile) return
+        val series = resolved.withPreferredSeriesPresentation(intent.card.show())
+        val episodes = withContext(Dispatchers.IO) {
+            portal.episodeSeason(session, series, _state.value.seriesStartSeason, intent.season).episodes
+        }
+        val selected = com.nikhil.niktv.discovery.discoveryEpisodeMatch(episodes, intent.season, intent.number)
+            ?: error("Season ${intent.season} episode ${intent.number} could not be matched uniquely. Open Episodes to choose the provider episode.")
+        if (!latestPlaybackRequest.isCurrent(intent.request) || _state.value.session?.profile?.cacheKey() != intent.profile) return
+        pendingDiscoveryEpisode = null
+        _state.update { it.copy(seriesMatchSelection = null, seriesMatchCandidates = emptyList()) }
+        store.saveTmdbMapping(TmdbIptvMapping(intent.profile, CatalogType.SERIES, intent.card.id, series, confirmedByUser = confirmedByUser))
+        if (!latestPlaybackRequest.isCurrent(intent.request) || _state.value.session?.profile?.cacheKey() != intent.profile) return
+        if (intent.download) downloadForOffline(selected, CatalogType.SERIES, series)
+        else playInternal(selected, CatalogType.SERIES, series, episodes, requestId = intent.request)
+    }
 
     fun toggleFavorite(item: MediaItem) {
         val snapshot = _state.value
@@ -7563,6 +7653,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val protectedMedia = favorite.media.copy(isAdult = favorite.media.isAdult ||
             com.nikhil.niktv.data.adultContentLabel(favorite.categoryTitle.orEmpty()) || favorite.series?.isAdult == true)
         if (gateAdultAction(protectedMedia, type) { openFavorite(favorite) }) return
+        if (favorite.source == FavoriteSource.TMDB && favorite.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && favorite.media.id.startsWith("tmdb-")) {
+            val id = favorite.media.externalTmdbId ?: favorite.media.id.substringAfterLast(':').toIntOrNull()
+            if (id != null) {
+                if (favorite.kind == FavoriteKind.MOVIE) openTrendingMovie(TrendingMovie(TmdbMovie(id,
+                    favorite.media.title, favorite.media.title, favorite.media.description, favorite.media.logo,
+                    null, null, null)))
+                else openTrendingSeries(TrendingSeries(TmdbSeries(id, favorite.media.title, favorite.media.title,
+                    favorite.media.description, favorite.media.logo, null, null, null)))
+                return
+            }
+        }
         when (favorite.kind) {
             FavoriteKind.CHANNEL, FavoriteKind.MOVIE -> {
                 val queue = _state.value.favorites.filter { it.kind == favorite.kind }.map { it.media }

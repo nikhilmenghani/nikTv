@@ -51,6 +51,8 @@ suspend fun appStorageSnapshot(
     val subtitleDirectory = File(appContext.cacheDir, "subtitles")
     val hlsDirectory = File(appContext.cacheDir, "hls_exports")
     val namedCacheBytes = directorySize(artworkDirectory) + directorySize(flowArtworkDirectory) + directorySize(subtitleDirectory)
+    // discovery_preview is deliberately unnamed: its bounded public metadata is
+    // reported as temporary cache and removed by clearTemporaryCaches.
     val allCacheBytes = directorySize(appContext.cacheDir) +
         (appContext.externalCacheDir?.let(::directorySize) ?: 0L)
     android.util.Log.i("NikTvStorage", "catalogues=${directorySize(File(appContext.cacheDir, "catalogues-v1"))}, artwork=${directorySize(artworkDirectory)}, other=${(allCacheBytes - namedCacheBytes - directorySize(File(appContext.cacheDir, "catalogues-v1"))).coerceAtLeast(0L)} bytes")

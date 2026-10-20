@@ -1,0 +1,135 @@
+package com.nikhil.niktv.discovery
+
+import android.app.Application
+import android.os.Looper
+import com.nikhil.niktv.model.*
+import kotlinx.coroutines.*
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], application = Application::class, manifest = Config.NONE)
+class DiscoveryViewModelTest {
+    private val app get() = RuntimeEnvironment.getApplication()
+    private fun pump() = shadowOf(Looper.getMainLooper()).idle()
+    private fun card(id: Int, series: Boolean = false) = DiscoveryCard(id, series, "Movie $id", date = "2020-01-01")
+    private open class Source : DiscoveryDataSource {
+        override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) = listOf(DiscoveryCard(1, section.series, "Cached movie", date = "2020-01-01"))
+        override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) = DiscoveryDetails(card, seasons = if (card.series) listOf(1, 2) else emptyList())
+        override suspend fun related(card: DiscoveryCard) = emptyList<DiscoveryCard>()
+        override suspend fun collection(id: Int) = emptyList<DiscoveryCard>()
+        override suspend fun reviews(card: DiscoveryCard) = emptyList<DiscoveryReview>()
+        override suspend fun episodes(card: DiscoveryCard, season: Int) = listOf(DiscoveryEpisode(season, 1, "Episode", date = "2020-01-01"))
+    }
+    @Test fun trialSettingsAreSeparateByProfileAndSurface() {
+        val vm = DiscoveryViewModel(app, Source())
+        val original = listOf(TmdbHomeSection.ACTION)
+        vm.bind("profile-a", DashboardSurface.MOVIES, original); pump()
+        vm.configure(listOf(TmdbHomeSection.COMEDY))
+        vm.bind("profile-b", DashboardSurface.MOVIES, original); pump()
+        assertEquals(original, vm.state.value.sections)
+        vm.bind("profile-a", DashboardSurface.MOVIES, original); pump()
+        assertEquals(listOf(TmdbHomeSection.COMEDY), vm.state.value.sections)
+        assertEquals(listOf(TmdbHomeSection.ACTION), original)
+        vm.bind("empty-profile", DashboardSurface.MOVIES, emptyList()); pump()
+        assertTrue(vm.state.value.sections.isEmpty())
+    }
+    @Test fun oldDetailsCannotReplaceNewSelectionEvenIfSourceIgnoresCancellation() {
+        val old = CompletableDeferred<DiscoveryDetails>()
+        val source = object : Source() {
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails =
+                if (card.id == 1) withContext(NonCancellable) { old.await() } else DiscoveryDetails(card)
+        }
+        val vm = DiscoveryViewModel(app, source)
+        vm.bind("p", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.openDetails(card(1)); pump(); vm.openDetails(card(2)); pump()
+        old.complete(DiscoveryDetails(card(1))); pump()
+        assertEquals(2, vm.state.value.details?.card?.id)
+        vm.closeDetails(); pump(); assertEquals(1, vm.state.value.detail?.id)
+        vm.closeDetails(); pump(); assertNull(vm.state.value.detail)
+    }
+    @Test fun oldSeasonCannotReplaceNewSeasonAndFutureEpisodesAreHidden() {
+        val old = CompletableDeferred<List<DiscoveryEpisode>>()
+        val source = object : Source() {
+            override suspend fun episodes(card: DiscoveryCard, season: Int): List<DiscoveryEpisode> =
+                if (season == 1) withContext(NonCancellable) { old.await() } else super.episodes(card, season)
+        }
+        val vm = DiscoveryViewModel(app, source)
+        vm.bind("p", DashboardSurface.SERIES, emptyList()); pump(); vm.openDetails(card(1, true)); pump()
+        vm.loadSeason(1); pump(); vm.loadSeason(2); pump()
+        old.complete(listOf(DiscoveryEpisode(1, 1, "Old", date = "2020-01-01"))); pump()
+        assertEquals(2, vm.state.value.season)
+        assertEquals(2, vm.state.value.episodes.single().season)
+    }
+    @Test fun supplementarySectionsReloadForNewTitlesAndRemainIndependentOnFailure() {
+        val source = object : Source() {
+            override suspend fun related(card: DiscoveryCard) = listOf(card.copy(id = card.id + 10))
+            override suspend fun reviews(card: DiscoveryCard): List<DiscoveryReview> = error("offline")
+        }
+        val vm = DiscoveryViewModel(app, source)
+        vm.bind("p", DashboardSurface.MOVIES, emptyList()); pump(); vm.openDetails(card(1)); pump()
+        vm.loadSupplement("related"); vm.loadSupplement("reviews"); pump()
+        assertEquals(11, vm.state.value.related.single().id)
+        assertTrue("extra:reviews" in vm.state.value.errors)
+        vm.openDetails(card(2)); pump(); vm.loadSupplement("related"); pump()
+        assertEquals(12, vm.state.value.related.single().id)
+        assertFalse("extra:reviews" in vm.state.value.errors)
+    }
+    @Test fun lateFeedFromPreviousProfileIsRejected() {
+        val old = CompletableDeferred<List<DiscoveryCard>>(); var first = true
+        val source = object : Source() {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> =
+                if (first) { first = false; withContext(NonCancellable) { old.await() } } else listOf(card(2))
+        }
+        val vm = DiscoveryViewModel(app, source)
+        vm.bind("old", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.bind("new", DashboardSurface.MOVIES, emptyList()); pump()
+        old.complete(listOf(card(1))); pump()
+        assertEquals("new", vm.state.value.profile)
+        assertEquals(2, vm.state.value.hero?.id)
+    }
+    @Test fun secondFeedDoesNotReplaceTheHeroTheUserAlreadySelected() {
+        val shows = CompletableDeferred<List<DiscoveryCard>>()
+        val source = object : Source() {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) =
+                if (section.series) shows.await() else (1..5).map { card(it) }
+        }
+        val vm = DiscoveryViewModel(app, source)
+        vm.bind("p", DashboardSurface.HOME, emptyList()); pump(); vm.rotate(1)
+        assertEquals("movie:2", vm.state.value.hero?.key)
+        shows.complete((1..5).map { card(it, true) }); pump()
+        assertEquals("movie:2", vm.state.value.hero?.key)
+    }
+    @Test fun closingDetailsClearsBusyStateAndRejectsLateCompletion() {
+        val delayed = CompletableDeferred<DiscoveryDetails>()
+        val source = object : Source() {
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) = withContext(NonCancellable) { delayed.await() }
+        }
+        val vm = DiscoveryViewModel(app, source)
+        vm.bind("p", DashboardSurface.MOVIES, emptyList()); pump(); vm.openDetails(card(1)); pump()
+        assertTrue("detail" in vm.state.value.loading)
+        vm.closeDetails(); pump(); assertFalse("detail" in vm.state.value.loading)
+        delayed.complete(DiscoveryDetails(card(1))); pump()
+        assertNull(vm.state.value.details); assertNull(vm.state.value.detail)
+    }
+    @Test fun leavingTheScreenCancelsWorkAndResumeReloadsOnlyTheSameRoute() {
+        var calls = 0; var canceled = false
+        val source = object : Source() {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> {
+                calls++
+                if (calls == 1) try { awaitCancellation() } finally { canceled = true }
+                return listOf(card(9))
+            }
+        }
+        val vm = DiscoveryViewModel(app, source)
+        vm.bind("p", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.pause(); pump(); assertTrue(canceled); assertTrue(vm.state.value.loading.isEmpty())
+        vm.resume("other", DashboardSurface.MOVIES); pump(); assertEquals(1, calls)
+        vm.resume("p", DashboardSurface.MOVIES); pump(); assertEquals("movie:9", vm.state.value.hero?.key)
+    }
+}

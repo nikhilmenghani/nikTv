@@ -1,6 +1,7 @@
 package com.nikhil.niktv.data
 
 import com.nikhil.niktv.model.MediaItem
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -31,7 +32,9 @@ data class TmdbMovie(
     val backdropUrl: String?,
     val releaseDate: String?,
     val voteAverage: Double?,
-    val cast: List<String> = emptyList()
+    val cast: List<String> = emptyList(),
+    val genres: List<String> = emptyList(),
+    val adult: Boolean = false
 ) {
     val releaseYear: Int?
         get() = releaseDate?.take(4)?.toIntOrNull()
@@ -60,7 +63,9 @@ data class TmdbSeries(
     val firstAirDate: String?,
     val voteAverage: Double?,
     val cast: List<String> = emptyList(),
-    val alternativeNames: List<String> = emptyList()
+    val alternativeNames: List<String> = emptyList(),
+    val genres: List<String> = emptyList(),
+    val adult: Boolean = false
 ) {
     val firstAirYear: Int?
         get() = firstAirDate?.take(4)?.toIntOrNull()
@@ -101,6 +106,24 @@ data class TmdbEpisode(
 )
 
 class TmdbClient {
+    /** Public TMDB metadata for the isolated discovery trial; never resolves IPTV media. */
+    internal suspend fun discoveryJson(path: String, query: Map<String, String> = emptyMap()): kotlinx.serialization.json.JsonObject {
+        check(configured) { "TMDB is not configured" }
+        require(path.startsWith("/") && !path.contains(".."))
+        var failure: IOException? = null
+        for (base in API_BASE_URLS) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val url = "$base/3$path".toHttpUrl().newBuilder().addQueryParameter("language", "en-US")
+            query.forEach { (name, value) -> url.addQueryParameter(name, value) }
+            if (readAccessToken.isBlank()) url.addQueryParameter("api_key", apiKey)
+            val request = Request.Builder().url(url.build()).header("Accept", "application/json")
+                .apply { if (readAccessToken.isNotBlank()) header("Authorization", "Bearer $readAccessToken") }.build()
+            try {
+                return com.nikhil.niktv.discovery.discoveryHttp(http, request, json)
+            } catch (error: IOException) { failure = error }
+        }
+        throw failure ?: IOException("TMDB could not be reached")
+    }
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -432,7 +455,8 @@ class TmdbClient {
             this["overview"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
             poster?.let { "$IMAGE_BASE_URL$it" }, backdrop?.let { "$BACKDROP_BASE_URL$it" },
             this["first_air_date"]?.jsonPrimitive?.contentOrNull,
-            this["vote_average"]?.jsonPrimitive?.doubleOrNull
+            this["vote_average"]?.jsonPrimitive?.doubleOrNull,
+            genres = discoveryGenreNames(), adult = this["adult"]?.jsonPrimitive?.contentOrNull == "true"
         )
     }
 
@@ -449,8 +473,16 @@ class TmdbClient {
             this["overview"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank),
             poster?.let { "$IMAGE_BASE_URL$it" }, backdrop?.let { "$BACKDROP_BASE_URL$it" },
             this["release_date"]?.jsonPrimitive?.contentOrNull,
-            this["vote_average"]?.jsonPrimitive?.doubleOrNull
+            this["vote_average"]?.jsonPrimitive?.doubleOrNull,
+            genres = discoveryGenreNames(), adult = this["adult"]?.jsonPrimitive?.contentOrNull == "true"
         )
+    }
+
+    internal fun kotlinx.serialization.json.JsonObject.discoveryGenreNames(): List<String> {
+        val names = mapOf(28 to "Action", 10759 to "Action & Adventure", 35 to "Comedy", 27 to "Horror",
+            53 to "Thriller", 10751 to "Family", 99 to "Documentary", 9648 to "Mystery", 18 to "Drama",
+            16 to "Animation", 878 to "Science Fiction", 14 to "Fantasy", 36 to "History", 10749 to "Romance")
+        return this["genre_ids"]?.jsonArray.orEmpty().mapNotNull { it.jsonPrimitive.intOrNull?.let(names::get) }
     }
 
     private fun discoverGenre(genreId: String, limit: Int) = fetchMovies(

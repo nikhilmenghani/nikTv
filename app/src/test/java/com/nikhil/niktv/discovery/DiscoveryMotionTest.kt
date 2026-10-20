@@ -1,0 +1,52 @@
+package com.nikhil.niktv.discovery
+
+import android.app.Application
+import android.os.Looper
+import androidx.compose.foundation.lazy.LazyListState
+import kotlinx.coroutines.*
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], application = Application::class, manifest = Config.NONE)
+class DiscoveryMotionTest {
+    @Test fun aNewDestinationCancelsAnUnlaidOutOldRowWithoutFocusingIt() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + androidx.compose.runtime.BroadcastFrameClock())
+        val coordinator = DiscoveryScrollCoordinator(scope)
+        val calls = mutableListOf<Int>()
+        val list = LazyListState()
+        try {
+            val old = coordinator.move(list, 2, false) { calls += 2; true }
+            shadowOf(Looper.getMainLooper()).idle()
+            val latest = coordinator.move(list, 3, false) { calls += 3; true }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(old.isCancelled)
+            assertTrue(latest.isActive)
+            assertTrue(calls.isEmpty())
+            coordinator.cancel()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(latest.isCancelled)
+            assertTrue(calls.isEmpty())
+        } finally { scope.cancel() }
+    }
+
+    @Test fun focusAlignmentForTheCurrentDestinationDoesNotCancelItsMove() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + androidx.compose.runtime.BroadcastFrameClock())
+        val coordinator = DiscoveryScrollCoordinator(scope)
+        val list = LazyListState()
+        try {
+            val move = coordinator.move(list, 2, false) { true }
+            shadowOf(Looper.getMainLooper()).idle()
+            coordinator.align(list, 2, false)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(move.isActive)
+            coordinator.align(list, 3, false)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(move.isCancelled)
+        } finally { coordinator.cancel(); scope.cancel() }
+    }
+}

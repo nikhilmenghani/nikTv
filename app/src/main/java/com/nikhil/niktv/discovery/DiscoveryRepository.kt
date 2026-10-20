@@ -1,0 +1,86 @@
+package com.nikhil.niktv.discovery
+
+import android.content.Context
+import com.nikhil.niktv.data.TmdbClient
+import com.nikhil.niktv.model.TmdbHomeSection
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.*
+
+/** No portal client is available here: speculative discovery cannot search/open provider streams. */
+internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClient = TmdbClient()) : DiscoveryDataSource {
+    private val cache = DiscoveryCache(java.io.File(context.applicationContext.cacheDir, "discovery_preview"))
+    companion object { private val slots = Semaphore(2) }
+    private val json = Json { ignoreUnknownKeys = true }
+    val configured get() = tmdb.configured
+    private suspend fun <T> cached(key: String, ttl: Long, serializer: kotlinx.serialization.KSerializer<T>,
+        stale: (T) -> Unit = {}, load: suspend () -> T): T {
+        return cache.load(key, ttl, serializer, stale) { slots.withPermit { load() } }
+    }
+    override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> =
+        cached("feed-v3:${section.name}", DiscoveryCache.FEED_TTL, ListSerializer(DiscoveryCard.serializer()), stale) {
+            val (path, query) = discoveryFeedRequest(section)
+            val first = cards(tmdb.discoveryJson(path, query + ("page" to "1")), section.series)
+            if (first.size >= 10) first
+            else (first + cards(tmdb.discoveryJson(path, query + ("page" to "2")), section.series)).distinctBy { it.key }.take(30)
+        }.filter { it.released() }
+
+    override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails =
+        cached("detail-v1:${card.key}", DiscoveryCache.DETAIL_TTL, DiscoveryDetails.serializer(), stale) {
+            val root = tmdb.discoveryJson("/${if (card.series) "tv" else "movie"}/${card.id}",
+                mapOf("append_to_response" to if (card.series) "credits,images,content_ratings" else "credits,images,release_dates", "include_image_language" to "en,null"))
+            val genres = root["genres"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject.string("name") }
+            val logo = root["images"]?.jsonObject?.get("logos")?.jsonArray.orEmpty().firstOrNull()?.jsonObject?.string("file_path")
+            val certification = if (card.series) root["content_ratings"]?.jsonObject?.get("results")?.jsonArray.orEmpty()
+                .firstOrNull { it.jsonObject.string("iso_3166_1") == "US" }?.jsonObject?.string("rating")
+            else root["release_dates"]?.jsonObject?.get("results")?.jsonArray.orEmpty()
+                .firstOrNull { it.jsonObject.string("iso_3166_1") == "US" }?.jsonObject?.get("release_dates")?.jsonArray.orEmpty()
+                .firstNotNullOfOrNull { it.jsonObject.string("certification")?.takeIf(String::isNotBlank) }
+            DiscoveryDetails(card.copy(overview = root.string("overview") ?: card.overview, genres = genres,
+                runtime = root["runtime"]?.jsonPrimitive?.intOrNull ?: root["episode_run_time"]?.jsonArray?.firstOrNull()?.jsonPrimitive?.intOrNull,
+                certification = certification?.takeIf(String::isNotBlank), titleLogo = logo?.let { image(it, "w500") }),
+                cast = root["credits"]?.jsonObject?.get("cast")?.jsonArray.orEmpty().take(20).mapNotNull { c ->
+                    c.jsonObject.string("name")?.let { DiscoveryPerson(it, c.jsonObject.string("character").orEmpty(), c.jsonObject.string("profile_path")?.let { p -> image(p, "w185") }) }
+                }, seasons = root["seasons"]?.jsonArray.orEmpty().mapNotNull { s ->
+                    s.jsonObject["season_number"]?.jsonPrimitive?.intOrNull?.takeIf { it >= 0 } }.sorted(),
+                collection = root["belongs_to_collection"]?.takeIf { it is JsonObject }?.jsonObject?.let { c ->
+                    c["id"]?.jsonPrimitive?.intOrNull?.let { DiscoveryCollection(it, c.string("name").orEmpty(), c.string("backdrop_path")?.let { p -> image(p, "w780") }) }
+                })
+        }
+    override suspend fun related(card: DiscoveryCard): List<DiscoveryCard> = cached("related-v1:${card.key}", DiscoveryCache.DETAIL_TTL,
+        ListSerializer(DiscoveryCard.serializer())) {
+        cards(tmdb.discoveryJson("/${if (card.series) "tv" else "movie"}/${card.id}/recommendations"), card.series)
+    }.filter { it.released() }
+    override suspend fun collection(id: Int): List<DiscoveryCard> = cached("collection-v1:$id", DiscoveryCache.DETAIL_TTL,
+        ListSerializer(DiscoveryCard.serializer())) {
+        val root = tmdb.discoveryJson("/collection/$id")
+        cards(root, false, "parts")
+    }.filter { it.released() }
+    override suspend fun reviews(card: DiscoveryCard): List<DiscoveryReview> = cached("reviews-v1:${card.key}", DiscoveryCache.DETAIL_TTL,
+        ListSerializer(DiscoveryReview.serializer())) {
+        tmdb.discoveryJson("/movie/${card.id}/reviews")["results"]?.jsonArray.orEmpty().take(10).mapNotNull {
+            val obj = it.jsonObject
+            obj.string("content")?.let { content -> DiscoveryReview(obj.string("author").orEmpty(), content.take(12000)) }
+        }
+    }
+    override suspend fun episodes(card: DiscoveryCard, season: Int): List<DiscoveryEpisode> = cached("episodes-v1:${card.key}:$season", DiscoveryCache.DETAIL_TTL,
+        ListSerializer(DiscoveryEpisode.serializer())) {
+        tmdb.discoveryJson("/tv/${card.id}/season/$season")["episodes"]?.jsonArray.orEmpty().mapNotNull { item ->
+            val e = item.jsonObject
+            e["episode_number"]?.jsonPrimitive?.intOrNull?.let { number -> DiscoveryEpisode(season, number,
+                e.string("name") ?: "Episode $number", e.string("overview"), e.string("air_date"), e.string("still_path")?.let { image(it, "w780") }) }
+        }
+    }.filter { it.released() }
+    private fun cards(root: JsonObject, series: Boolean, field: String = "results") = root[field]?.jsonArray.orEmpty().mapNotNull {
+        val o = it.jsonObject
+        o["id"]?.jsonPrimitive?.intOrNull?.let { id -> DiscoveryCard(id, series,
+            o.string(if (series) "name" else "title").orEmpty(), o.string("overview"),
+            o.string("poster_path")?.let { p -> image(p, "w342") }, o.string("backdrop_path")?.let { p -> image(p, "w1280") },
+            o.string(if (series) "first_air_date" else "release_date"), o["vote_average"]?.jsonPrimitive?.doubleOrNull,
+            genres = with(tmdb) { o.discoveryGenreNames() }, adult = o["adult"]?.jsonPrimitive?.booleanOrNull == true) }
+    }.filter { it.title.isNotBlank() && it.released() }.take(30)
+    private fun JsonObject.string(key: String) = get(key)?.jsonPrimitive?.contentOrNull
+    private fun image(path: String, size: String) = "https://image.tmdb.org/t/p/$size$path"
+}

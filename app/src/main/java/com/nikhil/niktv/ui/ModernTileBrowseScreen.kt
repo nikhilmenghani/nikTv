@@ -406,6 +406,7 @@ private fun ModernTilePhoneHeader(
     openSettings: () -> Unit,
     openProfileSwitcher: () -> Unit
 ) {
+    val openDiscovery = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
     val isPhone = LocalConfiguration.current.smallestScreenWidthDp < 600
     var profileMenuOpen by remember { mutableStateOf(false) }
     Column(
@@ -464,6 +465,11 @@ private fun ModernTilePhoneHeader(
                         expanded = profileMenuOpen,
                         onDismissRequest = { profileMenuOpen = false }
                     ) {
+                        com.nikhil.niktv.discovery.trialSurfaces.forEach { surface ->
+                            DropdownMenuItem(text = { Text(when (surface) {
+                                DashboardSurface.MOVIES -> "Movies 2"; DashboardSurface.SERIES -> "Series 2"; else -> "Home 2"
+                            }) }, onClick = { profileMenuOpen = false; openDiscovery(surface) })
+                        }
                         DropdownMenuItem(
                             text = { Text("Switch profile") },
                             leadingIcon = { Icon(Icons.Default.AccountCircle, null) },
@@ -1337,7 +1343,7 @@ private fun ModernRecentChannelsCollection(
     }
 }
 
-private fun NikTvState.modernVisibleIptvCategories(
+internal fun NikTvState.modernVisibleIptvCategories(
     type: CatalogType,
     requireExplicitSelection: Boolean
 ): List<Category> {
@@ -2530,7 +2536,8 @@ internal fun ModernTileActionsMenu(
     recommendationType: CatalogType? = null,
     trailerItem: MediaItem? = null,
     trailerSeries: Boolean = false,
-    onTrailerReturned: (() -> Boolean)? = null
+    onTrailerReturned: (() -> Boolean)? = null,
+    extraActions: List<Pair<String, () -> Unit>> = emptyList()
 ) {
     val trailerContext = LocalContext.current
     var trailerOpen by remember(trailerItem?.id) { mutableStateOf(false) }
@@ -2567,6 +2574,9 @@ internal fun ModernTileActionsMenu(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        extraActions.forEach { (label, action) ->
+            NikDropdownMenuItem(text = { Text(label) }, onClick = { dismiss(); action() })
+        }
         (recommendationItem ?: trailerItem)?.let { item ->
             ShowRecommendationsMenuItem(item,
                 recommendationType ?: if (trailerSeries) CatalogType.SERIES else null, dismiss)

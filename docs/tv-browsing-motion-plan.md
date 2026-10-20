@@ -1,10 +1,37 @@
 # NikTV TV browsing and motion — working plan
 
-Status: **Draft for discussion; scope is not finalized.**
+Status: **Isolated Home 2 / Movies 2 / Series 2 trial implemented; verification results and remaining limits recorded.**
 
 Last updated: 2026-10-19
 
-Use this document to collect observations, proposals and decisions before implementing the redesign. Unchecked items are proposals, not approved requirements or completed work. Update the decision log as we refine the scope.
+This document retains the original exploration notes below. The user accepted the implementation plan on 2026-10-19; the accepted decisions in this section supersede pending proposals in the original notes. Keep recording verification and future refinements here.
+
+## Accepted implementation decisions
+
+- Preserve the original Home, Movies and Series screens and default startup. Add separate Home 2, Movies 2 and Series 2 entries, sharing a compact trial top bar.
+- Include new full movie and series detail pages, responsive phone/portrait layouts, touch gestures and D-pad navigation.
+- Discovery includes released TMDB titles only (unknown/future dates excluded). IPTV lookup happens only after an explicit Play/episode/download action; no automatic match counts.
+- Home 2 puts Continue Watching and New Episodes before daily rankings and personalized/configured discovery rows. Trial customization is profile/surface specific and independent of classic settings.
+- Use bounded public metadata caching (six-hour feeds, 24-hour details, 10 MiB disk limit) and existing artwork cache/storage ownership. No Room.
+- Hero rotation is eight seconds while visible and idle; focus, touch, scrolling, popups and lifecycle changes pause it.
+- Focus uses contained borders and modest scaling; row scrolling cancels obsolete movement. Prepared backdrops crossfade with gradients, without animated blur or parallax.
+- Reuse existing favorites, parental authorization, on-demand provider selection, playback engines and resume behavior. Do not change stream buffering.
+- Baseline pending work was committed as `165d3460` after 16 focused Android tests, source-secret scanning and Tizen lifecycle checks passed. No push. Trial implementation remains uncommitted.
+
+### Delivery and validation record
+
+See [the complete trial verification record](discovery-trial-verification.md) for changed files, exact commands, device coverage, frame/memory measurements and remaining checks. Original destinations and default startup remain available. The implementation is uncommitted; only the baseline commit was created, with no push.
+
+- 492 app unit tests passed, including 33 discovery tests. Final Fire TV and tablet fixtures passed 3/3 each. On reconnection Samsung also passed 3/3; two additional phone layout fixes are installed, with an enlarged-font follow-up passing 2/3 (carousel touch failed). A subsequent phone-specific header/Live TV revision passed 38 focused unit tests; the updated app is now installed on Samsung and Fire TV. Final 130% text checks were 2/3 portrait and 3/3 landscape, with intermittent portrait row-focus loss still unresolved (see verification record).
+- Full lint still reports 25 pre-existing errors outside discovery; no suppression was added.
+- Fire TV measurements caught a substantial initial rendering regression. Baking static backdrop gradients off-thread and removing unfocused poster shadows reduced warm scroll median from 44 ms to 9 ms (8 ms on the third cycle). See the verification record for comparison caveats and remaining long frames.
+- Portrait, 130% text and reduced motion were checked on tablet; phone-width emulation was also captured. Temporary device settings were restored.
+
+- Initial Kotlin compilation and debug APK build passed.
+- Discovery cache/policy tests passed; expanded ViewModel tests cover late detail/feed/season responses, profile-specific configuration and supplementary-section failures.
+- First tablet rendering confirmed hero artwork, compact rows, full details, runtime/genres/certification, related titles and cast from TMDB.
+- Tablet Back testing exposed a lazy cast-row race during detail teardown. The row now captures an immutable cast list; the isolated device fixture includes populated cast to exercise that path.
+- Final device results, lint/build commands and performance measurements are recorded in the verification document. No zero-stutter claim is made.
 
 ## Goal
 
@@ -116,3 +143,21 @@ Do not claim zero stutter or a performance improvement from appearance alone. Se
 | Date | Decision / note |
 | --- | --- |
 | 2026-10-19 | Created this living draft after observing Brodys TV on the connected tablet. User requested a Markdown note to refine before finalizing implementation scope. No redesign implementation is authorized by this document alone. |
+
+### Phone navigation follow-up (2026-10-19)
+
+Phone presentation is independent of tablet/TV navigation, using the device's smallest width (under 600 dp, excluding TV) so rotating a phone does not select the tablet header. A compact utility row contains Back, NikTV 2, Search and Browse. A separate full-width row evenly distributes Home, Movies, Series and Live TV with minimum 48 dp targets. Trial identity remains in accessibility labels; shorter visual labels avoid unnecessary crowding. Tablet/TV retain the original compact header and gain an explicit Live TV action. Both Live TV actions reuse the existing channel collection and playback routes; no Live TV collection redesign or provider lookup is added to discovery browsing.
+
+Regression coverage checks all phone destination labels without horizontal scrolling, switches each trial surface by touch and verifies Live TV dispatch without starting a provider stream. Record final device results in `discovery-trial-verification.md`.
+
+Samsung follow-up: phone destination visibility and touch switching were checked at 130% text in both orientations; Live TV dispatch was verified without starting a provider stream. Updated normal APKs are installed on Samsung and Fire TV. Final landscape fixtures passed 3/3; the portrait repeat passed 2/3 and exposed intermittent row-transition focus loss that must be investigated before claiming a clean regression run. Display settings were restored and temporary fixture packages removed.
+
+Fire TV horizontal-scroll correction: a real Left/Right sequence displaced the current row vertically by 230 px. Discovery now uses the shared minimum-reveal focus viewport instead of the Android TV pivot; the explicit vertical spring is triggered on row entry rather than every tile focus. Horizontal edge scrolling remains enabled. A 20-input cross-edge/reversal regression checks that the vertical row anchor stays fixed.
+
+### Vertical navigation and action-menu follow-up
+
+Use a single cancellable owner for vertical reveal/alignment/focus, including rapid direction reversals. Do not start another alignment from the focus callback for that active destination. Track row entry by stable identity. Discovery long press uses the shared remote handler and opens after consuming release; its anchored popup reuses legacy actions and restores the originating item. Fire TV fixtures passed the four affected cases across separate final-source runs; 46 focused units passed. Normal APK assembly succeeded, but lint remains blocked by 25 pre-existing errors. Detailed results and limits are in `docs/discovery-trial-verification.md`; no new frame-performance claim is made.
+
+Early-focus refinement: partially visible destinations receive focus once fully revealed, concurrently with row alignment rather than after spring completion. A Fire TV fixture asserted focus during active scrolling (191 ms in one run); all five device cases passed. Cancellation tests and both APK builds passed. See verification document for measurement limits.
+
+Tablet observation: minimum-reveal relocation could still compete with explicit vertical alignment and produce a small reverse movement. During an active explicit transition, suppress implicit relocation only for the vertical list; restore the standard minimum-reveal policy inside every horizontal discovery row. Focus composed destinations immediately. Tablet motion fixture measured 12 ms and no rebound; warm actual-page samples were modestly better but do not establish zero stutter. A separate popup-action regression failed and remains explicitly recorded rather than counted as navigation success.

@@ -456,6 +456,13 @@ internal fun ModernSideRail(
             ModernRailButton(Icons.Default.DownloadDone, "Offline", state.offlineDownloadsOpen, expanded, openOfflineDownloads)
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
+            Spacer(Modifier.height(12.dp))
+            val openDiscovery = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
+            com.nikhil.niktv.discovery.trialSurfaces.forEach { surface ->
+                ModernRailButton(Icons.Default.AutoAwesome, when (surface) {
+                    DashboardSurface.MOVIES -> "Movies 2"; DashboardSurface.SERIES -> "Series 2"; else -> "Home 2"
+                }, false, expanded) { openDiscovery(surface) }
+            }
         }
     }
 }
