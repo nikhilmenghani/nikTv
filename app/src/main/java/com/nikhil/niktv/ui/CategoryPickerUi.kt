@@ -106,7 +106,6 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     Dialog(onDismissRequest = { if (editing) { editing = false; keyboard?.hide() } else close() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val view = LocalView.current
-        val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
         DisposableEffect(view) {
             val window = (view.parent as? DialogWindowProvider)?.window
             window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
@@ -154,11 +153,11 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
                                         }
                                     }
                                     .onFocusChanged { searchFocused = it.isFocused; if (!it.isFocused) { editing = false; keyboard?.hide() } }
-                                    .focusProperties { up = cancel; right = if (keyboardVisible) save else bulk }
+                                    .focusProperties { up = cancel; right = bulk }
                                     .onPreviewKeyEvent { event ->
                                         when {
                                             event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && !editing -> {
-                                                if (keyboardVisible || inlineTools) enterGrid() else bulk.requestFocus(); true
+                                                if (inlineTools) enterGrid() else bulk.requestFocus(); true
                                             }
                                             event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter) && !editing -> {
                                                 if (event.type == KeyEventType.KeyUp) { editing = true; keyboard?.show() }; true
@@ -176,27 +175,29 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
                 }
                 val bulkActions: @Composable () -> Unit = {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        NikTvSecondaryActionButton(onClick = { draft = (selected + filtered.map { it.id }).toList() },
+                        NikTvSecondaryActionButton(onClick = { draft = (selected + filtered.map { it.id }).toList() }, enabled = filtered.isNotEmpty(),
                             modifier = Modifier.weight(1f).focusRequester(bulk).focusProperties { up = if (inlineTools) cancel else search; left = search; right = clear }
                                 .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { enterGrid(); true } else false }) {
                             Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
                             Text(if (query.isBlank()) "Select all" else "Select results", maxLines = 1, style = MaterialTheme.typography.labelLarge)
                         }
-                        NikTvSecondaryActionButton(onClick = { draft = (selected - filtered.map { it.id }.toSet()).toList() },
+                        NikTvSecondaryActionButton(onClick = { draft = (selected - filtered.map { it.id }.toSet()).toList() }, enabled = filtered.isNotEmpty(),
                             modifier = Modifier.weight(1f).focusRequester(clear).focusProperties { up = search; left = bulk }
                                 .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { enterGrid(); true } else false }) {
                             Icon(Icons.Default.RemoveDone, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (query.isBlank()) "Clear all" else "Clear results", maxLines = 1, style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
-                if (inlineTools && !keyboardVisible) {
+                // Keep toolbar membership/layout independent of transient IME insets.
+                // Only the grid resizes when the keyboard appears or disappears.
+                if (inlineTools) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) { searchField() }
                         Box(Modifier.weight(1f)) { bulkActions() }
                     }
                 } else {
                     searchField()
-                    if (!keyboardVisible) bulkActions()
+                    bulkActions()
                 }
                 HorizontalDivider(color = Color.White.copy(alpha = .10f))
                 if (filtered.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {

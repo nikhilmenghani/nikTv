@@ -218,20 +218,21 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         modifier = Modifier.onPreviewKeyEvent {
                             if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                         }, onFocus = onFocus, onClick = add)
-                    if (carousel) Row(Modifier.onPreviewKeyEvent {
-                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
-                    }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        PhoneHeroIcon("Previous featured title", Icons.Default.ChevronLeft, true, previous,
-                            Modifier.onFocusChanged { if (it.isFocused) onFocus() })
-                        Text("${index + 1} / $count", color = Color.LightGray, fontSize = 11.sp)
-                        PhoneHeroIcon("Next featured title", Icons.Default.ChevronRight, true, next,
-                            Modifier.onFocusChanged { if (it.isFocused) onFocus() })
-                    }
                     categoryActions?.let { actions ->
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {
                                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                             }) { actions() }
+                    }
+                    if (carousel) Row(Modifier.onPreviewKeyEvent {
+                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
+                    }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PhoneHeroIcon("Previous featured title", Icons.Default.ChevronLeft, true, previous,
+                            Modifier.onFocusChanged { if (it.isFocused) onFocus() })
+                        Text("${index + 1} / $count", Modifier.width((48f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp),
+                            color = Color.LightGray, fontSize = 11.sp, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        PhoneHeroIcon("Next featured title", Icons.Default.ChevronRight, true, next,
+                            Modifier.onFocusChanged { if (it.isFocused) onFocus() })
                     }
                 }
             }

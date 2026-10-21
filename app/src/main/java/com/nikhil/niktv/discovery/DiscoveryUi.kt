@@ -739,7 +739,7 @@ internal fun DiscoveryPreviewScreen(
                                     else entry.card?.let { featured = it; vm.presentFocusedCard(entry.key, it) }
                                 }
                             },
-                            move = { delta -> moveRow(index, delta) },
+                            move = { delta -> moveRow(index, delta) }, reenter = { focusRow(index) },
                             viewAll = row.providerType?.let { type -> { focusOrigins.returningTo = "${row.key}:all"; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
                                 ?: row.section?.let { section -> { focusOrigins.returningTo = "${row.key}:all"; openSection(section) } })
                         row.providerType?.let { type ->
@@ -1002,15 +1002,17 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                 iconOnly = !detail, enabled = card != null, onFocus = onFocus, onClick = add)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
+            if (landscape) categoryActions?.invoke()
+            // Trending can arrive after the category actions. Append its controls so
+            // the existing controls never change position while that feed loads.
             if (landscape && carousel) {
                 DiscoveryCarouselControls(index, count, onFocus, previous, next)
             }
-            if (landscape) categoryActions?.invoke()
         }
         if (!landscape && (carousel || categoryActions != null)) FlowRow(Modifier.padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (carousel) DiscoveryCarouselControls(index, count, onFocus, previous, next)
             categoryActions?.invoke()
+            if (carousel) DiscoveryCarouselControls(index, count, onFocus, previous, next)
         }
     }
 }
@@ -1019,7 +1021,8 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
 private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Unit, previous: () -> Unit, next: () -> Unit, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         DiscoveryAction("Previous featured title", Icons.Default.ChevronLeft, iconOnly = true, onFocus = onFocus, onClick = previous)
-        Text("${index + 1} / $count", color = Color.LightGray, fontSize = 11.sp)
+        Text("${index + 1} / $count", Modifier.width((48f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp),
+            color = Color.LightGray, fontSize = 11.sp, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         DiscoveryAction("Next featured title", Icons.Default.ChevronRight, iconOnly = true, onFocus = onFocus, onClick = next)
     }
 }
@@ -1029,7 +1032,7 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
     popupChanged: (Boolean) -> Unit,
     prefetch: Boolean, presentationEnabled: Boolean, skeleton: Boolean,
     register: (suspend () -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
-    present: (RailEntry) -> Unit, move: (Int) -> Boolean, viewAll: (() -> Unit)?) {
+    present: (RailEntry) -> Unit, move: (Int) -> Boolean, reenter: () -> Unit, viewAll: (() -> Unit)?) {
     val rowState = rememberLazyListState()
     val popupScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -1041,6 +1044,7 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
         if (prefetch && !rowState.isScrollInProgress) { delay(200); prefetchDiscoveryArtwork(context, row.entries.drop(rowState.firstVisibleItemIndex).take(8).map { it.artwork }) }
     }
     var selected by rememberSaveable(row.key) { mutableStateOf<String?>(null) }
+    var lastPoster by rememberSaveable(row.key) { mutableStateOf<String?>(null) }
     var focusedCard by remember { mutableStateOf<RailEntry?>(null) }
     val currentPresentation by rememberUpdatedState(present)
     LaunchedEffect(focusedCard?.key, presentationEnabled, rowState.isScrollInProgress) {
@@ -1076,14 +1080,22 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
             val requester = remember(key) { requesters.getOrPut(key) { FocusRequester() } }
             DiscoveryAction("Search / All", Icons.Default.Search,
                 modifier = Modifier.focusRequester(requester).onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown))
-                        move(if (event.key == Key.DirectionUp) -1 else 1) else false
+                    if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                        Key.DirectionUp -> move(-1)
+                        Key.DirectionDown, Key.DirectionLeft -> {
+                            selected = lastPoster?.takeIf { it in entryKeys } ?: entryKeys.firstOrNull()
+                            if (selected != null) { reenter(); true } else move(1)
+                        }
+                        else -> false
+                    }
                 }, onFocus = { selected = key; focused(RailEntry(key, row.title, null, open = viewAll)) }, onClick = viewAll)
         }
         }
         DiscoveryLazyRow(Modifier.fillMaxWidth().onFocusChanged { if (!it.hasFocus) focusedCard = null }.focusGroup().onPreviewKeyEvent { event ->
             if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown)) {
-                move(if (event.key == Key.DirectionUp) -1 else 1)
+                if (event.key == Key.DirectionUp && row.providerType != null && viewAll != null) {
+                    selected = "${row.key}:all"; reenter(); true
+                } else move(if (event.key == Key.DirectionUp) -1 else 1)
             } else false
         }, state = rowState, contentPadding = PaddingValues(start = if (phone) 16.dp else 24.dp, top = 10.dp, end = if (phone) 16.dp else 24.dp, bottom = if (phone) 12.dp else 4.dp), horizontalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 12.dp)) {
             if (row.entries.isEmpty() && skeleton) items(5) { Box(Modifier.width(tileWidth)
@@ -1103,11 +1115,11 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
                         if (phone) DiscoveryPhoneMediaCard(entry.title, entry.artwork, entry.subtitle, tileWidth,
                             wide = phoneWide, modifier = Modifier.focusRequester(requester), progress = entry.progress, matchCount = entry.matchCount,
                             onClick = entry.open, onLongClick = entry.popup?.let { { popupOpen = true } },
-                            onFocus = { selected = entry.key; focusedCard = entry; focused(entry) })
+                            onFocus = { selected = entry.key; lastPoster = entry.key; focusedCard = entry; focused(entry) })
                         else DiscoveryPosterTile(entry.title, entry.artwork, entry.subtitle, width, reduceMotion = reduceMotion,
                             modifier = Modifier.focusRequester(requester), progress = entry.progress, matchCount = entry.matchCount,
                             onClick = entry.open, onLongClick = entry.popup?.let { { popupOpen = true } },
-                            onFocus = { selected = entry.key; focusedCard = entry; focused(entry) })
+                            onFocus = { selected = entry.key; lastPoster = entry.key; focusedCard = entry; focused(entry) })
                         var restoreJob by remember(entry.key) { mutableStateOf<Job?>(null) }
                         val requestNow = { runCatching { requester.requestFocus() }.getOrDefault(false) }
                         val restore = {
