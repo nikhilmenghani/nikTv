@@ -40,3 +40,18 @@ internal class LiveSegmentLoadErrorPolicy(private val hasPlayed: () -> Boolean) 
             else super.getRetryDelayMsFor(info)
     }
 }
+
+/** Auto may change engines for device failures; network errors and explicit choices may not. */
+internal fun automaticLivePlayerFallback(preference: com.nikhil.niktv.model.PlaybackEngine,
+    live: Boolean, requested: Boolean, offline: Boolean, compatibleVlc: Boolean,
+    errorCode: Int): Boolean = preference == com.nikhil.niktv.model.PlaybackEngine.AUTO &&
+    live && requested && !offline && compatibleVlc && errorCode in setOf(
+        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        PlaybackException.ERROR_CODE_TIMEOUT)
+
+/** Sliding manifests change window coordinates without changing the decoded media clock. */
+internal fun liveRecoveryPosition(positionMillis: Long, windowOffsetMillis: Long): Long =
+    positionMillis.coerceAtLeast(0L) + windowOffsetMillis.coerceAtLeast(0L)

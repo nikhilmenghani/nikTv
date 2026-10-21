@@ -5,6 +5,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiveStreamRecoveryTest {
+    @Test fun exhaustedReadyButFrozenEngineIsActionableWithoutSpendingAnotherRetry() {
+        val recovery = LiveStreamRecovery()
+        recovery.shouldRecover(0, 100, true, false)
+        assertTrue(recovery.shouldRecover(20_000, 100, true, false))
+        // Replacement is preparing; the existing channel budget is retained.
+        recovery.shouldRecover(21_000, 0, false, false)
+        recovery.shouldRecover(22_000, 200, true, false)
+        assertFalse(recovery.unrecoverable(41_999, true, false))
+        assertTrue(recovery.unrecoverable(42_000, true, false))
+        assertFalse(recovery.unrecoverable(42_000, false, false))
+        assertFalse(recovery.shouldRecover(42_000, 200, true, false))
+        recovery.shouldRecover(43_000, 1_200, true, false)
+        assertFalse(recovery.unrecoverable(43_000, true, false))
+    }
+
     @Test fun stoppedStreamRecoversOnlyOnce() {
         val recovery = LiveStreamRecovery()
         assertTrue(recovery.shouldRecover(0, 100, true, true))

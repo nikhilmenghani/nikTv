@@ -216,6 +216,7 @@ internal fun ModernSeriesDetailScreen(
     val landscapeRequesters = remember(profile, series.id) { mutableMapOf<String, FocusRequester>() }
     val sortRequester = remember(series.id) { FocusRequester() }
     val synopsisRequester = remember(series.id) { FocusRequester() }
+    var hasSynopsis by remember(series.id) { mutableStateOf(false) }
     val wideFocusCoordinator = remember(series.id) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(detailScope) }
     val moreRequester = remember(series.id) { FocusRequester() }
     var episodeMove by remember { mutableStateOf<Job?>(null) }
@@ -361,6 +362,9 @@ internal fun ModernSeriesDetailScreen(
         }
     }
     fun requestWideFocus(target: SeriesDetailFocus, preferred: FocusRequester? = null) {
+        if (target == SeriesDetailFocus.INFO && !hasSynopsis) {
+            requestWideFocus(SeriesDetailFocus.PLAY); return
+        }
         if (target == SeriesDetailFocus.EPISODES) { focusLandscapeEpisode(); return }
         episodeMove?.cancel()
         val requester = preferred ?: when (target) {
@@ -380,7 +384,9 @@ internal fun ModernSeriesDetailScreen(
         }
     }
     fun moveWideFocus(from: SeriesDetailFocus, delta: Int) {
-        adjacentSeriesDetailFocus(from, delta, false)?.let { requestWideFocus(it) }
+        val next = adjacentSeriesDetailFocus(from, delta, false)
+        val target = if (next == SeriesDetailFocus.INFO && !hasSynopsis) adjacentSeriesDetailFocus(next, delta, false) else next
+        target?.let { requestWideFocus(it) }
     }
     DisposableEffect(profile, series.id, selectedSeason, activeSearchQuery, episodeSortDescending, episodeListView) {
         onDispose { episodeMove?.cancel(); wideFocusCoordinator.cancel() }
@@ -498,6 +504,7 @@ internal fun ModernSeriesDetailScreen(
             topDown = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.TOP, 1) }) else null,
             seasonCounts = { tmdbSeasonCounts = it },
             synopsisRequester = synopsisRequester,
+            synopsisAvailable = { hasSynopsis = it },
             synopsisUp = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.INFO, -1) }) else null,
             synopsisDown = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.INFO, 1) }) else null,
             down = {
@@ -759,7 +766,7 @@ internal fun ModernSeriesDetailScreen(
                             .onPreviewKeyEvent { event ->
                                 if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                     Key.DirectionUp -> if (episode.id == filteredEpisodes.firstOrNull()?.id) { requestWideFocus(SeriesDetailFocus.TOOLS); true } else false
-                                    Key.DirectionLeft -> if (availableSeasons.size > 1) runCatching { seasonSidebarRequester.requestFocus() }.getOrDefault(false) else false
+                                    Key.DirectionLeft -> if (availableSeasons.isNotEmpty()) runCatching { seasonSidebarRequester.requestFocus() }.getOrDefault(false) else false
                                     else -> false
                                 } else false
                             }
@@ -778,7 +785,7 @@ internal fun ModernSeriesDetailScreen(
                 else if (episodeListView) item("episode-row") {
                     Row(Modifier.fillMaxWidth().height((episodeConfiguration.screenHeightDp * .68f).coerceIn(260f, 620f).dp)
                         .padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        if (availableSeasons.size > 1) SeriesSeasonSidebar(availableSeasons, selectedSeason,
+                        if (availableSeasons.isNotEmpty()) SeriesSeasonSidebar(availableSeasons, selectedSeason,
                             seasonCounts,
                             seasonSidebarRequester, loadSeriesSeason, ::focusLandscapeEpisode,
                             { requestWideFocus(SeriesDetailFocus.SORT) }, Modifier.width(156.dp).fillMaxHeight())

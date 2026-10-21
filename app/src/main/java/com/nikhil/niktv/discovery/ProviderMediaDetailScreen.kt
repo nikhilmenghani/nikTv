@@ -42,7 +42,7 @@ internal val LocalProviderDetailNavigation = staticCompositionLocalOf<ProviderDe
 @Composable
 private fun ProviderDetailSynopsis(overview: String?, title: String, remoteInfo: Boolean = false,
     requester: FocusRequester = remember { FocusRequester() }, up: (() -> Unit)? = null, down: (() -> Unit)? = null) {
-    if (overview.isNullOrBlank() && !remoteInfo) return
+    if (overview.isNullOrBlank()) return
     var expanded by rememberSaveable(overview) { mutableStateOf(false) }
     var showInfo by remember(overview) { mutableStateOf(false) }
     var overflowing by remember(overview) { mutableStateOf(false) }
@@ -87,6 +87,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     heroUp: (() -> Unit)? = null, topDown: (() -> Unit)? = null,
     synopsisRequester: FocusRequester = remember { FocusRequester() },
     synopsisUp: (() -> Unit)? = null, synopsisDown: (() -> Unit)? = null,
+    synopsisAvailable: (Boolean) -> Unit = {},
     seasonCounts: (Map<Int, Int>) -> Unit = {},
     tools: @Composable RowScope.() -> Unit = {},
     layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
@@ -151,6 +152,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     }
     val people = metadata.cast.filter { (it.id ?: 0) > 0 }.distinctBy { it.id }
     LaunchedEffect(profile, item.id, metadata.seasonEpisodeCounts) { seasonCounts(metadata.seasonEpisodeCounts) }
+    LaunchedEffect(profile, item.id, metadata.card.overview) { synopsisAvailable(!metadata.card.overview.isNullOrBlank()) }
     val landscape = configuration.screenWidthDp >= 600 || context.isTvLikeDevice(configuration)
     val phone = app.discoveryExperienceEnabled && usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
         configuration.screenHeightDp >= configuration.screenWidthDp

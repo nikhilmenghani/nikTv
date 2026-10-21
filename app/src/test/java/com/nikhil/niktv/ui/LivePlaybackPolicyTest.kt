@@ -7,6 +7,40 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LivePlaybackPolicyTest {
+    @org.junit.Test fun slidingLiveWindowDoesNotHideProgressOrInventProgressDuringAFreeze() {
+        val recovery = LiveStreamRecovery()
+        for (second in 0..70) {
+            val offset = second * 1_000L
+            org.junit.Assert.assertFalse(recovery.shouldRecover(offset,
+                liveRecoveryPosition(30_000L, offset), true, false))
+        }
+        val frozen = LiveStreamRecovery()
+        for (second in 0..19) {
+            val offset = second * 1_000L
+            org.junit.Assert.assertFalse(frozen.shouldRecover(offset,
+                liveRecoveryPosition(30_000L - offset, offset), true, false))
+        }
+        org.junit.Assert.assertTrue(frozen.shouldRecover(20_000,
+            liveRecoveryPosition(10_000, 20_000), true, false))
+    }
+
+    @org.junit.Test fun autoDeviceFailureCanUseCompatibleEngineWithoutChangingExplicitChoices() {
+        val failure = androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED
+        for (engine in com.nikhil.niktv.model.PlaybackEngine.entries) {
+            org.junit.Assert.assertEquals(engine == com.nikhil.niktv.model.PlaybackEngine.AUTO,
+                automaticLivePlayerFallback(engine, true, true, false, true, failure))
+        }
+        val auto = com.nikhil.niktv.model.PlaybackEngine.AUTO
+        org.junit.Assert.assertFalse(automaticLivePlayerFallback(auto, true, false, false, true, failure))
+        org.junit.Assert.assertFalse(automaticLivePlayerFallback(auto, false, true, false, true, failure))
+        org.junit.Assert.assertFalse(automaticLivePlayerFallback(auto, true, true, true, true, failure))
+        org.junit.Assert.assertFalse(automaticLivePlayerFallback(auto, true, true, false, false, failure))
+        org.junit.Assert.assertFalse(automaticLivePlayerFallback(auto, true, true, false, true,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT))
+        org.junit.Assert.assertFalse(automaticLivePlayerFallback(auto, true, true, false, true,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS))
+    }
+
     @Test fun stuckOrResetLivePlaylistsUseBoundedRecoveryWithoutTreatingAuthAsNetwork() {
         assertTrue(recoverableLiveSourceFailure(true, true, PlaybackException.ERROR_CODE_IO_UNSPECIFIED, null, true))
         assertFalse(recoverableLiveSourceFailure(false, true, PlaybackException.ERROR_CODE_IO_UNSPECIFIED, null, true))

@@ -52,7 +52,7 @@ internal class MediaIdentityRepository(context: Context, private val tmdb: TmdbC
             // A background title search may finish after a user confirms a match.
             // It must never replace that stronger evidence (including with a miss).
             val previous = entries.orEmpty()[identity.key]
-            if (identity.method == "matched" && previous?.providerTitle == identity.providerTitle &&
+            if (identity.method in setOf("matched", "matched-series-v2") && previous?.providerTitle == identity.providerTitle &&
                 previous.method in setOf("confirmed", "provider")) return@withLock
             val updated = (entries.orEmpty() + (identity.key to identity)).values
                 .sortedByDescending { it.checkedAt }.take(4_000)
@@ -82,7 +82,7 @@ internal class MediaIdentityRepository(context: Context, private val tmdb: TmdbC
             val cached = cached(profile, type, item)
             if (cached != null && cached.providerTitle == item.title &&
                 (item.externalTmdbId == null || cached.tmdbId == item.externalTmdbId) &&
-                (cached.tmdbId != null || System.currentTimeMillis() - cached.checkedAt < 24 * 60 * 60_000L)) {
+                (cached.tmdbId != null || ((type != CatalogType.SERIES || cached.method == "matched-series-v2" || providerSeriesTmdbTitle(item.title) == providerTmdbTitle(item.title)) && System.currentTimeMillis() - cached.checkedAt < 24 * 60 * 60_000L))) {
                 return@withLock cached.takeIf { it.tmdbId != null }
             }
             if (!tmdb.configured) return@withLock null
@@ -91,7 +91,7 @@ internal class MediaIdentityRepository(context: Context, private val tmdb: TmdbC
             val identity = MediaIdentity(profile, type, item.id, item.title,
                 movie = if (type == CatalogType.MOVIES) tmdb.confidentlyMatchMovie(item) else null,
                 series = if (type == CatalogType.SERIES) tmdb.confidentlyMatchSeries(item) else null,
-                method = if (item.externalTmdbId != null) "provider" else "matched")
+                method = if (item.externalTmdbId != null) "provider" else if (type == CatalogType.SERIES) "matched-series-v2" else "matched")
             save(identity, requestGeneration)
             cached(profile, type, item)?.takeIf { it.tmdbId != null }
         }
@@ -123,4 +123,12 @@ internal fun providerTmdbTitle(title: String): String {
     repeat(3) { value = value.replace(prefix, "") }
     return value.replace(Regex("\\[(?:$labels|1080p|2160p|720p)(?:[ ,/+_-][^\\]]*)?\\]", RegexOption.IGNORE_CASE), " ")
         .trim()
+}
+
+/** Only recognized broadcaster prefixes: a colon inside a real show title is preserved. */
+internal fun providerSeriesTmdbTitle(title: String): String {
+    val channel = "star\\s+(?:plus|bharat|pravah|jalsha|maa|vijay)|sony(?:\\s+(?:sab|tv|entertainment))?|zee(?:\\s+(?:tv|marathi|bangla|kannada|telugu|tamil))?|colors(?:\\s+(?:tv|marathi|bangla|kannada|tamil))?|sab|sun\\s+tv"
+    val language = "hindi|english|marathi|bengali|bangla|tamil|telugu|kannada|malayalam"
+    val prefix = Regex("^(?:$channel)(?:\\s+(?:$language))?\\s*[:|]\\s*(?=\\S)", RegexOption.IGNORE_CASE)
+    return providerTmdbTitle(title).replace(prefix, "").trim()
 }

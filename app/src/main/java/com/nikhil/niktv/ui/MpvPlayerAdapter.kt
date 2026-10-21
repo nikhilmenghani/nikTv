@@ -33,7 +33,7 @@ internal class MpvPlayerAdapter(
     private val main = Handler(Looper.getMainLooper())
     private val released = AtomicBoolean()
     private val live = media.catalogType == CatalogType.LIVE_TV
-    // Native handle and all JNI commands belong to NativePlaybackWorker.
+    // Native handle and all JNI commands belong to MpvNativePlaybackWorker.
     private var mpv: MPVLib? = null
     private var nativeHasFile = false
     private var pendingPreparePosition: Long? = null
@@ -301,8 +301,11 @@ internal class MpvPlayerAdapter(
             mpv?.let {
                 it.removeObserver(observer)
                 it.removeLogObserver(nativeLogObserver)
+                android.util.Log.i("NikTvMpv", "Stopping retiring native stream")
                 runCatching { it.command(arrayOf("stop")) }
+                android.util.Log.i("NikTvMpv", "Retiring native stream stopped; detaching output")
                 runCatching { it.detachSurface() }
+                android.util.Log.i("NikTvMpv", "Destroying retiring native handle")
                 it.destroy()
             }
             mpv = null
@@ -430,13 +433,12 @@ internal class MpvPlayerAdapter(
         nativeSurface = null
     }
     private fun startHealthSamples() {
-        NativePlaybackWorker.scope.launch {
+        MpvNativePlaybackWorker.scope.launch {
             while (!released.get()) {
                 delay(15_000L)
                 if (released.get()) break
                 val engine = mpv ?: continue
                 if (!requested) continue
-                // Observe decoder/output health without probing the provider.
                 android.util.Log.i("NikTvMpv",
                     "health positionSecs=${engine.getPropertyDouble("time-pos")} " +
                         "cacheSecs=${engine.getPropertyDouble("demuxer-cache-duration")} " +
@@ -444,7 +446,8 @@ internal class MpvPlayerAdapter(
                         "avSyncSecs=${engine.getPropertyDouble("avsync")} " +
                         "syncCorrectionSecs=${engine.getPropertyDouble("total-avsync-change")} " +
                         "audioOutput=${engine.getPropertyString("current-ao")} " +
-                        "cachePaused=${engine.getPropertyBoolean("paused-for-cache")}")
+                        "cachePaused=${engine.getPropertyBoolean("paused-for-cache")} " +
+                        "paused=${engine.getPropertyBoolean("pause")} hwdec=${engine.getPropertyString("hwdec-current")}")
             }
         }
     }
@@ -485,14 +488,14 @@ internal class MpvPlayerAdapter(
         firstFrame = false
     }
     @androidx.annotation.VisibleForTesting
-    internal suspend fun diagnosticFrameDrops(): Int? = kotlinx.coroutines.withContext(NativePlaybackWorker.dispatcher) {
+    internal suspend fun diagnosticFrameDrops(): Int? = kotlinx.coroutines.withContext(MpvNativePlaybackWorker.dispatcher) {
         if (released.get()) null else mpv?.getPropertyInt("frame-drop-count")
     }
 
     private fun enqueue(action: (MPVLib) -> Unit): ListenableFuture<Void> = enqueueNative { mpv?.let(action) }
     private fun enqueueNative(allowReleased: Boolean = false, action: () -> Unit): ListenableFuture<Void> {
         val future = SettableFuture.create<Void>()
-        NativePlaybackWorker.scope.launch {
+        MpvNativePlaybackWorker.scope.launch {
             try {
                 if (allowReleased || !released.get()) action()
                 future.set(null)

@@ -1,6 +1,7 @@
 package com.nikhil.niktv.discovery
 
 import com.nikhil.niktv.data.providerTmdbTitle
+import com.nikhil.niktv.data.providerSeriesTmdbTitle
 import com.nikhil.niktv.model.*
 import kotlinx.serialization.builtins.ListSerializer
 
@@ -23,7 +24,8 @@ internal fun providerCategoryQueueFilter(category: Category, items: List<MediaIt
 internal suspend fun cachedProviderMetadata(cache: DiscoveryCache, item: MediaItem, type: CatalogType,
     lookup: suspend () -> DiscoveryCard?): DiscoveryCard? {
     require(type == CatalogType.MOVIES || type == CatalogType.SERIES)
-    val key = "provider-presentation-v1:${type.name}:${item.externalTmdbId}:${providerTmdbTitle(item.title)}"
+    val title = if (type == CatalogType.SERIES) providerSeriesTmdbTitle(item.title) else providerTmdbTitle(item.title)
+    val key = "provider-presentation-v1:${type.name}:${item.externalTmdbId}:$title"
     // Only public metadata is stored. Provider IDs, credentials and commands never enter this cache.
     return cache.load(key, DiscoveryCache.FEED_TTL, ListSerializer(DiscoveryCard.serializer())) {
         listOfNotNull(lookup())

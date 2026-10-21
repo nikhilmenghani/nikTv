@@ -347,7 +347,7 @@ class TmdbClient {
             val root = execute("/3/tv/$id", emptyMap())
             return@withContext root.toTmdbSeries()
         }
-        val lookupTitle = providerTmdbTitle(item.title)
+        val lookupTitle = providerSeriesTmdbTitle(item.title)
         val queries = listOf(lookupTitle,
             lookupTitle.replace(Regex("(?i)\\blatest\\b"), "Latent"))
             .filter { it.isNotBlank() }.distinct()

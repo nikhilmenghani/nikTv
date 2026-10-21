@@ -12,3 +12,11 @@ internal object NativePlaybackWorker {
     }.asCoroutineDispatcher()
     val scope = CoroutineScope(SupervisorJob() + dispatcher)
 }
+
+/** A hung mpv driver/teardown must not block VLC construction or its media preparation. */
+internal object MpvNativePlaybackWorker {
+    val dispatcher = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "NikTvMpvPlayback").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
+    val scope = CoroutineScope(SupervisorJob() + dispatcher)
+}

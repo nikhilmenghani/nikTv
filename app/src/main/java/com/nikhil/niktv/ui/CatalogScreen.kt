@@ -230,13 +230,29 @@ internal fun CatalogScreen(
             (state.modernTmdbSection != null || state.modernIptvCategory != null)
     val mobileMainPage = state.mobileMainPage()
     val openTrial = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
-    fun landingHome() { if (phoneExperience) openTrial(DashboardSurface.HOME) else openHome() }
+    fun landingHome() { if (state.discoveryExperienceEnabled) openTrial(DashboardSurface.HOME) else openHome() }
     val playTrialEpisode = com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode.current
     val previewVisible = state.discoverySurface != null && !state.settingsOpen && !state.searchOpen &&
         !state.favoritesOpen && !state.offlineDownloadsOpen && state.selectedSeries == null &&
         state.movieMatchSelection == null && state.seriesMatchSelection == null && !modernSectionOpen
     val previewProviderCategory = state.discoverySurface != null && state.modernIptvCategory?.type in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
         state.selectedSeries == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && !state.offlineDownloadsOpen
+    val discoveryLibrary = com.nikhil.niktv.discovery.discoveryLibraryDestination(
+        state.discoveryExperienceEnabled, state.homeOpen && state.modernIptvCategory?.type != CatalogType.LIVE_TV, state.selectedType, state.favoritesOpen,
+        state.settingsOpen || state.searchOpen || state.offlineDownloadsOpen || state.movieMatchSelection != null || state.seriesMatchSelection != null,
+        state.selectedSeries != null && !state.favoritesOpen)
+    fun navigateDiscovery(label: String) { when (label) {
+        "Home" -> openTrial(DashboardSurface.HOME)
+        "Movies" -> openTrial(DashboardSurface.MOVIES)
+        "Series" -> openTrial(DashboardSurface.SERIES)
+        "Live TV" -> if (state.homeOpen || state.favoritesOpen || state.selectedType != CatalogType.LIVE_TV || modernSectionOpen) selectType(CatalogType.LIVE_TV)
+        "My List" -> if (!state.favoritesOpen) openFavorites()
+        "Search" -> (openGlobalSearch ?: openSearch)()
+        "Settings" -> openSettings()
+        "Offline" -> openOfflineDownloads()
+        "Profile" -> openProfileSwitcher()
+    } }
+
 
     fun openDownloadsPane() {
         libraryPane = LibraryPane.DOWNLOADS
@@ -381,14 +397,16 @@ internal fun CatalogScreen(
                     loadMore = loadMoreSearch,
                     toggleFavorite = toggleFavoriteEntry
                 )
-                state.favoritesOpen -> ModernFavoritesScreen(
+                state.favoritesOpen -> StableTileFocusViewport { ModernFavoritesScreen(
                     state = state,
                     openFavorite = openFavorite,
                     toggleFavorite = toggleFavoriteEntry,
                     openSearch = openSearch,
                     openSettings = openSettings,
-                    closeFavorites = closeFavorites
-                )
+                    closeFavorites = closeFavorites,
+                    discoveryChrome = discoveryLibrary != null,
+                    refreshLiveProgramme = refreshLiveProgramme
+                ) }
                 state.selectedSeries != null -> StableTileFocusViewport { ModernSeriesDetailScreen(
                     state = state,
                     play = play,
@@ -480,6 +498,23 @@ internal fun CatalogScreen(
         }
     }
 
+    @Composable fun LibraryContent(modifier: Modifier = Modifier) {
+        Box(modifier) {
+            if (discoveryLibrary != null) com.nikhil.niktv.discovery.DiscoveryLibraryScreen(
+                state, discoveryLibrary,
+                back = { if (state.favoritesOpen) closeFavorites() else if (modernSectionOpen) closeModernSection() else landingHome() },
+                select = openTrial, navigate = ::navigateDiscovery) {
+                    Column(Modifier.fillMaxSize()) {
+                        MainContent(Modifier.weight(1f).fillMaxWidth())
+                        if (state.favoritesOpen && !phoneExperience) MobileLibrarySwitcher(
+                            downloadsSelected = false, storageSelected = false,
+                            openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane,
+                            openStorage = ::openStoragePane)
+                    }
+                }
+            else MainContent(Modifier.fillMaxSize())
+        }
+    }
     if (phoneExperience) {
         val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&
             state.movieMatchSelection == null && state.seriesMatchSelection == null && !state.categoryManagerOpen
@@ -495,7 +530,7 @@ internal fun CatalogScreen(
             Column(Modifier.fillMaxSize()
                 .then(if (previewVisible || previewProviderCategory || state.selectedSeries != null) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
                 .padding(bottom = if (showPhoneBar && !previewVisible) 88.dp else 0.dp)) {
-                MainContent(Modifier.weight(1f).fillMaxWidth())
+                LibraryContent(Modifier.weight(1f).fillMaxWidth())
                 if (state.favoritesOpen || state.offlineDownloadsOpen) MobileLibrarySwitcher(
                     downloadsSelected = state.offlineDownloadsOpen, storageSelected = libraryPane == LibraryPane.STORAGE,
                     openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane, openStorage = ::openStoragePane)
@@ -507,8 +542,8 @@ internal fun CatalogScreen(
                 DiscoveryPhoneDestination.LIBRARY -> openFavorites()
             } }, modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars))
         }
-    } else if (previewVisible || previewProviderCategory || state.selectedSeries != null) {
-        MainContent(Modifier.fillMaxSize())
+    } else if (previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null) {
+        LibraryContent(Modifier.fillMaxSize())
     } else if (wide || isTv) {
         Row(
             Modifier

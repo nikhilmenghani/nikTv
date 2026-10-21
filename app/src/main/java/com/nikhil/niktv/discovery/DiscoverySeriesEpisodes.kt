@@ -162,7 +162,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 modifier = (if (listView) Modifier.fillMaxWidth() else Modifier.width(200.dp)).focusRequester(requester)
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                            Key.DirectionLeft -> if (listView && wide && seasons.size > 1) runCatching { sidebar.requestFocus() }.getOrDefault(false) else false
+                            Key.DirectionLeft -> if (listView && wide && seasons.isNotEmpty()) runCatching { sidebar.requestFocus() }.getOrDefault(false) else false
                             Key.DirectionUp -> if (!listView && wide && seasons.isNotEmpty()) runCatching { sidebar.requestFocus() }.getOrDefault(false)
                                 else if (!listView || index == 0) runCatching { seasonEntry.requestFocus() }.getOrDefault(false) else false
                             Key.DirectionDown -> if (!listView || index == episodes.lastIndex) down() else false
@@ -184,7 +184,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), horizontal = true)
         if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
             .height((configuration.screenHeightDp * .68f).coerceIn(260f, 620f).dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (wide && seasons.size > 1) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
+            if (wide && seasons.isNotEmpty()) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
                 loadSeason, ::enterEpisodes, { runCatching { seasonEntry.requestFocus() } }, Modifier.width(156.dp).fillMaxHeight())
             LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (episodes.isEmpty()) item("episode-status") {

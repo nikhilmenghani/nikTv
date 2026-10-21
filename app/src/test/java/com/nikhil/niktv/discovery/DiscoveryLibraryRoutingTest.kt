@@ -1,0 +1,24 @@
+package com.nikhil.niktv.discovery
+
+import com.nikhil.niktv.model.CatalogType
+import org.junit.Assert.*
+import org.junit.Test
+
+class DiscoveryLibraryRoutingTest {
+    @Test fun liveAndSavedMediaUseDiscoveryWithoutChangingPersistedCatalogueTypes() {
+        assertEquals(DiscoveryLibraryDestination.LIVE_TV, destination(type = CatalogType.LIVE_TV))
+        assertEquals(DiscoveryLibraryDestination.MY_LIST, destination(favorites = true))
+        assertNull(destination(home = true))
+        assertNull(destination(type = CatalogType.MOVIES))
+        assertNull(destination(type = CatalogType.SERIES))
+    }
+    @Test fun originalUiAndSecondaryRoutesKeepTheirOwners() {
+        assertNull(destination(enabled = false))
+        assertNull(destination(overlay = true))
+        assertNull(destination(detail = true))
+        assertNull(destination(favorites = true, overlay = true))
+    }
+    private fun destination(enabled: Boolean = true, home: Boolean = false, type: CatalogType = CatalogType.LIVE_TV,
+        favorites: Boolean = false, overlay: Boolean = false, detail: Boolean = false) =
+        discoveryLibraryDestination(enabled, home, type, favorites, overlay, detail)
+}

@@ -11,6 +11,19 @@ class ProviderMetadataTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun movie(title: String = "Movie (2020)", id: Int? = null) =
         MediaItem("private-provider-id", title, null, "private-provider-stream-secret", externalTmdbId = id)
+    @Test fun broadcasterMissDoesNotBlockCleanSeriesLookup() = runBlocking {
+        val cache = DiscoveryCache(temporary.newFolder())
+        val decorated = movie("Star Plus Hindi : Anupama")
+        cache.load("provider-presentation-v1:SERIES:null:Star Plus Hindi : Anupama",
+            DiscoveryCache.FEED_TTL, kotlinx.serialization.builtins.ListSerializer(DiscoveryCard.serializer())) {
+            emptyList<DiscoveryCard>()
+        }
+        var calls = 0
+        val expected = DiscoveryCard(42, true, "Anupama")
+        assertEquals(expected, cachedProviderMetadata(cache, decorated, CatalogType.SERIES) { calls++; expected })
+        assertEquals(expected, cachedProviderMetadata(cache, movie("Anupama"), CatalogType.SERIES) { calls++; null })
+        assertEquals(1, calls)
+    }
     @Test fun cachedPresentationIsReusedWithoutSavingProviderCommands() = runBlocking {
         val directory = temporary.newFolder()
         val cache = DiscoveryCache(directory)

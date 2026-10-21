@@ -63,7 +63,8 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     headerFocus: () -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit, customize: (() -> Unit)?,
     backdrop: String? = null, backdropBounds: Rect = Rect.Zero,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
-    categoryPopupChanged: (Boolean) -> Unit = {}) {
+    categoryPopupChanged: (Boolean) -> Unit = {},
+    library: DiscoveryLibraryDestination? = null) {
     val tabs = rememberScrollState()
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -91,13 +92,17 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         verticalAlignment = Alignment.CenterVertically) {
                         trialSurfaces.forEach { tab ->
                             DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
-                                selected = surface == tab, horizontalPadding = 12.dp,
+                                selected = library == null && surface == tab, horizontalPadding = 12.dp,
                                 modifier = Modifier.semantics { contentDescription = tab.trialTitle() }
-                                    .then(if (tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
+                                    .then(if (library == null && tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
                                 onFocus = headerFocus) { select(tab) }
                         }
-                        DiscoveryAction("Live TV", horizontalPadding = 12.dp, onFocus = headerFocus) { classic("Live TV") }
-                        DiscoveryAction("My List", horizontalPadding = 12.dp, onFocus = headerFocus) { classic("My List") }
+                        DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
+                            modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
+                            onFocus = headerFocus) { classic("Live TV") }
+                        DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
+                            modifier = if (library == DiscoveryLibraryDestination.MY_LIST) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
+                            onFocus = headerFocus) { classic("My List") }
                     }
                 }
                 DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize)
@@ -140,7 +145,8 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
     back: () -> Unit, select: (DashboardSurface) -> Unit, classic: (String) -> Unit,
     menu: Boolean, changeMenu: (Boolean) -> Unit,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
-    categoryPopupChanged: (Boolean) -> Unit = {}) {
+    categoryPopupChanged: (Boolean) -> Unit = {},
+    library: DiscoveryLibraryDestination? = null) {
     Column(Modifier.fillMaxWidth().padding(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
@@ -149,15 +155,18 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
             DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
             DiscoveryBrowseMenu(menu, changeMenu, surface, classic, null)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             trialSurfaces.forEach { entry ->
                 DiscoveryAction(entry.trialTitle(), visualLabel = entry.trialTitle().removeSuffix(" 2"),
-                    selected = entry == surface, horizontalPadding = 4.dp,
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                        .then(if (entry == surface) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier),
+                    selected = library == null && entry == surface, horizontalPadding = 12.dp,
+                    modifier = Modifier.heightIn(min = 48.dp)
+                        .then(if (library == null && entry == surface) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier),
                     onClick = { select(entry) })
             }
-            DiscoveryAction("Live TV", horizontalPadding = 4.dp, modifier = Modifier.weight(1f)) { classic("Live TV") }
+            DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
+                modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { classic("Live TV") }
+            DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
+                modifier = if (library == DiscoveryLibraryDestination.MY_LIST) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { classic("My List") }
         }
     }
 }

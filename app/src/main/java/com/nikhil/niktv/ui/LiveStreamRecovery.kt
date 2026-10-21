@@ -49,6 +49,10 @@ internal class LiveStreamRecovery {
         }
     }
 
+    /** Exhaustion must also cover engines stuck in READY, not just explicit EOF. */
+    fun unrecoverable(now: Long, eligible: Boolean, terminated: Boolean): Boolean =
+        eligible && exhausted && (terminated || (lastPosition != null && now - lastAdvanceAt >= 20_000L))
+
     fun shouldRecover(now: Long, position: Long, eligible: Boolean, terminated: Boolean): Boolean {
         observePlayback(now, position, eligible, terminated)
         if (!eligible) return false

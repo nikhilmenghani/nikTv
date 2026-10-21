@@ -1053,7 +1053,7 @@ fun PlayerScreen(
                 val bufferedMillis = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L)
                 android.util.Log.i(
                     "NikTvPlayback",
-                    "state=$state bufferedMs=$bufferedMillis positionMs=${player.currentPosition} live=${media.catalogType == CatalogType.LIVE_TV}"
+                    "engine=$effectiveEngine state=$state bufferedMs=$bufferedMillis positionMs=${player.currentPosition} live=${media.catalogType == CatalogType.LIVE_TV}"
                 )
                 if (
                     media.catalogType == CatalogType.SERIES && !advancing &&
@@ -1242,6 +1242,20 @@ fun PlayerScreen(
                         }
                     }
 
+                    effectiveEngine.isMedia3Player() &&
+                        media.nativeSabr == null && media.separateAudioUrl == null &&
+                        automaticLivePlayerFallback(selectedPlayerChoice, media.catalogType == CatalogType.LIVE_TV,
+                            playbackRequested, media.offlinePlayback, vlcHeaderOptions(media.streamRequestHeaders) != null,
+                            error.errorCode) -> {
+                        // One compatible-engine handoff for Auto. Retain the chosen preference,
+                        // resolved URL, headers and queue; never retry an authorization failure here.
+                        playbackError = null
+                        decoderRecoveryInProgress = false
+                        engineSwitchResumePosition = 0L
+                        sessionEngineOverride = PlaybackEngine.VLC
+                        android.util.Log.w("NikTvPlayback", "Auto live decoder fallback to VLC; code=${error.errorCode}")
+                    }
+
                     else -> {
                         decoderRecoveryInProgress = false
 
@@ -1366,6 +1380,8 @@ fun PlayerScreen(
     }
     LaunchedEffect(player, media.progressKey) {
         var lastProgressSave = android.os.SystemClock.elapsedRealtime()
+        var lastHealthSample = lastProgressSave
+        val recoveryWindow = androidx.media3.common.Timeline.Window()
         while (true) {
             delay(1_000)
             if (media.catalogType == CatalogType.LIVE_TV) {
@@ -1378,18 +1394,36 @@ fun PlayerScreen(
                     val active = playbackLifecycleOwner.lifecycle.currentState.isAtLeast(
                         androidx.lifecycle.Lifecycle.State.STARTED)
                     val eligible = active && playbackRequested && playbackHasBeenReady &&
-                        playbackError == null && !liveRefreshPending
-                    liveEdgeRecovery.observePlayback(now, livePlaybackElapsedMillis, eligible)
-                    if (liveRecovery.shouldRecover(now, livePlaybackElapsedMillis, eligible,
+                        playbackError == null && !liveRefreshPending &&
+                        player.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
+                    // The UI elapsed clock advances when an engine claims it is playing,
+                    // even if the native media clock is frozen. Recovery needs real progress.
+                    val timeline = player.currentTimeline
+                    val windowOffset = if (!timeline.isEmpty && player.currentMediaItemIndex >= 0)
+                        timeline.getWindow(player.currentMediaItemIndex, recoveryWindow).positionInFirstPeriodMs else 0L
+                    val streamPosition = liveRecoveryPosition(player.currentPosition, windowOffset)
+                    liveEdgeRecovery.observePlayback(now, streamPosition, eligible)
+                    if (liveRecovery.shouldRecover(now, streamPosition, eligible,
                             player.playbackState == Player.STATE_ENDED)) {
                         liveRefreshPending = true
-                        android.util.Log.w("NikTvPlayback", "Refreshing stopped/stalled ExoPlayer live stream")
+                        android.util.Log.w("NikTvPlayback", "Refreshing stopped/stalled ${effectiveEngine.playerChoiceLabel()} live stream")
                         currentStreamRetry(0L)
-                    } else if (eligible && liveRecovery.exhausted && player.playbackState == Player.STATE_ENDED) {
+                    } else if (liveRecovery.unrecoverable(now, eligible, player.playbackState == Player.STATE_ENDED)) {
                         playbackError = "The live stream stopped. Retry to refresh the stream, or choose another player."
                         controlsVisible = true
                     }
                 }
+            }
+            if (media.catalogType == CatalogType.LIVE_TV && playbackRequested &&
+                android.os.SystemClock.elapsedRealtime() - lastHealthSample >= 15_000L) {
+                val exo = player as? ExoPlayer
+                val counters = exo?.videoDecoderCounters
+                counters?.ensureUpdated()
+                android.util.Log.i("NikTvPlaybackHealth", "engine=$effectiveEngine positionMs=${player.currentPosition} " +
+                    "bufferedMs=${player.totalBufferedDuration} playing=${player.isPlaying} " +
+                    "suppression=${player.playbackSuppressionReason} frames=${counters?.renderedOutputBufferCount} " +
+                    "dropped=${counters?.droppedBufferCount}")
+                lastHealthSample = android.os.SystemClock.elapsedRealtime()
             }
             position = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L

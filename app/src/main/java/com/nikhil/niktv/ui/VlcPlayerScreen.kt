@@ -830,14 +830,16 @@ internal fun VlcPlayerScreen(
                 androidx.lifecycle.Lifecycle.State.STARTED)
             if (liveRecovery.shouldRecover(
                     android.os.SystemClock.elapsedRealtime(), player.time,
-                    active && playbackRequested && streamWasPlaying && error == null &&
+                    active && playbackRequested && focus.shouldPlay && streamWasPlaying && error == null &&
                         !authorizationRecoveryRequested && !refreshPending,
                     streamTerminated
                 )) {
                 android.util.Log.w("NikTvPlayback", "VLC live stream stopped/stalled; requesting fresh stream")
                 streamTerminated = true
                 refreshLiveStream()
-            } else if (liveRecovery.exhausted && streamTerminated && !refreshPending && error == null) {
+            } else if (error == null && liveRecovery.unrecoverable(android.os.SystemClock.elapsedRealtime(),
+                    active && playbackRequested && focus.shouldPlay && streamWasPlaying && !authorizationRecoveryRequested && !refreshPending,
+                    streamTerminated)) {
                 error = "The live stream stopped. Retry to refresh the stream, or choose another player."
                 controlsVisible = true
             }

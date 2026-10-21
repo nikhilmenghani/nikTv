@@ -125,7 +125,9 @@ internal fun ModernFavoritesScreen(
     toggleFavorite: (FavoriteItem) -> Unit,
     openSearch: () -> Unit,
     openSettings: () -> Unit,
-    closeFavorites: () -> Unit
+    closeFavorites: () -> Unit,
+    discoveryChrome: Boolean = false,
+    refreshLiveProgramme: (MediaItem) -> Unit = {}
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -144,7 +146,7 @@ internal fun ModernFavoritesScreen(
     LaunchedEffect(remoteNavigationActive, firstFavoriteKey) {
         if (!remoteNavigationActive || entryFocusComplete) return@LaunchedEffect
         // The top bar and first group heading precede the first media tile.
-        gridState.scrollToItem(if (firstFavoriteKey == null) 0 else 2)
+        gridState.scrollToItem(if (discoveryChrome || firstFavoriteKey == null) 0 else 2)
         repeat(6) { attempt ->
             withFrameNanos { }
             if (runCatching { entryFocusRequester.requestFocus() }.getOrDefault(false)) {
@@ -165,11 +167,13 @@ internal fun ModernFavoritesScreen(
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
-            ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings,
+            if (discoveryChrome) ModernSectionHeader("My List", "Saved for this profile")
+            else ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings,
                 backModifier = if (firstFavoriteKey == null) Modifier.focusRequester(entryFocusRequester) else Modifier)
         }
         if (groups.isEmpty()) item("favorites-empty", span = { GridItemSpan(maxLineSpan) }) {
-            Box(Modifier.fillMaxWidth().height(360.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth().height(360.dp)
+                .then(if (discoveryChrome) Modifier.focusRequester(entryFocusRequester).focusable() else Modifier), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.FavoriteBorder, null, Modifier.size(48.dp), tint = Color.Gray)
                     Text("No favorites yet", style = MaterialTheme.typography.titleMedium, color = Color.White)
@@ -190,7 +194,8 @@ internal fun ModernFavoritesScreen(
                         aspectRatio = 16f / 9f,
                         open = { openFavorite(favorite) },
                         remove = { toggleFavorite(favorite) },
-                        modifier = if (favorite.key == firstFavoriteKey) Modifier.focusRequester(entryFocusRequester) else Modifier
+                        modifier = if (favorite.key == firstFavoriteKey) Modifier.focusRequester(entryFocusRequester) else Modifier,
+                        discoveryState = state.takeIf { discoveryChrome }, refreshLiveProgramme = refreshLiveProgramme
                     )
                 }
             }
@@ -204,7 +209,9 @@ internal fun ModernFavoriteCard(
     aspectRatio: Float,
     open: () -> Unit,
     remove: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    discoveryState: NikTvState? = null,
+    refreshLiveProgramme: (MediaItem) -> Unit = {}
 ) {
     var removalConfirmationOpen by rememberSaveable(favorite.key) {
         mutableStateOf(false)
@@ -231,6 +238,22 @@ internal fun ModernFavoriteCard(
             sourceLabel = favorite.source.takeIf { it == FavoriteSource.TMDB }?.name,
             modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
         )
+    } else if (discoveryState != null && favorite.kind == FavoriteKind.CHANNEL) {
+        val context = LocalContext.current
+        val configuration = LocalConfiguration.current
+        val profile = discoveryState.session?.profile?.cacheKey() ?: discoveryState.savedProfile?.cacheKey().orEmpty()
+        val item = discoveryState.withCachedLiveGuide(profile, favorite.media)
+        val now by produceState(System.currentTimeMillis(), item.id) {
+            while (true) { delay(30_000L); value = System.currentTimeMillis() }
+        }
+        ModernLiveChannelTile(item, { refreshLiveProgramme(item) },
+            xtream = discoveryState.savedProfile?.portalType == PortalType.XTREAM,
+            categoryTitle = favorite.categoryTitle.orEmpty(), guideNow = now,
+            programmeLoading = item.id in discoveryState.liveGuideLoadingIds,
+            programmeWaitingUntil = discoveryState.liveGuideWaitingUntilById[item.id], programmeStatusNow = now,
+            showQualityBadge = true, isFavorite = true, onFavorite = { removalConfirmationOpen = true },
+            isPinned = false, onTogglePin = null, onClick = open, modifier = modifier.padding(4.dp),
+            isTv = context.isModernTileTv(configuration), compact = true)
     } else ModernPosterCard(
         item = favorite.media,
         aspectRatio = aspectRatio,
