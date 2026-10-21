@@ -809,7 +809,7 @@ internal fun DiscoveryPreviewScreen(
                                         color = if (focused) Color(0xFF303641) else Color.Transparent,
                                         border = if (focused) BorderStroke(2.dp, Color.White) else null) {
                                     Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                        AsyncImage(person.portrait, person.name, Modifier.size(80.dp).clip(CircleShape).background(Color(0xFF20232A)), contentScale = ContentScale.Crop)
+                                        AsyncImage(person.portrait, null, Modifier.size(80.dp).clip(CircleShape).background(Color(0xFF20232A)), contentScale = ContentScale.Crop)
                                         Text(person.name, color = Color.White, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         Text(person.role, color = Color.Gray, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     }
@@ -1151,7 +1151,7 @@ internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: Stri
             scaleX = scale.value; scaleY = scale.value; shadowElevation = if (focused) 4.dp.toPx() else 0f; this.shape = shape
         }.tileFocusOutline(true, border, shape, Color(0xFF2B303A), 2.dp).clip(shape).background(Color(0xFF1C222C))) {
             AsyncImage(request,
-                title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, onError = { artworkFailed = true })
+                null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, onError = { artworkFailed = true })
             if (artwork.isNullOrBlank() || artworkFailed) Column(Modifier.align(Alignment.Center).padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Default.Movie, null, Modifier.size(28.dp), tint = Color.Gray)
             }

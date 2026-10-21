@@ -685,3 +685,7 @@ Across the three final current runs: **735 measured navigation inputs**, 28 deta
 - No user-facing functionality was removed. Keep recommendations, artwork, progress, menus, provider category navigation, parental checks and playback engines. Further speculative changes to cache/prefetch windows, removing closed menu state or shortening animations were not justified by these measurements.
 
 The regular APKs are ready under `app/build/outputs/apk/debug/`, but were deliberately not installed on the sleeping television. Changes remain uncommitted for review.
+
+### Authorized visible Fire TV follow-up
+
+The user subsequently authorized waking/using the screen after the above work was committed and pushed as `74636975`. Physical Wio tests, a two-line decorative-image accessibility cleanup, an existing nondebuggable-build comparison and the unresolved playback/startup observations are recorded separately in [the 2026-10-21 visible navigation review](firetv-visible-navigation-review-2026-10-21.md). That report supersedes the coverage/install status only for this later run; the quiet-fixture measurements and their limitations above remain unchanged.
