@@ -298,3 +298,224 @@ policy; the two profile-entry assignments were reviewed directly. No new device
 interaction or full-suite/lint pass is claimed for this small routing change.
 Log: `D:/workspace/niktv-playback-tests/modern-home-default-verification.log`.
 Samsung update succeeded using `adb install -r`. Tablet installation was not completed: the wireless transport disappeared, reconnected, then went offline again during streamed installation; the non-streaming retry also reported device offline. Fire TV was left unchanged. No apps were launched or navigation/playback tests performed after installation.
+
+## Dedicated phone discovery shell and original-UI fallback — 2026-10-20
+
+Implementation details and the Brodys comparison are in `tv-browsing-motion-plan.md`
+under the Samsung audit and first phone implementation sections. Application changes
+remain uncommitted. No new dependencies, Room usage, playback-engine modifications,
+background IPTV matching or provider benchmarking were introduced.
+
+Verification commands (PowerShell, from the repository):
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests '*DiscoveryPhoneLayoutTest' --tests '*DiscoveryViewModelTest' --tests '*DiscoveryArtworkTest' --tests '*CatalogBackNavigationTest' --tests '*SearchResultNavigationTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+.\gradlew.bat :app:testDebugUnitTest --tests '*DiscoveryViewModelTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+.\gradlew.bat :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+- Initial compilation caught missing menu arguments in the compact phone-header call;
+  corrected before device installation. `phone-discovery-compile.log` records that
+  unsuccessful first compile; it is not counted as a pass.
+- The first command passed in 1m 16s (`phone-discovery-final-verification.log`):
+  PhoneLayout 4, ViewModel 12, Artwork 1, CatalogBack 10, SearchResultNavigation 4.
+- The second command reran the changed ViewModel plus a new feed-refresh race case:
+  13/13 passed, build successful in 50s (`phone-discovery-hero-race-final.log`). Across
+  those suites there are 32 distinct targeted tests, zero failures/errors.
+- Final phone D-pad/rotation-pause input refinements were followed by successful APK
+  assembly in 1m 25s (`phone-discovery-input-final-build.log`). The final APK was
+  installed successfully on Samsung using `adb install -r`, retaining app data.
+- `git diff --check` passed. Full unit suite and lint were not rerun for this focused
+  presentation change. The previously documented lint errors are not claimed fixed.
+
+Samsung SM-S948W manual checks used normal app navigation, existing profile/cache
+content and public TMDB metadata. No NikTV stream was started, favorite/watch-state
+items removed, or app data cleared during these implementation checks.
+
+1. Portrait hero artwork, separate title logo, metadata and Add/Play/Info were visible.
+   Device findings prompted backdrop-first artwork, equal caption slots and adjustment
+   for transparent padding in the existing NikTV logo asset.
+2. Home → Live TV → Search → My List → Home remained accessible. Global Search entered
+   from Live TV showed all type choices rather than locking to Live TV. Existing Friends
+   search returned 42 results and three equal poster columns with retained result actions.
+3. Wide Continue Watching cards had identical vertical bounds after correction:
+   first and second cards `[60,488][958,1275]` and `[996,488][1440,1275]` in the sampled
+   hierarchy. New Episodes used the same wide card composition.
+4. Hero swipe left changed the featured selection without launching playback. Info
+   opened details without the bottom bar; Android Back restored the landing page.
+5. Long-press on a resume card showed Play, Show Related, Watch trailer, View description,
+   Add to My List and Clear from this list. Dismissing did not activate Play.
+6. Use original UI restored the old Home and old navigation. After the subsequent APK
+   update/reopening, selecting the profile still opened old Home. The Settings switch
+   was visibly off; enabling it restored modern Home. User customization was retained.
+7. On the final APK, three D-pad Down presses focused All → Play → first resume card.
+   Right moved to the second card; both sampled focused bounds retained Y=292…1079,
+   with no vertical displacement in the settled captures. This is a functional check,
+   not a frame-time or animation-smoothness measurement.
+
+Screenshots/hierarchies: `D:/workspace/niktv-playback-tests/niktv-phone-ui-2026-10-20/`.
+Samsung was left at the top of modern Home for the user. Tablet was unavailable and
+Fire TV was not operated or updated. Larger-font rendering, phone landscape, sustained
+memory/frame profiling and physical tablet/TV regression checks remain unverified in
+this pass. Playback behavior was deliberately outside these UI checks.
+
+
+## Series details UX refinement — 2026-10-20
+
+- Separated provider detail presentation into hero and supplementary slots. Series now renders hero/short synopsis, a sticky episode toolbar, episode rows, then cast/related. Provider identity, playback, downloads, notification subscriptions and context menus remain on their existing callbacks.
+- Added system-bar insets, a shorter phone hero, a labelled My List control, a continuous dark content background and expandable three-line synopsis. Tablet/TV retain landscape hero geometry and season chips; phones use a bounded season dropdown.
+- Labelled latest/earliest sorting, latest/last-watched jumps and Cast/Related shortcuts; jumps account for sticky-header height. Sorting retains the selected season. Remote entry and playback-return episode indexing remain hero=0, toolbar=1, episodes=2 onward.
+- Automatic pagination is restricted to the loaded episode boundary, one automatic attempt per page; filtering/loading/empty lists and supplementary-section jumps do not initiate it. A compact manual retry/load-more fallback remains. Counts distinguish loaded pages and local filtered matches.
+- Corrected progress lookup to use playback's profile/series/season/episode/title identity rather than substring-matching provider IDs. Supports exact legacy keys and the storage key length bound. Rows show real progress/remaining time or watched status, with smaller repeated-artwork fallbacks and consistent title slots.
+- Cast names and roles use equal-height slots. Related posters place text below artwork. Provider-related recommendations prefer the source's original language, then shared genres using the existing cached response; no extra provider matching or recommendation search was added. Incompatible recommendations are omitted. Original language is optional in serialized discovery records; metadata cache versions were advanced for the added field.
+
+Verification:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'com.nikhil.niktv.ui.SeriesDetailPolicyTest' --tests 'com.nikhil.niktv.discovery.DiscoveryRelatedRelevanceTest' --tests 'com.nikhil.niktv.ui.SeriesEpisodeEntryFocusTest' --tests 'com.nikhil.niktv.SeriesEpisodeSortTest' --tests 'com.nikhil.niktv.discovery.ProviderMetadataTest' --tests 'com.nikhil.niktv.discovery.DiscoveryCacheTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+- Final targeted run: 37 tests, zero failures/errors/skips; build successful in 1m 8s. Log: `D:/workspace/niktv-playback-tests/series-ux-final-build-test.log` (outside Git). Initial targeted build also passed before phone compactness refinements.
+- Samsung SM-S948W: first installed iteration visually verified clear status-bar separation, collapsed synopsis, earlier episode access, a sticky toolbar, and the existing resume episode showing 16 min left. D-pad Down moved Resume → first episode, positioned below the toolbar. No playback was started and no app data/history was cleared.
+- Final APK installed successfully on Samsung, preserving data. The phone was being used again after install; further automated interaction stopped for user testing. The compact season dropdown and final thumbnail refinements remain for the user's visual confirmation.
+- Tablet and Fire TV were not installed or operated for this change. Their layout branches were retained/adapted in code; physical-device validation remains outstanding. Full lint/full app suite and frame-performance measurements were not rerun for this focused UX change. No claim of measured animation performance.
+
+
+## Series details follow-up controls and season index — 2026-10-20
+
+- Removed Latest and Last watched shortcuts. Search/Cast/Related now use wrapping controls. Phone season picker is always visible, including while only a cached current season is known, with an explicit Refresh seasons entry.
+- Resume and My List share the compact detail action row. Phone provider top actions now render over the same prepared artwork; portrait and landscape artwork have both top and bottom dark fades, with bumped transformation cache keys.
+- Remaining-time/watched badges moved from the thumbnail to a wrapping episode metadata row beside air date. Progress bars remain on the thumbnail and the resume row retains its highlight.
+- Fixed loss of the full season index in both episode-page and player-queue page append paths by merging known seasons. Added a backward-compatible validated-index marker and background repair for legacy multi-page caches with a collapsed index; cached content is shown while repairing.
+- Optional provider add/upload timestamp parsed separately from air date, retained through enrichment/cache refresh, and formatted in local date/time. Only explicit upload/add fields and unambiguous Unix/offset timestamps are accepted; missing/date-only/ambiguous values remain hidden. No extra timestamp-specific requests.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'com.nikhil.niktv.ui.SeriesDetailPolicyTest' --tests 'com.nikhil.niktv.data.ProviderEpisodeTimeTest' --tests 'com.nikhil.niktv.ui.EpisodeMetadataTest' --tests 'com.nikhil.niktv.data.PortalEpisodeClassificationTest' --tests 'com.nikhil.niktv.ui.SeriesEpisodeEntryFocusTest' --tests 'com.nikhil.niktv.discovery.DiscoveryPhoneLayoutTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+26 focused tests passed (zero failures/errors/skips), assembleDebug succeeded in 2m 40s; external log `D:/workspace/niktv-playback-tests/series-ux-followup-build-test.log`. `git diff --check` passed. Installed arm64 APK successfully on Samsung without clearing data. Samsung was on Home and then changed to the season picker during the final inspection; the picker reported multiple seasons. Further automated input stopped for user testing. Actual upload-time availability on Wio and final phone/tablet/TV visual confirmation remain unverified. No tablet/Fire TV installation, full suite, lint or performance benchmark in this follow-up. No commit/push.
+
+
+## Inline Cast/Related and consistent metadata controls — 2026-10-20
+
+Both provider-series panels start hidden and toggle beneath their controls, replacing the previous scroll-to-footer behavior. One is open at a time, with a 180ms top-aligned animated height plus a short fade (zero duration for reduced motion). D-pad entry/return is tied to the corresponding button; actor/detail actions keep their existing callbacks. Movie details retain their static sections. The permanent inline slot is index 2 and episodes begin at index 3, whether a panel is open or closed; return-focus and paging share these offsets.
+
+Episode number/date/remaining time use fixed columns and equal-height badges. Missing statuses reserve their column. Phone thumbnails have equal width so captions align across rows. The season selector/sort buttons share one row, with the episode count below them.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'com.nikhil.niktv.ui.SeriesDetailPolicyTest' --tests 'com.nikhil.niktv.ui.SeriesEpisodeEntryFocusTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+Final combined build: 15 focused tests passed, zero failures/errors/skips; assembleDebug succeeded in 53s. External log: `D:/workspace/niktv-playback-tests/series-inline-related-build-test.log`. Samsung installation succeeded, retaining data. `git diff --check` passed.
+
+On the preceding Cast/alignment build, Samsung's Wio screen confirmed season/sort text at identical y=1128–1188, and episode/date/remaining-time labels at identical y=2335–2395 for the resume row, with matching episode/date alignment on other rows. The screen changed during automated inspection, so subsequent inputs stopped; final Related toggle/D-pad interaction and tablet/TV device checks remain for validation. No playback started, user data cleared, Fire TV/tablet installation, full lint/suite or frame-performance measurements. Changes remain uncommitted.
+
+
+## Always-visible Related and genre matching across languages — 2026-10-20
+
+Provider series details now always supplies the Related control, including before metadata is loaded or when there are no eligible cards. Its focusable empty panel distinguishes loading, fetch failure and no relevant results; D-pad Up returns to the originating button and Down enters episodes. Original language is now only a ranking preference; titles in other languages are eligible when source/candidate genres overlap. Release/adult/source/duplicate exclusions remain. Movies keep their existing static-section behavior.
+
+Read-only public-cache verification on Samsung: Taarak Mehta had 20 cached released recommendations with overlapping genres, all previously excluded because they were English. The revised policy accepts those cached titles without another IPTV request.
+
+Verification command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'com.nikhil.niktv.discovery.DiscoveryRelatedRelevanceTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+Four focused recommendation tests passed with zero failures/errors/skips; build succeeded in 1m 16s. External log: `D:/workspace/niktv-playback-tests/related-visible-genre-build-test.log`. Samsung arm64 APK installation returned Success, retaining data. Final visual empty-state/D-pad checks remain for device validation; no provider requests, tablet/Fire TV installation, full suite, lint or performance measurement was performed for this small follow-up. No commit/push.
+
+
+## Inline Search and phone backdrop framing — 2026-10-20
+
+Episode Search now shares the inline Search/Cast/Related panel. Search button or Back closes it. TV Down enters the field and Select enables input; touch enters input by tapping the field. A keyboard-visibility observer closes the panel after IME Back; explicit keyboard Search/Up/Down actions suppress that close so filtered results remain available. Closing/switching panels restores the full list, retaining the typed query for reopening. The floating search overlay is removed, keyboard insets are accounted for, and the persistent inline item keeps paging/return-focus indices stable.
+
+Compact portrait provider-detail backdrops use FillWidth aligned TopCenter, avoiding side cropping without stretching. Poster fallbacks/discovery heroes/tablet/TV artwork retain existing sizing.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'com.nikhil.niktv.ui.SeriesDetailPolicyTest' --tests 'com.nikhil.niktv.ui.SeriesEpisodeEntryFocusTest' --tests 'com.nikhil.niktv.discovery.DiscoveryPhoneLayoutTest' :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+.\gradlew.bat :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+19 focused tests passed, zero failures/errors/skips; initial build succeeded in 1m 12s. Final build after explicit keyboard-action refinements succeeded in 52s. External logs: `D:/workspace/niktv-playback-tests/series-inline-search-artwork-build-test.log` and `series-inline-search-artwork-final-build.log`. Whitespace check passed.
+
+Samsung wireless endpoint changed; rediscovered through ADB mDNS and reconnected without disturbing other devices. Arm64 APK install returned Success, retaining app data. Screenshot 58 in the external QA folder confirms full-width Taarak Mehta backdrop framing, including the rightmost actor. During the subsequent Search-button attempt the page changed and an episode opened; stopped further input and left playback running. Search/Back/IME interaction remains unverified on-device. No tablet/Fire TV installation, full lint/suite or performance measurements. No commit/push.
+
+### 2026-10-20 — IPTV collections and mobile in-tile metadata
+
+Implementation: `ProviderDiscoveryViewModel.kt`, `ProviderDiscoveryCollection.kt`, discovery rail/phone-card integration, and additive existing ViewModel detail/category callbacks. The collection cache uses `catalogues-v1`, already included in temporary-cache storage reporting and clearing.
+
+Focused verification command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests com.nikhil.niktv.discovery.ProviderDiscoveryTest --tests com.nikhil.niktv.discovery.DiscoveryPhoneLayoutTest :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+Coverage: selected category membership/sensitive exclusions, stable deduplication, punctuation/accent/word-order local search, expiry boundaries, cache-first loading without provider calls, retained stale data on failure, two-request batch bounds, page append versus refresh, obsolete-profile results, retained metadata bounds, private disk profile/type isolation, artwork preservation, and unchanged phone card footprints including larger fonts.
+
+The first compile passed. The initial focused run found a test-only Robolectric `getApplication` generic argument error, which was corrected. The next run passed 15 tests and built the APK; final follow-up adds direct disk-cache isolation/artwork coverage and reruns the same focused command. Final results and Samsung installation are recorded below when completed. No full lint/suite or Fire TV device test is claimed for this change.
+
+Tablet screenshot requested during implementation was captured without navigation or installation: `D:/workspace/niktv-playback-tests/tablet-current-2026-10-20.png` (Movies screen, Continue Watching / Trending / Top Rated). It shows the previously installed build, not the new collection implementation.
+
+Final targeted results: **16 tests passed** (11 `ProviderDiscoveryTest`, 5 `DiscoveryPhoneLayoutTest`), zero failures/errors. Final combined test/build log: `D:/workspace/niktv-playback-tests/provider-discovery-samsung-verified.log`, BUILD SUCCESSFUL in 55s. The follow-up APK build includes Play/Download routing through the existing guarded provider actions; log: `provider-discovery-install-build.log`.
+
+Additional checks: expired completed categories stay eligible beyond the first refresh batch; nested TMDB detail routes have independent collection state; leaving a route cancels requests and releases private catalogue objects from its ViewModel. No recording/benchmark or new tablet/TV install was performed, so responsive layout policy is implemented but its new collection interaction still needs those device checks. `git diff --check` passed (line-ending notices only).
+
+### 2026-10-20 — tablet glass-header follow-up and final installation
+
+Targeted command added `--tests com.nikhil.niktv.discovery.DiscoveryArtworkTest --tests com.nikhil.niktv.discovery.DiscoveryNavigationLayoutTest` to the collection/phone command above. **19 tests passed**, zero failures/errors; build succeeded in 1m37s. Log: `D:/workspace/niktv-playback-tests/provider-discovery-glass-header.log`. Blur tests verify softened edges, unchanged source pixels and a bounded output bitmap; the sizing policy covers constrained widths/font scales.
+
+The first tablet visual check exposed a clipped My List label caused by estimated widths not including actual button touch/layout bounds. Replaced that estimate with a self-sizing button Row and a `fill = false` scrolling middle section. A subsequent `:app:assembleDebug` succeeded in 57s (`glass-header-measured-layout-build.log`). No data/repository changes followed the passing unit run.
+
+Final APK installed successfully with `adb install -r` on Xiaomi Pad 5 (`6889f3db`) and Samsung SM-S948W (`adb-R3GL10CE4LE-9DLvKe._adb-tls-connect._tcp`), preserving app data. Opened the tablet's existing Wio profile and confirmed larger leading logo, complete Home/Movies/Series/Live TV/My List labels, a panel ending after Browse, and equal-height menu/profile panels. Final screenshot: `D:/workspace/niktv-playback-tests/niktv-phone-ui-2026-10-20/67-tablet-glass-final.png`. A short D-pad right sequence reached Live TV (focused bounds `[899,96][1044,198]`) without a vertical header/layout shift; no media was opened. This is a targeted smoke check, not full remote/portrait/performance regression coverage.
+
+Samsung installation/opening reached the profile chooser; subsequent capture was discarded when the foreground changed, and further Samsung input was stopped. The final APK update installed successfully. Phone card geometry is covered by focused tests; final mobile in-profile visual acceptance remains for the user. Fire TV was not connected, installed or operated. No lint/full unit suite or frame-time measurements were run for this follow-up. Changes remain uncommitted.
+
+Collection cache-hit refinement: once its selected-category snapshot exists, reuse it rather than parsing the full browse/search files again; skip disk writes when no provider page changed. Completed-but-expired categories remain eligible for demand refresh beyond the first batch. Collection search remains explicitly scoped to loaded titles, with pagination and the visible 12,000-record/type bound.
+### 2026-10-20 — IPTV category rails and scrolling header
+
+Supersedes the combined IPTV preview/category-chip presentation above. Movies and Series now show individual selected/default category poster rails and per-category Search / All collections. Tablet/TV navigation is part of the scrolling feed, with header/hero/row focus links; phones retain their own navigation.
+
+Verification command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests com.nikhil.niktv.discovery.ProviderDiscoveryTest --tests com.nikhil.niktv.discovery.DiscoveryNavigationLayoutTest --tests com.nikhil.niktv.discovery.DiscoveryMotionTest :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+Final log: `D:/workspace/niktv-playback-tests/iptv-rails-priority-final.log`. BUILD SUCCESSFUL in 1m49s; **23 tests passed**, zero failures/errors (18 provider discovery, 3 navigation layout, 2 motion). Additional coverage includes default category selection, separate preview/full caches, category cache retention, clipped preview pagination, scoped refresh, shared loader priority and cancellation releasing a blocked provider gate. Whitespace check passed with line-ending notices only.
+
+Tablet Wio checks: D-pad Down hid the scrolling menu, Up restored its selected tab; movie rows loaded actual provider artwork/titles for Amazon, All Time Favorites and Collection Movies. Series rows loaded Hindi TV Shows, Web Series and Dubbed Series. Screenshots in `D:/workspace/niktv-playback-tests/niktv-phone-ui-2026-10-20/`: `72-header-down-again.png`, `73-header-restored-up.png`, `76-shared-loader-rows.png`, `79-series-iptv-rows.png`. The initial independent provider request path produced generic row errors; routing through the existing shared session/reauthentication path restored loading. The original failure's HTTP cause was not captured, so authentication expiry is not proven. Sanitized diagnostics recorded no subsequent category errors during these checks.
+
+Final source also cancels category HTTP work on title selection and inhibits automatic category loads behind playback/details. This behavior is covered by deterministic cancellation tests; no playback latency measurement is claimed. Final APK installs returned Success on Xiaomi Pad 5, Samsung SM-S948W and Fire TV AFTKRT (compatible armeabi-v7a APK); app data was preserved. Fire TV was idle/asleep before installation and was not awakened for navigation testing. No new full-suite/lint or timed frame/memory benchmark was run. Full collection touch search and a final Fire TV D-pad smoke test remain unverified for this follow-up. No commit or push.
+
+### 2026-10-20 — accessible Categories shortcut and shared chooser redesign
+
+The new discovery header now has a Categories action on tablets/TV and a labelled-for-accessibility Tune icon on phones. Movies/Series open the existing profile/type editor directly; Home offers a media-type picker. The chooser was extracted from CatalogDialogs.kt into CategoryPickerUi.kt with navigation/selection policy in CategoryPickerPolicy.kt. It retains the existing applyCategoryFilters persistence callback, local keyword search, bulk selection/clear and staged edits; no new preference store or provider lookup was introduced. The hero pauses while the editor/type popup is open. Closing restores the originating shortcut.
+
+Targeted verification:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests com.nikhil.niktv.ui.CategoryPickerPolicyTest --tests com.nikhil.niktv.discovery.ProviderDiscoveryTest --tests com.nikhil.niktv.discovery.DiscoveryNavigationLayoutTest :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+Final log: `D:/workspace/niktv-playback-tests/category-picker-keyboard.log`, BUILD SUCCESSFUL in 46s; **25 tests passed**, zero failures/errors (4 chooser policy, 18 provider discovery, 3 navigation layout). Coverage added: horizontal grid boundaries, incomplete final rows, vertical exits, larger-font column policy, explicit empty selections, and draft precedence over saved/default values. Build preparation tasks were inspected; no integrated-source change was needed. `git diff --check` passed with line-ending notices only.
+
+Installed the final APK on Xiaomi Pad 5 only, preserving app data. Tablet Wio checks confirmed Home's type picker, direct Movies/Series access (78 and 29 categories respectively), selected-category remote entry, D-pad movement to offscreen categories, return focus to Categories, touch search (NETFLIX -> 7 matching movie categories), and temporary toggle count changing 78 -> 77. The temporary toggle was canceled; reopening restored 78. The initial touch-search test found the keyboard obscuring the footer. Fixed edge-to-edge dialog insets and compacted controls while the IME is visible; the final screenshot confirms Cancel/Save above the keyboard and Cancel dismisses correctly. Final screenshots in `D:/workspace/niktv-playback-tests/niktv-phone-ui-2026-10-20/`: `93-final-movie-picker.png`, `94-final-keyboard-resize.png`, `95-series-category-picker.png`. Earlier D-pad captures `86-picker-offscreen.png`, `87-picker-return-focus.png`, `88-type-dpad-entry.png`, `89-dpad-chooser-entry.png` cover the same navigation policy before inset refinement.
+
+No saved selections were changed during device testing; saving uses the existing persistence path and was not exercised with a new permanent selection. Samsung showed its notification shade, so no phone interaction/install was performed. Phone/large-font layout policy is unit-covered, but final phone visuals are not device-verified. Fire TV was neither accessed nor installed, at the user's request. No full-suite/lint or performance benchmark was run. Changes remain uncommitted; no push.
+
+### 2026-10-20 — TV/tablet series episode layout and focus
+
+Scope narrowed explicitly by the user to TV/tablet; mobile presentation was retained. Shared landscape episode tiles now serve IPTV and TMDB series; IPTV episodes use a horizontal rail, while preserving progress, season ordering, download/removal and description callbacks. Provider hero/season/sort/tools/episodes have explicit vertical remote paths; episode Left/Right stays horizontal. Pagination and playback-return focus now distinguish vertical slots from horizontal episode indices. Stale focus movement is canceled on season/search/order changes. Episode popups return focus to their originating tiles.
+
+Focused command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests com.nikhil.niktv.ui.SeriesDetailPolicyTest --tests com.nikhil.niktv.ui.SeriesEpisodeEntryFocusTest --tests com.nikhil.niktv.discovery.DiscoveryNavigationLayoutTest :app:assembleDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+Initial compile found a Compose stickyHeader callback signature mismatch; corrected it without changing the phone toolbar. Final log: `D:/workspace/niktv-playback-tests/series-landscape-device.log`, BUILD SUCCESSFUL in 1m11s. **20 tests passed**, zero failures/errors (11 series policy, 6 entry focus, 3 discovery navigation). New policy assertions cover horizontal playback-return slots and horizontal pagination gates for loading/filtering/interaction. Whitespace check passed with line-ending notices only.
+
+Final arm64 APK installed successfully on Xiaomi Pad 5, preserving app data. Wio device checks: One Euro House's three episodes displayed as a landscape row; Down through controls entered the row; Left/Right stayed on it; long Select opened Download episode without executing it, and Back dismissed the popup. Below Deck loaded TMDB-backed metadata and multiple seasons; selecting season 12 from season 13 displayed its 16 episodes. D-pad returned through tools/sort to the season strip and navigated beyond the initially visible episode tiles. Matched captures `110-season12-episode-entry.png` and `111-episode-offscreen-right.png` retained the same vertical coordinates while episode focus/scroll moved horizontally. Cyberpunk TMDB details displayed the same episode tile design; season Down entered the first episode and episode Up returned to the season strip. Captures `114-tmdb-episode-entry.png` and `115-tmdb-season-return.png` record these checks. All captures are under `D:/workspace/niktv-playback-tests/niktv-phone-ui-2026-10-20/`.
+
+Device testing did not start playback or a download, so playback-return behavior and provider pagination are regression-policy-covered, not exercised end-to-end in this session. No final phone test, full lint/suite or frame-time benchmark was run. Fire TV was neither accessed nor installed. Final changes remain uncommitted; no push.

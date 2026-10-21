@@ -152,7 +152,9 @@ data class MediaItem(
     val cast: List<String> = emptyList(),
     /** Search-only routing identity; never persisted in favourites or provider caches. */
     @kotlinx.serialization.Transient val searchResultType: SearchContentType? = null,
-    val isAdult: Boolean = false
+    val isAdult: Boolean = false,
+    /** Provider upload/add timestamp, independent of the episode's original air date. */
+    val episodeAddedAtMillis: Long? = null
 )
 
 @Serializable
@@ -319,7 +321,9 @@ data class EpisodeSeasonCache(
     /** IPTV episode identities for which TMDB was checked and cached. */
     val tmdbEpisodeKeys: Set<String> = emptySet(),
     val tmdbSeriesId: Int? = null,
-    val tmdbCachedAtMillis: Long = 0L
+    val tmdbCachedAtMillis: Long = 0L,
+    /** True after loading the series index, not merely a subsequent season page. */
+    val seasonIndexValidated: Boolean = false
 ) {
     val key: String get() = "$profileKey|$seriesId|${season ?: -1}"
 }

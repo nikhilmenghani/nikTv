@@ -12,6 +12,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.*
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
@@ -37,6 +39,21 @@ internal data class ProviderDetailNavigation(
     val playProvider: (MediaItem, List<MediaItem>, PlaybackQueueFilter) -> Unit)
 internal val LocalProviderDetailNavigation = staticCompositionLocalOf<ProviderDetailNavigation?> { null }
 
+@Composable
+private fun ProviderDetailSynopsis(overview: String?) {
+    if (overview.isNullOrBlank()) return
+    var expanded by rememberSaveable(overview) { mutableStateOf(false) }
+    var overflowing by remember(overview) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
+        Text(overview, color = Color(0xFFD6D6DC), style = MaterialTheme.typography.bodyMedium,
+            maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
+            onTextLayout = { if (!expanded) overflowing = it.hasVisualOverflow })
+        if (expanded || overflowing) DiscoveryAction(if (expanded) "Read less" else "Read more",
+            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            modifier = Modifier.padding(top = 6.dp)) { expanded = !expanded }
+    }
+}
+
 /** Provider identity is never replaced by the TMDB identity used for presentation. */
 @Composable
 internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTvState,
@@ -45,7 +62,13 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     playRequester: FocusRequester = remember { FocusRequester() },
     backRequester: FocusRequester = remember { FocusRequester() },
     down: () -> Unit = {}, playLabel: String = "Play", playEnabled: Boolean = true,
-    tools: @Composable RowScope.() -> Unit = {}) {
+    progressLabel: String? = null, castUp: (() -> Unit)? = null, relatedUp: (() -> Unit)? = null,
+    episodeDown: (() -> Unit)? = null,
+    tools: @Composable RowScope.() -> Unit = {},
+    layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
+        cast: (() -> Boolean)?, related: (() -> Boolean)?) -> Unit = { hero, castRow, supplementary, _, _ ->
+        Column { hero(); castRow(); supplementary() }
+    }) {
     val context = LocalContext.current
     val navigation = LocalProviderDetailNavigation.current
     val configuration = LocalConfiguration.current
@@ -53,6 +76,8 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val repository = remember(context) { DiscoveryRepository(context) }
     var metadata by remember(profile, item.id, type) { mutableStateOf(DiscoveryDetails(providerDetailFallback(item, type))) }
     var related by remember(profile, item.id, type) { mutableStateOf(emptyList<DiscoveryCard>()) }
+    var relatedLoading by remember(profile, item.id, type) { mutableStateOf(false) }
+    var relatedFailed by remember(profile, item.id, type) { mutableStateOf(false) }
     var loading by remember(profile, item.id, type) { mutableStateOf(true) }
     var failed by remember(profile, item.id, type) { mutableStateOf(false) }
     var retry by remember(profile, item.id, type) { mutableIntStateOf(0) }
@@ -76,13 +101,16 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
           catch (_: Exception) { failed = true }
         finally { if (request.isActive) loading = false }
     }
-    LaunchedEffect(profile, item.id, type, metadata.card.id) {
+    LaunchedEffect(profile, item.id, type, metadata.card.id, metadata.card.originalLanguage, metadata.card.genres) {
         related = emptyList()
+        relatedLoading = metadata.card.id > 0
+        relatedFailed = false
         if (metadata.card.id > 0) {
             val request = coroutineContext
-            try { val result = repository.related(metadata.card); request.ensureActive(); related = result }
+            try { val result = repository.related(metadata.card); request.ensureActive(); related = relevantDiscoveryRecommendations(metadata.card, result) }
             catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { /* Optional recommendations never block provider playback. */ }
+            catch (_: Exception) { relatedFailed = true }
+            finally { if (request.isActive) relatedLoading = false }
         }
     }
     fun focus(requester: FocusRequester, fallback: () -> Unit = down) {
@@ -99,10 +127,14 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     }
     val people = metadata.cast.filter { (it.id ?: 0) > 0 }.distinctBy { it.id }
     val landscape = configuration.screenWidthDp >= 600 || context.isTvLikeDevice(configuration)
-    Box(Modifier.fillMaxWidth()) {
-        Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion) }
-        Column {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    val phone = app.discoveryExperienceEnabled && usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
+        configuration.screenHeightDp >= configuration.screenWidthDp
+    val wideSeries = type == CatalogType.SERIES && (configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration))
+    val toolbar: @Composable () -> Unit = {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onPreviewKeyEvent { event ->
+                if (wideSeries && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown)
+                    runCatching { playRequester.requestFocus() }.getOrDefault(false) else false
+            },
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
                     modifier = Modifier.focusRequester(backRequester), onClick = close)
@@ -116,57 +148,104 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         onTrailerReturned = { runCatching { playRequester.requestFocus() }.getOrDefault(false) })
                 }
             }
+    }
+    val hero: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
+            Box(Modifier.fillMaxWidth()) {
+            if (!phone) Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion) }
+            Column {
+            if (!phone) toolbar()
             DiscoveryHero(metadata.card, null, if (landscape) 280.dp else 255.dp, landscape,
                 compact = configuration.screenHeightDp < 480, detail = true, loading = false,
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},
-                onDown = { if (people.isNotEmpty()) focus(castEntry) else if (related.isNotEmpty()) focus(relatedEntry) else down() },
-                previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled)
+                onDown = { if (type == CatalogType.SERIES) down() else if (people.isNotEmpty()) focus(castEntry) else if (related.isNotEmpty()) focus(relatedEntry) else down() },
+                onUp = { if (wideSeries) runCatching { backRequester.requestFocus() }.getOrDefault(false) else false },
+                previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
+                portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = false, compactDetail = true)
+            }
+            }
+            progressLabel?.let { Text(it, Modifier.padding(horizontal = 24.dp, vertical = 4.dp), color = Color.LightGray, style = MaterialTheme.typography.labelMedium) }
+            ProviderDetailSynopsis(metadata.card.overview)
             Box(Modifier.fillMaxWidth().height(4.dp).padding(horizontal = 24.dp)) {
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             if (failed) DiscoveryAction("Retry TMDB details", Icons.Default.Refresh, modifier = Modifier.padding(horizontal = 24.dp)) { retry++ }
             if (!loading && !failed && metadata.card.id <= 0) Text("TMDB details were not matched. You can still play this title.",
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp), color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    val castRow: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
             if (people.isNotEmpty()) {
-                Text("Cast", Modifier.padding(start = 24.dp, top = 12.dp), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                if (type != CatalogType.SERIES) Text("Cast", Modifier.padding(start = 24.dp, top = 12.dp), color = Color.White, style = MaterialTheme.typography.titleMedium)
                 LazyRow(Modifier.onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { focus(playRequester); true }
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { if (castUp != null) castUp() else if (type == CatalogType.SERIES) down() else focus(playRequester); true }
                     else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                        if (related.isNotEmpty()) focus(relatedEntry) else down(); true
+                        if (type == CatalogType.SERIES) (episodeDown ?: down)() else if (related.isNotEmpty()) focus(relatedEntry); true
                     } else false
-                }, contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                }, contentPadding = PaddingValues(start = if (phone) 14.dp else 24.dp, end = if (phone) 14.dp else 24.dp,
+                    top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(people, key = { _, person -> person.id!! }) { index, person ->
                         val requester = if (index == 0) castEntry else remember(person.id) { FocusRequester() }
                         var focused by remember { mutableStateOf(false) }
                         Surface(onClick = { actorOrigin = requester; actor = person },
-                            modifier = Modifier.width(104.dp).focusRequester(requester).onFocusChanged { focused = it.isFocused },
+                            modifier = Modifier.width(if (phone) 92.dp else 104.dp).focusRequester(requester).onFocusChanged { focused = it.isFocused },
                             color = if (focused) Color(0xFF303641) else Color(0xFF181C24), shape = RoundedCornerShape(10.dp),
                             border = if (focused) BorderStroke(2.dp, Color.White) else null) {
                             Column(Modifier.padding(8.dp)) {
                                 AsyncImage(person.portrait, person.name, Modifier.fillMaxWidth().height(105.dp), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-                                Text(person.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
-                                Text(person.role, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                                val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+                                Text(person.name, Modifier.height(34.dp * fontScale).padding(top = 4.dp), color = Color.White,
+                                    style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(person.role, Modifier.height(32.dp * fontScale), color = Color.LightGray,
+                                    style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
                 }
             }
+        }
+    }
+    val supplementary: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
             if (related.isNotEmpty()) {
-                Text("Related", Modifier.padding(start = 24.dp, top = 8.dp), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                if (type != CatalogType.SERIES) Text("Related", Modifier.padding(start = 24.dp, top = 8.dp), color = Color.White, style = MaterialTheme.typography.titleMedium)
                 LazyRow(Modifier.onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { focus(if (people.isNotEmpty()) castEntry else playRequester); true }
-                    else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { down(); true } else false
-                }, contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { if (relatedUp != null) relatedUp() else if (type == CatalogType.SERIES) down() else focus(if (people.isNotEmpty()) castEntry else playRequester); true }
+                    else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { if (type == CatalogType.SERIES) (episodeDown ?: down)(); true } else false
+                }, contentPadding = PaddingValues(start = if (phone) 14.dp else 24.dp, end = if (phone) 14.dp else 24.dp, top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(related, key = { _, card -> card.key }) { index, card ->
-                        DiscoveryPosterTile(card.title, card.poster, card.date?.take(4).orEmpty(), 112.dp,
-                            modifier = if (index == 0) Modifier.focusRequester(relatedEntry) else Modifier,
-                            reduceMotion = reduceMotion, onClick = { relatedDetail = card })
+                        DiscoveryPhoneMediaCard(card.title, card.poster, card.date?.take(4).orEmpty(), if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else 112.dp,
+                            wide = false, modifier = if (index == 0) Modifier.focusRequester(relatedEntry) else Modifier,
+                            onClick = { relatedDetail = card }, onLongClick = null, onFocus = {})
                     }
+                }
+            } else if (type == CatalogType.SERIES) {
+                var focused by remember { mutableStateOf(false) }
+                Surface(Modifier.fillMaxWidth().padding(horizontal = if (phone) 14.dp else 24.dp, vertical = 8.dp)
+                    .focusRequester(relatedEntry).onFocusChanged { focused = it.isFocused }
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) false
+                        else when (event.key) {
+                            Key.DirectionUp -> { relatedUp?.invoke(); true }
+                            Key.DirectionDown -> { (episodeDown ?: down)(); true }
+                            else -> false
+                        }
+                    }.focusable(), shape = RoundedCornerShape(10.dp), color = Color(0xFF181C24),
+                    border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58))) {
+                    Text(when {
+                        loading || relatedLoading -> "Loading recommendations…"
+                        failed || relatedFailed -> "Recommendations could not be loaded. Try again later."
+                        else -> "No relevant recommendations available."
+                    }, Modifier.padding(20.dp), color = Color.LightGray, style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
     }
+    layout(hero, castRow, supplementary,
+        if (people.isEmpty()) null else ({ runCatching { castEntry.requestFocus() }.getOrDefault(false) }),
+        if (type != CatalogType.SERIES && related.isEmpty()) null else ({ runCatching { relatedEntry.requestFocus() }.getOrDefault(false) }))
     actor?.takeIf { relatedDetail == null }?.let { person ->
         actorPages.SaveableStateProvider("actor:${person.id}") {
             DiscoveryActorDialog(person, load = repository::actorCredits,

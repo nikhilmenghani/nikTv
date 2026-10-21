@@ -22,8 +22,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -61,7 +64,7 @@ private data class RailEntry(val key: String, val title: String, val artwork: St
     val matchCount: Int? = null,
     val popup: (@Composable (Boolean, () -> Unit, () -> Boolean) -> Unit)? = null)
 private data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
-    val section: TmdbHomeSection? = null)
+    val section: TmdbHomeSection? = null, val providerType: CatalogType? = null, val providerCategory: Category? = null)
 
 @Composable
 internal fun DiscoveryPreviewScreen(
@@ -72,7 +75,8 @@ internal fun DiscoveryPreviewScreen(
     openCategory: (Category) -> Unit, openSection: (TmdbHomeSection) -> Unit,
     removeRecent: (RecentItem) -> Unit, markWatched: (WatchedSeries, MediaItem) -> Unit,
     dismissEpisode: (WatchedSeries, MediaItem) -> Unit,
-    vm: DiscoveryViewModel = viewModel(key = "discovery2:${app.savedProfile?.cacheKey()}")
+    vm: DiscoveryViewModel = viewModel(key = "discovery2:${app.savedProfile?.cacheKey()}"),
+    detailVisibilityChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
@@ -81,15 +85,68 @@ internal fun DiscoveryPreviewScreen(
     val openProviderSeries = LocalOpenDiscoverySeries.current
     val providerNavigation = LocalProviderDetailNavigation.current
     val configuration = LocalConfiguration.current
-    val phone = configuration.smallestScreenWidthDp < 600 && !context.isTvLikeDevice(configuration)
+    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
+    val phonePortrait = phone && configuration.screenHeightDp >= configuration.screenWidthDp
+    val remoteNavigation = context.usesRemoteNavigation(configuration) || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     val landscape = !phone
     val compactLandscape = configuration.screenWidthDp > configuration.screenHeightDp && configuration.screenHeightDp < 480
     val profile = app.savedProfile?.cacheKey().orEmpty()
+    // Nested TMDB details use a different discovery VM; they must not rebind the
+    // underlying collection or retain another profile's catalogue in memory.
+    val providerVm: ProviderDiscoveryViewModel = viewModel(key = "provider-discovery:$profile:${System.identityHashCode(vm)}")
+    val providerLoaded by providerVm.state.collectAsStateWithLifecycle()
+    val openProvider = LocalOpenProviderDiscovery.current
+    val configureProvider = LocalConfigureProviderDiscovery.current
+    val playProvider = LocalPlayProviderDiscovery.current
+    val downloadProvider = LocalDownloadProviderDiscovery.current
+    val providerPageLoader = LocalProviderDiscoveryPageLoader.current
+    val providerSelections = remember(profile, surface, app.categoryFilters, app.rawCategoriesByType, app.browseCachesByType.mapValues { it.value.categories }) {
+        listOf(CatalogType.MOVIES, CatalogType.SERIES)
+            .filter { surface == DashboardSurface.HOME || (it == CatalogType.SERIES) == (surface == DashboardSurface.SERIES) }
+            .associateWith { type -> providerDiscoveryCategoryRows(
+                app.modernVisibleIptvCategories(type, requireExplicitSelection = surface == DashboardSurface.HOME),
+                implicitSelection = app.categoryFilters["$profile|${type.name}"] == null) }
+    }
+    val expectedProviderCategories = remember(providerSelections) {
+        providerSelections.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
+    }
+    val providerState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
+        ?: ProviderDiscoveryState(profile = profile, categories = expectedProviderCategories)
+    val providerQueues by produceState(profile to emptyMap<String, List<MediaItem>>(), profile, providerSelections, providerState.pages) {
+        value = profile to withContext(Dispatchers.Default) {
+            buildMap { providerSelections.forEach { (type, categories) -> categories.forEach { category ->
+                put("provider:${type.name}:${category.id}", providerDiscoveryItems(providerDiscoverySources(listOf(category)), providerState.pages[type].orEmpty()))
+            } } }
+        }
+    }
+    var providerCollection by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
+    var providerCollectionCategory by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
+    LaunchedEffect(profile, app.session, providerSelections, app.cacheIntervalMinutes) {
+        providerVm.bind(app.session, providerSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
+    }
+    DisposableEffect(providerVm) { onDispose { providerVm.pause(release = true) } }
+    val providerLifecycle = LocalLifecycleOwner.current.lifecycle
+    val bindProvider by rememberUpdatedState {
+        providerVm.bind(app.session, providerSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
+    }
+    DisposableEffect(providerLifecycle, providerVm) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) providerVm.pause()
+            else if (event == Lifecycle.Event.ON_START) bindProvider()
+        }
+        providerLifecycle.addObserver(observer)
+        onDispose { providerLifecycle.removeObserver(observer) }
+    }
     val loadedState by vm.state.collectAsStateWithLifecycle()
     val state = loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)
+    DisposableEffect(state.detail != null) {
+        detailVisibilityChanged(state.detail != null)
+        onDispose { detailVisibilityChanged(false) }
+    }
     val localScope = rememberCoroutineScope()
     var configure by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var categoryPopup by remember { mutableStateOf(false) }
     var actor by remember(profile, surface) { mutableStateOf<DiscoveryPerson?>(null) }
     var actorOrigin by remember(profile, surface) { mutableStateOf<String?>(null) }
     var actorFocusOrigin by remember(profile, surface) { mutableStateOf<String?>(null) }
@@ -118,7 +175,7 @@ internal fun DiscoveryPreviewScreen(
     }
     LaunchedEffect(state.hero?.key) { if (state.detail == null) featured = state.hero }
     LaunchedEffect(state.detail?.key) {
-        if (lastDetail.value != null && state.detail == null) {
+        if (lastDetail.value != null && state.detail == null && (!phone || remoteNavigation)) {
             withFrameNanos { }; returningTo?.let { runCatching { returnRequesters[it]?.requestFocus() } }
         }
         lastDetail.value = state.detail?.key
@@ -217,69 +274,99 @@ internal fun DiscoveryPreviewScreen(
             state.sections.filterNot { it in setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES) }.forEach { section ->
                 add(Rail("section:${section.name}", section.title, state.feeds[section].orEmpty().map { cardEntry(it, "section:${section.name}") }, section = section))
             }
+            providerSelections.filterValues { it.isNotEmpty() }.forEach { (type, categories) ->
+                categories.forEach { category ->
+                val rowKey = "provider:${type.name}:${category.id}"
+                val queue = providerQueues.second[rowKey].orEmpty().takeIf { providerQueues.first == profile }.orEmpty()
+                add(Rail(rowKey, category.title, queue.take(30).map { item ->
+                    val saved = FavoriteItem(if (type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
+                        item, profileKey = profile, categoryTitle = category.title)
+                    RailEntry("$rowKey:${item.id}", item.title, item.logo,
+                        subtitle = category.title.orEmpty(),
+                        progress = providerDiscoveryProgress(app, type, item),
+                        open = { returningTo = "$rowKey:${item.id}"; openProvider(type, item, queue) },
+                        popup = { expanded, dismiss, restore ->
+                            ModernTileActionsMenu(expanded, app.favorites.any { it.key == saved.key }, dismiss,
+                                { toggleFavorite(saved) }, clear = null, trailerItem = item, trailerSeries = type == CatalogType.SERIES,
+                                recommendationItem = item, recommendationType = type,
+                                onTrailerReturned = restore, playAction = { playProvider(type, item, queue) },
+                                downloadAction = if (type == CatalogType.MOVIES) ({ downloadProvider(type, item) }) else null)
+                        })
+                }, providerType = type, providerCategory = category))
+                }
+            }
+
         } else {
             if (state.collection.isNotEmpty()) add(Rail("collection", state.details?.collection?.title ?: "Collection", state.collection.map { cardEntry(it, "collection") }))
             if (state.related.isNotEmpty()) add(Rail("related", "Related", state.related.map { cardEntry(it, "related") }))
         }
     }
-    val visibleRails = rails.filterNot { row -> row.section?.let { it in state.feeds && state.feeds[it].isNullOrEmpty() } == true }
+    val visibleRails = rails.filterNot { row ->
+        row.section?.let { it in state.feeds && state.feeds[it].isNullOrEmpty() } == true ||
+            row.providerCategory?.let { category -> providerDiscoverySources(listOf(category)).all { source ->
+                val page = providerState.pages[category.type]?.get(source.id)
+                page != null && page.page > 0 && !page.hasMore && !page.truncated && page.items.isEmpty()
+            } } == true
+    }
     val routeKey = "$profile:${surface.name}:${state.detail?.key ?: "landing"}"
-    val candidate = state.details?.card?.takeIf { it.key == state.detail?.key } ?: state.detail ?: featured ?: state.hero
-    val displayed by preparedDiscoveryCard(candidate)
+    val rawCandidate = state.details?.card?.takeIf { it.key == state.detail?.key } ?: state.detail ?: featured ?: state.hero
+    val candidate = state.heroPresentation?.takeIf { state.detail == null && it.key == rawCandidate?.key } ?: rawCandidate
+    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait })
+    val displayed = if (phonePortrait) candidate else prepared
+    var glassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    providerCollection?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
+        DisposableEffect(Unit) { detailVisibilityChanged(true); onDispose { detailVisibilityChanged(false) } }
+        saved.SaveableStateProvider("provider-collection:${type.name}:$providerCollectionCategory") {
+            val category = providerSelections[type].orEmpty().firstOrNull { it.id == providerCollectionCategory }
+            ProviderDiscoveryCollectionRoute(type, category?.let { listOf(it) } ?: providerSelections[type].orEmpty(),
+                category?.title ?: "Your IPTV ${type.title}", app,
+                close = { providerCollection = null; providerCollectionCategory = null }, favorite = toggleFavorite)
+        }
+        return
+    }
     // TV pivot scrolling must not compete with explicit vertical row alignment.
     StableTileFocusViewport {
-    BoxWithConstraints(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)
+        .onGloballyPositioned { glassBounds = it.boundsInRoot() }) {
         val screenHeight = maxHeight
-        DiscoveryBackdrop(displayed, reduceMotion)
+        if (!phonePortrait) DiscoveryBackdrop(displayed, reduceMotion)
         Column(Modifier.fillMaxSize()) {
-            if (!phone) {
-                DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
-                    back = { if (state.detail != null) vm.closeDetails() else exit() },
-                    select = { tab -> if (tab != surface) selectSurface(tab) else if (state.detail != null) vm.closeDetails() },
-                    classic = classic, headerFocus = { contentFocused = false }, menu = menu,
-                    changeMenu = { menu = it }, customize = { configure = true })
-            } else Column(Modifier.fillMaxWidth().background(Background.copy(alpha = .82f))) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { if (state.detail != null) vm.closeDetails() else exit() }
-                    Image(androidx.compose.ui.res.painterResource(com.nikhil.niktv.R.drawable.niktv_logo_foreground), "NikTV", Modifier.padding(start = 8.dp).size(36.dp))
-                    Spacer(Modifier.weight(1f))
-                    DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
-                    DiscoveryBrowseMenu(menu, { menu = it }, surface, classic, { configure = true })
-                }
-                Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    trialSurfaces.forEach { tab ->
-                        DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"), horizontalPadding = 4.dp,
-                            selected = tab == surface, modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                                .semantics { contentDescription = tab.trialTitle() }
-                                .then(if (tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
-                            onFocus = { contentFocused = false }) { if (tab != surface) selectSurface(tab) else if (state.detail != null) vm.closeDetails() }
-                    }
-                    DiscoveryAction("Live TV", horizontalPadding = 4.dp, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { classic("Live TV") }
-                }
+            if (phone && !phonePortrait) {
+                DiscoveryPhoneNavigation(surface, tabRequester, playRequester,
+                    { if (state.detail != null) vm.closeDetails() else exit() }, selectSurface, classic,
+                    menu = menu, changeMenu = { menu = it }, categoryManagerOpen = app.categoryManagerOpen,
+                    categoriesEnabled = state.detail == null, categoryPopupChanged = { categoryPopup = it })
             }
             saved.SaveableStateProvider(routeKey) {
+                val positions = discoveryFeedIndices(!phone, state.detail?.series == true)
                 val listState = rememberLazyListState()
                 val coordinator = remember { DiscoveryScrollCoordinator(localScope) }
                 DisposableEffect(Unit) { onDispose { coordinator.cancel() } }
-                val heroVisible by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 } }
+                val heroVisible by remember { derivedStateOf { (if (!phone) listState.firstVisibleItemIndex <= positions.hero else listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) } }
                 val scrolling by remember { derivedStateOf { listState.isScrollInProgress } }
                 val anchorIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
                 val activity = HeroActivity(heroVisible && state.detail == null, foreground,
-                    contentFocused, scrolling, touching, menu || configure || tilePopupOpen)
+                    contentFocused, scrolling, touching, menu || configure || tilePopupOpen || app.categoryManagerOpen || categoryPopup)
+                LaunchedEffect(phonePortrait, heroVisible, foreground, state.hero?.key) {
+                    if (phonePortrait && heroVisible && foreground && state.detail == null) vm.prepareHero()
+                    else if (phonePortrait) vm.pauseHeroMetadata()
+                }
                 LaunchedEffect(activity, state.heroes.size) {
                     if (activity.mayRotate && state.heroes.size > 1) while (true) { delay(8_000); vm.rotate(1) }
                 }
-                LaunchedEffect(foreground, scrolling, state.heroIndex, state.heroes) {
+                LaunchedEffect(foreground, scrolling, state.heroIndex, state.heroes, phonePortrait) {
                     if (foreground && !scrolling && state.heroes.isNotEmpty()) {
                         delay(200)
-                        prefetchDiscoveryArtwork(context, emptyList(), state.heroes.getOrNull((state.heroIndex + 1) % state.heroes.size)?.backdrop)
+                        val adjacent = state.heroes.getOrNull((state.heroIndex + 1) % state.heroes.size)
+                        prefetchDiscoveryArtwork(context, emptyList(), if (phonePortrait) adjacent?.backdrop ?: adjacent?.poster else adjacent?.backdrop,
+                            portraitHero = phonePortrait, portraitPoster = phonePortrait && adjacent?.backdrop.isNullOrBlank())
                     }
                 }
                 val routeIdentity = state.detail?.key ?: "landing"
                 val playOrigin = "$routeIdentity:play"
                 SideEffect { returnRequesters[playOrigin] = playRequester }
-                LaunchedEffect(state.detail?.key, state.detail != null && displayed?.key == state.detail?.key) {
+                LaunchedEffect(state.detail?.key, state.detail != null && displayed?.key == state.detail?.key, remoteNavigation) {
+                    if (phone && !remoteNavigation) return@LaunchedEffect
                     var readinessFrames = 0
                     while (!hostView.hasWindowFocus() && readinessFrames++ < 60) withFrameNanos { }
                     withFrameNanos { }; withFrameNanos { }
@@ -304,19 +391,23 @@ internal fun DiscoveryPreviewScreen(
                 val focusHandlers = remember { mutableMapOf<Int, () -> Boolean>() }
                 var move by remember { mutableStateOf<Job?>(null) }
                 var requestedRow by remember { mutableIntStateOf(0) }
-                val firstRailIndex = if (state.detail?.series == true) 2 else 1
+                val firstRailIndex = positions.firstRail
                 val castIndex = firstRailIndex + visibleRails.size + 1 + if (state.details?.collection != null) 1 else 0
                 val navigationRows = buildList {
-                    add(0)
-                    if (state.detail?.series == true && state.details?.seasons?.isNotEmpty() == true) add(1)
-                    visibleRails.forEachIndexed { i, row -> if (row.entries.isNotEmpty()) add(firstRailIndex + i) }
+                    positions.header?.let(::add)
+                    add(positions.hero)
+                    if (state.detail?.series == true && state.details?.seasons?.isNotEmpty() == true) add(positions.season)
+                    visibleRails.forEachIndexed { i, row -> if (row.entries.isNotEmpty() || row.providerType != null) add(firstRailIndex + i) }
                     if (state.detail != null && state.details?.cast?.any { (it.id ?: 0) > 0 } == true) add(castIndex)
                 }
                 fun focusRow(index: Int) {
                     requestedRow = index
                     move = coordinator.move(listState, index, reduceMotion) {
-                        if (index <= 0) runCatching { playRequester.requestFocus() }.getOrDefault(false)
-                        else focusHandlers[index]?.invoke() == true
+                        when (index) {
+                            positions.header -> runCatching { tabRequester.requestFocus() }.getOrDefault(false)
+                            positions.hero -> runCatching { playRequester.requestFocus() }.getOrDefault(false)
+                            else -> focusHandlers[index]?.invoke() == true
+                        }
                     }
                 }
                 fun moveRow(index: Int, delta: Int): Boolean {
@@ -327,12 +418,31 @@ internal fun DiscoveryPreviewScreen(
                 }
                 DiscoveryVerticalFocusViewport(coordinator) {
                 LazyColumn(Modifier.fillMaxSize().pointerInput(Unit) {
-                    awaitPointerEventScope { while (true) { val event = awaitPointerEvent(PointerEventPass.Initial); touching = event.changes.any { it.pressed } } }
-                }, state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
+                    awaitPointerEventScope { while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        touching = event.changes.any { it.pressed }
+                        if (phone && !remoteNavigation && touching) contentFocused = false
+                    } }
+                }, state = listState, contentPadding = PaddingValues(bottom = if (phone && state.detail == null) 96.dp else 32.dp)) {
+                    if (!phone) item("navigation") {
+                        Box(Modifier.onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) moveRow(0, 1) else false
+                        }) {
+                            DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
+                                back = { if (state.detail != null) vm.closeDetails() else exit() },
+                                select = { tab -> if (tab != surface) selectSurface(tab) else if (state.detail != null) vm.closeDetails() },
+                                classic = classic, headerFocus = { contentFocused = false; alignFocusedRow("navigation", 0) },
+                                menu = menu, changeMenu = { menu = it }, customize = { configure = true },
+                                backdrop = displayed?.backdrop, backdropBounds = glassBounds,
+                                categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = state.detail == null,
+                                categoryPopupChanged = { categoryPopup = it })
+                        }
+                    }
                     item("hero") {
                         val origin = "hero:${displayed?.key}"
                         val infoFocusRequester = remember(origin) { returnRequesters.getOrPut(origin) { FocusRequester() } }
-                        val heroHeight = if (compactLandscape) (screenHeight * .52f).coerceIn(165.dp, 230.dp)
+                        val heroHeight = if (phonePortrait) (screenHeight * .67f).coerceIn(480.dp, 620.dp)
+                            else if (compactLandscape) (screenHeight * .52f).coerceIn(165.dp, 230.dp)
                             else if (landscape) (screenHeight * .55f).coerceIn(235.dp, 355.dp) else (screenHeight * .45f).coerceIn(255.dp, 355.dp)
                         DiscoveryHero(displayed, if (state.detail == null) state.feeds[if (displayed?.series == true) TmdbHomeSection.TRENDING_SERIES else TmdbHomeSection.TRENDING_MOVIES]
                             .orEmpty().take(10).indexOfFirst { it.key == displayed?.key }.takeIf { it >= 0 }?.plus(1) else null,
@@ -343,9 +453,17 @@ internal fun DiscoveryPreviewScreen(
                             play = { displayed?.let { returningTo = playOrigin; routeOrigins = routeOrigins + (routeIdentity to playOrigin); playCard(it) } },
                             add = { displayed?.let { toggleFavorite(favorite(it)) } },
                             info = { displayed?.let { details(it, origin) } },
-                            onFocus = { contentFocused = true; focusedRow = "hero" }, onDown = { moveRow(0, 1) },
+                            onFocus = { contentFocused = true; focusedRow = "hero" }, onDown = { moveRow(positions.hero, 1) }, onUp = { moveRow(positions.hero, -1) },
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
-                            index = state.heroIndex, count = state.heroes.size)
+                            index = state.heroIndex, count = state.heroes.size,
+                            portraitPhone = phonePortrait,
+                            phoneHeader = if (phonePortrait && state.detail == null) ({
+                                DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
+                                    back = { if (state.detail != null) vm.closeDetails() else exit() },
+                                    select = { if (it != surface) selectSurface(it) }, classic = classic,
+                                    menu = menu, changeMenu = { menu = it }, customize = { configure = true },
+                                    categoryManagerOpen = app.categoryManagerOpen, categoryPopupChanged = { categoryPopup = it })
+                            }) else null)
                         state.errors.filterKeys { it == "detail" }.values.forEach { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray, fontSize = 13.sp) }
                         if (candidate == null && state.loading.isEmpty()) Text("Discovery is unavailable. Check your TMDB configuration or retry below.", Modifier.padding(24.dp), color = Color.LightGray)
                     }
@@ -353,6 +471,14 @@ internal fun DiscoveryPreviewScreen(
                         val episodeCard = state.detail
                         val seasons = state.details?.seasons.orEmpty()
                         var newestFirst by rememberSaveable(episodeCard?.key) { mutableStateOf(true) }
+                        val seasonEntry = remember { FocusRequester() }
+                        val episodeEntry = remember { FocusRequester() }
+                        val episodeState = rememberLazyListState()
+                        val episodes = if (newestFirst) state.episodes.sortedByDescending { it.number } else state.episodes.sortedBy { it.number }
+                        fun enterEpisodes() { localScope.launch {
+                            episodeState.scrollToItem(0)
+                            repeat(20) { withFrameNanos { }; if (runCatching { episodeEntry.requestFocus() }.getOrDefault(false)) return@launch }
+                        } }
                         if (seasons.isNotEmpty()) {
                             val chosenSeason = state.season ?: if (app.seriesStartSeason == SeriesStartSeason.LAST) seasons.last() else seasons.first()
                             val seasonState = rememberLazyListState(initialFirstVisibleItemIndex = seasons.indexOf(chosenSeason).coerceAtLeast(0))
@@ -365,26 +491,50 @@ internal fun DiscoveryPreviewScreen(
                                     localScope.launch { seasonState.animateScrollToItem(seasons.indexOf(target).coerceAtLeast(0)) }
                                 }
                             }
-                            val seasonEntry = remember { FocusRequester() }
                             DisposableEffect(Unit) {
-                                focusHandlers[1] = { runCatching { seasonEntry.requestFocus() }.getOrDefault(false) }
-                                onDispose { focusHandlers.remove(1) }
+                                focusHandlers[positions.season] = { runCatching { seasonEntry.requestFocus() }.getOrDefault(false) }
+                                onDispose { focusHandlers.remove(positions.season) }
                             }
-                            DiscoveryLazyRow(state = seasonState, contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DiscoveryLazyRow(Modifier.then(if (landscape) Modifier.onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { enterEpisodes(); true }
+                                else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) moveRow(positions.season, -1) else false
+                            } else Modifier), state = seasonState, contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 itemsIndexed(seasons) { seasonIndex, season -> DiscoveryAction("Season $season", selected = state.season == season,
                                     modifier = if (season == chosenSeason) Modifier.focusRequester(seasonEntry) else Modifier,
-                                    onFocus = { contentFocused = true; alignFocusedRow("seasons", 1) }) { vm.loadSeason(season) } }
+                                    onFocus = { contentFocused = true; alignFocusedRow("seasons", positions.season) }) { vm.loadSeason(season) } }
                             }
                             LaunchedEffect(state.details?.card?.key) { vm.loadSeason(chosenSeason) }
                         }
                         state.errors["season"]?.let { DiscoveryAction(it) { state.season?.let(vm::loadSeason) } }
                         if ("season" in state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 24.dp))
-                        DiscoveryLazyRow(contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            val episodes = if (newestFirst) state.episodes.sortedByDescending { it.number } else state.episodes.sortedBy { it.number }
-                            items(episodes, key = { "${it.season}:${it.number}" }) { episode ->
+                        DiscoveryLazyRow(Modifier.then(if (landscape) Modifier.onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                                Key.DirectionUp -> runCatching { seasonEntry.requestFocus() }.getOrDefault(false)
+                                Key.DirectionDown -> moveRow(positions.season, 1)
+                                else -> false
+                            }
+                        } else Modifier), state = episodeState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }) { index, episode ->
                                 var description by remember { mutableStateOf(false) }
                                 var options by remember { mutableStateOf(false) }
-                                DiscoveryPosterTile(episode.title, episode.still, "E${episode.number}", width = if (landscape) 180.dp else 150.dp,
+                                val requester = remember(episode.season, episode.number) { FocusRequester() }
+                                var hadEpisodePopup by remember { mutableStateOf(false) }
+                                LaunchedEffect(options, description) {
+                                    if (landscape) {
+                                        if (options || description) hadEpisodePopup = true
+                                        else if (hadEpisodePopup) {
+                                            hadEpisodePopup = false
+                                            repeat(30) { withFrameNanos { }
+                                                if (hostView.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                                            }
+                                        }
+                                    }
+                                }
+                                val episodeModifier = Modifier.focusRequester(requester).then(if (index == 0) Modifier.focusRequester(episodeEntry) else Modifier)
+                                if (landscape) DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
+                                    modifier = episodeModifier.width(200.dp), onFocus = { contentFocused = true },
+                                    onClick = { episodeCard?.let { playEpisode(it, episode.season, episode.number) } }, onLongClick = { options = true })
+                                else DiscoveryPosterTile(episode.title, episode.still, "E${episode.number}", width = 150.dp,
                                     aspect = 16f / 9f, reduceMotion = reduceMotion,
                                     onClick = { episodeCard?.let { playEpisode(it, episode.season, episode.number) } },
                                     onLongClick = { options = true }, onFocus = { contentFocused = true })
@@ -398,21 +548,41 @@ internal fun DiscoveryPreviewScreen(
                         }
                     }
                     itemsIndexed(visibleRails, key = { _, row -> row.key }) { rowIndex, row ->
-                        val index = rowIndex + if (state.detail?.series == true) 2 else 1
+                        val index = rowIndex + positions.firstRail
                         LaunchedEffect(row.section) { row.section?.let(vm::loadFeed) }
+                        LaunchedEffect(row.key, providerState.ready, providerState.loading, providerState.errors) {
+                            val category = row.providerCategory
+                            val type = row.providerType
+                            if (category != null && type != null && providerState.ready && type !in providerState.loading && type !in providerState.errors &&
+                                app.nowPlaying == null && app.providerMovieDetails == null && app.selectedSeries == null && !app.loading) {
+                                val sources = providerDiscoverySources(listOf(category))
+                                if (sources.any { !providerDiscoveryFresh(providerState.pages[type]?.get(it.id), System.currentTimeMillis(), app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L) })
+                                    providerVm.load(type, categoryIds = sources.mapTo(mutableSetOf()) { it.id })
+                            }
+                        }
                         val width = if (landscape) minOf(((configuration.screenWidthDp - 64) / 7.4f - 12).dp.coerceIn(92.dp, 132.dp),
                             ((screenHeight.value - 224) / 3f).dp.coerceIn(88.dp, 132.dp))
                             else ((configuration.screenWidthDp - 40) / 3.15f - 10).dp.coerceIn(88.dp, 120.dp)
-                        DiscoveryRail(row, width, reduceMotion, returnRequesters, navigationIndex = index,
+                        DiscoveryRail(row, width, reduceMotion, returnRequesters, navigationIndex = index, phone = phonePortrait,
                             popupChanged = { tilePopupOpen = it },
                             prefetch = foreground && !scrolling && anchorIndex == index,
-                            skeleton = row.section?.let { it !in state.feeds && "feed:${it.name}" !in state.errors } == true,
+                            skeleton = row.section?.let { it !in state.feeds && "feed:${it.name}" !in state.errors } == true ||
+                                row.providerType?.let { !providerState.ready || (row.entries.isEmpty() && it !in providerState.errors && it !in providerState.capped) } == true,
                             register = { handler -> focusHandlers[index] = handler }, unregister = { focusHandlers.remove(index) },
-                            focused = { entry -> contentFocused = true; returningTo = entry.key; routeOrigins = routeOrigins + (routeIdentity to entry.key); alignFocusedRow(row.key, index) },
+                            focused = { entry -> contentFocused = true; returningTo = entry.key; routeOrigins = routeOrigins + (routeIdentity to entry.key); if (!phonePortrait) alignFocusedRow(row.key, index) },
                             present = { entry -> entry.card?.let { featured = it } },
                             move = { delta -> moveRow(index, delta) },
-                            viewAll = row.section?.let { section -> { returningTo = "${row.key}:all"; openSection(section) } })
-                        if (row.entries.isEmpty()) {
+                            viewAll = row.providerType?.let { type -> { returningTo = "${row.key}:all"; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
+                                ?: row.section?.let { section -> { returningTo = "${row.key}:all"; openSection(section) } })
+                        row.providerType?.let { type ->
+                            if (row.entries.isEmpty() && type in providerState.errors) {
+                                providerState.errors[type]?.let { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray) }
+                                DiscoveryAction("Retry", Icons.Default.Refresh, modifier = Modifier.padding(start = 24.dp)) {
+                                    providerVm.load(type, refresh = true, categoryIds = row.providerCategory?.let { providerDiscoverySources(listOf(it)).mapTo(mutableSetOf()) { source -> source.id } })
+                                }
+                            }
+                        }
+                        if (row.entries.isEmpty() && row.providerType == null) {
                             val key = "feed:${row.section?.name}"
                             if (key in state.errors) DiscoveryAction("Retry ${row.title}", modifier = Modifier.padding(start = 24.dp)) { row.section?.let { vm.loadFeed(it, true) } }
                             else if (key !in state.loading) Text("No released titles available", Modifier.padding(start = 24.dp, bottom = 12.dp), color = Color.Gray, fontSize = 12.sp)
@@ -499,10 +669,16 @@ internal fun DiscoveryPreviewScreen(
                         val types = when (surface) { DashboardSurface.MOVIES -> listOf(CatalogType.MOVIES); DashboardSurface.SERIES -> listOf(CatalogType.SERIES); else -> listOf(CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES) }
                         types.forEach { type ->
                             val categories = app.modernVisibleIptvCategories(type, requireExplicitSelection = surface == DashboardSurface.HOME).filterNot { adultContentLabel(it.title) }
-                            if (categories.isNotEmpty()) {
+                            if (categories.isNotEmpty() || type != CatalogType.LIVE_TV) {
                                 Text("IPTV ${type.title}", Modifier.padding(start = 24.dp, top = 18.dp), color = Color.White, fontWeight = FontWeight.Bold)
                                 DiscoveryLazyRow(contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    items(categories, key = { it.id }) { category -> DiscoveryAction(category.title) { openCategory(category) } }
+                                    if (type != CatalogType.LIVE_TV) item("choose-categories") {
+                                        DiscoveryAction("Choose categories", Icons.Default.Tune) { configureProvider(type) }
+                                    }
+                                    if (type == CatalogType.LIVE_TV) items(categories, key = { it.id }) { category -> DiscoveryAction(category.title) { openCategory(category) } }
+                                    else if (providerSelections[type].orEmpty().isNotEmpty()) item("search-selected") {
+                                        DiscoveryAction("Search selected categories", Icons.Default.Search) { providerCollectionCategory = null; providerCollection = type.name }
+                                    }
                                 }
                             }
                         }
@@ -511,6 +687,8 @@ internal fun DiscoveryPreviewScreen(
                 } // DiscoveryVerticalFocusViewport
             }
         }
+        if (phonePortrait && state.detail != null) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack,
+            iconOnly = true, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) { vm.closeDetails() }
     }
     }
     actor?.takeIf { actorOrigin == state.detail?.key }?.let { person ->
@@ -523,6 +701,12 @@ internal fun DiscoveryPreviewScreen(
     }
     if (configure) AlertDialog(onDismissRequest = { configure = false }, title = { Text("Customize ${surface.trialTitle()}") },
         text = { LazyColumn(Modifier.heightIn(max = 400.dp)) {
+            item("iptv-settings") {
+                Text("IPTV collections", color = Color.White, fontWeight = FontWeight.SemiBold)
+                providerSelections.keys.forEach { type -> DiscoveryAction("Choose ${type.title} categories", Icons.Default.Tune,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { configure = false; configureProvider(type) } }
+                Text("TMDB discovery", Modifier.padding(top = 12.dp), fontWeight = FontWeight.SemiBold)
+            }
             items(TmdbHomeSection.entries.filter { surface == DashboardSurface.HOME || it.series == (surface == DashboardSurface.SERIES) }) { section ->
                 Row(Modifier.fillMaxWidth().toggleablePreview { vm.configure(if (section in state.sections) state.sections - section else state.sections + section) }, verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(section in state.sections, onCheckedChange = { vm.configure(if (it) state.sections + section else state.sections - section) }); Text(section.title)
@@ -596,7 +780,17 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     inList: Boolean, playRequester: FocusRequester, infoRequester: FocusRequester,
     play: () -> Unit, add: () -> Unit, info: () -> Unit, onFocus: () -> Unit, onDown: () -> Unit,
     previous: () -> Unit, next: () -> Unit, carousel: Boolean, index: Int, count: Int,
-    playLabel: String = "Play", playEnabled: Boolean = true) {
+    playLabel: String = "Play", playEnabled: Boolean = true,
+    phoneHeader: (@Composable () -> Unit)? = null, portraitPhone: Boolean = false,
+    showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false }) {
+    if (portraitPhone) {
+        val context = LocalContext.current
+        val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+        DiscoveryPhoneHero(card, rank, height.coerceAtLeast(if (compactDetail) 320.dp else 480.dp), detail, loading, inList,
+            playRequester, infoRequester, play, add, info, previous, next, carousel, index, count,
+            playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail)
+        return
+    }
     var drag by remember { mutableFloatStateOf(0f) }
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     Column(Modifier.fillMaxWidth().heightIn(min = height).padding(horizontal = if (landscape) 32.dp else 18.dp, vertical = if (compact) 8.dp else 16.dp)
@@ -615,11 +809,18 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         val metadata = card?.let { listOfNotNull(it.date?.take(4), it.runtime?.let { n -> "${n} min" }, it.genres.take(3).joinToString(" · ").takeIf(String::isNotBlank),
             it.rating?.takeIf { n -> n > 0 }?.let { n -> "★ %.1f".format(n) }, it.certification).joinToString(" · ") }.orEmpty()
         if (metadata.isNotBlank()) Text(metadata, Modifier.padding(top = if (compact) 4.dp else 6.dp), color = Color.LightGray, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        card?.overview?.takeIf(String::isNotBlank)?.let { Text(it, Modifier.widthIn(max = if (landscape) 600.dp else 500.dp).padding(top = if (compact) 6.dp else 8.dp),
+        card?.overview?.takeIf { showSynopsis && it.isNotBlank() }?.let { Text(it, Modifier.widthIn(max = if (landscape) 600.dp else 500.dp).padding(top = if (compact) 6.dp else 8.dp),
             color = Color(0xFFD6D8DC), fontSize = if (compact) 12.sp else 13.sp, lineHeight = if (compact) 16.sp else 18.sp, maxLines = if (detail) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis) }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false }) {
+            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {
+                if (it.type != KeyEventType.KeyDown) false
+                else when (it.key) {
+                    Key.DirectionDown -> { onDown(); true }
+                    Key.DirectionUp -> onUp()
+                    else -> false
+                }
+            }) {
             DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true,
                 modifier = Modifier.focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
@@ -644,7 +845,7 @@ private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Uni
 }
 
 @Composable
-private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>, navigationIndex: Int,
+private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>, navigationIndex: Int, phone: Boolean = false,
     popupChanged: (Boolean) -> Unit,
     prefetch: Boolean, skeleton: Boolean,
     register: (() -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
@@ -652,6 +853,10 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
     val rowState = rememberLazyListState()
     val popupScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val phoneWide = phone && row.key in setOf("continue", "episodes")
+    val phoneWidth = if (phoneWide) ((LocalConfiguration.current.screenWidthDp - 32) * .68f).dp.coerceIn(200.dp, 280.dp)
+        else phoneDiscoveryPosterWidth(LocalConfiguration.current.screenWidthDp).dp
+    val tileWidth = if (phone) phoneWidth else width
     LaunchedEffect(prefetch, rowState.firstVisibleItemIndex, rowState.isScrollInProgress, row.entries) {
         if (prefetch && !rowState.isScrollInProgress) { delay(200); prefetchDiscoveryArtwork(context, row.entries.drop(rowState.firstVisibleItemIndex).take(8).map { it.artwork }) }
     }
@@ -662,30 +867,49 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
     DisposableEffect(row.key, navigationIndex) {
         register {
             val key = selected?.takeIf { it == "${row.key}:all" || entries.any { entry -> entry.key == it } } ?: entries.firstOrNull()?.key
+                ?: "${row.key}:all".takeIf { row.providerType != null }
             key != null && runCatching { requesters[key]?.requestFocus() == true }.getOrDefault(false)
         }
         onDispose(unregister)
     }
     Column {
-        Text(row.title, Modifier.padding(start = 24.dp, top = 4.dp), color = Color.White, fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(row.title, Modifier.weight(1f).padding(start = if (phone) 16.dp else 24.dp, top = 4.dp), color = Color.White,
+            fontSize = if (phone) 19.sp else 16.sp, lineHeight = if (phone) 24.sp else 20.sp, fontWeight = FontWeight.SemiBold)
+        if (row.providerType != null && viewAll != null) {
+            val key = "${row.key}:all"
+            val requester = remember(key) { requesters.getOrPut(key) { FocusRequester() } }
+            DiscoveryAction("Search / All", Icons.Default.Search,
+                modifier = Modifier.focusRequester(requester).onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown))
+                        move(if (event.key == Key.DirectionUp) -1 else 1) else false
+                }, onFocus = { selected = key; focused(RailEntry(key, row.title, null, open = viewAll)) }, onClick = viewAll)
+        }
+        }
         DiscoveryLazyRow(Modifier.fillMaxWidth().onFocusChanged { if (!it.hasFocus) focusedCard = null }.focusGroup().onPreviewKeyEvent { event ->
             if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown)) {
                 move(if (event.key == Key.DirectionUp) -1 else 1)
             } else false
-        }, state = rowState, contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 24.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (row.entries.isEmpty() && skeleton) items(5) { Box(Modifier.width(width).aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1B1F27))) }
+        }, state = rowState, contentPadding = PaddingValues(start = if (phone) 16.dp else 24.dp, top = 10.dp, end = if (phone) 16.dp else 24.dp, bottom = if (phone) 12.dp else 4.dp), horizontalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 12.dp)) {
+            if (row.entries.isEmpty() && skeleton) items(5) { Box(Modifier.width(tileWidth)
+                .height(if (phone) phoneDiscoveryCardHeight(tileWidth.value, phoneWide, LocalDensity.current.fontScale).dp else tileWidth * 1.5f)
+                .clip(RoundedCornerShape(10.dp)).background(Color(0xFF1B1F27))) }
             itemsIndexed(row.entries, key = { _, entry -> entry.key }) { index, entry ->
                 val requester = remember(entry.key) { requesters.getOrPut(entry.key) { FocusRequester() } }
                 Row(verticalAlignment = Alignment.Bottom) {
                     if (row.ranked) Text((index + 1).toString(), color = Color.White.copy(alpha = .9f), fontWeight = FontWeight.Black,
-                        fontSize = 44.sp, modifier = Modifier.width(if (index == 9) 48.dp else 32.dp).padding(bottom = 46.dp))
+                        fontSize = if (phone) 64.sp else 44.sp, modifier = Modifier.width(if (index == 9) 48.dp else 32.dp).padding(bottom = if (phone) 50.dp else 46.dp))
                     var popupOpen by remember(entry.key) { mutableStateOf(false) }
                     if (popupOpen) DisposableEffect(Unit) {
                         popupChanged(true)
                         onDispose { popupChanged(false) }
                     }
                     Box {
-                        DiscoveryPosterTile(entry.title, entry.artwork, entry.subtitle, width, reduceMotion = reduceMotion,
+                        if (phone) DiscoveryPhoneMediaCard(entry.title, entry.artwork, entry.subtitle, tileWidth,
+                            wide = phoneWide, modifier = Modifier.focusRequester(requester), progress = entry.progress, matchCount = entry.matchCount,
+                            onClick = entry.open, onLongClick = entry.popup?.let { { popupOpen = true } },
+                            onFocus = { selected = entry.key; focusedCard = entry; focused(entry) })
+                        else DiscoveryPosterTile(entry.title, entry.artwork, entry.subtitle, width, reduceMotion = reduceMotion,
                             modifier = Modifier.focusRequester(requester), progress = entry.progress, matchCount = entry.matchCount,
                             onClick = entry.open, onLongClick = entry.popup?.let { { popupOpen = true } },
                             onFocus = { selected = entry.key; focusedCard = entry; focused(entry) })
@@ -708,10 +932,10 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
                     }
                 }
             }
-            if (viewAll != null && row.entries.isNotEmpty()) item("view-all") {
+            if (viewAll != null && row.providerType == null && row.entries.isNotEmpty()) item("view-all") {
                 val key = "${row.key}:all"
                 val requester = remember(key) { requesters.getOrPut(key) { FocusRequester() } }
-                Box(Modifier.width(width).height(width * 1.5f), contentAlignment = Alignment.Center) {
+                Box(Modifier.width(tileWidth).height(if (phoneWide) tileWidth * .5625f else tileWidth * 1.5f), contentAlignment = Alignment.Center) {
                     DiscoveryAction("View all", modifier = Modifier.focusRequester(requester),
                         onFocus = { selected = key; focused(RailEntry(key, row.title, null, open = viewAll)) }, onClick = viewAll)
                 }
@@ -773,7 +997,8 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     var focused by remember { mutableStateOf(false) }
     Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 40.dp)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() },
-        shape = RoundedCornerShape(10.dp), color = if (focused) Color.White else if (selected) Accent else Color(0xFF242831).copy(alpha = .85f),
+        shape = RoundedCornerShape(10.dp), color = if (focused) Color.White else if (selected) Accent
+            else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
         contentColor = if (focused) Color.Black else Color.White) {
         Row(Modifier.padding(horizontal = if (iconOnly) 10.dp else horizontalPadding, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {

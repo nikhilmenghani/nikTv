@@ -28,7 +28,7 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
         }.filter { it.released() }
 
     override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails =
-        cached("detail-v2:${card.key}", DiscoveryCache.DETAIL_TTL, DiscoveryDetails.serializer(), stale) {
+        cached("detail-v3:${card.key}", DiscoveryCache.DETAIL_TTL, DiscoveryDetails.serializer(), stale) {
             val root = tmdb.discoveryJson("/${if (card.series) "tv" else "movie"}/${card.id}",
                 mapOf("append_to_response" to if (card.series) "credits,images,content_ratings" else "credits,images,release_dates", "include_image_language" to "en,null"))
             val genres = root["genres"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject.string("name") }
@@ -45,7 +45,8 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
                 rating = root["vote_average"]?.jsonPrimitive?.doubleOrNull ?: card.rating,
                 overview = root.string("overview") ?: card.overview, genres = genres,
                 runtime = root["runtime"]?.jsonPrimitive?.intOrNull ?: root["episode_run_time"]?.jsonArray?.firstOrNull()?.jsonPrimitive?.intOrNull,
-                certification = certification?.takeIf(String::isNotBlank), titleLogo = logo?.let { image(it, "w500") }),
+                certification = certification?.takeIf(String::isNotBlank), titleLogo = logo?.let { image(it, "w500") },
+                originalLanguage = root.string("original_language") ?: card.originalLanguage),
                 cast = root["credits"]?.jsonObject?.get("cast")?.jsonArray.orEmpty().take(20).mapNotNull { c ->
                     c.jsonObject.string("name")?.let { DiscoveryPerson(it, c.jsonObject.string("character").orEmpty(), c.jsonObject.string("profile_path")?.let { p -> image(p, "w185") }, c.jsonObject["id"]?.jsonPrimitive?.intOrNull) }
                 }, seasons = root["seasons"]?.jsonArray.orEmpty().mapNotNull { s ->
@@ -54,7 +55,7 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
                     c["id"]?.jsonPrimitive?.intOrNull?.let { DiscoveryCollection(it, c.string("name").orEmpty(), c.string("backdrop_path")?.let { p -> image(p, "w780") }) }
                 })
         }
-    override suspend fun related(card: DiscoveryCard): List<DiscoveryCard> = cached("related-v1:${card.key}", DiscoveryCache.DETAIL_TTL,
+    override suspend fun related(card: DiscoveryCard): List<DiscoveryCard> = cached("related-v2:${card.key}", DiscoveryCache.DETAIL_TTL,
         ListSerializer(DiscoveryCard.serializer())) {
         cards(tmdb.discoveryJson("/${if (card.series) "tv" else "movie"}/${card.id}/recommendations"), card.series)
     }.filter { it.released() }
@@ -84,7 +85,8 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
             o.string(if (series) "name" else "title").orEmpty(), o.string("overview"),
             o.string("poster_path")?.let { p -> image(p, "w342") }, o.string("backdrop_path")?.let { p -> image(p, "w1280") },
             o.string(if (series) "first_air_date" else "release_date"), o["vote_average"]?.jsonPrimitive?.doubleOrNull,
-            genres = with(tmdb) { o.discoveryGenreNames() }, adult = o["adult"]?.jsonPrimitive?.booleanOrNull == true) }
+            genres = with(tmdb) { o.discoveryGenreNames() }, adult = o["adult"]?.jsonPrimitive?.booleanOrNull == true,
+            originalLanguage = o.string("original_language")) }
     }.filter { it.title.isNotBlank() && it.released() }.take(30)
     override suspend fun actorCredits(person: DiscoveryPerson, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> {
         val id = person.id?.takeIf { it > 0 } ?: return emptyList()

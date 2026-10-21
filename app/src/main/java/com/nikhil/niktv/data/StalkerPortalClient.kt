@@ -535,7 +535,7 @@ class StalkerPortalClient(private val context: Context) {
                     "${series.id}:$season:$explicitEpisode", item.string("name") ?: episodeTitle(season, explicitEpisode),
                     series.logo, command, item.string("description"), season, explicitEpisode, portalSeasonId ?: item.string("season_id"),
                     series.portalCategoryId, item.string("id") ?: item.string("episode_id"),
-                    episodeAirDate = item.providerEpisodeAirDate()
+                    episodeAirDate = item.providerEpisodeAirDate(), episodeAddedAtMillis = item.providerEpisodeAddedTime()
                 ))
             } else if (numbered.isNotEmpty() && command != null) numbered.map { episode ->
                 // This response shape contains only episode numbers. The parent description
@@ -549,7 +549,7 @@ class StalkerPortalClient(private val context: Context) {
                 if (id != null && command != null && (episode != null || season != null)) listOf(
                     MediaItem(id, item.string("name") ?: item.string("title") ?: episodeTitle(season, episode), item.string("screenshot_uri") ?: series.logo, command, item.string("description"), season, episode,
                         portalSeasonId ?: item.string("season_id"), series.portalCategoryId, id,
-                        episodeAirDate = item.providerEpisodeAirDate())
+                        episodeAirDate = item.providerEpisodeAirDate(), episodeAddedAtMillis = item.providerEpisodeAddedTime())
                 ) else emptyList()
             }
         }
@@ -810,7 +810,9 @@ class StalkerPortalClient(private val context: Context) {
                 command = "${profile.portalUrl}/series/${encode(profile.username)}/${encode(profile.password)}/$id.$extension",
                 description = info?.string("plot") ?: info?.string("releasedate"),
                 seasonNumber = season,
-                episodeNumber = episode
+                episodeNumber = episode,
+                episodeAirDate = info?.providerEpisodeAirDate() ?: node.providerEpisodeAirDate(),
+                episodeAddedAtMillis = node.providerEpisodeAddedTime() ?: info?.providerEpisodeAddedTime()
             )
         }.distinctBy { it.id }.sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title }))
     }

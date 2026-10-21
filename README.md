@@ -15,6 +15,11 @@ rows and full information pages; IPTV availability is checked only when the user
 requests playback or a download. Trial section preferences are separate from the
 original Home configuration. See [the working design and verification notes](docs/tv-browsing-motion-plan.md).
 
+Phones use a dedicated portrait discovery layout with Home, Live TV, Search and My
+List in the bottom navigation. To return to the original UI, choose **Use original
+UI** in the new Browse menu, or disable **Modern discovery UI** under Settings →
+Device & display. The choice is remembered; enabling the setting restores the new UI.
+
 ## MVP features
 
 - Portal URL, profile name, and MAC-address onboarding

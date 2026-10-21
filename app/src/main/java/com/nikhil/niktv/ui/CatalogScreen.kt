@@ -103,6 +103,8 @@ import com.nikhil.niktv.data.TmdbMovie
 import com.nikhil.niktv.data.artworkRequest
 import com.nikhil.niktv.data.cast4kLegacyDeviceIdentity
 import com.nikhil.niktv.model.*
+import com.nikhil.niktv.discovery.DiscoveryPhoneBottomNavigation
+import com.nikhil.niktv.discovery.DiscoveryPhoneDestination
 import com.nikhil.niktv.update.AppUpdates
 import com.nikhil.niktv.update.UpdateDownloadState
 import com.nikhil.niktv.update.UpdateInfo
@@ -209,12 +211,15 @@ internal fun CatalogScreen(
     playRecording: (RecordedLiveTvMedia) -> Unit,
     playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null,
     playProviderMovie: () -> Unit,
-    closeProviderMovie: () -> Unit
+    closeProviderMovie: () -> Unit,
+    openGlobalSearch: (() -> Unit)? = null
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val activity = context.findHostActivity()
     val isTv = context.isTvLikeDevice(configuration)
+    val phoneExperience = state.discoveryExperienceEnabled && com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    var phoneDetailOpen by remember(state.savedProfile?.cacheKey()) { mutableStateOf(false) }
     val wide = configuration.screenWidthDp >= 720
     val mobileUiDesign by rememberMobileUiDesign()
     var exitConfirmationOpen by rememberSaveable { mutableStateOf(false) }
@@ -225,6 +230,7 @@ internal fun CatalogScreen(
             (state.modernTmdbSection != null || state.modernIptvCategory != null)
     val mobileMainPage = state.mobileMainPage()
     val openTrial = com.nikhil.niktv.discovery.LocalOpenDiscovery.current
+    fun landingHome() { if (phoneExperience) openTrial(DashboardSurface.HOME) else openHome() }
     val playTrialEpisode = com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode.current
     val previewVisible = state.discoverySurface != null && !state.settingsOpen && !state.searchOpen &&
         !state.favoritesOpen && !state.offlineDownloadsOpen && state.selectedSeries == null &&
@@ -280,7 +286,7 @@ internal fun CatalogScreen(
             CatalogBackAction.CLOSE_FAVORITES -> closeFavorites()
             CatalogBackAction.CLOSE_SERIES -> closeSeries()
             CatalogBackAction.CLOSE_MODERN_SECTION -> closeModernSection()
-            CatalogBackAction.OPEN_HOME -> openHome()
+            CatalogBackAction.OPEN_HOME -> landingHome()
             CatalogBackAction.SHOW_EXIT_CONFIRMATION -> exitConfirmationOpen = true
         }
     }
@@ -412,7 +418,8 @@ internal fun CatalogScreen(
                         else openTrendingMovie(com.nikhil.niktv.data.TrendingMovie(card.movie())) },
                     playEpisode = playTrialEpisode, openRecent = openRecent, openWatched = openWatchedEpisode,
                     toggleFavorite = toggleFavoriteEntry, openCategory = openModernIptvCategory, openSection = openModernTmdbSection,
-                    removeRecent = removeRecent, markWatched = markEpisodeWatched, dismissEpisode = dismissWatchedEpisode
+                    removeRecent = removeRecent, markWatched = markEpisodeWatched, dismissEpisode = dismissWatchedEpisode,
+                    detailVisibilityChanged = { phoneDetailOpen = it }
                     )
                 }
                 previewProviderCategory -> browseStateHolder.SaveableStateProvider("provider-trial:${state.savedProfile?.cacheKey()}:${state.modernIptvCategory?.id}:${state.modernIptvCategoryOpenId}") {
@@ -473,7 +480,34 @@ internal fun CatalogScreen(
         }
     }
 
-    if (previewVisible || previewProviderCategory || state.selectedSeries != null) {
+    if (phoneExperience) {
+        val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&
+            state.movieMatchSelection == null && state.seriesMatchSelection == null && !state.categoryManagerOpen
+        val destination = when {
+            state.searchOpen -> DiscoveryPhoneDestination.SEARCH
+            state.favoritesOpen || state.offlineDownloadsOpen -> DiscoveryPhoneDestination.LIBRARY
+            state.settingsOpen -> null
+            previewVisible || previewProviderCategory -> DiscoveryPhoneDestination.HOME
+            !state.homeOpen && state.selectedType == CatalogType.LIVE_TV -> DiscoveryPhoneDestination.LIVE
+            else -> DiscoveryPhoneDestination.HOME
+        }
+        Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
+            Column(Modifier.fillMaxSize()
+                .then(if (previewVisible || previewProviderCategory || state.selectedSeries != null) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
+                .padding(bottom = if (showPhoneBar && !previewVisible) 88.dp else 0.dp)) {
+                MainContent(Modifier.weight(1f).fillMaxWidth())
+                if (state.favoritesOpen || state.offlineDownloadsOpen) MobileLibrarySwitcher(
+                    downloadsSelected = state.offlineDownloadsOpen, storageSelected = libraryPane == LibraryPane.STORAGE,
+                    openFavorites = openFavorites, openOfflineDownloads = ::openDownloadsPane, openStorage = ::openStoragePane)
+            }
+            if (showPhoneBar) DiscoveryPhoneBottomNavigation(destination, select = { page -> when (page) {
+                DiscoveryPhoneDestination.HOME -> openTrial(DashboardSurface.HOME)
+                DiscoveryPhoneDestination.LIVE -> selectType(CatalogType.LIVE_TV)
+                DiscoveryPhoneDestination.SEARCH -> (openGlobalSearch ?: openSearch)()
+                DiscoveryPhoneDestination.LIBRARY -> openFavorites()
+            } }, modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars))
+        }
+    } else if (previewVisible || previewProviderCategory || state.selectedSeries != null) {
         MainContent(Modifier.fillMaxSize())
     } else if (wide || isTv) {
         Row(

@@ -15,13 +15,15 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val screen = DiscoveryGeneration()
     private val detail = DiscoveryGeneration()
     private val seasonGeneration = DiscoveryGeneration()
+    private val heroGeneration = DiscoveryGeneration()
+    private var heroRequestKey: String? = null
     private val jobs = mutableMapOf<String, Job>()
     private val stack = mutableListOf<DiscoveryCard>()
     private fun preferenceKey(profile: String, surface: DashboardSurface) = "$profile:${surface.name}"
     fun bind(profile: String, surface: DashboardSurface, originalSections: List<TmdbHomeSection>?) {
         if (_state.value.profile == profile && _state.value.surface == surface) return
         jobs.values.forEach { it.cancel() }; jobs.clear(); stack.clear()
-        screen.next(); detail.next(); seasonGeneration.next()
+        screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()
         val key = preferenceKey(profile, surface)
         val defaults = originalSections ?: when (surface) {
             DashboardSurface.MOVIES -> listOf(TmdbHomeSection.TOP_RATED_MOVIES, TmdbHomeSection.NEW_HOLLYWOOD_MOVIES, TmdbHomeSection.NEW_BOLLYWOOD_MOVIES)
@@ -37,7 +39,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         if (surface != DashboardSurface.MOVIES) loadFeed(TmdbHomeSection.TRENDING_SERIES)
     }
     fun pause() {
-        screen.next(); detail.next(); seasonGeneration.next()
+        screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()
         jobs.values.forEach { it.cancel() }; jobs.clear()
         _state.update { it.copy(loading = emptySet()) }
     }
@@ -74,7 +76,32 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
             finally { if (screen.accepts(token)) _state.update { it.copy(loading = it.loading - key) } }
         }
     }
-    fun rotate(delta: Int) { _state.update { if (it.heroes.isEmpty()) it else it.copy(heroIndex = Math.floorMod(it.heroIndex + delta, it.heroes.size)) } }
+    fun rotate(delta: Int) {
+        pauseHeroMetadata()
+        _state.update { if (it.heroes.isEmpty()) it else it.copy(heroIndex = Math.floorMod(it.heroIndex + delta, it.heroes.size)) }
+    }
+    fun pauseHeroMetadata() { heroGeneration.next(); jobs.remove("hero-metadata")?.cancel(); heroRequestKey = null }
+    /** Only public, cache-backed TMDB metadata; never resolve an IPTV stream while browsing. */
+    fun prepareHero() {
+        val snapshot = _state.value
+        val card = snapshot.hero ?: return
+        if (snapshot.detail != null || snapshot.heroPresentation?.key == card.key ||
+            jobs["hero-metadata"]?.isActive == true && heroRequestKey == card.key) return
+        pauseHeroMetadata()
+        heroRequestKey = card.key
+        val token = heroGeneration.next()
+        jobs["hero-metadata"] = viewModelScope.launch {
+            fun publish(value: DiscoveryDetails) {
+                if (heroGeneration.accepts(token)) _state.update { current ->
+                    if (current.profile == snapshot.profile && current.surface == snapshot.surface &&
+                        current.detail == null && current.hero?.key == card.key) current.copy(heroPresentation = value.card) else current
+                }
+            }
+            try { publish(repository.details(card, ::publish)) }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* Optional title artwork must not block or show a global error. */ }
+        }
+    }
     suspend fun actorCredits(person: DiscoveryPerson, stale: (List<DiscoveryCard>) -> Unit) = repository.actorCredits(person, stale)
     fun openDetails(card: DiscoveryCard) { stack.add(card); showDetails(card) }
     fun closeDetails() {
@@ -87,6 +114,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         }
     }
     private fun showDetails(card: DiscoveryCard) {
+        pauseHeroMetadata()
         val token = detail.next(); seasonGeneration.next()
         jobs.filterKeys { !it.startsWith("feed:") }.values.forEach { it.cancel() }
         jobs.keys.removeAll { !it.startsWith("feed:") }

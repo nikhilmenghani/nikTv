@@ -15,6 +15,69 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryViewModelTest {
+    @Test fun heroPresentationEnrichesOnlyPublicPresentationWithoutOpeningDetails() {
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
+                DiscoveryDetails(card.copy(titleLogo = "https://example.invalid/title.png", genres = listOf("Comedy")))
+        })
+        vm.bind("hero-public", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.prepareHero(); pump()
+        assertEquals(listOf("Comedy"), vm.state.value.heroPresentation?.genres)
+        assertNull(vm.state.value.detail)
+        assertTrue(vm.state.value.episodes.isEmpty())
+        assertTrue(vm.state.value.errors.isEmpty())
+    }
+
+    @Test fun obsoleteHeroMetadataCannotReplaceTheNewFeaturedTitle() {
+        val old = CompletableDeferred<DiscoveryDetails>()
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) = listOf(card(1), card(2))
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
+                if (card.id == 1) withContext(NonCancellable) { old.await() } else DiscoveryDetails(card.copy(genres = listOf("New")))
+        })
+        vm.bind("hero-race", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.prepareHero(); pump(); vm.rotate(1); vm.prepareHero(); pump()
+        old.complete(DiscoveryDetails(card(1))); pump()
+        assertEquals(2, vm.state.value.hero?.id)
+        assertEquals(2, vm.state.value.heroPresentation?.id)
+    }
+
+    @Test fun leavingProfileRejectsLateHeroMetadataEvenIfCancellationIsIgnored() {
+        val old = CompletableDeferred<DiscoveryDetails>()
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) = withContext(NonCancellable) { old.await() }
+        })
+        vm.bind("hero-old", DashboardSurface.MOVIES, emptyList()); pump(); vm.prepareHero(); pump()
+        vm.pause(); vm.bind("hero-new", DashboardSurface.SERIES, emptyList()); pump()
+        old.complete(DiscoveryDetails(card(1))); pump()
+        assertEquals("hero-new", vm.state.value.profile)
+        assertNull(vm.state.value.heroPresentation)
+    }
+
+    @Test fun optionalHeroFailureDoesNotHideFeedOrRaiseAnError() {
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails = error("offline")
+        })
+        vm.bind("hero-error", DashboardSurface.MOVIES, emptyList()); pump(); vm.prepareHero(); pump()
+        assertNotNull(vm.state.value.hero)
+        assertNull(vm.state.value.heroPresentation)
+        assertTrue(vm.state.value.errors.isEmpty())
+    }
+
+    @Test fun refreshedFeedRetargetsHeroMetadataWithoutWaitingForObsoleteWork() {
+        val old = CompletableDeferred<DiscoveryDetails>()
+        var loads = 0
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) = listOf(card(++loads))
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
+                if (card.id == 1) withContext(NonCancellable) { old.await() } else DiscoveryDetails(card)
+        })
+        vm.bind("hero-refresh", DashboardSurface.MOVIES, emptyList()); pump(); vm.prepareHero(); pump()
+        vm.loadFeed(TmdbHomeSection.TRENDING_MOVIES, true); pump(); vm.prepareHero(); pump()
+        assertEquals(2, vm.state.value.heroPresentation?.id)
+        old.complete(DiscoveryDetails(card(1))); pump()
+        assertEquals(2, vm.state.value.heroPresentation?.id)
+    }
     private val app get() = RuntimeEnvironment.getApplication()
     private fun pump() = shadowOf(Looper.getMainLooper()).idle()
     private fun card(id: Int, series: Boolean = false) = DiscoveryCard(id, series, "Movie $id", date = "2020-01-01")

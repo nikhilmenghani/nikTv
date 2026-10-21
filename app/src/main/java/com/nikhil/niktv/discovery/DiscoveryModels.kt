@@ -8,6 +8,10 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
+/** Preserve the pre-overlay phone tile footprint, including its former caption space. */
+internal fun phoneDiscoveryCardHeight(width: Float, wide: Boolean, fontScale: Float): Float =
+    width / (if (wide) 16f / 9f else 2f / 3f) + 7f + (if (wide) 68f else 45f) * fontScale.coerceAtLeast(1f)
+
 /** Public discovery metadata only. Provider URLs and personal data never enter this cache. */
 @Serializable
 internal data class DiscoveryCard(
@@ -15,7 +19,7 @@ internal data class DiscoveryCard(
     val poster: String? = null, val backdrop: String? = null, val date: String? = null,
     val rating: Double? = null, val genres: List<String> = emptyList(),
     val runtime: Int? = null, val certification: String? = null, val titleLogo: String? = null,
-    val adult: Boolean = false
+    val adult: Boolean = false, val originalLanguage: String? = null
 ) {
     val key get() = "${if (series) "tv" else "movie"}:$id"
     val media get() = MediaItem("tmdb-${if (series) "series" else "movie"}:$id", title, poster, null,
@@ -23,6 +27,15 @@ internal data class DiscoveryCard(
     fun movie() = TmdbMovie(id, title, title, overview, poster, backdrop, date, rating)
     fun show() = TmdbSeries(id, title, title, overview, poster, backdrop, date, rating)
     fun released(today: String = currentDiscoveryDate()): Boolean = !adult && releasedDiscoveryDate(date, today)
+}
+
+/** Keep provider details relevant without additional searches or guessing a language from the title. */
+internal fun relevantDiscoveryRecommendations(source: DiscoveryCard, cards: List<DiscoveryCard>): List<DiscoveryCard> {
+    val candidates = cards.filter { it.key != source.key && it.series == source.series && it.released() }.distinctBy { it.key }
+    val language = source.originalLanguage?.takeIf(String::isNotBlank)
+    val relevant = candidates.filter { source.genres.isEmpty() || it.genres.any(source.genres::contains) }
+    return relevant.sortedWith(compareByDescending<DiscoveryCard> { language != null && it.originalLanguage == language }
+        .thenByDescending { card -> card.genres.count(source.genres::contains) })
 }
 
 internal fun TmdbMovie.discovery() = DiscoveryCard(id, false, title, overview, posterUrl, backdropUrl, releaseDate, voteAverage, genres, adult = adult)
@@ -55,7 +68,8 @@ internal data class DiscoveryState(
     val detail: DiscoveryCard? = null, val details: DiscoveryDetails? = null,
     val related: List<DiscoveryCard> = emptyList(), val collection: List<DiscoveryCard> = emptyList(),
     val reviews: List<DiscoveryReview> = emptyList(), val episodes: List<DiscoveryEpisode> = emptyList(),
-    val season: Int? = null, val heroes: List<DiscoveryCard> = emptyList(), val heroIndex: Int = 0
+    val season: Int? = null, val heroes: List<DiscoveryCard> = emptyList(), val heroIndex: Int = 0,
+    val heroPresentation: DiscoveryCard? = null
 ) {
     val hero get() = heroes.getOrNull(heroIndex)
 }

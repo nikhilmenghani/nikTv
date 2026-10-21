@@ -13,6 +13,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import com.nikhil.niktv.ui.tileFocusScrollDistance
 
+internal data class DiscoveryFeedIndices(val header: Int?, val hero: Int, val season: Int, val firstRail: Int)
+internal fun discoveryFeedIndices(scrollingHeader: Boolean, series: Boolean): DiscoveryFeedIndices {
+    val hero = if (scrollingHeader) 1 else 0
+    return DiscoveryFeedIndices(if (scrollingHeader) 0 else null, hero, hero + 1, hero + 1 + if (series) 1 else 0)
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun DiscoveryVerticalFocusViewport(coordinator: DiscoveryScrollCoordinator, content: @Composable () -> Unit) {

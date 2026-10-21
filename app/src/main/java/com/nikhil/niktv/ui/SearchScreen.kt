@@ -1482,8 +1482,9 @@ private fun SearchResultsContent(
     var resultTab by rememberSaveable(state.searchQuery, state.searchCategoryId) { mutableStateOf(SearchContentType.SERIES) }
     val tabRequesters = remember { globalSearchTypes.associateWith { FocusRequester() } }
     val resultRequester = if (all) remember { FocusRequester() } else firstItemRequester
-    val posterGrid = !all && state.searchType in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) &&
-        (isTv || screenWidthDp >= 600)
+    val posterGrid = (!all || state.discoveryExperienceEnabled && !isTv && screenWidthDp < 600) &&
+        (if (all) resultTab else state.searchType) in setOf(SearchContentType.MOVIES, SearchContentType.SERIES) &&
+        (isTv || screenWidthDp >= 600 || state.discoveryExperienceEnabled)
     val liveGrid = state.searchType == SearchContentType.LIVE_TV && isTv
     val columns = when {
         liveGrid -> 2

@@ -517,11 +517,17 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     androidx.compose.runtime.CompositionLocalProvider(
+        com.nikhil.niktv.discovery.LocalSetDiscoveryExperience provides vm::setDiscoveryExperienceEnabled,
         com.nikhil.niktv.discovery.LocalOpenDiscovery provides vm::openDiscovery,
         com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode provides vm::openDiscoveryEpisode,
         com.nikhil.niktv.discovery.LocalDownloadDiscoveryEpisode provides vm::downloadDiscoveryEpisode,
         com.nikhil.niktv.discovery.LocalRefreshDiscoveryMatches provides vm::refreshDiscoveryMatches,
         com.nikhil.niktv.discovery.LocalOpenDiscoverySeries provides { vm.openSeriesFromHome(it) },
+        com.nikhil.niktv.discovery.LocalOpenProviderDiscovery provides vm::openDiscoveryProviderDetails,
+        com.nikhil.niktv.discovery.LocalConfigureProviderDiscovery provides vm::openCategoryManager,
+        com.nikhil.niktv.discovery.LocalPlayProviderDiscovery provides vm::playDiscoveryProvider,
+        com.nikhil.niktv.discovery.LocalDownloadProviderDiscovery provides { type, item -> vm.downloadForOffline(item, type, null) },
+        com.nikhil.niktv.discovery.LocalProviderDiscoveryPageLoader provides vm::loadDiscoveryCategoryPage,
         com.nikhil.niktv.discovery.LocalProviderDetailNavigation provides com.nikhil.niktv.discovery.ProviderDetailNavigation(
             openDiscovery = vm::openDiscovery,
             classic = { label -> when (label) {
@@ -773,6 +779,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                 else -> catalogStateHolder.SaveableStateProvider(state.savedProfile?.cacheKey().orEmpty()) { CatalogScreen(
                     state = state,
                     selectType = vm::openCatalogType,
+                    openGlobalSearch = vm::openGlobalSearch,
                     selectCategory = vm::loadCategory,
                     play = { vm.openCatalogDetails(it) },
                     playInContext = { item, queue, filter -> vm.openCatalogDetails(item, queue, filter) },
