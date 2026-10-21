@@ -14,6 +14,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryMotionTest {
+    @Test fun cancelingAnOldMenuEntryCannotReleaseANewerEntrysAutomaticRevealOwnership() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val coordinator = DiscoveryScrollCoordinator(scope)
+        try {
+            val old = scope.launch { coordinator.withAutomaticRevealSuppressed { awaitCancellation() } }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(coordinator.blocksAutomaticReveal)
+            assertFalse(coordinator.isMoving)
+            val latest = scope.launch { coordinator.withAutomaticRevealSuppressed { awaitCancellation() } }
+            shadowOf(Looper.getMainLooper()).idle()
+            old.cancel()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue("A canceled entry must not release another entry's ownership", coordinator.blocksAutomaticReveal)
+            latest.cancel()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse("Cancellation must always restore automatic edge reveal", coordinator.blocksAutomaticReveal)
+        } finally { scope.cancel() }
+    }
+
     @Test fun aNewDestinationCancelsAnUnlaidOutOldRowWithoutFocusingIt() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + androidx.compose.runtime.BroadcastFrameClock())
         val coordinator = DiscoveryScrollCoordinator(scope)

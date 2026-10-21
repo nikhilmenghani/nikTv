@@ -34,8 +34,7 @@ internal fun providerDiscoveryProgress(app: NikTvState, type: CatalogType, item:
     val recent = app.recentlyPlayed.firstOrNull { it.profileKey == profile &&
         it.kind == (if (type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE) &&
         (it.media.id == item.id || (type == CatalogType.SERIES && it.series?.id == item.id)) } ?: return null
-    val progress = discoveryRecentProgress(recent, app.playbackProgress) ?: return null
-    return if (progress.durationMillis > 0) (progress.positionMillis.toFloat() / progress.durationMillis).coerceIn(0f, 1f) else null
+    return discoveryProgressFraction(discoveryRecentProgress(recent, app.playbackProgress))
 }
 
 @Composable
@@ -72,6 +71,7 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     var entryHandled by remember { mutableStateOf(false) }
     val all = state.items[type].orEmpty()
+    val progressLookup = rememberDiscoveryProgressLookup(app.savedProfile?.cacheKey(), app.recentlyPlayed, app.playbackProgress)
     val items by produceState(all, all, query) {
         if (query.isNotBlank()) delay(100)
         value = withContext(Dispatchers.Default) { searchProviderDiscovery(all, query) }
@@ -116,7 +116,7 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
                     BoxWithConstraints {
                         val click = { selected = item.id; open(type, item, items) }
                         val subtitle = categoryTitles[item.portalCategoryId].orEmpty()
-                        val progress = providerDiscoveryProgress(app, type, item)
+                        val progress = progressLookup?.provider(type, item.id)
                         if (phone) DiscoveryPhoneMediaCard(item.title, item.logo, subtitle, maxWidth, false,
                             modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
                         else DiscoveryPosterTile(item.title, item.logo, subtitle, maxWidth,

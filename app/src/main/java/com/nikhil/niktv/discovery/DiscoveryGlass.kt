@@ -17,6 +17,8 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.transformations
 import com.nikhil.niktv.data.thumbnailArtworkUrl
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 internal val LocalDiscoveryGlassButtons = staticCompositionLocalOf { false }
 
@@ -32,12 +34,22 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
     focused: Boolean = false, content: @Composable BoxScope.() -> Unit) {
     val context = LocalContext.current
     var position by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    val permitted = remember(artwork) { !discoveryArtworkPressure(context) }
+    // MemoryInfo is a system-service call; never put that IPC on a focus/scroll frame.
+    val permitted by key(context, artwork) {
+        produceState(false) {
+            value = withContext(Dispatchers.Default) { !discoveryArtworkPressure(context) }
+        }
+    }
     val painter = rememberAsyncImagePainter(remember(artwork, permitted) {
         ImageRequest.Builder(context).data(if (permitted) thumbnailArtworkUrl(artwork, 1280) else null)
-            .size(1280, 720).transformations(DiscoveryGlassTransformation()).build()
+            // The final glass texture is 96px wide. Decode near that size instead of
+            // allocating a second full backdrop just to downsample it for blur.
+            .size(192, 108).transformations(DiscoveryGlassTransformation()).build()
     })
-    val shape = RoundedCornerShape(10.dp)
+    val shape = remember { RoundedCornerShape(10.dp) }
+    val glassHighlight = remember {
+        Brush.verticalGradient(listOf(Color.White.copy(alpha = .12f), Color.Transparent, Color.Black.copy(alpha = .12f)))
+    }
     Box(modifier.onGloballyPositioned { position = it.positionInRoot() }.clip(shape)
         .background(Color(0x77171B24)).border(if (focused) 2.dp else 1.dp,
             if (focused) Color.White else Color(0x777F899B), shape)) {
@@ -51,7 +63,7 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
                 withTransform({ translate(x, y) }) { with(painter) { draw(Size(width, height), alpha = .68f) } }
             }
             drawRect(Color(0x71101520))
-            drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = .12f), Color.Transparent, Color.Black.copy(alpha = .12f))))
+            drawRect(glassHighlight)
         }
         content()
     }

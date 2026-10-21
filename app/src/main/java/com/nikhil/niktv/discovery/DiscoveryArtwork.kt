@@ -86,7 +86,7 @@ internal fun discoveryArtworkPressure(context: Context): Boolean {
 }
 internal suspend fun prefetchDiscoveryArtwork(context: Context, posters: List<String?>, adjacentHero: String? = null,
     portraitHero: Boolean = false, portraitPoster: Boolean = false) = coroutineScope {
-    if (discoveryArtworkPressure(context)) return@coroutineScope
+    if (withContext(Dispatchers.IO) { discoveryArtworkPressure(context) }) return@coroutineScope
     val requests = posters.filterNotNull().distinct().take(8).map { it to false } + listOfNotNull(adjacentHero?.let { it to true })
     requests.map { (url, hero) -> async(Dispatchers.IO) {
         speculativeImages.withPermit {

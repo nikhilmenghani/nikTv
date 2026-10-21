@@ -1,5 +1,8 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.nikhil.niktv.model
 
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import java.text.Normalizer
 
@@ -39,7 +42,7 @@ enum class SearchContentType(val title: String) {
 data class RecentSearch(
     val query: String,
     val type: SearchContentType,
-    val searchedAtMillis: Long = System.currentTimeMillis(),
+    @EncodeDefault val searchedAtMillis: Long = System.currentTimeMillis(),
     val categoryId: String = "*",
     val categoryTitle: String = "All categories",
     val profileKey: String = ""
@@ -100,7 +103,7 @@ data class SearchResultCache(
     val lastPage: Int,
     val hasMore: Boolean,
     val items: List<MediaItem>,
-    val cachedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val cachedAtMillis: Long = System.currentTimeMillis()
 ) { val key: String get() = "${profileKey}|${type.name}|$categoryId|${query.trim().lowercase()}" }
 
 data class PortalSearchPage(
@@ -167,7 +170,7 @@ data class TmdbIptvMapping(
     val confirmedByUser: Boolean = false,
     /** True only after the provider successfully created a playback URL. */
     val playbackVerified: Boolean = false,
-    val cachedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val cachedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "$profileKey|${type.name}|$tmdbId"
 }
@@ -241,7 +244,7 @@ data class FavoriteItem(
     val kind: FavoriteKind,
     val media: MediaItem,
     val series: MediaItem? = null,
-    val addedAtMillis: Long = System.currentTimeMillis(),
+    @EncodeDefault val addedAtMillis: Long = System.currentTimeMillis(),
     val profileKey: String = "",
     val categoryTitle: String? = null,
     val source: FavoriteSource = FavoriteSource.IPTV
@@ -315,7 +318,7 @@ data class EpisodeSeasonCache(
     val page: Int = 1,
     val hasMore: Boolean = false,
     val metadataVersion: Int = 0,
-    val cachedAtMillis: Long = System.currentTimeMillis(),
+    @EncodeDefault val cachedAtMillis: Long = System.currentTimeMillis(),
     /** Unmodified provider episodes, retained so the TMDB switch is local-only. */
     val iptvEpisodes: List<MediaItem> = emptyList(),
     /** IPTV episode identities for which TMDB was checked and cached. */
@@ -334,7 +337,7 @@ data class RecentItem(
     val media: MediaItem,
     val series: MediaItem? = null,
     val lastPlayed: MediaItem? = null,
-    val playedAtMillis: Long = System.currentTimeMillis(),
+    @EncodeDefault val playedAtMillis: Long = System.currentTimeMillis(),
     val profileKey: String = "",
     val categoryTitle: String? = null
 ) {
@@ -374,14 +377,14 @@ data class PlaybackProgress(
     val key: String,
     val positionMillis: Long,
     val durationMillis: Long,
-    val updatedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val updatedAtMillis: Long = System.currentTimeMillis()
 )
 
 @Serializable
 data class PlaybackUrl(
     val key: String,
     val url: String,
-    val resolvedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val resolvedAtMillis: Long = System.currentTimeMillis()
 )
 
 @Serializable
@@ -394,7 +397,7 @@ data class OfflineMediaDownload(
     val media: MediaItem,
     val series: MediaItem? = null,
     val fileType: String = "",
-    val queuedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val queuedAtMillis: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "$profileKey:${catalogType.name}:${media.id}"
 }
@@ -408,7 +411,7 @@ data class PortalSession(
     val metrics: String,
     val hardwareVersion2: String,
     val random: String? = null,
-    val authenticatedAtMillis: Long = System.currentTimeMillis()
+    @EncodeDefault val authenticatedAtMillis: Long = System.currentTimeMillis()
 )
 
 /** A local browse context; never stores credentials or a resolved stream URL. */

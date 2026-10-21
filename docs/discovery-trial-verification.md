@@ -582,3 +582,106 @@ adb -s 192.168.2.19:5555 install -r app/build/outputs/apk/debug/app-armeabi-v7a-
 - Installed the final regular armeabi-v7a APK successfully on Fire TV with app data preserved, before moving the remaining test to the tablet so the user could test Fire TV uninterrupted. No additional Fire TV navigation was sent afterward.
 
 The bounded animation and lack of post-completion correction are device-tested in the fixture. A matched end-to-end frame benchmark, cold-network artwork latency, final Samsung visuals, full unit suite and lint were not run in this focused follow-up. No claim of zero dropped frames or universal lag-free scrolling is made. The user subsequently requested committing and pushing all pending fixes.
+
+### 2026-10-21 — discovery navigation CPU costs and strictly offscreen Fire TV testing
+
+Baseline: clean `main` at `bd4123fd`. The following work is additional and remains uncommitted; no push. The user expressly prohibited waking the television or making noise, and permitted tablet interaction only if no other method could answer the question.
+
+#### Findings and changes
+
+- `discovery/DiscoveryUi.kt`: focus/presentation changes rebuilt every rail, progress lookup and episode grouping, and reallocated tile callbacks. Remember that content by its actual inputs and use current-state callback indirection for actions. Save focus origins as event bookkeeping (`DiscoveryFocusOrigins.kt`), retaining profile/surface/route restoration without invalidating the whole composition at every focus change.
+- Closed menus scanned the complete favorites list. The TMDB predicate also constructed media/favorite objects for each candidate in that scan. `DiscoveryFavoriteLookup.kt` builds exact-key membership once per favorites change, and TMDB entries precompute their media/key once per rail construction. Preserve the hero's existing broader profile/media-ID check and intentional duplicate provider occurrences. Closed menus, trailers and return callbacks remain available.
+- New row-presentation dispatch waits for both vertical and horizontal scrolling to stop, then the existing 150 ms stability interval. Focus highlighting remains immediate. This does not freeze an already-running backdrop fade or cancel every image request on input.
+- Selected title/actions previously waited for prepared artwork, potentially retaining the wrong title/Play identity during a slow decode. The selected identity now drives metadata/actions immediately; only the previous background is retained during preparation. Hidden IPTV-movie detail overlays pause landing hero rotation and new speculative artwork/presentation work; actor popups pause rotation too.
+- `DiscoveryGlass.kt` / `DiscoveryArtwork.kt`: move memory-pressure system-service calls off composition/Main. Decode the glass intermediate at 192×108 for the same final 96 px blurred texture; retain normal poster/backdrop sizes. Start each new artwork's pressure permission denied until checked, and cache the static glass gradient/shape instead of rebuilding them during drawing.
+- `data/ProfileStore.kt` / `ProfilePreferencesWork.kt`: skip unchanged raw preference keys before decoding, and perform decoding, decoded equality and JSON edit transforms on a shared Default dispatcher bounded to two simultaneous operations. Enqueue atomic DataStore edits in caller order before dispatching their transform, avoiding reordering whole-snapshot writes. No Room, preference-key changes or profile-data migration.
+- Persistence regressions exposed clock-dependent default timestamps being omitted when serialized in the same millisecond as object creation. `model/Models.kt` explicitly encodes ten existing timestamp fields while retaining compact serialization of unrelated defaults. Old records remain readable; an already-omitted historical timestamp cannot be reconstructed.
+- Explicit menu re-entry could lose focus entirely after a Home/Movies/Series cycle. Diagnostic events showed `scrollToItem(0)` complete, followed by implicit focus relocation to index 1 before the header could take focus. `DiscoveryMotion.kt` now suppresses that relocation for the full menu-entry readiness/focus operation, releasing ownership in `finally`. Ordinary row motion and detail Back restoration retain their existing policies. A canceled older entry cannot release a newer entry's suppression.
+- A bounded Java sampling run identified repeated provider-progress history/prefix scans and regex compilation on Main. `DiscoveryProgressLookup.kt` builds an immutable profile-specific index off Main and preserves first-recent/null suppression, timestamp ties, arbitrary delimiter-containing identities and provider-series aliases. Differential tests compare it with the original scan. No new persistent cache or provider traffic is added.
+- The strict second-tile return checks exposed overlapping focus ownership: an outgoing lazy composition could overwrite the saved destination, including when the route text returned to the same value. Capture the intended destination before lazy composition, retain its exact offset during restoration and guard delayed callbacks by both current ViewModel route and composition token. Explicit input cancels restoration. A separate stress failure reached Compose's disposed-item pin assertion through Android's automatic owner-focus reentry; move focus to a stable, non-lazy target before explicit remote route replacement. That target is hidden from accessibility and excluded from normal directional traversal. The existing destination then restores focus.
+
+No playback engines, provider searches, channel queues, recommendation sections, progress, parental checks, download actions or original-screen navigation were removed to obtain these changes. Deliberate trade-offs are later background presentation during navigation and bounded metadata CPU throughput. The glass's final texture resolution is unchanged.
+
+#### Quiet fixture and measurement limits
+
+`DiscoveryQuietPerformanceTest.kt` requires both an isolated `.regression` package and `quietVirtualDisplay=true`. It refuses an interactive/asleep-mismatch device. It uses an app-owned private 1920×1080 Presentation at the Fire TV's density, with a nonfocusable native window, generated artwork, fake metadata, local Compose D-pad events and a local Back dispatcher. It never starts an Activity, sends default-display shell input, wakes the display, starts media, changes volume or accesses real profiles/provider credentials. Sound/haptic effects are disabled. Power state is monitored every 100 ms and checked before/after.
+
+The workload contains 720 provider fixture records across 24 categories, 120 recent/progress entries, 500 favorites and 20 new-episode groups. The default artwork pool contains eight generated poster/backdrop pairs; optional `quietArtworkVariants` expands unique local file identities to 48 without changing the default workload. It navigates Home, Movies and Series, including offscreen provider rows and direction reversals. Movie/series detail checks use actual discovery composables and fake playback callbacks, never a player or stream. Fast detail entry uses the second tile so an unchanged first hero cannot hide a stale-title/action bug; settled Back checks exact tile identity and row position.
+
+The fixture matches CatalogScreen's outer profile/surface `SaveableStateProvider` boundary and shared profile ViewModel. Its local readiness-view getter bypasses native window-focus waiting only for the deliberately nonfocusable private display. Native window focus remains false. Native accessibility events are rejected by the private test root to prevent a configured service from speaking; this does not modify device settings or production accessibility. Consequently, semantic focus timing is not physical visible-focus latency or real window-transition latency. FrameMetrics ANIMATION includes the fixture's semantics observer; TOTAL includes private-display/render-queue costs and is not an actual physical compositor missed-deadline count. All timings include normal fixture observation overhead. Artwork is generated locally, so this is not a cold-WAN/network benchmark.
+
+Earlier fixture attempts had missing attachment/registry owners or omitted the outer surface saveable boundary. Those failures were corrected rather than counted as app passes. Earlier direct-root timing comparisons are retired. A later fixture forced surface state changes while a tile remained focused, bypassing the real menu callback and its focus handoff; it could crash in Compose's disposed-item pin assertion. Live phase traces established this bypass after several successful movie/series returns. The final fixture instead uses bounded local D-pad Up to the header, settles untimed, and invokes the destination tab's actual OnClick. It changes no native focus behavior or correctness assertions. Recollect both baseline and current with this same fixture; comparisons from forced surface mutation are diagnostic history, not final benchmarks. Failed logs are retained outside the repository. A private generated PNG could not be pulled from the non-debuggable target's scoped storage; no physical-screen screenshot or visual acceptance is claimed.
+
+Optional `quietTraceNavigation=true` records bounded focus-entry diagnostics; it is off for final timing runs. Optional `quietSampleMethods=true` samples only the isolated process during the first navigation round (8 MiB buffer, 1 ms interval), emits a bounded chunked trace with byte count/SHA-256 after timing, and labels that run diagnostic-only. Its timings must not be used as the final performance comparison. `quietNavigationRounds` and `quietCorrectnessRounds` accept 1–3; defaults are three, never zero.
+
+#### Final commands and fresh results
+
+Build preparation/integration tasks were inspected before running. No integrated Flow/SmartTube source changes resulted. Use JDK 17 explicitly; an intermediate JDK 25 run failed Robolectric with unsupported class major version 69 and is not a valid app result.
+
+```powershell
+$env:JAVA_HOME='C:/Program Files/Java/jdk-17'
+.\gradlew.bat :app:testDebugUnitTest --tests 'com.nikhil.niktv.discovery.*' --tests com.nikhil.niktv.data.ProfileStoreDispatchTest --tests com.nikhil.niktv.model.PersistedTimestampSerializationTest :app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true -PperformanceBuild=true --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx5g -Dfile.encoding=UTF-8'
+.\gradlew.bat :app:assembleDebugAndroidTest -PregressionBuild=true -PperformanceBuild=true --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx5g -Dfile.encoding=UTF-8'
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon -PskipLocalGithubToken=true --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8'
+```
+
+- Focused regression build: **120 tests passed**, no failures/errors/skips; APK and test APK built, BUILD SUCCESSFUL in 2m43s. Log: `D:/workspace/niktv-playback-tests/discovery-parking-lifetime-build.log`.
+- Final actual-menu test-only rebuild: BUILD SUCCESSFUL in 51s. Log: `discovery-real-menu-test-build.log`. Production sources did not change afterward.
+- Final normal application suite: **606 tests passed**, zero failures/errors/skips. Both normal `app-arm64-v8a-debug.apk` and `app-armeabi-v7a-debug.apk` built. Tests include preference thread/ordering/cancellation/profile isolation with real temporary DataStore, timestamp compatibility, progress differential cases, favorite identity, route ownership, canceled restoration and scroll-suppression ownership.
+- **Lint failed: 26 errors, 330 warnings, three hints.** Errors occur in 14 unchanged files, beginning with `NikTubeDownloads.kt:203` / `WrongConstant`; none occurs in a changed or new file. Existing warnings in edited files include configuration-size reads, prefetch index observation, modifier naming and KTX suggestions. No lint suppression/baseline was added. The combined final command therefore exits nonzero; do not call it a complete check pass. Log: `discovery-final-real-menu-verification.log`; reports: `app/build/reports/lint-results-debug.xml` and `.html`.
+- `git diff --check` passed. A scan using `tools/check-source-secrets.py.findings` over both tracked and new nonignored files found **zero credentials**. No generated captures/APKs/traces were added to Git. HEAD remains `bd4123fd`; no commit or push.
+
+The isolated performance target uses `-PperformanceBuild=true` on **both** baseline and current. Frozen APKs are in `D:/workspace/niktv-playback-tests/discovery-real-menu-pair/{baseline,current,test}.apk`; the same test APK drives both production revisions. Only the `.regression` packages were installed. The normal Fire TV app was neither replaced nor launched; Samsung, Poco and tablet were untouched.
+
+The external runner restricts commands to this test class, checks `mWakefulness=Asleep` and `Display Power: state=OFF` before/after, and has a 600s watchdog that can stop only the isolated regression package. Exact device test entry:
+
+```powershell
+adb -s 192.168.2.19:5555 shell am instrument -w -r -e quietVirtualDisplay true -e quietLargeWorkload true -e class com.nikhil.niktv.ui.DiscoveryQuietPerformanceTest#modernNavigationFrameMetricsWithoutWakingTelevision com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Reproducible runner invocations (Python path: `C:/Program Files/Python312/python.exe`; runner under `D:/workspace/niktv-playback-tests/`):
+
+```powershell
+python run-quiet-discovery.py discovery-real-menu-baseline.txt quietLargeWorkload true quietNavigationRounds 1 quietCorrectnessRounds 1 quietRecordKnownIdentityFailure true
+python run-quiet-discovery.py discovery-real-menu-current.txt quietLargeWorkload true
+python run-quiet-discovery.py discovery-real-menu-slow-stress.txt quietLargeWorkload true quietNavigationRounds 1 quietCorrectnessRounds 3 quietImageDelayMs 800 quietMetadataDelayMs 120 quietStaleMetadata true
+python run-quiet-discovery.py discovery-real-menu-artwork48.txt quietLargeWorkload true quietArtworkVariants 48 quietCorrectnessRounds 1
+```
+
+Run from that artifact directory, with the corresponding frozen baseline/current app APK installed and the common test APK installed. These are offscreen-only commands; ordinary existing Activity/wake-display fixtures elsewhere in this document remain prohibited while the TV must stay asleep.
+
+#### Matched measurements and correctness
+
+Fresh baseline: `discovery-real-menu-baseline.txt`, exact baseline production at `bd4123fd`, actual-menu fixture, no method sampling/trace/screen recording. Its 105-input timed cycle completed, then **Back returned to movie 1 instead of the selected second tile**. The test FAILED in 74.257s. The record-only identity option does not disable the Back/focus assertions, and baseline `correctness_passed=false` is retained.
+
+Compare the first 105-input cycle of the final current run with that baseline cycle (same fixture, default eight artwork pairs, 20ms metadata, no injected image delay):
+
+| Private-display metric | Baseline cycle 0 | Current cycle 0 |
+| --- | ---: | ---: |
+| Semantic input-to-focus p95 | 341.83 ms | 142.50 ms |
+| UI-phase sum p95 | 173.13 ms | 48.88 ms |
+| UI-phase samples above 50 ms | 274/940 (29.15%) | 63/1356 (4.65%) |
+| Private FrameMetrics TOTAL p95 | 310.81 ms | 81.20 ms |
+| Frame-metrics callback drops | 0 | 0 |
+
+This is approximately 72% lower UI-phase p95 in one matched cycle, not a statistical guarantee or physical-screen latency measurement. Baseline and current have different frame counts because their processing speed differs.
+
+Final current, `discovery-real-menu-current.txt`: **PASS**, 129.152s, all three timed cycles / **315 measured navigation inputs**, and all three correctness rounds. UI-phase p95 by cycle: **48.88 / 38.79 / 37.63 ms**. Semantic focus p95: **142.50 / 116.28 / 124.07 ms**. Aggregate UI-phase p95 40.24ms, with 124/4109 samples above 50ms. Exact title, fake Play identity, fast Back and settled Back/offset checks all passed: 12 detail opens/returns, six fake Play actions, zero identity failures.
+
+Current default-workload PSS samples (KiB): `121848,112508,120541,118596,115764,120957,119405,116505,119417`. They do not show steadily increasing memory over these three cycles. They are roughly 110–119MiB and are not uniformly below baseline PSS; this is not a claim of reduced memory or a long-term leak test.
+
+Slow artwork/metadata with stale-first responses, `discovery-real-menu-slow-stress.txt`: **PASS**, 62.082s, 105 measured inputs and three strict correctness rounds (12 detail opens/returns, six fake Play actions). No old image/detail response replaced the selected title/action. This stress run is not the default timing comparison.
+
+Unique artwork cache/decode stress, `discovery-real-menu-artwork48.txt`: **PASS**, 115.715s, 315 measured inputs and one strict correctness round (four detail opens/returns, two fake Play actions). UI-phase p95 by cycle: **51.62 / 36.02 / 34.35 ms**. PSS KiB: `130208,140412,153360,143922,125996,127290,124197,121234,123751`; initialization peak about 150MiB, ending about 121MiB. Unique local file identities exercise cache churn, although their generated artwork is simpler than real photographs. No larger image cache, extra media stream/decoder, buffer increase or new provider requests were introduced to obtain this result.
+
+Across the three final current runs: **735 measured navigation inputs**, 28 detail opens/returns and 14 fake Play checks, plus untimed real-menu setup. All completed with native window focus false and the physical display asleep/OFF throughout. No physical screen recording or audible playback occurred.
+
+#### Remaining limits and intentional trade-offs
+
+- The two-display-frame semantic focus target is **not met**: 182/315 default-run samples exceeded two virtual frames. UI-phase samples above 50ms remain. FrameMetrics includes fixture observation and private-display scheduling, so these counts cannot be relabeled as physical missed deadlines or proven animation-attributable stalls. No claim of zero interruptions or universally polished physical motion is made.
+- Real visible-screen acceptance, real WAN artwork, actual profile loading/background services, real provider resolution, player Activity return, the IPTV movie-dialog wrapper and phone touch/bottom-navigation routes were not exercised on a physical display. Discovery movie/series details and fake Play dispatch were exercised. Faster tablet hardware was not used to claim Fire TV performance.
+- Starting new presentation work after the move plus the existing 150ms idle interval deliberately delays background/secondary metadata changes. Selection highlights and the identity used by actions remain immediate. In-flight fades/images may overlap a subsequent movement. The existing 240ms row move and 380/320ms tile focus timing remain unchanged; any remaining perceived scale-settling effect requires later visual validation.
+- Two metadata CPU workers may extend initial bulk-cache hydration under contention; real-profile hydration latency is unmeasured. Initial/refreshed progress can appear after its short derived-index calculation. The previous same-profile snapshot stays visible meanwhile, and another profile's index is never shown.
+- No user-facing functionality was removed. Keep recommendations, artwork, progress, menus, provider category navigation, parental checks and playback engines. Further speculative changes to cache/prefetch windows, removing closed menu state or shortening animations were not justified by these measurements.
+
+The regular APKs are ready under `app/build/outputs/apk/debug/`, but were deliberately not installed on the sleeping television. Changes remain uncommitted for review.

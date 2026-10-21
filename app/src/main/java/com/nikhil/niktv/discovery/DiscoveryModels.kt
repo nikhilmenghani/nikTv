@@ -126,15 +126,26 @@ internal fun currentDiscoveryDate(): String = synchronized(DiscoveryDateClock) {
     DiscoveryDateClock.date
 }
 
+private val discoveryMovieProgressSeparators = Regex("[^\\p{L}\\p{N}]+")
+
 /** Profile-scoped progress only; legacy unscoped keys cannot safely identify this profile. */
-internal fun discoveryRecentProgress(recent: RecentItem, progress: List<PlaybackProgress>): PlaybackProgress? {
+internal fun discoveryRecentProgressPrefix(recent: RecentItem): String? {
     val type = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES
     val prefix = "progress-v2|${recent.profileKey}|${type.name}|"
     val identity = if (type == CatalogType.SERIES) {
         val episode = recent.lastPlayed ?: return null
         "series:${recent.media.id}|s:${episode.seasonNumber ?: -1}|e:${episode.episodeNumber ?: -1}|"
-    } else "movie:${recent.media.title.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "-").trim('-')}|"
-    return progress.filter { it.key.startsWith(prefix + identity) }.maxByOrNull { it.updatedAtMillis }
+    } else "movie:${recent.media.title.lowercase().replace(discoveryMovieProgressSeparators, "-").trim('-')}|"
+    return prefix + identity
+}
+
+internal fun discoveryRecentProgress(recent: RecentItem, progress: List<PlaybackProgress>): PlaybackProgress? {
+    val prefix = discoveryRecentProgressPrefix(recent) ?: return null
+    var latest: PlaybackProgress? = null
+    for (entry in progress) {
+        if (entry.key.startsWith(prefix) && (latest == null || entry.updatedAtMillis > latest.updatedAtMillis)) latest = entry
+    }
+    return latest
 }
 
 internal fun discoveryFeedRequest(section: TmdbHomeSection): Pair<String, Map<String, String>> {

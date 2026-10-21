@@ -29,6 +29,8 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +56,8 @@ internal val LocalRefreshDiscoveryMatches = staticCompositionLocalOf<((Discovery
 internal val LocalOpenDiscoverySeries = staticCompositionLocalOf<((MediaItem) -> Unit)?> { null }
 internal val LocalDownloadDiscoveryEpisode = staticCompositionLocalOf<(DiscoveryCard, Int, Int) -> Unit> { { _, _, _ -> } }
 internal val LocalPlayDiscoveryEpisode = staticCompositionLocalOf<(DiscoveryCard, Int, Int) -> Unit> { { _, _, _ -> } }
+/** Optional fixture diagnostics; normal navigation builds no trace strings. */
+internal val LocalDiscoveryNavigationTrace = staticCompositionLocalOf<((String) -> Unit)?> { null }
 private val Background = Color(0xFF090B10)
 private val Accent = Color(0xFFE50925)
 internal val trialSurfaces = listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)
@@ -80,6 +84,7 @@ internal fun DiscoveryPreviewScreen(
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
+    val navigationTrace = LocalDiscoveryNavigationTrace.current
     val downloadEpisode = LocalDownloadDiscoveryEpisode.current
     val refreshDiscoveryMatches = LocalRefreshDiscoveryMatches.current
     val openProviderSeries = LocalOpenDiscoverySeries.current
@@ -143,6 +148,12 @@ internal fun DiscoveryPreviewScreen(
     }
     val loadedState by vm.state.collectAsStateWithLifecycle()
     val state = loadedState.takeIf { it.profile == profile && it.surface == surface } ?: DiscoveryState(profile = profile, surface = surface)
+    val focusRouteOwner = remember(profile, surface) { DiscoveryFocusRouteOwner() }
+    val focusRouteToken = remember(profile, surface, state.detail?.key, app.discoveryNavigationId) { Any() }
+    SideEffect { focusRouteOwner.claim(focusRouteToken) }
+    DisposableEffect(focusRouteOwner, focusRouteToken) {
+        onDispose { focusRouteOwner.release(focusRouteToken) }
+    }
     DisposableEffect(state.detail != null) {
         detailVisibilityChanged(state.detail != null)
         onDispose { detailVisibilityChanged(false) }
@@ -170,42 +181,56 @@ internal fun DiscoveryPreviewScreen(
     var contentFocused by remember { mutableStateOf(false) }
     var touching by remember { mutableStateOf(false) }
     var featured by remember(profile, surface) { mutableStateOf<DiscoveryCard?>(null) }
-    var returningTo by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
-    var routeOrigins by rememberSaveable(profile, surface) { mutableStateOf<Map<String, String>>(emptyMap()) }
-    val lastDetail = remember { mutableStateOf<String?>(null) }
+    val focusOrigins = rememberSaveable(profile, surface, saver = DiscoveryFocusOrigins.Saver) { DiscoveryFocusOrigins() }
     val returnRequesters = remember(profile, surface) { mutableMapOf<String, FocusRequester>() }
     val saved = rememberSaveableStateHolder()
     val tabRequester = remember(profile, surface) { FocusRequester() }
     val playRequester = remember(profile, surface, state.detail?.key) { FocusRequester() }
+    val parkingRequester = remember(profile, surface) { FocusRequester() }
+    val focusParking = remember(profile, surface) { DiscoveryFocusParking() }
+    val parkingModifier = remember(parkingRequester, focusParking) {
+        Modifier.size(1.dp).focusRequester(parkingRequester)
+            .focusProperties { canFocus = focusParking.canFocus }
+            .onFocusChanged { focusParking.focusChanged(it.isFocused) }.focusTarget()
+            .clearAndSetSemantics { hideFromAccessibility() }
+    }
+    fun parkRouteFocus() {
+        if (remoteNavigation && focusRouteOwner.owns(focusRouteToken) &&
+            vm.state.value.ownsFocusRoute(profile, surface, state.detail?.key ?: "landing")) {
+            val parked = focusParking.request { runCatching { parkingRequester.requestFocus() }.getOrDefault(false) }
+            navigationTrace?.invoke("focus-park surface=$surface route=${state.detail?.key ?: "landing"} parked=$parked")
+        }
+    }
+    fun closeRoute() { parkRouteFocus(); if (state.detail != null) vm.closeDetails() else exit() }
+    fun selectRoute(destination: DashboardSurface) { parkRouteFocus(); selectSurface(destination) }
+    fun classicRoute(destination: String) { parkRouteFocus(); classic(destination) }
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, _ -> foreground = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer) }
     }
+    // The IPTV movie dialog covers this composition without stopping its lifecycle.
+    val presentationActive = foreground && app.providerMovieDetails == null
     LaunchedEffect(profile, surface) { vm.bind(profile, surface, app.tmdbSectionsBySurface[surface]) }
     DisposableEffect(vm, profile, surface) {
         vm.resume(profile, surface)
         onDispose { vm.pause() }
     }
     LaunchedEffect(state.hero?.key) { if (state.detail == null) featured = state.hero }
-    LaunchedEffect(state.detail?.key) {
-        if (lastDetail.value != null && state.detail == null && (!phone || remoteNavigation)) {
-            withFrameNanos { }; returningTo?.let { runCatching { returnRequesters[it]?.requestFocus() } }
-        }
-        lastDetail.value = state.detail?.key
-    }
-    BackHandler { if (state.detail != null) vm.closeDetails() else exit() }
+    BackHandler(onBack = ::closeRoute)
     fun details(card: DiscoveryCard, origin: String) {
-        returningTo = origin
-        routeOrigins = (routeOrigins + ((state.detail?.key ?: "landing") to origin)) - card.key
+        parkRouteFocus()
+        navigationTrace?.invoke("details-open surface=$surface from=${state.detail?.key ?: "landing"} origin=$origin target=${card.key}")
+        focusOrigins.returningTo = origin
+        focusOrigins.routes = (focusOrigins.routes + ((state.detail?.key ?: "landing") to origin)) - card.key
         vm.openDetails(card)
     }
     fun dismissActor() {
         actor = null
         val key = actorFocusOrigin
-        returningTo = key
-        if (key != null) actorOrigin?.let { routeOrigins = routeOrigins + (it to key) }
+        focusOrigins.returningTo = key
+        if (key != null) actorOrigin?.let { focusOrigins.routes = focusOrigins.routes + (it to key) }
         localScope.launch {
             repeat(60) {
                 withFrameNanos { }
@@ -216,46 +241,73 @@ internal fun DiscoveryPreviewScreen(
     LaunchedEffect(state.detail?.key) { if (state.detail == null) actor = null }
     fun favorite(card: DiscoveryCard) = FavoriteItem(if (card.series) FavoriteKind.SERIES else FavoriteKind.MOVIE,
         card.media, profileKey = profile, source = FavoriteSource.TMDB)
-    fun cardEntry(card: DiscoveryCard, row: String) = RailEntry("$row:${card.key}", card.title, card.poster, card,
+    val favorites = remember(app.favorites, profile) { discoveryFavoriteLookup(app.favorites, profile) }
+    val currentFavorites by rememberUpdatedState(favorites)
+    val currentDetails by rememberUpdatedState<(DiscoveryCard, String) -> Unit>({ card, origin -> details(card, origin) })
+    val currentPlayCard by rememberUpdatedState(playCard)
+    val currentToggleFavorite by rememberUpdatedState(toggleFavorite)
+    val currentOpenRecent by rememberUpdatedState(openRecent)
+    val currentRemoveRecent by rememberUpdatedState(removeRecent)
+    val currentOpenWatched by rememberUpdatedState(openWatched)
+    val currentDismissEpisode by rememberUpdatedState(dismissEpisode)
+    val currentMarkWatched by rememberUpdatedState(markWatched)
+    val currentOpenProvider by rememberUpdatedState(openProvider)
+    val currentPlayProvider by rememberUpdatedState(playProvider)
+    val currentDownloadProvider by rememberUpdatedState(downloadProvider)
+    val currentOpenProviderSeries by rememberUpdatedState(openProviderSeries)
+    val currentRefreshMatches by rememberUpdatedState(refreshDiscoveryMatches)
+    val currentProviderRecent by rememberUpdatedState(providerNavigation?.recent)
+    fun cardEntry(card: DiscoveryCard, row: String): RailEntry {
+        val media = card.media
+        val favoriteKey = discoveryFavoriteKey(profile, if (card.series) FavoriteKind.SERIES else FavoriteKind.MOVIE, media.id)
+        return RailEntry("$row:${card.key}", card.title, card.poster, card,
         subtitle = listOfNotNull(card.date?.take(4), card.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) }).joinToString(" · "),
-        open = { details(card, "$row:${card.key}") },
+        open = { currentDetails(card, "$row:${card.key}") },
         matchCount = app.discoveryMatchCounts[discoveryAvailabilityKey(profile, card)],
         popup = { expanded, dismiss, restore ->
             var descriptionOpen by remember(card.key) { mutableStateOf(false) }
-            ModernTileActionsMenu(expanded = expanded, isFavorite = app.favorites.any { it.key == favorite(card).key },
-                dismiss = dismiss, toggleFavorite = { toggleFavorite(favorite(card)) }, clear = null,
-                trailerItem = card.media, trailerSeries = card.series, onTrailerReturned = restore,
-                recommendationItem = card.media, recommendationType = if (card.series) CatalogType.SERIES else CatalogType.MOVIES,
-                refreshMatches = refreshDiscoveryMatches?.let { refresh -> { refresh(card) } },
+            ModernTileActionsMenu(expanded = expanded, isFavorite = favoriteKey in currentFavorites.keys,
+                dismiss = dismiss, toggleFavorite = { currentToggleFavorite(favorite(card)) }, clear = null,
+                trailerItem = media, trailerSeries = card.series, onTrailerReturned = restore,
+                recommendationItem = media, recommendationType = if (card.series) CatalogType.SERIES else CatalogType.MOVIES,
+                refreshMatches = currentRefreshMatches?.let { refresh -> { refresh(card) } },
                 viewDescription = card.overview?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
-                openSeries = if (card.series) ({ playCard(card) }) else null,
-                playAction = { playCard(card) })
+                openSeries = if (card.series) ({ currentPlayCard(card) }) else null,
+                playAction = { currentPlayCard(card) })
             if (descriptionOpen) FullDescriptionDialog(card.title, card.overview.orEmpty()) { descriptionOpen = false; restore() }
         })
-    val rails = buildList {
+    }
+    // Focus and prepared-backdrop publications must not rebuild every row, rescan progress,
+    // sort episode backlogs or allocate every tile callback on the UI thread.
+    val progressLookup = rememberDiscoveryProgressLookup(profile, app.recentlyPlayed, app.playbackProgress)
+    val today = currentDiscoveryDate()
+    val rails = remember(profile, surface, state.detail?.key, state.feeds, state.sections,
+        state.collection, state.related, state.details?.collection?.title,
+        app.recentlyPlayed, app.playbackProgress, app.watchedSeries, app.historyRecommendations,
+        app.discoveryMatchCounts, providerSelections, providerQueues, progressLookup, today) { buildList {
         val detail = state.detail
         if (detail == null) {
             val recents = app.recentlyPlayed.filter { it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) && (surface == DashboardSurface.HOME ||
                 it.kind == if (surface == DashboardSurface.MOVIES) FavoriteKind.MOVIE else FavoriteKind.SERIES) }
                 .filterNot { it.media.isAdult }.sortedByDescending { it.playedAtMillis }.take(30)
             if (recents.isNotEmpty()) add(Rail("continue", "Continue Watching", recents.map { recent ->
-                val progress = discoveryRecentProgress(recent, app.playbackProgress)
+                val progress = progressLookup?.recent(recent)
                 RailEntry("continue:${recent.key}", recent.media.title, recent.media.logo,
                     providerMedia = recent.series ?: recent.media,
                     providerType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                     subtitle = recent.lastPlayed?.title ?: recent.categoryTitle.orEmpty(),
                     progress = progress?.takeIf { it.durationMillis > 0 }?.let { (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f) },
-                    open = { returningTo = "continue:${recent.key}"; openRecent(recent) },
+                    open = { focusOrigins.returningTo = "continue:${recent.key}"; currentOpenRecent(recent) },
                     popup = { expanded, dismiss, restore ->
                         var descriptionOpen by remember(recent.key) { mutableStateOf(false) }
                         val saved = FavoriteItem(recent.kind, recent.media, recent.series, profileKey = profile)
-                        ModernTileActionsMenu(expanded, app.favorites.any { it.key == saved.key }, dismiss,
-                            { toggleFavorite(saved) }, clear = { removeRecent(recent) },
-                            openSeries = if (recent.kind == FavoriteKind.SERIES) openProviderSeries?.let { open -> { open(recent.series ?: recent.media) } } else null,
+                        ModernTileActionsMenu(expanded, saved.key in currentFavorites.keys, dismiss,
+                            { currentToggleFavorite(saved) }, clear = { currentRemoveRecent(recent) },
+                            openSeries = if (recent.kind == FavoriteKind.SERIES) currentOpenProviderSeries?.let { open -> { open(recent.series ?: recent.media) } } else null,
                             trailerItem = recent.media.takeUnless { it.episodeNumber != null }, trailerSeries = recent.kind == FavoriteKind.SERIES,
                             recommendationItem = recent.media, recommendationType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                             viewDescription = recent.media.description?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
-                            onTrailerReturned = restore, playAction = { (providerNavigation?.recent ?: openRecent)(recent) })
+                            onTrailerReturned = restore, playAction = { (currentProviderRecent ?: currentOpenRecent)(recent) })
                         if (descriptionOpen) FullDescriptionDialog(recent.media.title, recent.media.description.orEmpty()) { descriptionOpen = false; restore() }
                     })
             }))
@@ -266,17 +318,17 @@ internal fun DiscoveryPreviewScreen(
                     RailEntry("episodes:${group.key}", group.watched.series.title, group.watched.series.logo,
                         providerMedia = group.watched.series, providerType = CatalogType.SERIES,
                         subtitle = "S${episode.seasonNumber ?: "?"}:E${episode.episodeNumber ?: "?"} · ${episode.title}",
-                        open = { returningTo = "episodes:${group.key}"; openWatched(group.watched, episode) },
+                        open = { focusOrigins.returningTo = "episodes:${group.key}"; currentOpenWatched(group.watched, episode) },
                         popup = { expanded, dismiss, restore ->
                             var descriptionOpen by remember(group.key) { mutableStateOf(false) }
                             val saved = FavoriteItem(FavoriteKind.EPISODE, episode, group.watched.series, profileKey = profile, categoryTitle = group.watched.categoryTitle)
-                            ModernTileActionsMenu(expanded, app.favorites.any { it.key == saved.key }, dismiss,
-                                { toggleFavorite(saved) }, clear = { dismissEpisode(group.watched, episode) },
-                                markWatched = { markWatched(group.watched, episode) },
+                            ModernTileActionsMenu(expanded, saved.key in currentFavorites.keys, dismiss,
+                                { currentToggleFavorite(saved) }, clear = { currentDismissEpisode(group.watched, episode) },
+                                markWatched = { currentMarkWatched(group.watched, episode) },
                                 recommendationItem = group.watched.series, recommendationType = CatalogType.SERIES, trailerSeries = true,
-                                openSeries = openProviderSeries?.let { open -> { open(group.watched.series) } },
+                                openSeries = currentOpenProviderSeries?.let { open -> { open(group.watched.series) } },
                                 viewDescription = episode.description?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
-                                onTrailerReturned = restore, playAction = { openWatched(group.watched, episode) })
+                                onTrailerReturned = restore, playAction = { currentOpenWatched(group.watched, episode) })
                             if (descriptionOpen) FullDescriptionDialog(episode.title, episode.description.orEmpty()) { descriptionOpen = false; restore() }
                         })
                 }))
@@ -302,14 +354,14 @@ internal fun DiscoveryPreviewScreen(
                     RailEntry("$rowKey:${item.id}", item.title, item.logo,
                         providerMedia = item, providerType = type,
                         subtitle = category.title.orEmpty(),
-                        progress = providerDiscoveryProgress(app, type, item),
-                        open = { returningTo = "$rowKey:${item.id}"; openProvider(type, item, queue) },
+                        progress = progressLookup?.provider(type, item.id),
+                        open = { focusOrigins.returningTo = "$rowKey:${item.id}"; currentOpenProvider(type, item, queue) },
                         popup = { expanded, dismiss, restore ->
-                            ModernTileActionsMenu(expanded, app.favorites.any { it.key == saved.key }, dismiss,
-                                { toggleFavorite(saved) }, clear = null, trailerItem = item, trailerSeries = type == CatalogType.SERIES,
+                            ModernTileActionsMenu(expanded, saved.key in currentFavorites.keys, dismiss,
+                                { currentToggleFavorite(saved) }, clear = null, trailerItem = item, trailerSeries = type == CatalogType.SERIES,
                                 recommendationItem = item, recommendationType = type,
-                                onTrailerReturned = restore, playAction = { playProvider(type, item, queue) },
-                                downloadAction = if (type == CatalogType.MOVIES) ({ downloadProvider(type, item) }) else null)
+                                onTrailerReturned = restore, playAction = { currentPlayProvider(type, item, queue) },
+                                downloadAction = if (type == CatalogType.MOVIES) ({ currentDownloadProvider(type, item) }) else null)
                         })
                 }, providerType = type, providerCategory = category))
                 }
@@ -319,14 +371,14 @@ internal fun DiscoveryPreviewScreen(
             if (state.collection.isNotEmpty()) add(Rail("collection", state.details?.collection?.title ?: "Collection", state.collection.map { cardEntry(it, "collection") }))
             if (state.related.isNotEmpty()) add(Rail("related", "Related", state.related.map { cardEntry(it, "related") }))
         }
-    }
-    val visibleRails = rails.filterNot { row ->
+    } }
+    val visibleRails = remember(rails, state.feeds, providerState.pages) { rails.filterNot { row ->
         row.section?.let { it in state.feeds && state.feeds[it].isNullOrEmpty() } == true ||
             row.providerCategory?.let { category -> providerDiscoverySources(listOf(category)).all { source ->
                 val page = providerState.pages[category.type]?.get(source.id)
                 page != null && page.page > 0 && !page.hasMore && !page.truncated && page.items.isEmpty()
             } } == true
-    }
+    } }
     val routeKey = "$profile:${surface.name}:${state.detail?.key ?: "landing"}"
     val focusedRail = if (state.detail == null) rails.firstOrNull { row -> row.entries.any { it.key == state.focusedEntryKey } } else null
     val focusedEntry = focusedRail?.entries?.firstOrNull { it.key == state.focusedEntryKey }
@@ -335,9 +387,11 @@ internal fun DiscoveryPreviewScreen(
     val focusedQueue = focusedRail?.key?.let { providerQueues.second[it] }.orEmpty().ifEmpty { listOfNotNull(focusedProvider) }
     val rawCandidate = state.details?.card?.takeIf { it.key == state.detail?.key } ?: state.detail ?: state.focusedPresentation ?: featured ?: state.hero
     val candidate = state.heroPresentation?.takeIf { state.detail == null && it.key == rawCandidate?.key } ?: rawCandidate
-    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait }, vm.preparedPresentation?.takeIf { it.key == candidate?.key && it.title == candidate.title })
+    // Selection and actions change immediately. Retain only the previous background
+    // while artwork prepares; a slow image must never leave another title's Play active.
+    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait }, vm.preparedPresentation, presentationActive)
     SideEffect { prepared?.let(vm::retainPreparedPresentation) }
-    val displayed = if (phonePortrait) candidate else prepared
+    val displayed = candidate
     var glassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     providerCollection?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
         DisposableEffect(Unit) { detailVisibilityChanged(true); onDispose { detailVisibilityChanged(false) } }
@@ -354,11 +408,15 @@ internal fun DiscoveryPreviewScreen(
     BoxWithConstraints(Modifier.fillMaxSize().background(Background).windowInsetsPadding(WindowInsets.safeDrawing)
         .onGloballyPositioned { glassBounds = it.boundsInRoot() }) {
         val screenHeight = maxHeight
-        if (!phonePortrait) DiscoveryBackdrop(displayed, reduceMotion)
+        // Keep native owner focus while outgoing lazy items unpin and dispose. This
+        // target has no lazy parent, is invisible to accessibility and is never a
+        // normal D-pad destination; the next route's existing entry restores focus.
+        Box(parkingModifier)
+        if (!phonePortrait) DiscoveryBackdrop(prepared, reduceMotion)
         Column(Modifier.fillMaxSize()) {
             if (phone && !phonePortrait) {
                 DiscoveryPhoneNavigation(surface, tabRequester, playRequester,
-                    { if (state.detail != null) vm.closeDetails() else exit() }, selectSurface, classic,
+                    ::closeRoute, ::selectRoute, ::classicRoute,
                     menu = menu, changeMenu = { menu = it }, categoryManagerOpen = app.categoryManagerOpen,
                     categoriesEnabled = state.detail == null, categoryPopupChanged = { categoryPopup = it })
             }
@@ -370,17 +428,17 @@ internal fun DiscoveryPreviewScreen(
                 val heroVisible by remember { derivedStateOf { (if (!phone) listState.firstVisibleItemIndex <= positions.hero else listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) } }
                 val scrolling by remember { derivedStateOf { listState.isScrollInProgress } }
                 val anchorIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
-                val activity = HeroActivity(heroVisible && state.detail == null, foreground,
-                    contentFocused, scrolling, touching, menu || configure || tilePopupOpen || app.categoryManagerOpen || categoryPopup)
-                LaunchedEffect(phonePortrait, heroVisible, foreground, state.hero?.key) {
-                    if (phonePortrait && heroVisible && foreground && state.detail == null) vm.prepareHero()
+                val activity = HeroActivity(heroVisible && state.detail == null, presentationActive,
+                    contentFocused, scrolling, touching, menu || configure || tilePopupOpen || app.categoryManagerOpen || categoryPopup || actor != null)
+                LaunchedEffect(phonePortrait, heroVisible, presentationActive, state.hero?.key) {
+                    if (phonePortrait && heroVisible && presentationActive && state.detail == null) vm.prepareHero()
                     else if (phonePortrait) vm.pauseHeroMetadata()
                 }
                 LaunchedEffect(activity, state.heroes.size) {
                     if (activity.mayRotate && state.heroes.size > 1) while (true) { delay(8_000); vm.rotate(1) }
                 }
-                LaunchedEffect(foreground, scrolling, state.heroIndex, state.heroes, phonePortrait) {
-                    if (foreground && !scrolling && state.heroes.isNotEmpty()) {
+                LaunchedEffect(presentationActive, scrolling, state.heroIndex, state.heroes, phonePortrait) {
+                    if (presentationActive && !scrolling && state.heroes.isNotEmpty()) {
                         delay(200)
                         val adjacent = state.heroes.getOrNull((state.heroIndex + 1) % state.heroes.size)
                         prefetchDiscoveryArtwork(context, emptyList(), if (phonePortrait) adjacent?.backdrop ?: adjacent?.poster else adjacent?.backdrop,
@@ -388,32 +446,72 @@ internal fun DiscoveryPreviewScreen(
                     }
                 }
                 val routeIdentity = state.detail?.key ?: "landing"
+                fun ownsFocusRoute() = focusRouteOwner.owns(focusRouteToken) && vm.state.value.ownsFocusRoute(profile, surface, routeIdentity)
                 val playOrigin = "$routeIdentity:play"
                 SideEffect { returnRequesters[playOrigin] = playRequester }
                 var handledNavigationId by rememberSaveable { mutableLongStateOf(-1L) }
-                LaunchedEffect(app.discoveryNavigationId, state.detail?.key, state.detail != null && displayed?.key == state.detail?.key, remoteNavigation) {
+                fun awaitingMenuEntry() = (!phone || remoteNavigation) && state.detail == null &&
+                    handledNavigationId != app.discoveryNavigationId
+                val focusRestoration = remember(app.discoveryNavigationId, state.detail?.key, remoteNavigation) {
+                    DiscoveryFocusRestoration(if ((phone && !remoteNavigation) || awaitingMenuEntry()) null else
+                        focusOrigins.routes[routeIdentity] ?: focusOrigins.returningTo.takeIf { state.detail == null })
+                }
+                LaunchedEffect(app.discoveryNavigationId, state.detail?.key, remoteNavigation) {
                     if (phone && !remoteNavigation) return@LaunchedEffect
-                    val menuEntry = state.detail == null && handledNavigationId != app.discoveryNavigationId
-                    if (menuEntry) {
-                        handledNavigationId = app.discoveryNavigationId
-                        coordinator.cancel()
-                        listState.scrollToItem(0)
+                    val menuEntry = awaitingMenuEntry()
+                    suspend fun enterRoute() {
+                        navigationTrace?.invoke("entry-start surface=$surface nav=${app.discoveryNavigationId} handled=$handledNavigationId menuEntry=$menuEntry first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset}")
+                        if (menuEntry) {
+                            coordinator.cancel()
+                            listState.scrollToItem(0)
+                            navigationTrace?.invoke("entry-scrolled surface=$surface nav=${app.discoveryNavigationId} handled=$handledNavigationId first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset}")
+                        }
+                        var readinessFrames = 0
+                        while (!hostView.hasWindowFocus() && !focusRestoration.canceled && readinessFrames++ < 60) withFrameNanos { }
+                        if (focusRestoration.canceled || !ownsFocusRoute()) return
+                        val key = focusRestoration.target
+                        // An attached return tile can focus before the first draw; only
+                        // new header/detail entry needs the extra composition frames.
+                        if (key == null) { withFrameNanos { }; withFrameNanos { } }
+                        if (key != null) repeat(8) {
+                            if (focusRestoration.canceled || !ownsFocusRoute()) return
+                            val restored = runCatching { returnRequesters[key]?.requestFocus() == true }.getOrDefault(false)
+                            if (it == 0 || it == 7 || restored) navigationTrace?.invoke("entry-restore surface=$surface nav=${app.discoveryNavigationId} key=$key restored=$restored first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset}")
+                            if (restored) return
+                            withFrameNanos { }
+                        }
+                        repeat(20) { attempt ->
+                            if (focusRestoration.canceled || !ownsFocusRoute()) return
+                            val focused = runCatching { if (state.detail == null) tabRequester.requestFocus() else playRequester.requestFocus() }.getOrDefault(false)
+                            if (attempt == 0 || attempt == 19 || focused) navigationTrace?.invoke("entry-focus surface=$surface nav=${app.discoveryNavigationId} handled=$handledNavigationId menuEntry=$menuEntry attempt=$attempt target=${if (state.detail == null) "tab" else "play"} focused=$focused first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset}")
+                            if (focused) {
+                                // A restored row can briefly take focus while the lazy header
+                                // composes. Consume this entry only after the selected tab owns it.
+                                if (menuEntry) handledNavigationId = app.discoveryNavigationId
+                                navigationTrace?.invoke("entry-complete surface=$surface nav=${app.discoveryNavigationId} handled=$handledNavigationId first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset}")
+                                return
+                            }
+                            withFrameNanos { }
+                        }
                     }
-                    var readinessFrames = 0
-                    while (!hostView.hasWindowFocus() && readinessFrames++ < 60) withFrameNanos { }
-                    withFrameNanos { }; withFrameNanos { }
-                    val key = if (menuEntry) null else routeOrigins[routeIdentity] ?: returningTo.takeIf { state.detail == null }
-                    if (key != null) repeat(8) {
-                        if (runCatching { returnRequesters[key]?.requestFocus() == true }.getOrDefault(false)) return@LaunchedEffect
-                        withFrameNanos { }
-                    }
-                    repeat(20) {
-                        if (runCatching { if (state.detail == null) tabRequester.requestFocus() else playRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-                        withFrameNanos { }
-                    }
+                    // scrollToItem ends before focus transfer: implicit BringIntoView
+                    // must remain suppressed until the header owns focus or this entry ends.
+                    try {
+                        if (menuEntry || focusRestoration.pending) coordinator.withAutomaticRevealSuppressed { enterRoute() } else enterRoute()
+                    } finally { focusRestoration.finish() }
                 }
                 var focusedRow by rememberSaveable { mutableStateOf<String?>(null) }
                 fun alignFocusedRow(key: String, index: Int) {
+                    if (!ownsFocusRoute()) {
+                        navigationTrace?.invoke("align-drop surface=$surface route=$routeIdentity key=$key active=${vm.state.value.detail?.key ?: "landing"}")
+                        return
+                    }
+                    val pending = awaitingMenuEntry()
+                    navigationTrace?.invoke("align surface=$surface nav=${app.discoveryNavigationId} handled=$handledNavigationId key=$key index=$index previous=$focusedRow pending=$pending first=${listState.firstVisibleItemIndex} offset=${listState.firstVisibleItemScrollOffset} moving=${coordinator.isMoving}")
+                    // Explicit menu selection takes precedence over a lazy row restoring
+                    // focus; that row must not scroll the header away before it can enter.
+                    if (key != "navigation" && pending) return
+                    if (focusRestoration.pending) return // Retain the exact saved return offset.
                     // Left/Right changes the item, not the vertical navigation destination.
                     if (focusedRow != key) {
                         focusedRow = key
@@ -433,9 +531,10 @@ internal fun DiscoveryPreviewScreen(
                     if (state.detail != null && state.details?.cast?.any { (it.id ?: 0) > 0 } == true) add(castIndex)
                 }
                 fun focusRow(index: Int) {
+                    if (!ownsFocusRoute()) return
                     requestedRow = index
                     move = coordinator.move(listState, index, reduceMotion) {
-                        when (index) {
+                        if (!ownsFocusRoute()) false else when (index) {
                             positions.header -> runCatching { tabRequester.requestFocus() }.getOrDefault(false)
                             positions.hero -> runCatching { playRequester.requestFocus() }.getOrDefault(false)
                             else -> focusHandlers[index]?.invoke() == true
@@ -443,16 +542,22 @@ internal fun DiscoveryPreviewScreen(
                     }
                 }
                 fun moveRow(index: Int, delta: Int): Boolean {
+                    if (!ownsFocusRoute()) return false
                     val current = if (move?.isActive == true) requestedRow else index
                     val next = adjacentDiscoveryRow(current, delta, navigationRows) ?: return false
                     focusRow(next)
                     return true
                 }
                 DiscoveryVerticalFocusViewport(coordinator) {
-                LazyColumn(Modifier.fillMaxSize().pointerInput(Unit) {
+                LazyColumn(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+                    if (focusRestoration.pending && event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight))
+                        focusRestoration.cancel() // Deliberate navigation wins over a pending return.
+                    false
+                }.pointerInput(focusRestoration) {
                     awaitPointerEventScope { while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         touching = event.changes.any { it.pressed }
+                        if (touching && focusRestoration.pending) focusRestoration.cancel()
                         if (phone && !remoteNavigation && touching) contentFocused = false
                     } }
                 }, state = listState, contentPadding = PaddingValues(bottom = if (phone && state.detail == null) 96.dp else 32.dp)) {
@@ -461,11 +566,11 @@ internal fun DiscoveryPreviewScreen(
                             if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) moveRow(0, 1) else false
                         }) {
                             DiscoveryTopNavigation(surface, app.savedProfile?.name.orEmpty(), tabRequester, playRequester,
-                                back = { if (state.detail != null) vm.closeDetails() else exit() },
-                                select = { tab -> if (tab != surface) selectSurface(tab) else if (state.detail != null) vm.closeDetails() },
-                                classic = classic, headerFocus = { contentFocused = false; alignFocusedRow("navigation", 0) },
+                                back = ::closeRoute,
+                                select = { tab -> if (tab != surface) selectRoute(tab) else if (state.detail != null) closeRoute() },
+                                classic = ::classicRoute, headerFocus = { if (ownsFocusRoute()) { contentFocused = false; alignFocusedRow("navigation", 0) } },
                                 menu = menu, changeMenu = { menu = it }, customize = { configure = true },
-                                backdrop = displayed?.backdrop, backdropBounds = glassBounds,
+                                backdrop = prepared?.backdrop, backdropBounds = glassBounds,
                                 categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = state.detail == null,
                                 categoryPopupChanged = { categoryPopup = it })
                         }
@@ -480,12 +585,12 @@ internal fun DiscoveryPreviewScreen(
                             .orEmpty().take(10).indexOfFirst { it.key == displayed?.key }.takeIf { it >= 0 }?.plus(1) else null,
                             height = heroHeight, landscape = landscape, compact = compactLandscape, detail = state.detail != null,
                             loading = displayed == null && (state.loading.isNotEmpty() || candidate != null),
-                            inList = if (focusedProvider != null) app.favorites.any { it.profileKey == profile && it.media.id == focusedProvider.id }
-                                else displayed?.let { card -> app.favorites.any { it.profileKey == profile && it.media.id == card.media.id } } == true,
+                            inList = if (focusedProvider != null) focusedProvider.id in favorites.profileMediaIds
+                                else displayed?.let { card -> card.media.id in favorites.profileMediaIds } == true,
                             playRequester = playRequester, infoRequester = infoFocusRequester,
                             play = {
                                 if (focusedProvider != null) focusedEntry?.open?.invoke()
-                                else displayed?.let { returningTo = playOrigin; routeOrigins = routeOrigins + (routeIdentity to playOrigin); playCard(it) }
+                                else displayed?.let { focusOrigins.returningTo = playOrigin; focusOrigins.routes = focusOrigins.routes + (routeIdentity to playOrigin); playCard(it) }
                             },
                             add = {
                                 if (focusedProvider != null && focusedType != null) toggleFavorite(FavoriteItem(
@@ -493,23 +598,23 @@ internal fun DiscoveryPreviewScreen(
                                 else displayed?.let { toggleFavorite(favorite(it)) }
                             },
                             info = {
-                                if (focusedProvider != null && focusedType != null) { returningTo = origin; openProvider(focusedType, focusedProvider, focusedQueue) }
+                                if (focusedProvider != null && focusedType != null) { focusOrigins.returningTo = origin; openProvider(focusedType, focusedProvider, focusedQueue) }
                                 else displayed?.let { details(it, origin) }
                             },
-                            onFocus = { contentFocused = true; focusedRow = "hero" }, onDown = { moveRow(positions.hero, 1) }, onUp = { moveRow(positions.hero, -1) },
+                            onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }, onDown = { moveRow(positions.hero, 1) }, onUp = { moveRow(positions.hero, -1) },
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
                             index = state.heroIndex, count = state.heroes.size,
                             categoryActions = if (state.detail == null) ({
                                 DiscoveryCategoryAccess(surface, app.categoryManagerOpen, popupChanged = { categoryPopup = it },
-                                    onFocus = { contentFocused = true; focusedRow = "hero" })
+                                    onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } })
                                 DiscoveryAction("TMDB categories", modifier = Modifier.focusRequester(tmdbCategoriesRequester),
-                                    onFocus = { contentFocused = true; focusedRow = "hero" }) { restoreTmdbCategories = true; configure = true }
+                                    onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }) { restoreTmdbCategories = true; configure = true }
                             }) else null,
                             portraitPhone = phonePortrait,
                             phoneHeader = if (phonePortrait && state.detail == null) ({
                                 DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
-                                    back = { if (state.detail != null) vm.closeDetails() else exit() },
-                                    select = { if (it != surface) selectSurface(it) }, classic = classic,
+                                    back = ::closeRoute,
+                                    select = { if (it != surface) selectRoute(it) }, classic = ::classicRoute,
                                     menu = menu, changeMenu = { menu = it }, customize = { configure = true },
                                     categoryManagerOpen = app.categoryManagerOpen, categoryPopupChanged = { categoryPopup = it })
                             }) else null)
@@ -550,7 +655,7 @@ internal fun DiscoveryPreviewScreen(
                             } else Modifier), state = seasonState, contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 itemsIndexed(seasons) { seasonIndex, season -> DiscoveryAction("Season $season", selected = state.season == season,
                                     modifier = if (season == chosenSeason) Modifier.focusRequester(seasonEntry) else Modifier,
-                                    onFocus = { contentFocused = true; alignFocusedRow("seasons", positions.season) }) { vm.loadSeason(season) } }
+                                    onFocus = { if (ownsFocusRoute()) { contentFocused = true; alignFocusedRow("seasons", positions.season) } }) { vm.loadSeason(season) } }
                             }
                             LaunchedEffect(state.details?.card?.key) { vm.loadSeason(chosenSeason) }
                         }
@@ -581,12 +686,12 @@ internal fun DiscoveryPreviewScreen(
                                 }
                                 val episodeModifier = Modifier.focusRequester(requester).then(if (index == 0) Modifier.focusRequester(episodeEntry) else Modifier)
                                 if (landscape) DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
-                                    modifier = episodeModifier.width(200.dp), onFocus = { contentFocused = true },
+                                    modifier = episodeModifier.width(200.dp), onFocus = { if (ownsFocusRoute()) contentFocused = true },
                                     onClick = { episodeCard?.let { playEpisode(it, episode.season, episode.number) } }, onLongClick = { options = true })
                                 else DiscoveryPosterTile(episode.title, episode.still, "E${episode.number}", width = 150.dp,
                                     aspect = 16f / 9f, reduceMotion = reduceMotion,
                                     onClick = { episodeCard?.let { playEpisode(it, episode.season, episode.number) } },
-                                    onLongClick = { options = true }, onFocus = { contentFocused = true })
+                                    onLongClick = { options = true }, onFocus = { if (ownsFocusRoute()) contentFocused = true })
                                 if (options) AlertDialog(onDismissRequest = { options = false }, title = { Text(episode.title) },
                                     text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         NikTvSecondaryActionButton({ options = false; episodeCard?.let { downloadEpisode(it, episode.season, episode.number) } }, Modifier.fillMaxWidth()) { Text("Download") }
@@ -614,18 +719,29 @@ internal fun DiscoveryPreviewScreen(
                             else ((configuration.screenWidthDp - 40) / 3.15f - 10).dp.coerceIn(88.dp, 120.dp)
                         DiscoveryRail(row, width, reduceMotion, returnRequesters, navigationIndex = index, phone = phonePortrait,
                             popupChanged = { tilePopupOpen = it },
-                            prefetch = foreground && !scrolling && anchorIndex == index,
+                            prefetch = presentationActive && !scrolling && anchorIndex == index,
+                            presentationEnabled = presentationActive && !scrolling,
                             skeleton = row.section?.let { it !in state.feeds && "feed:${it.name}" !in state.errors } == true ||
                                 row.providerType?.let { !providerState.ready || (row.entries.isEmpty() && it !in providerState.errors && it !in providerState.capped) } == true,
                             register = { handler -> focusHandlers[index] = handler }, unregister = { focusHandlers.remove(index) },
-                            focused = { entry -> contentFocused = true; returningTo = entry.key; routeOrigins = routeOrigins + (routeIdentity to entry.key); if (!phonePortrait) alignFocusedRow(row.key, index) },
+                            focused = record@{ entry ->
+                                if (!ownsFocusRoute() || !focusRestoration.accepts(entry.key)) {
+                                    navigationTrace?.invoke("focus-drop surface=$surface route=$routeIdentity key=${entry.key} active=${vm.state.value.detail?.key ?: "landing"} pending=${focusRestoration.pending}")
+                                    return@record
+                                }
+                                navigationTrace?.invoke("focus-record surface=$surface route=$routeIdentity key=${entry.key} pending=${focusRestoration.pending}")
+                                contentFocused = true; focusOrigins.returningTo = entry.key; focusOrigins.routes = focusOrigins.routes + (routeIdentity to entry.key)
+                                if (!phonePortrait) alignFocusedRow(row.key, index)
+                            },
                             present = { entry ->
-                                if (entry.providerMedia != null && entry.providerType != null) vm.presentProvider(entry.key, entry.providerMedia, entry.providerType)
-                                else entry.card?.let { featured = it; vm.presentFocusedCard(entry.key, it) }
+                                if (ownsFocusRoute() && focusRestoration.accepts(entry.key)) {
+                                    if (entry.providerMedia != null && entry.providerType != null) vm.presentProvider(entry.key, entry.providerMedia, entry.providerType)
+                                    else entry.card?.let { featured = it; vm.presentFocusedCard(entry.key, it) }
+                                }
                             },
                             move = { delta -> moveRow(index, delta) },
-                            viewAll = row.providerType?.let { type -> { returningTo = "${row.key}:all"; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
-                                ?: row.section?.let { section -> { returningTo = "${row.key}:all"; openSection(section) } })
+                            viewAll = row.providerType?.let { type -> { focusOrigins.returningTo = "${row.key}:all"; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
+                                ?: row.section?.let { section -> { focusOrigins.returningTo = "${row.key}:all"; openSection(section) } })
                         row.providerType?.let { type ->
                             if (row.entries.isEmpty() && type in providerState.errors) {
                                 providerState.errors[type]?.let { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray) }
@@ -684,9 +800,9 @@ internal fun DiscoveryPreviewScreen(
                                         enabled = (person.id ?: 0) > 0,
                                         modifier = Modifier.width(102.dp).focusRequester(requester).onFocusChanged {
                                             focused = it.isFocused
-                                            if (it.isFocused) {
-                                                selected = key; returningTo = key
-                                                routeOrigins = routeOrigins + (routeIdentity to key)
+                                            if (it.isFocused && ownsFocusRoute() && focusRestoration.accepts(key)) {
+                                                selected = key; focusOrigins.returningTo = key
+                                                focusOrigins.routes = focusOrigins.routes + (routeIdentity to key)
                                                 contentFocused = true; alignFocusedRow("cast", castIndex)
                                             }
                                         }, shape = RoundedCornerShape(12.dp),
@@ -740,7 +856,7 @@ internal fun DiscoveryPreviewScreen(
             }
         }
         if (phonePortrait && state.detail != null) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack,
-            iconOnly = true, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) { vm.closeDetails() }
+            iconOnly = true, modifier = Modifier.align(Alignment.TopStart).padding(12.dp), onClick = ::closeRoute)
     }
     }
     actor?.takeIf { actorOrigin == state.detail?.key }?.let { person ->
@@ -780,17 +896,21 @@ private fun DiscoveryLazyRow(
     }
 }
 
-/** Promote metadata and its prepared image together; canceled old decodes cannot change the hero. */
+/** Prepare only the background; selected metadata/actions never wait for image decoding. */
 @Composable
-private fun preparedDiscoveryCard(card: DiscoveryCard?, initial: DiscoveryCard? = null): State<DiscoveryCard?> {
+private fun preparedDiscoveryCard(card: DiscoveryCard?, initial: DiscoveryCard? = null, enabled: Boolean = true): State<DiscoveryCard?> {
     val context = LocalContext.current
-    return produceState<DiscoveryCard?>(initial, card) {
+    val request = remember(context, card?.backdrop) {
+        card?.backdrop?.let { ImageRequest.Builder(context).data(thumbnailArtworkUrl(it, 1280))
+            .size(1280, 720).transformations(DiscoveryBackdropTransformation()).build() }
+    }
+    return produceState<DiscoveryCard?>(initial, card, request, enabled) {
+        if (!enabled) return@produceState
         if (card == null) { value = null; return@produceState }
-        val url = card.backdrop?.let { thumbnailArtworkUrl(it, 1280) }
-        if (url == null) { value = card; return@produceState }
+        if (request == null) { value = card; return@produceState }
         val image = try {
             withTimeoutOrNull(2000) { withContext(Dispatchers.IO) {
-                context.imageLoader.execute(ImageRequest.Builder(context).data(url).size(1280, 720).transformations(DiscoveryBackdropTransformation()).build())
+                context.imageLoader.execute(request)
             } }
         } catch (c: CancellationException) { throw c }
           catch (_: Exception) { null }
@@ -812,11 +932,17 @@ internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean) {
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
         Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else 300), label = "discoveryBackdrop") { url ->
-            AsyncImage(ImageRequest.Builder(context).data(url).size(1280, 720).transformations(DiscoveryBackdropTransformation()).crossfade(false).build(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            val request = remember(context, url) { ImageRequest.Builder(context).data(url).size(1280, 720)
+                .transformations(DiscoveryBackdropTransformation()).crossfade(false).build() }
+            AsyncImage(request, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
         // Hidden decode layer promotes only the latest successfully prepared backdrop.
-        if (requested != null && requested != ready) AsyncImage(ImageRequest.Builder(context).data(requested).size(1280, 720).transformations(DiscoveryBackdropTransformation()).crossfade(false).build(), null,
-            Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) ready = requested }, onError = { if (currentRequest == requested) ready = null })
+        if (requested != null && requested != ready) {
+            val request = remember(context, requested) { ImageRequest.Builder(context).data(requested).size(1280, 720)
+                .transformations(DiscoveryBackdropTransformation()).crossfade(false).build() }
+            AsyncImage(request, null,
+                Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) ready = requested }, onError = { if (currentRequest == requested) ready = null })
+        }
         LaunchedEffect(requested) { if (requested == null) ready = null }
     }
 }
@@ -899,7 +1025,7 @@ private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Uni
 @Composable
 private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>, navigationIndex: Int, phone: Boolean = false,
     popupChanged: (Boolean) -> Unit,
-    prefetch: Boolean, skeleton: Boolean,
+    prefetch: Boolean, presentationEnabled: Boolean, skeleton: Boolean,
     register: (() -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
     present: (RailEntry) -> Unit, move: (Int) -> Boolean, viewAll: (() -> Unit)?) {
     val rowState = rememberLazyListState()
@@ -914,7 +1040,15 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
     }
     var selected by rememberSaveable(row.key) { mutableStateOf<String?>(null) }
     var focusedCard by remember { mutableStateOf<RailEntry?>(null) }
-    LaunchedEffect(focusedCard?.key) { delay(150); focusedCard?.let(present) }
+    val currentPresentation by rememberUpdatedState(present)
+    LaunchedEffect(focusedCard?.key, presentationEnabled, rowState.isScrollInProgress) {
+        // Keep image decoding, metadata publication and a full-screen crossfade out of
+        // the row's movement. Focus highlighting itself remains immediate.
+        if (presentationEnabled && !rowState.isScrollInProgress) {
+            delay(150)
+            focusedCard?.let(currentPresentation)
+        }
+    }
     val entries by rememberUpdatedState(row.entries)
     DisposableEffect(row.key, navigationIndex) {
         register {
@@ -1005,8 +1139,10 @@ internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: Stri
     val scale = animateFloatAsState(if (focused && !reduceMotion) 1.05f else 1f,
         tween(if (reduceMotion) 0 else if (focused) 380 else 320, easing = CubicBezierEasing(.2f, 0f, 0f, 1f)), label = "discoveryTileScale")
     val border = animateFloatAsState(if (focused) 1f else 0f, tween(if (reduceMotion) 0 else 180), label = "discoveryTileBorder")
-    val shape = RoundedCornerShape(10.dp)
+    val shape = remember { RoundedCornerShape(10.dp) }
     val context = LocalContext.current
+    val request = remember(context, artwork, aspect) { ImageRequest.Builder(context)
+        .data(thumbnailArtworkUrl(artwork, 342)).size(342, if (aspect == 2f / 3f) 513 else 193).crossfade(false).build() }
     // Scale the legacy overlay treatment to these deliberately smaller posters.
     val textScale = (width.value / 120f).coerceIn(.85f, 1.15f)
     Column(modifier.width(width).onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
@@ -1014,7 +1150,7 @@ internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: Stri
         Box(Modifier.fillMaxWidth().aspectRatio(aspect).graphicsLayer {
             scaleX = scale.value; scaleY = scale.value; shadowElevation = if (focused) 4.dp.toPx() else 0f; this.shape = shape
         }.tileFocusOutline(true, border, shape, Color(0xFF2B303A), 2.dp).clip(shape).background(Color(0xFF1C222C))) {
-            AsyncImage(ImageRequest.Builder(context).data(thumbnailArtworkUrl(artwork, 342)).size(342, if (aspect == 2f / 3f) 513 else 193).crossfade(false).build(),
+            AsyncImage(request,
                 title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, onError = { artworkFailed = true })
             if (artwork.isNullOrBlank() || artworkFailed) Column(Modifier.align(Alignment.Center).padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Default.Movie, null, Modifier.size(28.dp), tint = Color.Gray)

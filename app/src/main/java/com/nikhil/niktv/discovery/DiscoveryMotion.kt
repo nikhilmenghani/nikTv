@@ -28,7 +28,7 @@ internal fun DiscoveryVerticalFocusViewport(coordinator: DiscoveryScrollCoordina
     val spec = remember(coordinator) {
         object : BringIntoViewSpec {
             override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
-                if (coordinator.isMoving) 0f else tileFocusScrollDistance(offset, size, containerSize)
+                if (coordinator.blocksAutomaticReveal) 0f else tileFocusScrollDistance(offset, size, containerSize)
         }
     }
     CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
@@ -38,8 +38,16 @@ internal fun DiscoveryVerticalFocusViewport(coordinator: DiscoveryScrollCoordina
 internal class DiscoveryScrollCoordinator(private val scope: CoroutineScope) {
     private var job: Job? = null
     private var destination: Int? = null
+    private var automaticRevealOwners = 0
     val isMoving: Boolean get() = job?.isActive == true
+    val blocksAutomaticReveal: Boolean get() = isMoving || automaticRevealOwners > 0
     fun cancel() { job?.cancel(); job = null; destination = null }
+
+    /** Keep an old focused row from undoing a menu reveal while its header composes. */
+    suspend fun <T> withAutomaticRevealSuppressed(block: suspend () -> T): T {
+        automaticRevealOwners++
+        return try { block() } finally { automaticRevealOwners-- }
+    }
 
     private fun start(index: Int, block: suspend () -> Unit): Job {
         cancel()

@@ -1,6 +1,9 @@
 package com.nikhil.niktv.data
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import kotlinx.coroutines.withContext
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -45,7 +48,10 @@ private data class NikTvBackup(
     val integers: Map<String, Int>
 )
 
-class ProfileStore(private val context: Context) {
+class ProfileStore @JvmOverloads constructor(
+    private val context: Context,
+    private val preferences: DataStore<Preferences> = context.dataStore,
+) {
     private val key = stringPreferencesKey("active_profile")
     private val sessionKey = stringPreferencesKey("active_session")
     private val profilesKey = stringPreferencesKey("saved_profiles")
@@ -73,36 +79,42 @@ class ProfileStore(private val context: Context) {
     private val tmdbDashboardSectionsKey = stringPreferencesKey("tmdb_dashboard_sections")
     private val tmdbMappingsKey = stringPreferencesKey("tmdb_iptv_mappings")
     private val offlineDownloadsKey = stringPreferencesKey("offline_media_downloads")
-    val activeProfile: Flow<PortalProfile?> = context.dataStore.data.map { prefs ->
-        val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
-        val identity = prefs[activeProfileKey]
-        profiles.firstOrNull { it.identity() == identity } ?: profiles.firstOrNull()
-    }
-    val activeSession: Flow<PortalSession?> = context.dataStore.data.map { prefs ->
-        val active = prefs[activeProfileKey]
-        decodeSessions(prefs[sessionsKey], prefs[sessionKey]).firstOrNull { it.profile.identity() == active }
-            ?: prefs[sessionKey]?.let { runCatching { Json.decodeFromString<PortalSession>(it) }.getOrNull() }
-    }
-    val profiles: Flow<List<PortalProfile>> = context.dataStore.data.map { decodeProfiles(it[profilesKey], it[key]) }
-    val favorites: Flow<List<FavoriteItem>> = context.dataStore.data.map { prefs ->
-        prefs[favoritesKey]?.let { runCatching { Json.decodeFromString<List<FavoriteItem>>(it) }.getOrNull() }.orEmpty()
-    }
-    val recentlyPlayed: Flow<List<RecentItem>> = context.dataStore.data.map { prefs ->
-        val stored = prefs[recentKey]?.let { runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull() }.orEmpty()
+    val activeProfile: Flow<PortalProfile?> = preferences.data.decodedProfilePreference(
+        select = { Triple(it[profilesKey], it[key], it[activeProfileKey]) },
+        decode = { (raw, legacy, identity) ->
+            val profiles = decodeProfiles(raw, legacy)
+            profiles.firstOrNull { it.identity() == identity } ?: profiles.firstOrNull()
+        },
+    )
+    val activeSession: Flow<PortalSession?> = preferences.data.decodedProfilePreference(
+        select = { Triple(it[sessionsKey], it[sessionKey], it[activeProfileKey]) },
+        decode = { (raw, legacy, active) ->
+            decodeSessions(raw, legacy).firstOrNull { it.profile.identity() == active }
+                ?: legacy?.let { runCatching { Json.decodeFromString<PortalSession>(it) }.getOrNull() }
+        },
+    )
+    val profiles: Flow<List<PortalProfile>> = preferences.data.decodedProfilePreference(
+        select = { it[profilesKey] to it[key] }, decode = { (raw, legacy) -> decodeProfiles(raw, legacy) },
+    )
+    val favorites: Flow<List<FavoriteItem>> = preferences.data.decodedProfilePreference(select = { it[favoritesKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<List<FavoriteItem>>(it) }.getOrNull() }.orEmpty()
+    })
+    val recentlyPlayed: Flow<List<RecentItem>> = preferences.data.decodedProfilePreference(select = { it[recentKey] }, decode = { raw ->
+        val stored = raw?.let { runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull() }.orEmpty()
         stored.filterNot { it.kind == com.nikhil.niktv.model.FavoriteKind.EPISODE }.map { recent ->
             if (recent.kind != com.nikhil.niktv.model.FavoriteKind.SERIES || recent.lastPlayed != null) recent
             else stored.firstOrNull { it.kind == com.nikhil.niktv.model.FavoriteKind.EPISODE && it.series?.id == recent.media.id }
                 ?.let { recent.copy(lastPlayed = it.media, playedAtMillis = maxOf(recent.playedAtMillis, it.playedAtMillis)) }
                 ?: recent
         }
-    }
+    })
     private val requestedRecommendationsKey = stringPreferencesKey("requested_recommendations_v1")
-    val requestedRecommendations: Flow<List<RecentItem>> = context.dataStore.data.map { prefs ->
-        prefs[requestedRecommendationsKey]?.let {
+    val requestedRecommendations: Flow<List<RecentItem>> = preferences.data.decodedProfilePreference(select = { it[requestedRecommendationsKey] }, decode = { raw ->
+        raw?.let {
             runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull()
         }.orEmpty()
-    }
-    suspend fun requestRecommendations(seed: RecentItem, category: String) = context.dataStore.edit { prefs ->
+    })
+    suspend fun requestRecommendations(seed: RecentItem, category: String) = preferences.editProfileMetadata { prefs ->
         val seeds = prefs[requestedRecommendationsKey]?.let {
             runCatching { Json.decodeFromString<List<RecentItem>>(it) }.getOrNull()
         }.orEmpty()
@@ -117,12 +129,12 @@ class ProfileStore(private val context: Context) {
     }
 
     private val dismissedRecommendationsKey = stringPreferencesKey("dismissed_recommendations_v1")
-    val dismissedRecommendations: Flow<Map<String, Set<String>>> = context.dataStore.data.map { prefs ->
-        prefs[dismissedRecommendationsKey]?.let {
+    val dismissedRecommendations: Flow<Map<String, Set<String>>> = preferences.data.decodedProfilePreference(select = { it[dismissedRecommendationsKey] }, decode = { raw ->
+        raw?.let {
             runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
         }.orEmpty()
-    }
-    suspend fun dismissRecommendation(profile: String, category: String) = context.dataStore.edit { prefs ->
+    })
+    suspend fun dismissRecommendation(profile: String, category: String) = preferences.editProfileMetadata { prefs ->
         val current = prefs[dismissedRecommendationsKey]?.let {
             runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
         }.orEmpty()
@@ -130,7 +142,7 @@ class ProfileStore(private val context: Context) {
             current + (profile to (current[profile].orEmpty() + category)))
     }
 
-    suspend fun restoreRecommendation(profile: String, category: String) = context.dataStore.edit { prefs ->
+    suspend fun restoreRecommendation(profile: String, category: String) = preferences.editProfileMetadata { prefs ->
         val current = prefs[dismissedRecommendationsKey]?.let {
             runCatching { Json.decodeFromString<Map<String, Set<String>>>(it) }.getOrNull()
         }.orEmpty()
@@ -141,12 +153,12 @@ class ProfileStore(private val context: Context) {
     }
 
     private val recommendationProgressKey = stringPreferencesKey("recommendation_progress_v1")
-    val recommendationProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
-        prefs[recommendationProgressKey]?.let {
+    val recommendationProgress: Flow<List<PlaybackProgress>> = preferences.data.decodedProfilePreference(select = { it[recommendationProgressKey] }, decode = { raw ->
+        raw?.let {
             runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull()
         }.orEmpty()
-    }
-    suspend fun saveRecommendationProgress(progress: PlaybackProgress) = context.dataStore.edit { prefs ->
+    })
+    suspend fun saveRecommendationProgress(progress: PlaybackProgress) = preferences.editProfileMetadata { prefs ->
         val current = prefs[recommendationProgressKey]?.let {
             runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull()
         }.orEmpty()
@@ -154,70 +166,70 @@ class ProfileStore(private val context: Context) {
             (listOf(progress) + current.filterNot { it.key == progress.key }).take(500))
     }
 
-    val playbackProgress: Flow<List<PlaybackProgress>> = context.dataStore.data.map { prefs ->
-        prefs[progressKey]?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
-    }
-    val playbackUrls: Flow<List<PlaybackUrl>> = context.dataStore.data.map { prefs ->
-        prefs[playbackUrlsKey]?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
-    }
-    val cacheIntervalMinutes: Flow<Int> = context.dataStore.data.map { it[cacheIntervalKey] ?: 60 }
-    val initialCatalogItems: Flow<Int> = context.dataStore.data.map { prefs ->
+    val playbackProgress: Flow<List<PlaybackProgress>> = preferences.data.decodedProfilePreference(select = { it[progressKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<List<PlaybackProgress>>(it) }.getOrNull() }.orEmpty()
+    })
+    val playbackUrls: Flow<List<PlaybackUrl>> = preferences.data.decodedProfilePreference(select = { it[playbackUrlsKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<List<PlaybackUrl>>(it) }.getOrNull() }.orEmpty()
+    })
+    val cacheIntervalMinutes: Flow<Int> = preferences.data.map { it[cacheIntervalKey] ?: 60 }
+    val initialCatalogItems: Flow<Int> = preferences.data.map { prefs ->
         prefs[initialCatalogItemsKey]?.takeIf { it in INITIAL_CATALOG_OPTIONS } ?: 14
     }
-    val playerControlsTimeoutSeconds: Flow<Int> = context.dataStore.data.map { it[playerControlsTimeoutKey] ?: 3 }
-    val keepAwakeOnlyDuringPlayback: Flow<Boolean> = context.dataStore.data.map {
+    val playerControlsTimeoutSeconds: Flow<Int> = preferences.data.map { it[playerControlsTimeoutKey] ?: 3 }
+    val keepAwakeOnlyDuringPlayback: Flow<Boolean> = preferences.data.map {
         (it[keepAwakeOnlyDuringPlaybackKey] ?: 0) == 1
     }
-    val automaticReauthentication: Flow<Boolean> = context.dataStore.data.map {
+    val automaticReauthentication: Flow<Boolean> = preferences.data.map {
         (it[automaticReauthenticationKey] ?: 1) == 1
     }
-    val modernUiEnabled: Flow<Boolean> = context.dataStore.data.map {
+    val modernUiEnabled: Flow<Boolean> = preferences.data.map {
         // Existing and new installs both default to the tile-first interface.
         (it[modernUiEnabledKey] ?: 1) == 1
     }
-    val playbackEngine: Flow<PlaybackEngine> = context.dataStore.data.map { prefs ->
+    val playbackEngine: Flow<PlaybackEngine> = preferences.data.map { prefs ->
         prefs[playbackEngineKey]?.let { runCatching { PlaybackEngine.valueOf(it) }.getOrNull() }
             ?.let { if (it == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3 else it }
             ?: PlaybackEngine.AUTO
     }
-    val recentSearches: Flow<List<RecentSearch>> = context.dataStore.data.map { prefs ->
-        decodeRecentSearches(prefs[recentSearchesKey]).deduplicatedRecentSearches()
-    }
-    val pagedSearches: Flow<List<SearchResultCache>> = context.dataStore.data.map { prefs ->
-        prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
-    }
-    val categoryFilters: Flow<Map<String, List<String>>> = context.dataStore.data.map { prefs ->
-        prefs[categoryFiltersKey]?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
-    }
-    val seriesStartSeason: Flow<SeriesStartSeason> = context.dataStore.data.map { prefs ->
+    val recentSearches: Flow<List<RecentSearch>> = preferences.data.decodedProfilePreference(select = { it[recentSearchesKey] }, decode = { raw ->
+        decodeRecentSearches(raw).deduplicatedRecentSearches()
+    })
+    val pagedSearches: Flow<List<SearchResultCache>> = preferences.data.decodedProfilePreference(select = { it[pagedSearchesKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
+    })
+    val categoryFilters: Flow<Map<String, List<String>>> = preferences.data.decodedProfilePreference(select = { it[categoryFiltersKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
+    })
+    val seriesStartSeason: Flow<SeriesStartSeason> = preferences.data.map { prefs ->
         prefs[seriesStartSeasonKey]?.let { runCatching { SeriesStartSeason.valueOf(it) }.getOrNull() }
             ?: SeriesStartSeason.LAST
     }
-    val watchedSeries: Flow<List<WatchedSeries>> = context.dataStore.data.map { prefs ->
-        prefs[watchedSeriesKey]?.let { runCatching { Json.decodeFromString<List<WatchedSeries>>(it) }.getOrNull() }.orEmpty()
-    }
-    val rememberedSeriesSeasons: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
-        prefs[rememberedSeriesSeasonsKey]?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
-    }
-    val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = context.dataStore.data.map { prefs ->
-        prefs[episodeSeasonCachesKey]
+    val watchedSeries: Flow<List<WatchedSeries>> = preferences.data.decodedProfilePreference(select = { it[watchedSeriesKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<List<WatchedSeries>>(it) }.getOrNull() }.orEmpty()
+    })
+    val rememberedSeriesSeasons: Flow<Map<String, Int>> = preferences.data.decodedProfilePreference(select = { it[rememberedSeriesSeasonsKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
+    })
+    val episodeSeasonCaches: Flow<List<EpisodeSeasonCache>> = preferences.data.decodedProfilePreference(select = { it[episodeSeasonCachesKey] }, decode = { raw ->
+        raw
             ?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }
             .orEmpty()
-    }
-    val browseLayouts: Flow<Map<String, BrowseLayout>> = context.dataStore.data.map { prefs ->
-        prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
-    }
-    val tmdbDashboardSections: Flow<Map<String, List<TmdbHomeSection>>> = context.dataStore.data.map { prefs ->
-        prefs[tmdbDashboardSectionsKey]
+    })
+    val browseLayouts: Flow<Map<String, BrowseLayout>> = preferences.data.decodedProfilePreference(select = { it[browseLayoutsKey] }, decode = { raw ->
+        raw?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
+    })
+    val tmdbDashboardSections: Flow<Map<String, List<TmdbHomeSection>>> = preferences.data.decodedProfilePreference(select = { it[tmdbDashboardSectionsKey] }, decode = { raw ->
+        raw
             ?.let { runCatching { Json.decodeFromString<Map<String, List<TmdbHomeSection>>>(it) }.getOrNull() }
             .orEmpty()
-    }
-    val tmdbMappings: Flow<List<TmdbIptvMapping>> = context.dataStore.data.map { prefs ->
-        prefs[tmdbMappingsKey]
+    })
+    val tmdbMappings: Flow<List<TmdbIptvMapping>> = preferences.data.decodedProfilePreference(select = { it[tmdbMappingsKey] }, decode = { raw ->
+        raw
             ?.let { runCatching { Json.decodeFromString<List<TmdbIptvMapping>>(it) }.getOrNull() }
             .orEmpty()
-    }
-    suspend fun save(session: PortalSession) = context.dataStore.edit {
+    })
+    suspend fun save(session: PortalSession) = preferences.editProfileMetadata {
         val profiles = decodeProfiles(it[profilesKey], it[key])
         val sessions = decodeSessions(it[sessionsKey], it[sessionKey])
         it[profilesKey] = Json.encodeToString((profiles.filterNot { saved -> saved.identity() == session.profile.identity() } + session.profile))
@@ -226,22 +238,24 @@ class ProfileStore(private val context: Context) {
         it[key] = Json.encodeToString(session.profile)
         it[sessionKey] = Json.encodeToString(session)
     }
-    suspend fun addProfile(profile: PortalProfile) = context.dataStore.edit { prefs ->
+    suspend fun addProfile(profile: PortalProfile) = preferences.editProfileMetadata { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key])
         if (profiles.none { it.identity() == profile.identity() }) {
             prefs[profilesKey] = Json.encodeToString(profiles + profile)
         }
     }
-    suspend fun activate(profile: PortalProfile) = context.dataStore.edit { prefs ->
+    suspend fun activate(profile: PortalProfile) = preferences.editProfileMetadata { prefs ->
         prefs[activeProfileKey] = profile.identity()
         prefs[key] = Json.encodeToString(profile)
         val session = decodeSessions(prefs[sessionsKey], prefs[sessionKey]).firstOrNull { it.profile.identity() == profile.identity() }
         if (session != null) prefs[sessionKey] = Json.encodeToString(session) else prefs.remove(sessionKey)
     }
-    suspend fun sessionFor(profile: PortalProfile): PortalSession? = context.dataStore.data.first().let { prefs ->
-        decodeSessions(prefs[sessionsKey], prefs[sessionKey]).firstOrNull { it.profile.identity() == profile.identity() }
+    suspend fun sessionFor(profile: PortalProfile): PortalSession? = withContext(profileMetadataDispatcher) {
+        preferences.data.first().let { prefs ->
+            decodeSessions(prefs[sessionsKey], prefs[sessionKey]).firstOrNull { it.profile.identity() == profile.identity() }
+        }
     }
-    suspend fun removeProfile(profile: PortalProfile) = context.dataStore.edit { prefs ->
+    suspend fun removeProfile(profile: PortalProfile) = preferences.editProfileMetadata { prefs ->
         val profiles = decodeProfiles(prefs[profilesKey], prefs[key]).filterNot { it.identity() == profile.identity() }
         val sessions = decodeSessions(prefs[sessionsKey], prefs[sessionKey]).filterNot { it.profile.identity() == profile.identity() }
         prefs[profilesKey] = Json.encodeToString(profiles)
@@ -250,7 +264,7 @@ class ProfileStore(private val context: Context) {
             prefs.remove(activeProfileKey); prefs.remove(key); prefs.remove(sessionKey)
         }
     }
-    suspend fun clearSession() = context.dataStore.edit { it.remove(sessionKey) }
+    suspend fun clearSession() = preferences.edit { it.remove(sessionKey) }
     fun searchCatalog(type: CatalogType, profileKey: String? = null): Flow<SearchCatalogCache?> = kotlinx.coroutines.flow.flow {
         emit(profileKey?.let { CatalogDiskCache.read<SearchCatalogCache>(context, "search:$it:${type.name}") })
     }
@@ -259,16 +273,16 @@ class ProfileStore(private val context: Context) {
         CatalogDiskCache.write(context, "search:${cache.profileKey}:${cache.type.name}", cache)
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)
     }
-    suspend fun saveFavorites(items: List<FavoriteItem>) = context.dataStore.edit {
+    suspend fun saveFavorites(items: List<FavoriteItem>) = preferences.editProfileMetadata {
         it[favoritesKey] = Json.encodeToString(items)
     }
-    suspend fun saveRecentlyPlayed(items: List<RecentItem>) = context.dataStore.edit {
+    suspend fun saveRecentlyPlayed(items: List<RecentItem>) = preferences.editProfileMetadata {
         it[recentKey] = Json.encodeToString(items)
     }
-    suspend fun savePlaybackProgress(items: List<PlaybackProgress>) = context.dataStore.edit {
+    suspend fun savePlaybackProgress(items: List<PlaybackProgress>) = preferences.editProfileMetadata {
         it[progressKey] = Json.encodeToString(items)
     }
-    suspend fun savePlaybackUrls(items: List<PlaybackUrl>) = context.dataStore.edit {
+    suspend fun savePlaybackUrls(items: List<PlaybackUrl>) = preferences.editProfileMetadata {
         it[playbackUrlsKey] = Json.encodeToString(items)
     }
     fun browseCatalog(type: CatalogType, profileKey: String? = null): Flow<BrowseCatalogCache?> = kotlinx.coroutines.flow.flow {
@@ -307,7 +321,7 @@ class ProfileStore(private val context: Context) {
         saveSearchCatalog(merged, scheduleMetadataSync = false)
     }
 
-    suspend fun discardLegacyBrowseCatalogs() = context.dataStore.edit { prefs ->
+    suspend fun discardLegacyBrowseCatalogs() = preferences.edit { prefs ->
         // These are rebuildable caches, not user settings. Drop the legacy
         // strings without decoding their potentially enormous object graphs.
         prefs.asMap().keys.filter {
@@ -323,7 +337,7 @@ class ProfileStore(private val context: Context) {
             .joinToString("") { "%02x".format(it) }
         return stringPreferencesKey("browse_catalog_v2_${type.name.lowercase()}_$digest")
     }
-    suspend fun saveTmdbMapping(mapping: TmdbIptvMapping) = context.dataStore.edit { prefs ->
+    suspend fun saveTmdbMapping(mapping: TmdbIptvMapping) = preferences.editProfileMetadata { prefs ->
         val current = prefs[tmdbMappingsKey]
             ?.let { runCatching { Json.decodeFromString<List<TmdbIptvMapping>>(it) }.getOrNull() }
             .orEmpty()
@@ -331,53 +345,53 @@ class ProfileStore(private val context: Context) {
             (listOf(mapping) + current.filterNot { it.key == mapping.key }).take(500)
         )
     }
-    suspend fun setCacheIntervalMinutes(minutes: Int) = context.dataStore.edit { it[cacheIntervalKey] = minutes }
-    suspend fun setInitialCatalogItems(items: Int) = context.dataStore.edit {
+    suspend fun setCacheIntervalMinutes(minutes: Int) = preferences.edit { it[cacheIntervalKey] = minutes }
+    suspend fun setInitialCatalogItems(items: Int) = preferences.edit {
         it[initialCatalogItemsKey] =
             items.takeIf { value -> value in INITIAL_CATALOG_OPTIONS } ?: 14
     }
-    suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = context.dataStore.edit {
+    suspend fun setPlayerControlsTimeoutSeconds(seconds: Int) = preferences.edit {
         it[playerControlsTimeoutKey] = if (seconds <= 0) 0 else seconds.coerceIn(1, 30)
     }
-    suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = context.dataStore.edit {
+    suspend fun setKeepAwakeOnlyDuringPlayback(enabled: Boolean) = preferences.edit {
         it[keepAwakeOnlyDuringPlaybackKey] = if (enabled) 1 else 0
     }
-    val offlineDownloads: Flow<List<OfflineMediaDownload>> = context.dataStore.data.map { prefs ->
-        prefs[offlineDownloadsKey]
+    val offlineDownloads: Flow<List<OfflineMediaDownload>> = preferences.data.decodedProfilePreference(select = { it[offlineDownloadsKey] }, decode = { raw ->
+        raw
             ?.let { runCatching { Json.decodeFromString<List<OfflineMediaDownload>>(it) }.getOrNull() }
             .orEmpty()
-    }
-    suspend fun setAutomaticReauthentication(enabled: Boolean) = context.dataStore.edit {
+    })
+    suspend fun setAutomaticReauthentication(enabled: Boolean) = preferences.edit {
         it[automaticReauthenticationKey] = if (enabled) 1 else 0
     }
-    suspend fun setModernUiEnabled(enabled: Boolean) = context.dataStore.edit {
+    suspend fun setModernUiEnabled(enabled: Boolean) = preferences.edit {
         it[modernUiEnabledKey] = if (enabled) 1 else 0
     }
-    suspend fun setPlaybackEngine(engine: PlaybackEngine) = context.dataStore.edit {
+    suspend fun setPlaybackEngine(engine: PlaybackEngine) = preferences.edit {
         it[playbackEngineKey] = if (engine == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3.name else engine.name
     }
-    suspend fun setSeriesStartSeason(value: SeriesStartSeason) = context.dataStore.edit { it[seriesStartSeasonKey] = value.name }
-    suspend fun saveWatchedSeries(items: List<WatchedSeries>) = context.dataStore.edit {
+    suspend fun setSeriesStartSeason(value: SeriesStartSeason) = preferences.edit { it[seriesStartSeasonKey] = value.name }
+    suspend fun saveWatchedSeries(items: List<WatchedSeries>) = preferences.editProfileMetadata {
         it[watchedSeriesKey] = Json.encodeToString(items)
     }
     // Merge into the latest persisted subscription, preserving concurrent watched/
     // dismissed actions and never reviving an unsubscribed series.
     internal suspend fun recordEpisodeDiscovery(seriesKey: String, episodes: List<com.nikhil.niktv.model.MediaItem>, now: Long): EpisodeDiscovery? {
         var result: EpisodeDiscovery? = null
-        context.dataStore.edit { prefs ->
+        preferences.editProfileMetadata { prefs ->
             val current = prefs[watchedSeriesKey]?.let { Json.decodeFromString<List<WatchedSeries>>(it) }.orEmpty()
-            val watched = current.firstOrNull { it.key == seriesKey } ?: return@edit
+            val watched = current.firstOrNull { it.key == seriesKey } ?: return@editProfileMetadata
             val discovery = discoverNewEpisodes(watched, episodes, now)
             prefs[watchedSeriesKey] = Json.encodeToString(current.map { if (it.key == seriesKey) discovery.updated else it })
             result = discovery
         }
         return result
     }
-    suspend fun rememberSeriesSeason(profileKey: String, seriesId: String, season: Int) = context.dataStore.edit { prefs ->
+    suspend fun rememberSeriesSeason(profileKey: String, seriesId: String, season: Int) = preferences.editProfileMetadata { prefs ->
         val current = prefs[rememberedSeriesSeasonsKey]?.let { runCatching { Json.decodeFromString<Map<String, Int>>(it) }.getOrNull() }.orEmpty()
         prefs[rememberedSeriesSeasonsKey] = Json.encodeToString(current + ("$profileKey|$seriesId" to season))
     }
-    suspend fun saveEpisodeSeasonCache(cache: EpisodeSeasonCache) = context.dataStore.edit { prefs ->
+    suspend fun saveEpisodeSeasonCache(cache: EpisodeSeasonCache) = preferences.editProfileMetadata { prefs ->
         val current = prefs[episodeSeasonCachesKey]
             ?.let { runCatching { Json.decodeFromString<List<EpisodeSeasonCache>>(it) }.getOrNull() }
             .orEmpty()
@@ -385,49 +399,49 @@ class ProfileStore(private val context: Context) {
             (listOf(cache) + current.filterNot { it.key == cache.key }).take(40)
         )
     }
-    suspend fun saveOfflineDownloads(items: List<OfflineMediaDownload>) = context.dataStore.edit { prefs ->
+    suspend fun saveOfflineDownloads(items: List<OfflineMediaDownload>) = preferences.editProfileMetadata { prefs ->
         prefs[offlineDownloadsKey] = Json.encodeToString(items)
     }
-    suspend fun setBrowseLayout(profileKey: String, layout: BrowseLayout) = context.dataStore.edit { prefs ->
+    suspend fun setBrowseLayout(profileKey: String, layout: BrowseLayout) = preferences.editProfileMetadata { prefs ->
         val current = prefs[browseLayoutsKey]?.let { runCatching { Json.decodeFromString<Map<String, BrowseLayout>>(it) }.getOrNull() }.orEmpty()
         prefs[browseLayoutsKey] = Json.encodeToString(current + (profileKey to layout))
     }
-    suspend fun setTmdbDashboardSections(profileKey: String, surface: DashboardSurface, sections: List<TmdbHomeSection>) = context.dataStore.edit { prefs ->
+    suspend fun setTmdbDashboardSections(profileKey: String, surface: DashboardSurface, sections: List<TmdbHomeSection>) = preferences.editProfileMetadata { prefs ->
         val current = prefs[tmdbDashboardSectionsKey]
             ?.let { runCatching { Json.decodeFromString<Map<String, List<TmdbHomeSection>>>(it) }.getOrNull() }
             .orEmpty()
         prefs[tmdbDashboardSectionsKey] = Json.encodeToString(current + ("$profileKey|${surface.name}" to sections.distinct()))
     }
-    suspend fun addRecentSearch(search: RecentSearch) = context.dataStore.edit { prefs ->
+    suspend fun addRecentSearch(search: RecentSearch) = preferences.editProfileMetadata { prefs ->
         val entry = search.copy(query = search.query.canonicalSearchQuery())
         val current = decodeRecentSearches(prefs[recentSearchesKey])
         prefs[recentSearchesKey] = Json.encodeToString(
             (listOf(entry) + current.filterNot { it.key == entry.key }).deduplicatedRecentSearches()
         )
     }
-    suspend fun removeRecentSearch(search: RecentSearch) = context.dataStore.edit { prefs ->
+    suspend fun removeRecentSearch(search: RecentSearch) = preferences.editProfileMetadata { prefs ->
         val current = decodeRecentSearches(prefs[recentSearchesKey])
         prefs[recentSearchesKey] = Json.encodeToString(
             current.filterNot { it.key == search.key }.deduplicatedRecentSearches()
         )
     }
-    suspend fun savePagedSearch(cache: SearchResultCache) = context.dataStore.edit { prefs ->
+    suspend fun savePagedSearch(cache: SearchResultCache) = preferences.editProfileMetadata { prefs ->
         val current = prefs[pagedSearchesKey]?.let { runCatching { Json.decodeFromString<List<SearchResultCache>>(it) }.getOrNull() }.orEmpty()
         prefs[pagedSearchesKey] = Json.encodeToString((listOf(cache) + current.filterNot { it.key == cache.key }).take(40))
     }
-    suspend fun saveCategoryFilter(profileKey: String, type: CatalogType, categoryIds: List<String>) = context.dataStore.edit { prefs ->
+    suspend fun saveCategoryFilter(profileKey: String, type: CatalogType, categoryIds: List<String>) = preferences.editProfileMetadata { prefs ->
         val existing = prefs[categoryFiltersKey]?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
         val filterKey = "$profileKey|${type.name}"
         prefs[categoryFiltersKey] = Json.encodeToString(existing + (filterKey to categoryIds))
     }
-    suspend fun clearCategoryFilter(profileKey: String, type: CatalogType) = context.dataStore.edit { prefs ->
+    suspend fun clearCategoryFilter(profileKey: String, type: CatalogType) = preferences.editProfileMetadata { prefs ->
         val existing = prefs[categoryFiltersKey]?.let { runCatching { Json.decodeFromString<Map<String, List<String>>>(it) }.getOrNull() }.orEmpty()
         val filterKey = "$profileKey|${type.name}"
         prefs[categoryFiltersKey] = Json.encodeToString(existing - filterKey)
     }
 
     suspend fun backupFingerprint(): String {
-        val values = context.dataStore.data.first().asMap()
+        val values = preferences.data.first().asMap()
         val canonical = buildString {
             BACKUP_STRING_KEYS.sorted().forEach { name ->
                 val value =
@@ -468,7 +482,7 @@ class ProfileStore(private val context: Context) {
     }
 
     suspend fun exportBackup(): String {
-        val values = context.dataStore.data.first().asMap()
+        val values = preferences.data.first().asMap()
         val strings = values.mapNotNull { (key, value) ->
             if (key.name in BACKUP_STRING_KEYS && value is String) key.name to value else null
         }.toMap()
@@ -488,7 +502,7 @@ class ProfileStore(private val context: Context) {
                 "The backup contains invalid profile data"
             }
         }
-        context.dataStore.edit { prefs ->
+        preferences.edit { prefs ->
             BACKUP_STRING_KEYS.forEach { prefs.remove(stringPreferencesKey(it)) }
             BACKUP_INT_KEYS.forEach { prefs.remove(intPreferencesKey(it)) }
             backup.strings.filterKeys { it in BACKUP_STRING_KEYS }.forEach { (name, value) ->
@@ -502,7 +516,7 @@ class ProfileStore(private val context: Context) {
             prefs.remove(sessionsKey)
         }
     }
-    suspend fun clear() = context.dataStore.edit {
+    suspend fun clear() = preferences.edit {
         CatalogDiskCache.clear(context)
         CatalogRepository(context).clear()
         it.remove(key)
