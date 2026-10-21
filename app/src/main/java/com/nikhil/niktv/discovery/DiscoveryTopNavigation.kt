@@ -71,7 +71,8 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     fun textWidth(text: String) = with(density) { measurer.measure(text, style, maxLines = 1).size.width.toDp() }
     val naturalProfile = textWidth("00:00 p.m.") + 68.dp
     val height = maxOf(56.dp, (24f * density.fontScale + 24f).dp)
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
+        .discoveryHeaderFocusEntry(tabRequester)) {
     val widths = discoveryHeaderWidths(maxWidth.value, maxWidth.value, naturalProfile.value)
     Row(Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
@@ -99,7 +100,6 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         DiscoveryAction("My List", horizontalPadding = 12.dp, onFocus = headerFocus) { classic("My List") }
                     }
                 }
-                if (categoriesEnabled) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged)
                 DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize)
             }
             }
@@ -147,7 +147,6 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
             Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.size(36.dp))
             Spacer(Modifier.weight(1f))
             DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
-            if (categoriesEnabled) DiscoveryCategoryAccess(surface, categoryManagerOpen, compact = true, popupChanged = categoryPopupChanged)
             DiscoveryBrowseMenu(menu, changeMenu, surface, classic, null)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -166,7 +165,7 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
 /** A direct entry to the same profile/type-scoped selections used by classic browsing. */
 @Composable
 internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boolean, compact: Boolean = false,
-    popupChanged: (Boolean) -> Unit = {}) {
+    popupChanged: (Boolean) -> Unit = {}, onFocus: () -> Unit = {}) {
     val configure = LocalConfigureProviderDiscovery.current
     val requester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -187,8 +186,8 @@ internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boo
         }
     }
     DisposableEffect(chooseType) { popupChanged(chooseType); onDispose { popupChanged(false) } }
-    DiscoveryAction("IPTV categories", Icons.Default.Tune, iconOnly = compact, visualLabel = "Categories",
-        modifier = Modifier.focusRequester(requester)) {
+    DiscoveryAction("IPTV categories", if (compact) Icons.Default.Tune else null, iconOnly = compact,
+        modifier = Modifier.focusRequester(requester), onFocus = onFocus) {
         val type = when (surface) { DashboardSurface.MOVIES -> CatalogType.MOVIES; DashboardSurface.SERIES -> CatalogType.SERIES; else -> null }
         if (type == null) chooseType = true else { openedHere = true; configure(type) }
     }

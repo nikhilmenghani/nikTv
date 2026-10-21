@@ -19,6 +19,24 @@ import java.time.Duration
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class ProviderDiscoveryTest {
+    @Test fun returningToLandingKeepsReadyRowsWithoutReparsingTheDiskCache() {
+        var cacheReads = 0
+        val source = object : Source() {
+            override suspend fun cached(profile: String, type: CatalogType, categories: List<Category>, preview: Boolean): Map<String, ProviderDiscoveryPage> {
+                cacheReads++
+                return mapOf("a" to ProviderDiscoveryPage(listOf(item("retained")), 1, false, System.currentTimeMillis()))
+            }
+        }
+        val vm = ProviderDiscoveryViewModel(app, source)
+        bind(vm, preview = true)
+        val ready = vm.state.value.pages
+        vm.pause(); bind(vm, preview = true)
+        assertEquals(1, cacheReads)
+        assertEquals(ready, vm.state.value.pages)
+        assertEquals("retained", vm.state.value.items[CatalogType.MOVIES]?.single()?.id)
+        vm.pause(release = true)
+        assertTrue(vm.state.value.pages.isEmpty())
+    }
     private val app get() = RuntimeEnvironment.getApplication()
     private fun item(id: String, title: String = id, category: String = "a") = MediaItem(id, title, null, null, portalCategoryId = category)
     private fun category(id: String) = Category(id, id, CatalogType.MOVIES)

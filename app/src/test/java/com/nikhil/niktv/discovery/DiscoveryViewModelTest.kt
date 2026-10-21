@@ -15,6 +15,48 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryViewModelTest {
+    @Test fun providerFocusRejectsLateMetadataWithoutOpeningAProviderOrDetailRoute() {
+        val old = CompletableDeferred<DiscoveryDetails>()
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun providerDetails(item: MediaItem, type: CatalogType, stale: (DiscoveryDetails) -> Unit) =
+                if (item.id == "old") withContext(NonCancellable) { old.await() }
+                else DiscoveryDetails(card(202).copy(title = "Selected provider title"))
+        })
+        vm.bind("provider-focus", DashboardSurface.SERIES, emptyList()); pump()
+        vm.presentProvider("row:old", MediaItem("old", "Old", null, null), CatalogType.SERIES); pump()
+        vm.presentProvider("row:new", MediaItem("new", "New", null, null), CatalogType.SERIES); pump()
+        old.complete(DiscoveryDetails(card(101))); pump()
+        assertEquals("row:new", vm.state.value.focusedEntryKey)
+        assertEquals(202, vm.state.value.focusedPresentation?.id)
+        assertNull(vm.state.value.detail)
+        assertTrue(vm.state.value.errors.isEmpty())
+    }
+    @Test fun returningFromDetailsRetainsFocusedPresentationAndPreparedBackdrop() {
+        val vm = DiscoveryViewModel(app, Source())
+        vm.bind("return", DashboardSurface.SERIES, emptyList()); pump()
+        vm.presentFocusedCard("continue:chosen", card(42)); vm.retainPreparedPresentation(card(42))
+        vm.pause(); vm.bind("return", DashboardSurface.SERIES, emptyList()); vm.resume("return", DashboardSurface.SERIES)
+        assertEquals("continue:chosen", vm.state.value.focusedEntryKey)
+        assertEquals(42, vm.state.value.focusedPresentation?.id)
+        assertEquals(42, vm.preparedPresentation?.id)
+        vm.bind("different-profile", DashboardSurface.SERIES, emptyList())
+        assertNull(vm.state.value.focusedPresentation)
+        assertNull(vm.preparedPresentation)
+    }
+    @Test fun repeatedSettledProviderFocusReusesItsPresentation() {
+        var requests = 0
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun providerDetails(item: MediaItem, type: CatalogType, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails {
+                requests++; return DiscoveryDetails(card(42))
+            }
+        })
+        vm.bind("repeat-focus", DashboardSurface.MOVIES, emptyList()); pump()
+        val provider = MediaItem("provider", "Title", null, null)
+        vm.presentProvider("row:provider", provider, CatalogType.MOVIES); pump()
+        vm.pause(); vm.bind("repeat-focus", DashboardSurface.MOVIES, emptyList())
+        vm.presentProvider("row:provider", provider, CatalogType.MOVIES); pump()
+        assertEquals(1, requests)
+    }
     @Test fun heroPresentationEnrichesOnlyPublicPresentationWithoutOpeningDetails() {
         val vm = DiscoveryViewModel(app, object : Source() {
             override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =

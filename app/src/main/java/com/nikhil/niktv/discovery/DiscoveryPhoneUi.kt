@@ -103,8 +103,6 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             }
             Spacer(Modifier.weight(1f))
             if (!detail) {
-                DiscoveryCategoryAccess(surface, categoryManagerOpen, compact = true, popupChanged = categoryPopupChanged)
-                Spacer(Modifier.width(6.dp))
                 DiscoveryAction("Settings", Icons.Default.AccountCircle, iconOnly = true) { classic("Settings") }
                 Spacer(Modifier.width(6.dp))
                 DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize)
@@ -142,7 +140,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     play: () -> Unit, add: () -> Unit, info: () -> Unit, previous: () -> Unit, next: () -> Unit,
     carousel: Boolean, index: Int, count: Int, playLabel: String, playEnabled: Boolean,
     reduceMotion: Boolean, onFocus: () -> Unit, onDown: () -> Unit, header: (@Composable () -> Unit)? = null,
-    showSynopsis: Boolean = true, compactDetail: Boolean = false) {
+    showSynopsis: Boolean = true, compactDetail: Boolean = false, categoryActions: (@Composable () -> Unit)? = null) {
     val context = LocalContext.current
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     var drag by remember { mutableFloatStateOf(0f) }
@@ -228,6 +226,12 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         Text("${index + 1} / $count", color = Color.LightGray, fontSize = 11.sp)
                         PhoneHeroIcon("Next featured title", Icons.Default.ChevronRight, true, next,
                             Modifier.onFocusChanged { if (it.isFocused) onFocus() })
+                    }
+                    categoryActions?.let { actions ->
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                            verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {
+                                if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
+                            }) { actions() }
                     }
                 }
             }

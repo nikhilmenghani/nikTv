@@ -36,6 +36,18 @@ internal enum class SeriesDetailPanel { SEARCH, CAST, RELATED }
 internal const val SERIES_INLINE_DETAILS_INDEX = 2
 internal const val SERIES_EPISODE_START_INDEX = 3
 
+internal enum class SeriesDetailFocus { TOP, PLAY, INFO, SEASONS, SORT, TOOLS, EPISODES }
+internal fun adjacentSeriesDetailFocus(current: SeriesDetailFocus, delta: Int, hasSeasons: Boolean): SeriesDetailFocus? {
+    val path = SeriesDetailFocus.entries.filter { it != SeriesDetailFocus.SEASONS || hasSeasons }
+    val index = path.indexOf(current)
+    return if (index < 0) null else path.getOrNull(index + delta)
+}
+internal fun seriesDetailFocusSlot(target: SeriesDetailFocus): Int = when (target) {
+    SeriesDetailFocus.TOP, SeriesDetailFocus.PLAY, SeriesDetailFocus.INFO -> 0
+    SeriesDetailFocus.SEASONS, SeriesDetailFocus.SORT, SeriesDetailFocus.TOOLS -> 1
+    SeriesDetailFocus.EPISODES -> SERIES_EPISODE_START_INDEX
+}
+
 internal fun seriesEpisodeVerticalIndex(episodeIndex: Int, horizontal: Boolean): Int =
     SERIES_EPISODE_START_INDEX + if (horizontal) 0 else episodeIndex
 

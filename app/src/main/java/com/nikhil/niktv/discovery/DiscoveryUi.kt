@@ -61,7 +61,7 @@ internal fun DashboardSurface.trialTitle() = when (this) { DashboardSurface.MOVI
 
 private data class RailEntry(val key: String, val title: String, val artwork: String?, val card: DiscoveryCard? = null,
     val subtitle: String = "", val progress: Float? = null, val open: () -> Unit,
-    val matchCount: Int? = null,
+    val matchCount: Int? = null, val providerMedia: MediaItem? = null, val providerType: CatalogType? = null,
     val popup: (@Composable (Boolean, () -> Unit, () -> Boolean) -> Unit)? = null)
 private data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
     val section: TmdbHomeSection? = null, val providerType: CatalogType? = null, val providerCategory: Category? = null)
@@ -112,19 +112,23 @@ internal fun DiscoveryPreviewScreen(
     }
     val providerState = providerLoaded.takeIf { it.profile == profile && it.categories == expectedProviderCategories }
         ?: ProviderDiscoveryState(profile = profile, categories = expectedProviderCategories)
-    val providerQueues by produceState(profile to emptyMap<String, List<MediaItem>>(), profile, providerSelections, providerState.pages) {
+    val providerQueues by produceState(providerVm.retainedRows.takeIf { it.first == profile }
+        ?: (profile to emptyMap<String, List<MediaItem>>()), profile, providerSelections, providerState.pages) {
         value = profile to withContext(Dispatchers.Default) {
             buildMap { providerSelections.forEach { (type, categories) -> categories.forEach { category ->
                 put("provider:${type.name}:${category.id}", providerDiscoveryItems(providerDiscoverySources(listOf(category)), providerState.pages[type].orEmpty()))
             } } }
         }
     }
+    SideEffect { if (providerQueues.first == profile) providerVm.retainedRows = providerQueues }
     var providerCollection by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
     var providerCollectionCategory by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
     LaunchedEffect(profile, app.session, providerSelections, app.cacheIntervalMinutes) {
         providerVm.bind(app.session, providerSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
     }
-    DisposableEffect(providerVm) { onDispose { providerVm.pause(release = true) } }
+    // Keep bounded landing previews for an immediate return from details; nested detail
+    // routes release their private catalogue copies. No network work survives disposal.
+    DisposableEffect(providerVm) { onDispose { providerVm.pause(release = vm.state.value.detail != null) } }
     val providerLifecycle = LocalLifecycleOwner.current.lifecycle
     val bindProvider by rememberUpdatedState {
         providerVm.bind(app.session, providerSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
@@ -145,6 +149,17 @@ internal fun DiscoveryPreviewScreen(
     }
     val localScope = rememberCoroutineScope()
     var configure by remember { mutableStateOf(false) }
+    val tmdbCategoriesRequester = remember { FocusRequester() }
+    var restoreTmdbCategories by remember { mutableStateOf(false) }
+    LaunchedEffect(configure) {
+        if (!configure && restoreTmdbCategories) {
+            restoreTmdbCategories = false
+            repeat(30) {
+                withFrameNanos { }
+                if (hostView.hasWindowFocus() && runCatching { tmdbCategoriesRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            }
+        }
+    }
     var menu by remember { mutableStateOf(false) }
     var categoryPopup by remember { mutableStateOf(false) }
     var actor by remember(profile, surface) { mutableStateOf<DiscoveryPerson?>(null) }
@@ -226,6 +241,8 @@ internal fun DiscoveryPreviewScreen(
             if (recents.isNotEmpty()) add(Rail("continue", "Continue Watching", recents.map { recent ->
                 val progress = discoveryRecentProgress(recent, app.playbackProgress)
                 RailEntry("continue:${recent.key}", recent.media.title, recent.media.logo,
+                    providerMedia = recent.series ?: recent.media,
+                    providerType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                     subtitle = recent.lastPlayed?.title ?: recent.categoryTitle.orEmpty(),
                     progress = progress?.takeIf { it.durationMillis > 0 }?.let { (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f) },
                     open = { returningTo = "continue:${recent.key}"; openRecent(recent) },
@@ -247,6 +264,7 @@ internal fun DiscoveryPreviewScreen(
                 if (episodes.isNotEmpty()) add(Rail("episodes", "New Episodes", episodes.map { group ->
                     val episode = group.latest
                     RailEntry("episodes:${group.key}", group.watched.series.title, group.watched.series.logo,
+                        providerMedia = group.watched.series, providerType = CatalogType.SERIES,
                         subtitle = "S${episode.seasonNumber ?: "?"}:E${episode.episodeNumber ?: "?"} · ${episode.title}",
                         open = { returningTo = "episodes:${group.key}"; openWatched(group.watched, episode) },
                         popup = { expanded, dismiss, restore ->
@@ -282,6 +300,7 @@ internal fun DiscoveryPreviewScreen(
                     val saved = FavoriteItem(if (type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
                         item, profileKey = profile, categoryTitle = category.title)
                     RailEntry("$rowKey:${item.id}", item.title, item.logo,
+                        providerMedia = item, providerType = type,
                         subtitle = category.title.orEmpty(),
                         progress = providerDiscoveryProgress(app, type, item),
                         open = { returningTo = "$rowKey:${item.id}"; openProvider(type, item, queue) },
@@ -309,9 +328,15 @@ internal fun DiscoveryPreviewScreen(
             } } == true
     }
     val routeKey = "$profile:${surface.name}:${state.detail?.key ?: "landing"}"
-    val rawCandidate = state.details?.card?.takeIf { it.key == state.detail?.key } ?: state.detail ?: featured ?: state.hero
+    val focusedRail = if (state.detail == null) rails.firstOrNull { row -> row.entries.any { it.key == state.focusedEntryKey } } else null
+    val focusedEntry = focusedRail?.entries?.firstOrNull { it.key == state.focusedEntryKey }
+    val focusedProvider = focusedEntry?.providerMedia
+    val focusedType = focusedEntry?.providerType
+    val focusedQueue = focusedRail?.key?.let { providerQueues.second[it] }.orEmpty().ifEmpty { listOfNotNull(focusedProvider) }
+    val rawCandidate = state.details?.card?.takeIf { it.key == state.detail?.key } ?: state.detail ?: state.focusedPresentation ?: featured ?: state.hero
     val candidate = state.heroPresentation?.takeIf { state.detail == null && it.key == rawCandidate?.key } ?: rawCandidate
-    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait })
+    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait }, vm.preparedPresentation?.takeIf { it.key == candidate?.key && it.title == candidate.title })
+    SideEffect { prepared?.let(vm::retainPreparedPresentation) }
     val displayed = if (phonePortrait) candidate else prepared
     var glassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     providerCollection?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
@@ -365,12 +390,19 @@ internal fun DiscoveryPreviewScreen(
                 val routeIdentity = state.detail?.key ?: "landing"
                 val playOrigin = "$routeIdentity:play"
                 SideEffect { returnRequesters[playOrigin] = playRequester }
-                LaunchedEffect(state.detail?.key, state.detail != null && displayed?.key == state.detail?.key, remoteNavigation) {
+                var handledNavigationId by rememberSaveable { mutableLongStateOf(-1L) }
+                LaunchedEffect(app.discoveryNavigationId, state.detail?.key, state.detail != null && displayed?.key == state.detail?.key, remoteNavigation) {
                     if (phone && !remoteNavigation) return@LaunchedEffect
+                    val menuEntry = state.detail == null && handledNavigationId != app.discoveryNavigationId
+                    if (menuEntry) {
+                        handledNavigationId = app.discoveryNavigationId
+                        coordinator.cancel()
+                        listState.scrollToItem(0)
+                    }
                     var readinessFrames = 0
                     while (!hostView.hasWindowFocus() && readinessFrames++ < 60) withFrameNanos { }
                     withFrameNanos { }; withFrameNanos { }
-                    val key = routeOrigins[routeIdentity] ?: returningTo.takeIf { state.detail == null }
+                    val key = if (menuEntry) null else routeOrigins[routeIdentity] ?: returningTo.takeIf { state.detail == null }
                     if (key != null) repeat(8) {
                         if (runCatching { returnRequesters[key]?.requestFocus() == true }.getOrDefault(false)) return@LaunchedEffect
                         withFrameNanos { }
@@ -380,7 +412,7 @@ internal fun DiscoveryPreviewScreen(
                         withFrameNanos { }
                     }
                 }
-                var focusedRow by remember { mutableStateOf<String?>(null) }
+                var focusedRow by rememberSaveable { mutableStateOf<String?>(null) }
                 fun alignFocusedRow(key: String, index: Int) {
                     // Left/Right changes the item, not the vertical navigation destination.
                     if (focusedRow != key) {
@@ -448,14 +480,31 @@ internal fun DiscoveryPreviewScreen(
                             .orEmpty().take(10).indexOfFirst { it.key == displayed?.key }.takeIf { it >= 0 }?.plus(1) else null,
                             height = heroHeight, landscape = landscape, compact = compactLandscape, detail = state.detail != null,
                             loading = displayed == null && (state.loading.isNotEmpty() || candidate != null),
-                            inList = displayed?.let { card -> app.favorites.any { it.profileKey == profile && it.media.id == card.media.id } } == true,
+                            inList = if (focusedProvider != null) app.favorites.any { it.profileKey == profile && it.media.id == focusedProvider.id }
+                                else displayed?.let { card -> app.favorites.any { it.profileKey == profile && it.media.id == card.media.id } } == true,
                             playRequester = playRequester, infoRequester = infoFocusRequester,
-                            play = { displayed?.let { returningTo = playOrigin; routeOrigins = routeOrigins + (routeIdentity to playOrigin); playCard(it) } },
-                            add = { displayed?.let { toggleFavorite(favorite(it)) } },
-                            info = { displayed?.let { details(it, origin) } },
+                            play = {
+                                if (focusedProvider != null) focusedEntry?.open?.invoke()
+                                else displayed?.let { returningTo = playOrigin; routeOrigins = routeOrigins + (routeIdentity to playOrigin); playCard(it) }
+                            },
+                            add = {
+                                if (focusedProvider != null && focusedType != null) toggleFavorite(FavoriteItem(
+                                    if (focusedType == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE, focusedProvider, profileKey = profile))
+                                else displayed?.let { toggleFavorite(favorite(it)) }
+                            },
+                            info = {
+                                if (focusedProvider != null && focusedType != null) { returningTo = origin; openProvider(focusedType, focusedProvider, focusedQueue) }
+                                else displayed?.let { details(it, origin) }
+                            },
                             onFocus = { contentFocused = true; focusedRow = "hero" }, onDown = { moveRow(positions.hero, 1) }, onUp = { moveRow(positions.hero, -1) },
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
                             index = state.heroIndex, count = state.heroes.size,
+                            categoryActions = if (state.detail == null) ({
+                                DiscoveryCategoryAccess(surface, app.categoryManagerOpen, popupChanged = { categoryPopup = it },
+                                    onFocus = { contentFocused = true; focusedRow = "hero" })
+                                DiscoveryAction("TMDB categories", modifier = Modifier.focusRequester(tmdbCategoriesRequester),
+                                    onFocus = { contentFocused = true; focusedRow = "hero" }) { restoreTmdbCategories = true; configure = true }
+                            }) else null,
                             portraitPhone = phonePortrait,
                             phoneHeader = if (phonePortrait && state.detail == null) ({
                                 DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
@@ -570,7 +619,10 @@ internal fun DiscoveryPreviewScreen(
                                 row.providerType?.let { !providerState.ready || (row.entries.isEmpty() && it !in providerState.errors && it !in providerState.capped) } == true,
                             register = { handler -> focusHandlers[index] = handler }, unregister = { focusHandlers.remove(index) },
                             focused = { entry -> contentFocused = true; returningTo = entry.key; routeOrigins = routeOrigins + (routeIdentity to entry.key); if (!phonePortrait) alignFocusedRow(row.key, index) },
-                            present = { entry -> entry.card?.let { featured = it } },
+                            present = { entry ->
+                                if (entry.providerMedia != null && entry.providerType != null) vm.presentProvider(entry.key, entry.providerMedia, entry.providerType)
+                                else entry.card?.let { featured = it; vm.presentFocusedCard(entry.key, it) }
+                            },
                             move = { delta -> moveRow(index, delta) },
                             viewAll = row.providerType?.let { type -> { returningTo = "${row.key}:all"; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
                                 ?: row.section?.let { section -> { returningTo = "${row.key}:all"; openSection(section) } })
@@ -699,14 +751,8 @@ internal fun DiscoveryPreviewScreen(
             })
         }
     }
-    if (configure) AlertDialog(onDismissRequest = { configure = false }, title = { Text("Customize ${surface.trialTitle()}") },
+    if (configure) AlertDialog(onDismissRequest = { configure = false }, title = { Text("TMDB categories") },
         text = { LazyColumn(Modifier.heightIn(max = 400.dp)) {
-            item("iptv-settings") {
-                Text("IPTV collections", color = Color.White, fontWeight = FontWeight.SemiBold)
-                providerSelections.keys.forEach { type -> DiscoveryAction("Choose ${type.title} categories", Icons.Default.Tune,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { configure = false; configureProvider(type) } }
-                Text("TMDB discovery", Modifier.padding(top = 12.dp), fontWeight = FontWeight.SemiBold)
-            }
             items(TmdbHomeSection.entries.filter { surface == DashboardSurface.HOME || it.series == (surface == DashboardSurface.SERIES) }) { section ->
                 Row(Modifier.fillMaxWidth().toggleablePreview { vm.configure(if (section in state.sections) state.sections - section else state.sections + section) }, verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(section in state.sections, onCheckedChange = { vm.configure(if (it) state.sections + section else state.sections - section) }); Text(section.title)
@@ -736,9 +782,9 @@ private fun DiscoveryLazyRow(
 
 /** Promote metadata and its prepared image together; canceled old decodes cannot change the hero. */
 @Composable
-private fun preparedDiscoveryCard(card: DiscoveryCard?): State<DiscoveryCard?> {
+private fun preparedDiscoveryCard(card: DiscoveryCard?, initial: DiscoveryCard? = null): State<DiscoveryCard?> {
     val context = LocalContext.current
-    return produceState<DiscoveryCard?>(null, card) {
+    return produceState<DiscoveryCard?>(initial, card) {
         if (card == null) { value = null; return@produceState }
         val url = card.backdrop?.let { thumbnailArtworkUrl(it, 1280) }
         if (url == null) { value = card; return@produceState }
@@ -761,8 +807,8 @@ private fun DiscoverySupplementStatus(section: String, state: DiscoveryState, vm
 @Composable
 internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean) {
     val context = LocalContext.current
-    var ready by remember { mutableStateOf<String?>(null) }
     val requested = card?.backdrop?.let { thumbnailArtworkUrl(it, 1280) }
+    var ready by remember { mutableStateOf(requested) }
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
         Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else 300), label = "discoveryBackdrop") { url ->
@@ -782,13 +828,14 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     previous: () -> Unit, next: () -> Unit, carousel: Boolean, index: Int, count: Int,
     playLabel: String = "Play", playEnabled: Boolean = true,
     phoneHeader: (@Composable () -> Unit)? = null, portraitPhone: Boolean = false,
-    showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false }) {
+    showSynopsis: Boolean = true, compactDetail: Boolean = false, onUp: () -> Boolean = { false },
+    categoryActions: (@Composable () -> Unit)? = null) {
     if (portraitPhone) {
         val context = LocalContext.current
         val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         DiscoveryPhoneHero(card, rank, height.coerceAtLeast(if (compactDetail) 320.dp else 480.dp), detail, loading, inList,
             playRequester, infoRequester, play, add, info, previous, next, carousel, index, count,
-            playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail)
+            playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail, categoryActions)
         return
     }
     var drag by remember { mutableFloatStateOf(0f) }
@@ -812,7 +859,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         card?.overview?.takeIf { showSynopsis && it.isNotBlank() }?.let { Text(it, Modifier.widthIn(max = if (landscape) 600.dp else 500.dp).padding(top = if (compact) 6.dp else 8.dp),
             color = Color(0xFFD6D8DC), fontSize = if (compact) 12.sp else 13.sp, lineHeight = if (compact) 16.sp else 18.sp, maxLines = if (detail) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis) }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {
                 if (it.type != KeyEventType.KeyDown) false
                 else when (it.key) {
@@ -830,8 +877,13 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             if (landscape && carousel) {
                 DiscoveryCarouselControls(index, count, onFocus, previous, next)
             }
+            if (landscape) categoryActions?.invoke()
         }
-        if (carousel && !landscape) DiscoveryCarouselControls(index, count, onFocus, previous, next, Modifier.padding(top = 8.dp))
+        if (!landscape && (carousel || categoryActions != null)) FlowRow(Modifier.padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (carousel) DiscoveryCarouselControls(index, count, onFocus, previous, next)
+            categoryActions?.invoke()
+        }
     }
 }
 

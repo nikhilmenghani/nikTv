@@ -249,6 +249,7 @@ class DiscoveryNavigationDeviceTest {
         val profile = PortalProfile("Fixture", "https://example.invalid", "")
         var plays = 0; var favorites = 0; var exited = false
         val selectedSurface = androidx.compose.runtime.mutableStateOf(DashboardSurface.HOME)
+        val navigationId = androidx.compose.runtime.mutableLongStateOf(0L)
         var classicDestination: String? = null
         var refreshes = 0; var related = 0
         val favoriteCards = androidx.compose.runtime.mutableStateOf(emptyList<FavoriteItem>())
@@ -276,7 +277,8 @@ class DiscoveryNavigationDeviceTest {
                         LocalRecommendationTypeFor provides { _, type -> type }
                     ) { MaterialTheme {
                         DiscoveryPreviewScreen(NikTvState(savedProfile = profile, favorites = favoriteCards.value,
-                            discoveryMatchCounts = matchCounts.value), selectedSurface.value, { selectedSurface.value = it }, { exited = true }, { classicDestination = it },
+                            discoveryMatchCounts = matchCounts.value, discoveryNavigationId = navigationId.longValue), selectedSurface.value,
+                            { selectedSurface.value = it; navigationId.longValue++ }, { exited = true }, { classicDestination = it },
                             { plays++ }, { _, _, _ -> plays++ }, {}, { _, _ -> }, { favorite ->
                                 favorites++
                                 favoriteCards.value = if (favoriteCards.value.any { it.key == favorite.key })
@@ -287,7 +289,8 @@ class DiscoveryNavigationDeviceTest {
             }
             await("Hero ready") { text("Fixture title 1") != null }
             await("Entry focuses active trial tab") { focused("Home 2") }
-            if (context.resources.configuration.smallestScreenWidthDp < 600) {
+            if (usesDiscoveryPhoneLayout(context.resources.configuration.smallestScreenWidthDp,
+                    context.isTvLikeDevice(context.resources.configuration))) {
                 listOf("Home 2", "Movies 2", "Series 2", "Live TV").forEach { label ->
                     await("Phone destination fully visible: $label") { fullTabLabelVisible(label) }
                 }
@@ -315,7 +318,19 @@ class DiscoveryNavigationDeviceTest {
             await("Down enters the series row after rapid reversals") { focused("Fixture title 1") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
             await("Up restores the movie row's selected item") { focused("Fixture title 2") }
-            if (motionOnly) return
+            if (motionOnly) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Return to hero") { focused("Play") }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+                await("Return to active menu") { focused("Home 2") }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Movies menu entry keeps focus in the header") { selectedSurface.value == DashboardSurface.MOVIES && focused("Movies 2") }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Reopening Home does not restore its previous tile") { selectedSurface.value == DashboardSurface.HOME && focused("Home 2") }
+                return
+            }
             holdCenter()
             await("Long-press release opens the menu without selecting Play") { text("Watch trailer") != null }
             assertEquals(0, plays); assertEquals(0, favorites); assertEquals(0, refreshes); assertEquals(0, related)

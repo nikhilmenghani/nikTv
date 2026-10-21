@@ -7,6 +7,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SeriesDetailPolicyTest {
+    @Test fun repeatedUpReachesTheTopIncludingDescriptionAndSingleSeasonSeries() {
+        for (hasSeasons in listOf(true, false)) {
+            var target = SeriesDetailFocus.EPISODES
+            val visited = mutableListOf(target)
+            repeat(8) { adjacentSeriesDetailFocus(target, -1, hasSeasons)?.let { target = it; visited += it } }
+            assertEquals(SeriesDetailFocus.TOP, target)
+            assertTrue(visited.contains(SeriesDetailFocus.INFO))
+            assertEquals(hasSeasons, visited.contains(SeriesDetailFocus.SEASONS))
+            assertNull(adjacentSeriesDetailFocus(target, -1, hasSeasons))
+        }
+    }
+    @Test fun offscreenHeroControlsRevealTheTopSlotBeforeRequestingFocus() {
+        assertEquals(0, seriesDetailFocusSlot(SeriesDetailFocus.PLAY))
+        assertEquals(0, seriesDetailFocusSlot(SeriesDetailFocus.INFO))
+        assertEquals(0, seriesDetailFocusSlot(SeriesDetailFocus.TOP))
+        assertEquals(1, seriesDetailFocusSlot(SeriesDetailFocus.SEASONS))
+        assertEquals(SERIES_EPISODE_START_INDEX, seriesDetailFocusSlot(SeriesDetailFocus.EPISODES))
+    }
     @Test fun horizontalEpisodeReturnUsesOneVerticalSlotWithoutLosingTheEpisodeIndex() {
         assertEquals(SERIES_EPISODE_START_INDEX, seriesEpisodeVerticalIndex(80, horizontal = true))
         assertEquals(SERIES_EPISODE_START_INDEX + 80, seriesEpisodeVerticalIndex(80, horizontal = false))

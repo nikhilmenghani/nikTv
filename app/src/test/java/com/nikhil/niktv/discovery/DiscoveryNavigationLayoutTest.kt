@@ -2,8 +2,23 @@ package com.nikhil.niktv.discovery
 
 import org.junit.Assert.*
 import org.junit.Test
+import androidx.compose.ui.focus.FocusDirection
 
 class DiscoveryNavigationLayoutTest {
+    @Test fun recreatedHeaderRedirectsInitialEntryBeforeBackAndAllowsExplicitPopupReturn() {
+        val entry = DiscoveryHeaderEntry()
+        assertTrue(entry.redirect(FocusDirection.Enter))
+        assertFalse(entry.redirect(FocusDirection.Enter))
+        assertTrue(DiscoveryHeaderEntry().redirect(FocusDirection.Enter))
+    }
+    @Test fun scrollingBackUpAlwaysEntersTheSelectedTab() {
+        val entry = DiscoveryHeaderEntry()
+        entry.redirect(FocusDirection.Enter)
+        repeat(5) {
+            assertTrue(entry.redirect(FocusDirection.Up))
+            assertFalse(entry.redirect(FocusDirection.Enter))
+        }
+    }
     @Test fun tabletAndTvFeedNavigationIncludesTheScrollingHeaderBeforeHeroAndRails() {
         val positions = discoveryFeedIndices(scrollingHeader = true, series = false)
         val rows = listOf(positions.header!!, positions.hero, positions.firstRail, positions.firstRail + 1)

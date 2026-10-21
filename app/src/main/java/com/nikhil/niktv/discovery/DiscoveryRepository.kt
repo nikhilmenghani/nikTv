@@ -94,8 +94,8 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
             discoveryActorCredits(tmdb.discoveryJson("/person/$id/combined_credits"))
         }.filter { it.released() }
     }
-    suspend fun providerDetails(item: com.nikhil.niktv.model.MediaItem, type: com.nikhil.niktv.model.CatalogType,
-        stale: (DiscoveryDetails) -> Unit = {}): DiscoveryDetails {
+    override suspend fun providerDetails(item: com.nikhil.niktv.model.MediaItem, type: com.nikhil.niktv.model.CatalogType,
+        stale: (DiscoveryDetails) -> Unit): DiscoveryDetails {
         val fallback = providerDetailFallback(item, type)
         val card = cachedProviderMetadata(cache, item, type) {
             if ((item.externalTmdbId ?: 0) > 0) providerTmdbSeed(item, type)

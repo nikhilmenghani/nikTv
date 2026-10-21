@@ -1,7 +1,10 @@
 package com.nikhil.niktv.discovery
 
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.foundation.MutatePriority
+import androidx.compose.foundation.lazy.LazyLayoutScrollScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.*
@@ -81,15 +84,21 @@ internal class DiscoveryScrollCoordinator(private val scope: CoroutineScope) {
     }
 
     private suspend fun scroll(state: LazyListState, index: Int, reduceMotion: Boolean) {
-        val info = state.layoutInfo
-        val target = info.visibleItemsInfo.firstOrNull { it.index == index }
-        if (target == null) {
-            if (reduceMotion) state.scrollToItem(index) else state.animateScrollToItem(index)
-        } else {
-            val distance = (target.offset - info.viewportStartOffset).toFloat()
-            if (distance != 0f) {
-                if (reduceMotion) state.scrollToItem(index)
-                else state.animateScrollBy(distance, spring(dampingRatio = 1f, stiffness = 180f))
+        if (reduceMotion) { state.scrollToItem(index); return }
+        // A bounded curve avoids the spring's long one-pixel settling tail. Use the
+        // same path for composed and offscreen rows, updating estimated geometry as
+        // the destination composes rather than starting a second alignment spring.
+        // UserInput priority also prevents a lower-priority implicit focus reveal
+        // from canceling this move. A real touch scroll or a new direction can cancel it.
+        state.scroll(MutatePriority.UserInput) {
+            val layout = LazyLayoutScrollScope(state, this)
+            if (layout.calculateDistanceTo(index) == 0) return@scroll
+            var previousFraction = 0f
+            animate(0f, 1f, animationSpec = tween(240, easing = FastOutSlowInEasing)) { fraction, _ ->
+                val remaining = layout.calculateDistanceTo(index).toFloat()
+                val portion = ((fraction - previousFraction) / (1f - previousFraction).coerceAtLeast(.000001f)).coerceIn(0f, 1f)
+                scrollBy(remaining * portion)
+                previousFraction = fraction
             }
         }
     }

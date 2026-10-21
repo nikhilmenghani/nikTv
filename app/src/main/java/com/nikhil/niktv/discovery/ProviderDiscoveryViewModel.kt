@@ -148,6 +148,7 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
     private val source: ProviderDiscoverySource = ProviderDiscoveryRepository(app)) : AndroidViewModel(app) {
     private val mutable = MutableStateFlow(ProviderDiscoveryState())
     val state = mutable.asStateFlow()
+    var retainedRows: Pair<String, Map<String, List<MediaItem>>> = "" to emptyMap()
     private var generation = 0L
     private var session: PortalSession? = null
     private var pageLoader: ProviderDiscoveryPageLoader? = null
@@ -162,6 +163,7 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
         this.pageLoader = pageLoader
         ttl = ttlMillis.coerceAtLeast(60_000L)
         val profile = session?.profile?.cacheKey().orEmpty()
+        if (mutable.value.profile != profile) retainedRows = "" to emptyMap()
         val selected = categories.mapValues { providerDiscoverySources(it.value) }.filterValues { it.isNotEmpty() }
         val identity = "$profile:$preview:" + selected.entries.sortedBy { it.key.name }.joinToString { (type, values) -> "$type:${values.map { it.id }}" }
         if (mutable.value.identity == identity && mutable.value.ready) return
@@ -192,7 +194,7 @@ internal class ProviderDiscoveryViewModel @JvmOverloads constructor(app: Applica
     }
     fun pause(release: Boolean = false) {
         generation++; jobs.values.forEach { it.cancel() }; jobs.clear(); diskJob?.cancel()
-        if (release) { session = null; mutable.value = ProviderDiscoveryState() }
+        if (release) { session = null; mutable.value = ProviderDiscoveryState(); retainedRows = "" to emptyMap() }
         else mutable.update { it.copy(loading = emptySet()) }
     }
     fun load(type: CatalogType, refresh: Boolean = false, categoryIds: Set<String>? = null) {

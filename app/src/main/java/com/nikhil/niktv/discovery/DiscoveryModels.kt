@@ -69,7 +69,8 @@ internal data class DiscoveryState(
     val related: List<DiscoveryCard> = emptyList(), val collection: List<DiscoveryCard> = emptyList(),
     val reviews: List<DiscoveryReview> = emptyList(), val episodes: List<DiscoveryEpisode> = emptyList(),
     val season: Int? = null, val heroes: List<DiscoveryCard> = emptyList(), val heroIndex: Int = 0,
-    val heroPresentation: DiscoveryCard? = null
+    val heroPresentation: DiscoveryCard? = null,
+    val focusedEntryKey: String? = null, val focusedPresentation: DiscoveryCard? = null
 ) {
     val hero get() = heroes.getOrNull(heroIndex)
 }

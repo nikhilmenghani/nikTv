@@ -198,6 +198,8 @@ internal fun ModernSeriesDetailScreen(
     val episodeRowState = key(profile, series.id, state.selectedSeriesSeason) { rememberLazyListState() }
     val landscapeRequesters = remember(profile, series.id) { mutableMapOf<String, FocusRequester>() }
     val sortRequester = remember(series.id) { FocusRequester() }
+    val synopsisRequester = remember(series.id) { FocusRequester() }
+    val wideFocusCoordinator = remember(series.id) { com.nikhil.niktv.discovery.DiscoveryScrollCoordinator(detailScope) }
     val moreRequester = remember(series.id) { FocusRequester() }
     var episodeMove by remember { mutableStateOf<Job?>(null) }
 
@@ -319,6 +321,7 @@ internal fun ModernSeriesDetailScreen(
         if (filteredEpisodes.isEmpty()) return
         val index = filteredEpisodes.indexOfFirst { it.id == focusedEpisodeId }.coerceAtLeast(0)
         episodeMove?.cancel()
+        wideFocusCoordinator.cancel()
         episodeMove = detailScope.launch {
             if (episodeListState.layoutInfo.visibleItemsInfo.none { it.index == SERIES_EPISODE_START_INDEX })
                 episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX)
@@ -328,7 +331,27 @@ internal fun ModernSeriesDetailScreen(
             }
         }
     }
-    DisposableEffect(profile, series.id, selectedSeason, activeSearchQuery, episodeSortDescending) { onDispose { episodeMove?.cancel() } }
+    fun requestWideFocus(target: SeriesDetailFocus, preferred: FocusRequester? = null) {
+        if (target == SeriesDetailFocus.EPISODES) { focusLandscapeEpisode(); return }
+        episodeMove?.cancel()
+        val requester = preferred ?: when (target) {
+            SeriesDetailFocus.TOP -> heroActionRequesters[0]
+            SeriesDetailFocus.PLAY -> detailPlayRequester
+            SeriesDetailFocus.INFO -> synopsisRequester
+            SeriesDetailFocus.SEASONS -> selectedSeasonRequester
+            SeriesDetailFocus.SORT -> sortRequester
+            else -> toolbarRequester
+        }
+        wideFocusCoordinator.move(episodeListState, seriesDetailFocusSlot(target), reducedMotion) {
+            runCatching { requester.requestFocus() }.getOrDefault(false)
+        }
+    }
+    fun moveWideFocus(from: SeriesDetailFocus, delta: Int) {
+        adjacentSeriesDetailFocus(from, delta, availableSeasons.size > 1)?.let { requestWideFocus(it) }
+    }
+    DisposableEffect(profile, series.id, selectedSeason, activeSearchQuery, episodeSortDescending) {
+        onDispose { episodeMove?.cancel(); wideFocusCoordinator.cancel() }
+    }
     val episodeIds = remember(filteredEpisodes) { filteredEpisodes.map { it.id } }
     val pendingPlaybackReturnId = entryPlaybackReturnFocusId?.takeUnless {
         it == handledPlaybackReturnFocusId
@@ -434,17 +457,17 @@ internal fun ModernSeriesDetailScreen(
             openTmdbMovie = openTmdbMovie, openTmdbSeries = openTmdbSeries,
             playLabel = if (primaryEpisodeToPlay == null) "Loading episodes…" else if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}" else if (episodeSortDescending) "Play latest" else "Start series",
             playEnabled = primaryEpisodeToPlay != null,
-            castUp = { runCatching { castButtonRequester.requestFocus() } },
-            relatedUp = { runCatching { relatedButtonRequester.requestFocus() } },
+            castUp = { if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.TOOLS, castButtonRequester) else runCatching { castButtonRequester.requestFocus() } },
+            relatedUp = { if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.TOOLS, relatedButtonRequester) else runCatching { relatedButtonRequester.requestFocus() } },
             playRequester = detailPlayRequester, backRequester = heroActionRequesters[0],
             episodeDown = if (!mobileEpisodeLayout) ({ focusLandscapeEpisode() }) else null,
+            heroUp = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.PLAY, -1) }) else null,
+            topDown = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.TOP, 1) }) else null,
+            synopsisRequester = synopsisRequester,
+            synopsisUp = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.INFO, -1) }) else null,
+            synopsisDown = if (!mobileEpisodeLayout) ({ moveWideFocus(SeriesDetailFocus.INFO, 1) }) else null,
             down = {
-                if (!mobileEpisodeLayout) detailScope.launch {
-                    episodeListState.animateScrollToItem(1)
-                    repeat(12) { withFrameNanos { }
-                        if (runCatching { (if (availableSeasons.size > 1) selectedSeasonRequester else sortRequester).requestFocus() }.getOrDefault(false)) return@launch
-                    }
-                } else detailScope.launch {
+                if (!mobileEpisodeLayout) { moveWideFocus(SeriesDetailFocus.PLAY, 1) } else detailScope.launch {
                     if (filteredEpisodes.isNotEmpty()) {
                         episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX, -toolbarHeightPx)
                         repeat(12) { withFrameNanos { }; if (runCatching { firstEpisodeRequester.requestFocus() }.getOrDefault(false)) return@launch }
@@ -470,6 +493,7 @@ internal fun ModernSeriesDetailScreen(
                     }
                 }
             }, layout = { hero, castRow, supplementary, focusCast, focusRelated ->
+        val seriesContent: @Composable () -> Unit = {
         LazyColumn(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
             state = episodeListState,
@@ -488,7 +512,7 @@ internal fun ModernSeriesDetailScreen(
                         LazyRow(
                             modifier = Modifier.onPreviewKeyEvent { event ->
                                 if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { sortRequester.requestFocus(); true }
-                                else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { detailPlayRequester.requestFocus(); true } else false
+                                else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) { moveWideFocus(SeriesDetailFocus.SEASONS, -1); true } else false
                             }, horizontalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(end = 12.dp)
                         ) {
@@ -527,8 +551,8 @@ internal fun ModernSeriesDetailScreen(
                     Row(
                         modifier = Modifier.fillMaxWidth().then(if (!mobileEpisodeLayout) Modifier.onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionUp -> { (if (availableSeasons.size > 1) selectedSeasonRequester else detailPlayRequester).requestFocus(); true }
-                                Key.DirectionDown -> { toolbarRequester.requestFocus(); true }
+                                Key.DirectionUp -> { moveWideFocus(SeriesDetailFocus.SORT, -1); true }
+                                Key.DirectionDown -> { moveWideFocus(SeriesDetailFocus.SORT, 1); true }
                                 else -> false
                             }
                         } else Modifier),
@@ -579,7 +603,7 @@ internal fun ModernSeriesDetailScreen(
                             )
                     FlowRow(modifier = if (!mobileEpisodeLayout) Modifier.onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                            Key.DirectionUp -> { sortRequester.requestFocus(); true }
+                            Key.DirectionUp -> { moveWideFocus(SeriesDetailFocus.TOOLS, -1); true }
                             Key.DirectionDown -> {
                                 if (expandedPanel == null) { focusLandscapeEpisode(); true } else false
                             }
@@ -766,18 +790,28 @@ internal fun ModernSeriesDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionUp -> { toolbarRequester.requestFocus(); true }
-                                Key.DirectionDown -> {
-                                    if (state.episodeHasMore && activeSearchQuery.isBlank()) detailScope.launch {
-                                        episodeListState.scrollToItem(SERIES_EPISODE_START_INDEX + 1)
-                                        repeat(12) { withFrameNanos { }; if (runCatching { moreRequester.requestFocus() }.getOrDefault(false)) return@launch }
-                                    }; true
-                                }
+                                Key.DirectionUp -> { moveWideFocus(SeriesDetailFocus.EPISODES, -1); true }
+                                Key.DirectionDown -> true
                                 else -> false
                             }
-                        }) { items(filteredEpisodes, key = { it.id }) { episodeCard(it) } }
+                        }) {
+                            items(filteredEpisodes, key = { it.id }) { episodeCard(it) }
+                            if ((state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) item("episodes-load-more") {
+                                Box(Modifier.width(200.dp).heightIn(min = 200.dp), contentAlignment = Alignment.Center) {
+                                    NikTvSecondaryActionButton(onClick = loadMoreEpisodes,
+                                        modifier = Modifier.fillMaxWidth().focusRequester(moreRequester).onPreviewKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) { focusLandscapeEpisode(); true } else false
+                                        }) {
+                                        if (state.episodeLoadingMore) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        else Icon(Icons.Default.Add, null, Modifier.size(20.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(if (state.episodeLoadingMore) "Loading episodes…" else "Load more episodes")
+                                    }
+                                }
+                            }
+                        }
                 }
-                if ((state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) {
+                if (mobileEpisodeLayout && (state.episodeHasMore || state.episodeLoadingMore) && activeSearchQuery.isBlank()) {
                     item("episodes-load-more") {
                         Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
                             NikTvSecondaryActionButton(
@@ -801,6 +835,9 @@ internal fun ModernSeriesDetailScreen(
                 }
             }
         }
+        }
+        if (mobileEpisodeLayout) seriesContent()
+        else com.nikhil.niktv.discovery.DiscoveryVerticalFocusViewport(wideFocusCoordinator, seriesContent)
         })
 
     }

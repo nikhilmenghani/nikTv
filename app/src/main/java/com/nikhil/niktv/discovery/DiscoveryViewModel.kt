@@ -16,6 +16,11 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     private val detail = DiscoveryGeneration()
     private val seasonGeneration = DiscoveryGeneration()
     private val heroGeneration = DiscoveryGeneration()
+    private val focusGeneration = DiscoveryGeneration()
+    private var completedFocusKey: String? = null
+    var preparedPresentation: DiscoveryCard? = null
+        private set
+    fun retainPreparedPresentation(card: DiscoveryCard) { preparedPresentation = card }
     private var heroRequestKey: String? = null
     private val jobs = mutableMapOf<String, Job>()
     private val stack = mutableListOf<DiscoveryCard>()
@@ -23,6 +28,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
     fun bind(profile: String, surface: DashboardSurface, originalSections: List<TmdbHomeSection>?) {
         if (_state.value.profile == profile && _state.value.surface == surface) return
         jobs.values.forEach { it.cancel() }; jobs.clear(); stack.clear()
+        focusGeneration.next(); preparedPresentation = null; completedFocusKey = null
         screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()
         val key = preferenceKey(profile, surface)
         val defaults = originalSections ?: when (surface) {
@@ -39,6 +45,7 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         if (surface != DashboardSurface.MOVIES) loadFeed(TmdbHomeSection.TRENDING_SERIES)
     }
     fun pause() {
+        focusGeneration.next()
         screen.next(); detail.next(); seasonGeneration.next(); heroGeneration.next()
         jobs.values.forEach { it.cancel() }; jobs.clear()
         _state.update { it.copy(loading = emptySet()) }
@@ -77,10 +84,39 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         }
     }
     fun rotate(delta: Int) {
+        focusGeneration.next(); jobs.remove("focused-provider")?.cancel()
+        _state.update { it.copy(focusedEntryKey = null, focusedPresentation = null) }
         pauseHeroMetadata()
         _state.update { if (it.heroes.isEmpty()) it else it.copy(heroIndex = Math.floorMod(it.heroIndex + delta, it.heroes.size)) }
     }
     fun pauseHeroMetadata() { heroGeneration.next(); jobs.remove("hero-metadata")?.cancel(); heroRequestKey = null }
+    fun presentFocusedCard(key: String, card: DiscoveryCard) {
+        focusGeneration.next(); jobs.remove("focused-provider")?.cancel()
+        completedFocusKey = key
+        _state.update { it.copy(focusedEntryKey = key, focusedPresentation = card) }
+    }
+    fun presentProvider(key: String, item: MediaItem, type: CatalogType) {
+        val snapshot = _state.value
+        if (snapshot.focusedEntryKey == key && completedFocusKey == key) return
+        val token = focusGeneration.next()
+        completedFocusKey = null
+        jobs.remove("focused-provider")?.cancel()
+        _state.update { it.copy(focusedEntryKey = key, focusedPresentation = providerDetailFallback(item, type)) }
+        jobs["focused-provider"] = viewModelScope.launch {
+            fun publish(details: DiscoveryDetails) {
+                if (focusGeneration.accepts(token)) _state.update { current ->
+                    if (current.profile == snapshot.profile && current.surface == snapshot.surface && current.focusedEntryKey == key)
+                        current.copy(focusedPresentation = details.card) else current
+                }
+            }
+            try {
+                publish(repository.providerDetails(item, type, ::publish))
+                if (focusGeneration.accepts(token)) completedFocusKey = key
+            }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* A metadata miss leaves the provider title usable. */ }
+        }
+    }
     /** Only public, cache-backed TMDB metadata; never resolve an IPTV stream while browsing. */
     fun prepareHero() {
         val snapshot = _state.value

@@ -19,7 +19,8 @@ class CategoryPickerPolicyTest {
     }
     @Test fun phoneAndLargerFontsRetainReadableRows() {
         assertEquals(1, categoryPickerColumns(380, 1f))
-        assertEquals(2, categoryPickerColumns(840, 1f))
+        assertEquals(4, categoryPickerColumns(840, 1f))
+        assertEquals(2, categoryPickerColumns(760, 1f))
         assertEquals(1, categoryPickerColumns(700, 1.5f))
         assertEquals(2, categoryPickerColumns(1120, 1.5f))
     }
@@ -28,5 +29,13 @@ class CategoryPickerPolicyTest {
         assertEquals(setOf("draft"), categoryPickerSelection(listOf("draft"), listOf("saved"), listOf("new-default")))
         assertEquals(setOf("default"), categoryPickerSelection(null, null, listOf("default")))
         assertEquals(setOf("saved"), categoryPickerSelection(null, listOf("saved", "saved"), emptyList()))
+    }
+    @Test fun denseFourColumnGridPreservesRowsAndTheIncompleteFinalRow() {
+        assertEquals(3, categoryPickerDestination(3, 11, 4, CategoryPickerDirection.RIGHT))
+        assertEquals(4, categoryPickerDestination(4, 11, 4, CategoryPickerDirection.LEFT))
+        assertEquals(7, categoryPickerDestination(3, 11, 4, CategoryPickerDirection.DOWN))
+        assertEquals(10, categoryPickerDestination(7, 11, 4, CategoryPickerDirection.DOWN))
+        assertEquals(6, categoryPickerDestination(10, 11, 4, CategoryPickerDirection.UP))
+        assertNull(categoryPickerDestination(8, 11, 4, CategoryPickerDirection.DOWN))
     }
 }

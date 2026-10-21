@@ -15,7 +15,11 @@ internal fun categoryPickerDestination(index: Int, count: Int, columns: Int, dir
 }
 
 internal fun categoryPickerColumns(widthDp: Int, fontScale: Float): Int =
-    if (widthDp >= 600 && widthDp / fontScale.coerceAtLeast(1f) >= 560) 2 else 1
+    when {
+        widthDp / fontScale.coerceAtLeast(1f) >= 800 -> 4
+        widthDp / fontScale.coerceAtLeast(1f) >= 560 -> 2
+        else -> 1
+    }
 
 /** An explicitly empty selection stays empty; draft edits survive background category updates. */
 internal fun categoryPickerSelection(draft: List<String>?, saved: List<String>?, defaults: List<String>): Set<String> =

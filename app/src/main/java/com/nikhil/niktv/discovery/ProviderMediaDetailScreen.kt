@@ -40,18 +40,38 @@ internal data class ProviderDetailNavigation(
 internal val LocalProviderDetailNavigation = staticCompositionLocalOf<ProviderDetailNavigation?> { null }
 
 @Composable
-private fun ProviderDetailSynopsis(overview: String?) {
-    if (overview.isNullOrBlank()) return
+private fun ProviderDetailSynopsis(overview: String?, title: String, remoteInfo: Boolean = false,
+    requester: FocusRequester = remember { FocusRequester() }, up: (() -> Unit)? = null, down: (() -> Unit)? = null) {
+    if (overview.isNullOrBlank() && !remoteInfo) return
     var expanded by rememberSaveable(overview) { mutableStateOf(false) }
+    var showInfo by remember(overview) { mutableStateOf(false) }
     var overflowing by remember(overview) { mutableStateOf(false) }
+    val host = LocalView.current
+    var hadInfo by remember { mutableStateOf(false) }
+    LaunchedEffect(showInfo) {
+        if (showInfo) hadInfo = true
+        else if (hadInfo) {
+            hadInfo = false
+            repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
+        }
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
-        Text(overview, color = Color(0xFFD6D6DC), style = MaterialTheme.typography.bodyMedium,
+        if (!overview.isNullOrBlank()) Text(overview, color = Color(0xFFD6D6DC), style = MaterialTheme.typography.bodyMedium,
             maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
             onTextLayout = { if (!expanded) overflowing = it.hasVisualOverflow })
-        if (expanded || overflowing) DiscoveryAction(if (expanded) "Read less" else "Read more",
+        if (remoteInfo) DiscoveryAction("More info", Icons.Default.Info,
+            modifier = Modifier.padding(top = 6.dp).focusRequester(requester).onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                    Key.DirectionUp -> { up?.invoke(); up != null }
+                    Key.DirectionDown -> { down?.invoke(); down != null }
+                    else -> false
+                }
+            }) { showInfo = true }
+        else if (expanded || overflowing) DiscoveryAction(if (expanded) "Read less" else "Read more",
             if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
             modifier = Modifier.padding(top = 6.dp)) { expanded = !expanded }
     }
+    if (showInfo) FullDescriptionDialog(title, overview.orEmpty().ifBlank { "No description is available for this series." }) { showInfo = false }
 }
 
 /** Provider identity is never replaced by the TMDB identity used for presentation. */
@@ -64,6 +84,9 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     down: () -> Unit = {}, playLabel: String = "Play", playEnabled: Boolean = true,
     progressLabel: String? = null, castUp: (() -> Unit)? = null, relatedUp: (() -> Unit)? = null,
     episodeDown: (() -> Unit)? = null,
+    heroUp: (() -> Unit)? = null, topDown: (() -> Unit)? = null,
+    synopsisRequester: FocusRequester = remember { FocusRequester() },
+    synopsisUp: (() -> Unit)? = null, synopsisDown: (() -> Unit)? = null,
     tools: @Composable RowScope.() -> Unit = {},
     layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
         cast: (() -> Boolean)?, related: (() -> Boolean)?) -> Unit = { hero, castRow, supplementary, _, _ ->
@@ -132,8 +155,9 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val wideSeries = type == CatalogType.SERIES && (configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration))
     val toolbar: @Composable () -> Unit = {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onPreviewKeyEvent { event ->
-                if (wideSeries && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown)
-                    runCatching { playRequester.requestFocus() }.getOrDefault(false) else false
+                if (wideSeries && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                    if (topDown != null) { topDown(); true } else runCatching { playRequester.requestFocus() }.getOrDefault(false)
+                } else false
             },
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
@@ -160,13 +184,13 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},
                 onDown = { if (type == CatalogType.SERIES) down() else if (people.isNotEmpty()) focus(castEntry) else if (related.isNotEmpty()) focus(relatedEntry) else down() },
-                onUp = { if (wideSeries) runCatching { backRequester.requestFocus() }.getOrDefault(false) else false },
+                onUp = { if (wideSeries) { if (heroUp != null) { heroUp(); true } else runCatching { backRequester.requestFocus() }.getOrDefault(false) } else false },
                 previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
                 portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = false, compactDetail = true)
             }
             }
             progressLabel?.let { Text(it, Modifier.padding(horizontal = 24.dp, vertical = 4.dp), color = Color.LightGray, style = MaterialTheme.typography.labelMedium) }
-            ProviderDetailSynopsis(metadata.card.overview)
+            ProviderDetailSynopsis(metadata.card.overview, metadata.card.title, wideSeries, synopsisRequester, synopsisUp, synopsisDown)
             Box(Modifier.fillMaxWidth().height(4.dp).padding(horizontal = 24.dp)) {
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             }

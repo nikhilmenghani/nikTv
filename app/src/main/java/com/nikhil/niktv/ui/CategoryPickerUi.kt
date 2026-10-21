@@ -57,12 +57,13 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     val density = LocalDensity.current
     val television = LocalContext.current.isTvLikeDevice(configuration)
     val compact = !television && configuration.screenWidthDp < 600
-    val panelWidth = if (compact) configuration.screenWidthDp else (minOf(configuration.screenWidthDp, 1040) * .94f).toInt()
-    val columns = categoryPickerColumns(panelWidth - if (compact) 32 else 48, density.fontScale)
+    val panelWidth = if (compact) configuration.screenWidthDp else minOf((configuration.screenWidthDp * .97f).toInt(), 1280)
+    val columns = categoryPickerColumns(panelWidth - 24, density.fontScale)
+    val inlineTools = (panelWidth - 24) / density.fontScale.coerceAtLeast(1f) >= 720
     val accent = MaterialTheme.colorScheme.primary
     val keyboard = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
-    val grid = rememberLazyGridState()
+    val grid = rememberLazyGridState(initialFirstVisibleItemIndex = filtered.indexOfFirst { it.id in selected }.coerceAtLeast(0))
     val search = remember { FocusRequester() }
     val save = remember { FocusRequester() }
     val cancel = remember { FocusRequester() }
@@ -75,6 +76,7 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
     var entered by remember(profile, type) { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var searchFocused by remember { mutableStateOf(false) }
+    var initialFocusHandled by remember(profile, type) { mutableStateOf(false) }
     fun focusCategory(index: Int) {
         val item = filtered.getOrNull(index) ?: return
         focusJob?.cancel()
@@ -110,91 +112,109 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
             window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             onDispose { window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_UNSPECIFIED) }
         }
-        Surface(modifier = if (compact) Modifier.fillMaxSize() else Modifier.widthIn(max = 1040.dp).fillMaxWidth(.94f).fillMaxHeight(.92f),
+        Surface(modifier = if (compact) Modifier.fillMaxSize() else Modifier.widthIn(max = 1280.dp).fillMaxWidth(.97f).fillMaxHeight(.96f),
             color = Color(0xFF101217), shape = RoundedCornerShape(if (compact) 0.dp else 16.dp),
             border = if (compact) null else BorderStroke(1.dp, Color.White.copy(alpha = .16f))) {
-            Column(Modifier.fillMaxSize().then(if (!television) Modifier.safeDrawingPadding() else Modifier).imePadding()
-                .padding(if (compact) 16.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Surface(shape = RoundedCornerShape(12.dp), color = accent.copy(alpha = .16f)) {
-                        Icon(Icons.Default.Tune, null, Modifier.padding(12.dp).size(24.dp), tint = accent)
+            Column(Modifier.fillMaxSize().focusProperties {
+                onEnter = {
+                    if (!initialFocusHandled) {
+                        initialFocusHandled = true
+                        val first = filtered.firstOrNull { it.id in selected } ?: filtered.firstOrNull()
+                        val target = first?.let { requesters[it.id] } ?: cancel
+                        if (!runCatching { target.requestFocus() }.getOrDefault(false)) {
+                            initialFocusHandled = false
+                            cancelFocusChange()
+                        }
                     }
+                }
+            }.focusGroup().then(if (!television) Modifier.safeDrawingPadding() else Modifier).imePadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
-                        Text("IPTV ${type.title} categories", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        if (!keyboardVisible) Text("${state.savedProfile?.name.orEmpty()} · Choose what appears on your screens",
-                            style = MaterialTheme.typography.bodySmall, color = Color(0xFFB6BAC5))
+                        Text("IPTV ${type.title} categories", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("${raw.count { it.id in selected }} selected · " +
+                            if (query.isBlank()) "${raw.size} available" else "${filtered.size} results",
+                            style = MaterialTheme.typography.labelMedium, color = Color(0xFFB6BAC5))
                     }
                 }
                 // Focusing search with a remote does not summon the keyboard until Select.
-                Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1B1E26),
-                    border = BorderStroke(if (searchFocused) 2.dp else 1.dp, if (searchFocused) Color.White else Color(0xFF353944))) {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = Color.LightGray)
-                        BasicTextField(query, { query = it }, singleLine = true, readOnly = !editing,
-                            modifier = Modifier.weight(1f).focusRequester(search)
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                        editing = true; search.requestFocus()
-                                        scope.launch { withFrameNanos { }; keyboard?.show() }
-                                    }
-                                }
-                                .onFocusChanged { searchFocused = it.isFocused; if (!it.isFocused) { editing = false; keyboard?.hide() } }
-                                .focusProperties { up = cancel; right = if (keyboardVisible) save else bulk }
-                                .onPreviewKeyEvent { event ->
-                                    when {
-                                        event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && !editing -> {
-                                            if (keyboardVisible) enterGrid() else bulk.requestFocus(); true
+                val searchField: @Composable () -> Unit = {
+                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF1B1E26),
+                        border = BorderStroke(if (searchFocused) 2.dp else 1.dp, if (searchFocused) Color.White else Color(0xFF353944))) {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = Color.LightGray)
+                            BasicTextField(query, { query = it }, singleLine = true, readOnly = !editing,
+                                modifier = Modifier.weight(1f).focusRequester(search)
+                                    .pointerInput(Unit) {
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                            editing = true; search.requestFocus()
+                                            scope.launch { withFrameNanos { }; keyboard?.show() }
                                         }
-                                        event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter) && !editing -> {
-                                            if (event.type == KeyEventType.KeyUp) { editing = true; keyboard?.show() }; true
-                                        }
-                                        else -> false
                                     }
-                                },
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White), cursorBrush = SolidColor(accent),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { editing = false; keyboard?.hide(); enterGrid() }),
-                            decorationBox = { inner -> Box { if (query.isEmpty()) Text("Search categories", color = Color(0xFFA7ABB5)); inner() } })
-                        if (query.isNotEmpty()) IconButton(onClick = { query = "" }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Close, "Clear search") }
+                                    .onFocusChanged { searchFocused = it.isFocused; if (!it.isFocused) { editing = false; keyboard?.hide() } }
+                                    .focusProperties { up = cancel; right = if (keyboardVisible) save else bulk }
+                                    .onPreviewKeyEvent { event ->
+                                        when {
+                                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && !editing -> {
+                                                if (keyboardVisible || inlineTools) enterGrid() else bulk.requestFocus(); true
+                                            }
+                                            event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter) && !editing -> {
+                                                if (event.type == KeyEventType.KeyUp) { editing = true; keyboard?.show() }; true
+                                            }
+                                            else -> false
+                                        }
+                                    },
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White), cursorBrush = SolidColor(accent),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { editing = false; keyboard?.hide(); enterGrid() }),
+                                decorationBox = { inner -> Box { if (query.isEmpty()) Text("Search categories", color = Color(0xFFA7ABB5)); inner() } })
+                            if (query.isNotEmpty()) IconButton(onClick = { query = "" }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Close, "Clear search") }
+                        }
                     }
                 }
-                if (!keyboardVisible) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    NikTvSecondaryActionButton(onClick = { draft = (selected + filtered.map { it.id }).toList() },
-                        modifier = Modifier.weight(1f).focusRequester(bulk).focusProperties { up = search; right = clear }
-                            .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { enterGrid(); true } else false }) {
-                        Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                        Text(if (query.isBlank()) "Select all" else "Select results", maxLines = 1)
-                    }
-                    NikTvSecondaryActionButton(onClick = { draft = (selected - filtered.map { it.id }.toSet()).toList() },
-                        modifier = Modifier.weight(1f).focusRequester(clear).focusProperties { up = search; left = bulk }
-                            .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { enterGrid(); true } else false }) {
-                        Icon(Icons.Default.RemoveDone, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (query.isBlank()) "Clear all" else "Clear results", maxLines = 1)
+                val bulkActions: @Composable () -> Unit = {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        NikTvSecondaryActionButton(onClick = { draft = (selected + filtered.map { it.id }).toList() },
+                            modifier = Modifier.weight(1f).focusRequester(bulk).focusProperties { up = if (inlineTools) cancel else search; left = search; right = clear }
+                                .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { enterGrid(); true } else false }) {
+                            Icon(Icons.Default.DoneAll, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                            Text(if (query.isBlank()) "Select all" else "Select results", maxLines = 1, style = MaterialTheme.typography.labelLarge)
+                        }
+                        NikTvSecondaryActionButton(onClick = { draft = (selected - filtered.map { it.id }.toSet()).toList() },
+                            modifier = Modifier.weight(1f).focusRequester(clear).focusProperties { up = search; left = bulk }
+                                .onPreviewKeyEvent { if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { enterGrid(); true } else false }) {
+                            Icon(Icons.Default.RemoveDone, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (query.isBlank()) "Clear all" else "Clear results", maxLines = 1, style = MaterialTheme.typography.labelLarge)
+                        }
                     }
                 }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${raw.count { it.id in selected }} selected", color = Color.White, fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                    Text(if (query.isBlank()) "${raw.size} available" else "${filtered.size} results",
-                        color = Color(0xFFA7ABB5), style = MaterialTheme.typography.labelMedium)
+                if (inlineTools && !keyboardVisible) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) { searchField() }
+                        Box(Modifier.weight(1f)) { bulkActions() }
+                    }
+                } else {
+                    searchField()
+                    if (!keyboardVisible) bulkActions()
                 }
                 HorizontalDivider(color = Color.White.copy(alpha = .10f))
                 if (filtered.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(if (raw.isEmpty()) "Categories are not available yet. Reopen after the profile has loaded." else "No matching categories",
                         color = Color.LightGray)
-                } else StableTileFocusViewport {
+                } else CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides if (television) 40.dp else 48.dp) {
+                StableTileFocusViewport {
                     LazyVerticalGrid(GridCells.Fixed(columns), state = grid, modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        contentPadding = PaddingValues(2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         itemsIndexed(filtered, key = { _, item -> item.id }) { index, category ->
                             var focused by remember { mutableStateOf(false) }
                             val checked = category.id in selected
                             Surface(onClick = { draft = (if (checked) selected - category.id else selected + category.id).toList() },
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 color = when { focused -> Color(0xFF303A49); checked -> accent.copy(alpha = .13f); else -> Color(0xFF1B1E26) },
                                 border = BorderStroke(if (focused) 2.dp else 1.dp,
                                     when { focused -> Color.White; checked -> accent.copy(alpha = .6f); else -> Color.White.copy(alpha = .12f) }),
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 62.dp).focusRequester(requesters.getValue(category.id))
+                                modifier = Modifier.fillMaxWidth().heightIn(min = if (television) 40.dp else 48.dp).focusRequester(requesters.getValue(category.id))
                                     .semantics { this.selected = checked; role = Role.Checkbox }
                                     .onFocusChanged { focused = it.isFocused; if (focused) lastFocused = category.id }
                                     .onPreviewKeyEvent { event ->
@@ -207,10 +227,10 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
                                             true
                                         }
                                     }) {
-                                Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Icon(if (checked) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, null,
-                                        Modifier.size(24.dp), tint = if (checked) accent else Color(0xFF8D93A1))
+                                        Modifier.size(20.dp), tint = if (checked) accent else Color(0xFF8D93A1))
                                     Text(category.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodyMedium, fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
                                         modifier = Modifier.weight(1f).then(if (focused) Modifier.basicMarquee() else Modifier))
@@ -218,6 +238,7 @@ internal fun CategoryManagerDialog(state: NikTvState, close: () -> Unit,
                             }
                         }
                     }
+                }
                 }
                 HorizontalDivider(color = Color.White.copy(alpha = .10f))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -48,6 +48,7 @@ import kotlinx.coroutines.NonCancellable
 data class NikTvState(
     val discoveryExperienceEnabled: Boolean = true,
     val discoverySurface: DashboardSurface? = null,
+    val discoveryNavigationId: Long = 0,
     val discoveryMatchCounts: Map<String, Int> = emptyMap(),
     val parentalControlsEnabled: Boolean = true,
     val parentalRelockMinutes: Int = 5,
@@ -7647,7 +7648,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun openDiscovery(surface: DashboardSurface) {
         cancelPendingPlayback()
         com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.setEnabled(getApplication(), true)
-        _state.update { it.copy(discoveryExperienceEnabled = true, discoverySurface = surface, homeOpen = true, favoritesOpen = false,
+        _state.update { it.copy(discoveryExperienceEnabled = true, discoverySurface = surface,
+            discoveryNavigationId = it.discoveryNavigationId + 1, homeOpen = true, favoritesOpen = false,
             settingsOpen = false, searchOpen = false, offlineDownloadsOpen = false,
             selectedSeries = null, modernTmdbSection = null, modernIptvCategory = null) }
     }

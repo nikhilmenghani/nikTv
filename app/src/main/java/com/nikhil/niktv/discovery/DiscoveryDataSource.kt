@@ -2,8 +2,11 @@ package com.nikhil.niktv.discovery
 
 import com.nikhil.niktv.model.TmdbHomeSection
 
-/** Injectable metadata boundary. It deliberately has no playback or provider methods. */
+/** Injectable public metadata boundary. It has no playback or provider-network operations. */
 internal interface DiscoveryDataSource {
+    /** Public TMDB metadata for a provider title; never resolves availability or a stream. */
+    suspend fun providerDetails(item: com.nikhil.niktv.model.MediaItem, type: com.nikhil.niktv.model.CatalogType,
+        stale: (DiscoveryDetails) -> Unit = {}): DiscoveryDetails = DiscoveryDetails(providerDetailFallback(item, type))
     suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit = {}): List<DiscoveryCard>
     suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit = {}): DiscoveryDetails
     suspend fun related(card: DiscoveryCard): List<DiscoveryCard>
