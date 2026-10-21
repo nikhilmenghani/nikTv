@@ -14,6 +14,8 @@ import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import com.nikhil.niktv.ui.tileFocusScrollDistance
 
 internal data class DiscoveryFeedIndices(val header: Int?, val hero: Int, val season: Int, val firstRail: Int)
@@ -29,6 +31,25 @@ internal fun DiscoveryVerticalFocusViewport(coordinator: DiscoveryScrollCoordina
         object : BringIntoViewSpec {
             override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
                 if (coordinator.blocksAutomaticReveal) 0f else tileFocusScrollDistance(offset, size, containerSize)
+        }
+    }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
+}
+
+internal fun discoveryHorizontalFocusScrollDistance(offset: Float, size: Float, containerSize: Float, edgePadding: Float): Float {
+    val padding = edgePadding.coerceIn(0f, ((containerSize - size) / 2f).coerceAtLeast(0f))
+    return tileFocusScrollDistance(offset - padding, size + 2f * padding, containerSize)
+}
+
+/** Keep the scaled poster and its border inside the row, including on the way back. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun DiscoveryHorizontalFocusViewport(edgePadding: Dp, content: @Composable () -> Unit) {
+    val padding = with(LocalDensity.current) { edgePadding.toPx() }
+    val spec = remember(padding) {
+        object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+                discoveryHorizontalFocusScrollDistance(offset, size, containerSize, padding)
         }
     }
     CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
@@ -64,7 +85,7 @@ internal class DiscoveryScrollCoordinator(private val scope: CoroutineScope) {
         start(index) { scroll(state, index, reduceMotion) }
     }
 
-    fun move(state: LazyListState, index: Int, reduceMotion: Boolean, focus: () -> Boolean): Job = start(index) {
+    fun move(state: LazyListState, index: Int, reduceMotion: Boolean, focus: suspend () -> Boolean): Job = start(index) {
         val layout = state.layoutInfo
         val item = layout.visibleItemsInfo.firstOrNull { it.index == index }
         // The vertical viewport suppresses implicit relocation while we own the move.

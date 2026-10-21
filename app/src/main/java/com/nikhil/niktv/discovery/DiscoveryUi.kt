@@ -518,7 +518,7 @@ internal fun DiscoveryPreviewScreen(
                         coordinator.align(listState, index, reduceMotion)
                     }
                 }
-                val focusHandlers = remember { mutableMapOf<Int, () -> Boolean>() }
+                val focusHandlers = remember { mutableMapOf<Int, suspend () -> Boolean>() }
                 var move by remember { mutableStateOf<Job?>(null) }
                 var requestedRow by remember { mutableIntStateOf(0) }
                 val firstRailIndex = positions.firstRail
@@ -890,7 +890,9 @@ private fun DiscoveryLazyRow(
     verticalAlignment: Alignment.Vertical = Alignment.Top,
     content: LazyListScope.() -> Unit,
 ) {
-    StableTileFocusViewport {
+    val direction = LocalLayoutDirection.current
+    val edgePadding = minOf(contentPadding.calculateLeftPadding(direction), contentPadding.calculateRightPadding(direction))
+    DiscoveryHorizontalFocusViewport(edgePadding) {
         LazyRow(modifier, state, contentPadding, horizontalArrangement = horizontalArrangement,
             verticalAlignment = verticalAlignment, content = content)
     }
@@ -1026,7 +1028,7 @@ private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Uni
 private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requesters: MutableMap<String, FocusRequester>, navigationIndex: Int, phone: Boolean = false,
     popupChanged: (Boolean) -> Unit,
     prefetch: Boolean, presentationEnabled: Boolean, skeleton: Boolean,
-    register: (() -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
+    register: (suspend () -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
     present: (RailEntry) -> Unit, move: (Int) -> Boolean, viewAll: (() -> Unit)?) {
     val rowState = rememberLazyListState()
     val popupScope = rememberCoroutineScope()
@@ -1049,12 +1051,19 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
             focusedCard?.let(currentPresentation)
         }
     }
-    val entries by rememberUpdatedState(row.entries)
+    val entryKeys by rememberUpdatedState(remember(row.entries) { row.entries.map { it.key } })
     DisposableEffect(row.key, navigationIndex) {
         register {
-            val key = selected?.takeIf { it == "${row.key}:all" || entries.any { entry -> entry.key == it } } ?: entries.firstOrNull()?.key
-                ?: "${row.key}:all".takeIf { row.providerType != null }
-            key != null && runCatching { requesters[key]?.requestFocus() == true }.getOrDefault(false)
+            focusDiscoveryRowEntry(selected, entryKeys, "${row.key}:all".takeIf { row.providerType != null || viewAll != null },
+                allIsRowItem = row.providerType == null,
+                isFullyVisible = { index ->
+                    val layout = rowState.layoutInfo
+                    val item = layout.visibleItemsInfo.firstOrNull { it.index == index }
+                    item != null && item.offset >= layout.viewportStartOffset + layout.beforeContentPadding &&
+                        item.offset + item.size <= layout.viewportEndOffset - layout.afterContentPadding
+                },
+                reveal = { rowState.scrollToItem(it) },
+                request = { key -> runCatching { requesters[key]?.requestFocus() == true }.getOrDefault(false) })
         }
         onDispose(unregister)
     }
