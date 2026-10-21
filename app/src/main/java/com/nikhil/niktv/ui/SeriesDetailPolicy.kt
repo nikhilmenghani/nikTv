@@ -3,6 +3,7 @@ package com.nikhil.niktv.ui
 import com.nikhil.niktv.model.MediaItem
 import com.nikhil.niktv.model.PlaybackProgress
 import com.nikhil.niktv.model.EpisodeSeasonCache
+import com.nikhil.niktv.model.matchesTitleKeywords
 
 /** A page knows its own season, not the entire series season index. */
 internal fun mergeSeriesSeasons(known: List<Int>, page: List<Int>, selected: Int?): List<Int> =
@@ -32,6 +33,23 @@ internal fun episodeRemainingLabel(progress: PlaybackProgress?): String? {
 }
 
 internal enum class SeriesDetailPanel { SEARCH, CAST, RELATED }
+
+/** Provider totals win; public season totals are labelled so they don't imply IPTV availability. */
+internal fun seasonEpisodeCountLabels(provider: Map<Int, Int>, tmdb: Map<Int, Int>, selected: Int?,
+    loaded: Int, hasMore: Boolean, loading: Boolean): Map<Int, String> {
+    val result = tmdb.filterValues { it >= 0 }.mapValues { "${it.value} eps · TMDB" }.toMutableMap()
+    provider.filterValues { it >= 0 }.forEach { (season, count) -> result[season] = "$count episodes" }
+    if (selected != null && !loading && (loaded > 0 || selected !in result))
+        result[selected] = if (hasMore) "$loaded+ loaded" else "$loaded episodes"
+    return result
+}
+
+internal fun episodeMatchesSearch(title: String, overview: String?, number: Int?, query: String): Boolean {
+    val value = query.trim()
+    if (value.isBlank()) return true
+    if (value.toIntOrNull() != null) return number?.toString()?.contains(value) == true
+    return "$title ${overview.orEmpty()} episode ${number ?: ""}".matchesTitleKeywords(value)
+}
 
 internal const val SERIES_INLINE_DETAILS_INDEX = 2
 internal const val SERIES_EPISODE_START_INDEX = 3

@@ -28,7 +28,7 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
         }.filter { it.released() }
 
     override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails =
-        cached("detail-v3:${card.key}", DiscoveryCache.DETAIL_TTL, DiscoveryDetails.serializer(), stale) {
+        cached("detail-v4:${card.key}", DiscoveryCache.DETAIL_TTL, DiscoveryDetails.serializer(), stale) {
             val root = tmdb.discoveryJson("/${if (card.series) "tv" else "movie"}/${card.id}",
                 mapOf("append_to_response" to if (card.series) "credits,images,content_ratings" else "credits,images,release_dates", "include_image_language" to "en,null"))
             val genres = root["genres"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject.string("name") }
@@ -51,6 +51,11 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
                     c.jsonObject.string("name")?.let { DiscoveryPerson(it, c.jsonObject.string("character").orEmpty(), c.jsonObject.string("profile_path")?.let { p -> image(p, "w185") }, c.jsonObject["id"]?.jsonPrimitive?.intOrNull) }
                 }, seasons = root["seasons"]?.jsonArray.orEmpty().mapNotNull { s ->
                     s.jsonObject["season_number"]?.jsonPrimitive?.intOrNull?.takeIf { it >= 0 } }.sorted(),
+                seasonEpisodeCounts = root["seasons"]?.jsonArray.orEmpty().mapNotNull { s ->
+                    val season = s.jsonObject["season_number"]?.jsonPrimitive?.intOrNull
+                    val count = s.jsonObject["episode_count"]?.jsonPrimitive?.intOrNull
+                    if (season != null && season >= 0 && count != null && count >= 0) season to count else null
+                }.toMap(),
                 collection = root["belongs_to_collection"]?.takeIf { it is JsonObject }?.jsonObject?.let { c ->
                     c["id"]?.jsonPrimitive?.intOrNull?.let { DiscoveryCollection(it, c.string("name").orEmpty(), c.string("backdrop_path")?.let { p -> image(p, "w780") }) }
                 })

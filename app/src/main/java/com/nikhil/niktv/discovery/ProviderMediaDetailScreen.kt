@@ -87,6 +87,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     heroUp: (() -> Unit)? = null, topDown: (() -> Unit)? = null,
     synopsisRequester: FocusRequester = remember { FocusRequester() },
     synopsisUp: (() -> Unit)? = null, synopsisDown: (() -> Unit)? = null,
+    seasonCounts: (Map<Int, Int>) -> Unit = {},
     tools: @Composable RowScope.() -> Unit = {},
     layout: @Composable (hero: @Composable () -> Unit, castRow: @Composable () -> Unit, supplementary: @Composable () -> Unit,
         cast: (() -> Boolean)?, related: (() -> Boolean)?) -> Unit = { hero, castRow, supplementary, _, _ ->
@@ -149,6 +150,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
         }
     }
     val people = metadata.cast.filter { (it.id ?: 0) > 0 }.distinctBy { it.id }
+    LaunchedEffect(profile, item.id, metadata.seasonEpisodeCounts) { seasonCounts(metadata.seasonEpisodeCounts) }
     val landscape = configuration.screenWidthDp >= 600 || context.isTvLikeDevice(configuration)
     val phone = app.discoveryExperienceEnabled && usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration)) &&
         configuration.screenHeightDp >= configuration.screenWidthDp

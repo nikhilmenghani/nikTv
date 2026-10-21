@@ -140,6 +140,8 @@ data class NikTvState(
     val seriesStartSeason: SeriesStartSeason = SeriesStartSeason.LAST,
     val availableSeriesSeasons: List<Int> = emptyList(),
     val selectedSeriesSeason: Int? = null,
+    val seriesSeasonEpisodeCounts: Map<Int, Int> = emptyMap(),
+    val seriesSeasonEpisodeCountsKey: String? = null,
     val watchedSeries: List<WatchedSeries> = emptyList(),
     val browseLayout: BrowseLayout = BrowseLayout.SECTIONS,
     val browseCache: BrowseCatalogCache? = null,
@@ -3038,7 +3040,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadSeriesSeason(season: Int) = task {
         val series = requireNotNull(_state.value.selectedSeries)
-        _state.update { it.copy(items = emptyList()) }
+        _state.update { it.copy(items = emptyList(), selectedSeriesSeason = season) }
         loadSeriesEpisodes(series, season)
     }
 
@@ -3077,6 +3079,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 items = cache.episodesForDisplay(it.useTmdbEpisodeMetadata),
                 availableSeriesSeasons = cache.availableSeasons,
                 selectedSeriesSeason = cache.season,
+                seriesSeasonEpisodeCounts = episodeSeasonCaches
+                    .filter { it.profileKey == cache.profileKey && it.seriesId == cache.seriesId && !it.hasMore && it.season != null }
+                    .associate { it.season!! to it.episodes.size },
+                seriesSeasonEpisodeCountsKey = "${cache.profileKey}|${cache.seriesId}",
                 episodePage = cache.page,
                 episodeHasMore = cache.hasMore,
                 episodeLoadingMore = false

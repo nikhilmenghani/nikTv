@@ -50,7 +50,8 @@ internal data class DiscoveryCollection(val id: Int, val title: String, val artw
 @Serializable
 internal data class DiscoveryDetails(
     val card: DiscoveryCard, val cast: List<DiscoveryPerson> = emptyList(),
-    val seasons: List<Int> = emptyList(), val collection: DiscoveryCollection? = null
+    val seasons: List<Int> = emptyList(), val collection: DiscoveryCollection? = null,
+    val seasonEpisodeCounts: Map<Int, Int> = emptyMap()
 )
 @Serializable
 internal data class DiscoveryEpisode(

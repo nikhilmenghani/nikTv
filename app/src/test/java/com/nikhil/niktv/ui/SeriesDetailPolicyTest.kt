@@ -7,6 +7,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SeriesDetailPolicyTest {
+    @Test fun seasonCountsPreferActualProviderTotalsAndLabelPublicFallbacks() {
+        val counts = seasonEpisodeCountLabels(mapOf(9 to 23), mapOf(8 to 24, 9 to 24, 10 to 17), 10, 17, false, false)
+        assertEquals("23 episodes", counts[9])
+        assertEquals("24 eps · TMDB", counts[8])
+        assertEquals("17 episodes", counts[10])
+        assertNull(counts[7])
+    }
+    @Test fun partialOrLoadingSeasonsDoNotBecomeFalseCompleteCounts() {
+        assertEquals("40+ loaded", seasonEpisodeCountLabels(emptyMap(), mapOf(1 to 200), 1, 40, true, false)[1])
+        assertEquals("24 episodes", seasonEpisodeCountLabels(mapOf(1 to 24), emptyMap(), 1, 0, false, true)[1])
+        assertEquals("24 episodes", seasonEpisodeCountLabels(mapOf(1 to 24), emptyMap(), 1, 0, false, false)[1])
+        assertNull(seasonEpisodeCountLabels(emptyMap(), emptyMap(), 1, 0, false, true)[1])
+        assertEquals("0 episodes", seasonEpisodeCountLabels(emptyMap(), emptyMap(), 1, 0, false, false)[1])
+    }
+    @Test fun episodeSearchUsesLoadedMetadataAndNumberWithoutRequiringProviderLookups() {
+        assertTrue(episodeMatchesSearch("Pilot", "Rachel arrives in New York", 1, ""))
+        assertTrue(episodeMatchesSearch("Pilot", "Rachel arrives in New York", 1, "rachel new york"))
+        assertTrue(episodeMatchesSearch("Pilot", null, 1, "pilot"))
+        assertTrue(episodeMatchesSearch("A long title", null, 17, "17"))
+        assertFalse(episodeMatchesSearch("Pilot", "Rachel arrives in New York", 1, "17"))
+        assertFalse(episodeMatchesSearch("Pilot", null, null, "99"))
+        assertFalse(episodeMatchesSearch("Pilot", null, 1, "missing title"))
+    }
     @Test fun repeatedUpReachesTheTopIncludingDescriptionAndSingleSeasonSeries() {
         for (hasSeasons in listOf(true, false)) {
             var target = SeriesDetailFocus.EPISODES

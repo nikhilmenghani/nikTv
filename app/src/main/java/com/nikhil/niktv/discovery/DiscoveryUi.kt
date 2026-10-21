@@ -622,84 +622,15 @@ internal fun DiscoveryPreviewScreen(
                         if (candidate == null && state.loading.isEmpty()) Text("Discovery is unavailable. Check your TMDB configuration or retry below.", Modifier.padding(24.dp), color = Color.LightGray)
                     }
                     if (state.detail?.series == true) item("seasons") {
-                        val episodeCard = state.detail
-                        val seasons = state.details?.seasons.orEmpty()
-                        var newestFirst by rememberSaveable(episodeCard?.key) { mutableStateOf(true) }
                         val seasonEntry = remember { FocusRequester() }
-                        val episodeEntry = remember { FocusRequester() }
-                        val episodeState = rememberLazyListState()
-                        val episodes = if (newestFirst) state.episodes.sortedByDescending { it.number } else state.episodes.sortedBy { it.number }
-                        fun enterEpisodes() { localScope.launch {
-                            episodeState.scrollToItem(0)
-                            repeat(20) { withFrameNanos { }; if (runCatching { episodeEntry.requestFocus() }.getOrDefault(false)) return@launch }
-                        } }
-                        if (seasons.isNotEmpty()) {
-                            val chosenSeason = state.season ?: if (app.seriesStartSeason == SeriesStartSeason.LAST) seasons.last() else seasons.first()
-                            val seasonState = rememberLazyListState(initialFirstVisibleItemIndex = seasons.indexOf(chosenSeason).coerceAtLeast(0))
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Episodes", Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.Bold)
-                                DiscoveryAction(if (newestFirst) "Newest first" else "Oldest first") {
-                                    newestFirst = !newestFirst
-                                    val target = if (newestFirst) seasons.last() else seasons.first()
-                                    vm.loadSeason(target)
-                                    localScope.launch { seasonState.animateScrollToItem(seasons.indexOf(target).coerceAtLeast(0)) }
-                                }
-                            }
-                            DisposableEffect(Unit) {
-                                focusHandlers[positions.season] = { runCatching { seasonEntry.requestFocus() }.getOrDefault(false) }
-                                onDispose { focusHandlers.remove(positions.season) }
-                            }
-                            DiscoveryLazyRow(Modifier.then(if (landscape) Modifier.onPreviewKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { enterEpisodes(); true }
-                                else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) moveRow(positions.season, -1) else false
-                            } else Modifier), state = seasonState, contentPadding = PaddingValues(24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                itemsIndexed(seasons) { seasonIndex, season -> DiscoveryAction("Season $season", selected = state.season == season,
-                                    modifier = if (season == chosenSeason) Modifier.focusRequester(seasonEntry) else Modifier,
-                                    onFocus = { if (ownsFocusRoute()) { contentFocused = true; alignFocusedRow("seasons", positions.season) } }) { vm.loadSeason(season) } }
-                            }
-                            LaunchedEffect(state.details?.card?.key) { vm.loadSeason(chosenSeason) }
+                        DisposableEffect(Unit) {
+                            focusHandlers[positions.season] = { runCatching { seasonEntry.requestFocus() }.getOrDefault(false) }
+                            onDispose { focusHandlers.remove(positions.season) }
                         }
-                        state.errors["season"]?.let { DiscoveryAction(it) { state.season?.let(vm::loadSeason) } }
-                        if ("season" in state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 24.dp))
-                        DiscoveryLazyRow(Modifier.then(if (landscape) Modifier.onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionUp -> runCatching { seasonEntry.requestFocus() }.getOrDefault(false)
-                                Key.DirectionDown -> moveRow(positions.season, 1)
-                                else -> false
-                            }
-                        } else Modifier), state = episodeState, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            itemsIndexed(episodes, key = { _, episode -> "${episode.season}:${episode.number}" }) { index, episode ->
-                                var description by remember { mutableStateOf(false) }
-                                var options by remember { mutableStateOf(false) }
-                                val requester = remember(episode.season, episode.number) { FocusRequester() }
-                                var hadEpisodePopup by remember { mutableStateOf(false) }
-                                LaunchedEffect(options, description) {
-                                    if (landscape) {
-                                        if (options || description) hadEpisodePopup = true
-                                        else if (hadEpisodePopup) {
-                                            hadEpisodePopup = false
-                                            repeat(30) { withFrameNanos { }
-                                                if (hostView.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-                                            }
-                                        }
-                                    }
-                                }
-                                val episodeModifier = Modifier.focusRequester(requester).then(if (index == 0) Modifier.focusRequester(episodeEntry) else Modifier)
-                                if (landscape) DiscoveryEpisodeTile(episode.title, episode.still, "S${episode.season} · E${episode.number}", episode.date.orEmpty(),
-                                    modifier = episodeModifier.width(200.dp), onFocus = { if (ownsFocusRoute()) contentFocused = true },
-                                    onClick = { episodeCard?.let { playEpisode(it, episode.season, episode.number) } }, onLongClick = { options = true })
-                                else DiscoveryPosterTile(episode.title, episode.still, "E${episode.number}", width = 150.dp,
-                                    aspect = 16f / 9f, reduceMotion = reduceMotion,
-                                    onClick = { episodeCard?.let { playEpisode(it, episode.season, episode.number) } },
-                                    onLongClick = { options = true }, onFocus = { if (ownsFocusRoute()) contentFocused = true })
-                                if (options) AlertDialog(onDismissRequest = { options = false }, title = { Text(episode.title) },
-                                    text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        NikTvSecondaryActionButton({ options = false; episodeCard?.let { downloadEpisode(it, episode.season, episode.number) } }, Modifier.fillMaxWidth()) { Text("Download") }
-                                        if (!episode.overview.isNullOrBlank()) NikTvSecondaryActionButton({ options = false; description = true }, Modifier.fillMaxWidth()) { Text("Description") }
-                                    } }, confirmButton = { NikTvSecondaryActionButton({ options = false }) { Text("Close") } }, containerColor = Color(0xFF181B22))
-                                if (description) FullDescriptionDialog(episode.title, episode.overview.orEmpty()) { description = false }
-                            }
-                        }
+                        DiscoverySeriesEpisodes(state, app.seriesStartSeason, seasonEntry, vm::loadSeason,
+                            playEpisode, downloadEpisode,
+                            onFocus = { if (ownsFocusRoute()) contentFocused = true },
+                            up = { moveRow(positions.season, -1) }, down = { moveRow(positions.season, 1) })
                     }
                     itemsIndexed(visibleRails, key = { _, row -> row.key }) { rowIndex, row ->
                         val index = rowIndex + positions.firstRail
