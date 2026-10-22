@@ -89,3 +89,20 @@ Changed implementation files for this task: discovery/DiscoveryLibraryScreen.kt,
 - Final compact-grid APKs installed successfully with `adb install -r` on Fire TV (`192.168.2.19:5555`, armeabi-v7a) and Samsung (`R3GL10CE4LE`, arm64-v8a). App data retained.
 
 - Final Fire TV visual acceptance: opened Wio → Movies → HINDI | OLD COLLECTION → Search/All. Verified eight full posters across, the complete outline on a focused first-row middle poster, then Down/Down/Up/Up/Left bursts back to the first poster with top and left outline intact. A further Down aligned the second row beneath the header with its entire focus border visible. Auto-pagination increased 42 → 56 titles during navigation. Evidence: `fire-compact-grid-top-border.png`, `fire-compact-grid-return-edge.png`, `fire-compact-grid-scrolled-border.png` under `D:/workspace/niktv-playback-tests`. Samsung installation confirmed; its post-install touch/portrait UI was not revalidated in this follow-up. No playback was started.
+
+## Mobile Live TV layout follow-up
+
+- Phones use the established Live TV category/channel browser inside the modern navigation shell, with the modern bottom bar retained.
+- Suppress the browser's duplicate phone header. Tablet/TV retain the modern Live TV feed; My List is unchanged.
+- Existing category configuration, channel grid/list, programme enrichment, pagination and playback callbacks remain owned by the original browser.
+- Mobile My List also retains its established grouped favorites grid/card design inside modern chrome, including existing open/remove actions and the downloads/storage switcher. Tablet/TV keep discovery cards and feeds.
+
+## Mobile favorites hero and shared header
+
+- Mobile Live TV/My List reuse the Home phone header (logo, search, account and options); Live TV content is unchanged.
+- My List keeps its existing grouped grid below a Home-style hero, selecting only current-profile movie/series favorites. Sensitive titles, channels and episodes are excluded from ambient artwork.
+- Presentation reads the existing discovery metadata cache off the UI thread and falls back to saved artwork; no background provider search or stream preparation.
+- Eight-second rotation pauses for scrolling/offscreen hero, backgrounding, focus, touch, popups and reduced-motion preference. Manual previous/next and swiping reuse Home controls.
+- Follow-up: mobile favorites hero now spans the screen with top-aligned artwork and header overlay, explicit top/bottom fades, left-aligned title/actions, no redundant My List subtitle, and compact category-style saved-group headings/counts.
+
+- Final mobile navigation order: Home, Movies, Series, Live TV, My List. Primary hero action bounds verified identical on Samsung: Home Play and My List Open both [458,1620][983,1800]. Saved hero checkmark opens themed Keep/Remove confirmation; Keep tested without changing favorites. Artwork uses fitted portrait posters with four-edge fades and a small supporting title.

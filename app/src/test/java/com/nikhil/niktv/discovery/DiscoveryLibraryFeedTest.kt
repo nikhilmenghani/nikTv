@@ -12,6 +12,16 @@ import org.junit.rules.TemporaryFolder
 class DiscoveryLibraryFeedTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun media(id: String, title: String = id) = MediaItem(id, title, null, "private-command")
+    @Test fun favoritesHeroExcludesOtherProfilesChannelsEpisodesAndSensitiveContent() {
+        val movie = FavoriteItem(FavoriteKind.MOVIE, media("m"), profileKey = "a")
+        val series = FavoriteItem(FavoriteKind.SERIES, media("s"), profileKey = "a")
+        val favorites = listOf(movie, series, movie,
+            movie.copy(profileKey = "b"), movie.copy(kind = FavoriteKind.CHANNEL),
+            movie.copy(kind = FavoriteKind.EPISODE),
+            movie.copy(media = media("adult").copy(isAdult = true)))
+        assertEquals(listOf(movie, series), libraryFavoriteHeroes(favorites, "a"))
+        assertTrue(libraryFavoriteHeroes(favorites, "missing").isEmpty())
+    }
     @Test fun savedFiltersSortAndSearchAreLocalAndProfileScoped() {
         val state = NikTvState(favorites = listOf(
             FavoriteItem(FavoriteKind.MOVIE, media("m1", "Zulu"), addedAtMillis = 2, profileKey = "a"),

@@ -65,3 +65,11 @@ internal fun libraryLiveQueue(state: NikTvState, profile: String, entry: Library
         selectedOrdinal = queue.take(index).count { it.id == entry.media.id },
         sourceIds = entry.category?.sourceCategoryIds?.takeIf { it.isNotEmpty() }?.toSet())
 }
+
+/** Only current-profile movie/series favorites may appear as ambient hero artwork. */
+internal fun libraryFavoriteHeroes(favorites: List<FavoriteItem>, profile: String): List<FavoriteItem> =
+    favorites.filter {
+        it.profileKey == profile && it.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES) &&
+            !it.media.isAdult && !com.nikhil.niktv.data.adultContentLabel(it.media.title) &&
+            !com.nikhil.niktv.data.adultContentLabel(it.categoryTitle.orEmpty())
+    }.distinctBy { it.key }

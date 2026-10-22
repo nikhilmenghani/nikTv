@@ -578,7 +578,7 @@ internal fun DiscoveryPreviewScreen(
                     item("hero") {
                         val origin = "hero:${displayed?.key}"
                         val infoFocusRequester = remember(origin) { returnRequesters.getOrPut(origin) { FocusRequester() } }
-                        val heroHeight = if (phonePortrait) (screenHeight * .67f).coerceIn(480.dp, 620.dp)
+                        val heroHeight = if (phonePortrait) phoneDiscoveryHeroHeight()
                             else if (compactLandscape) (screenHeight * .52f).coerceIn(165.dp, 230.dp)
                             else if (landscape) (screenHeight * .55f).coerceIn(235.dp, 355.dp) else (screenHeight * .45f).coerceIn(255.dp, 355.dp)
                         DiscoveryHero(displayed, if (state.detail == null) state.feeds[if (displayed?.series == true) TmdbHomeSection.TRENDING_SERIES else TmdbHomeSection.TRENDING_MOVIES]

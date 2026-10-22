@@ -23,6 +23,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.*
@@ -40,7 +41,16 @@ import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.ui.tileFocusOutline
 
 internal enum class DiscoveryPhoneDestination(val title: String) {
-    HOME("Home"), LIVE("Live TV"), MOVIES("Movies"), SERIES("Series"), LIBRARY("My List")
+    HOME("Home"), MOVIES("Movies"), SERIES("Series"), LIVE("Live TV"), LIBRARY("My List")
+}
+
+/** Both feeds anchor hero actions to the same full-screen safe viewport. */
+@Composable
+internal fun phoneDiscoveryHeroHeight(): Dp {
+    val density = LocalDensity.current
+    val safeHeight = LocalWindowInfo.current.containerSize.height -
+        WindowInsets.safeDrawing.getTop(density) - WindowInsets.safeDrawing.getBottom(density)
+    return with(density) { safeHeight.toDp() * .67f }.coerceIn(480.dp, 620.dp)
 }
 
 /** Geometry is device-width based; text scale never changes artwork ratios. */
@@ -121,7 +131,9 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     play: () -> Unit, add: () -> Unit, info: () -> Unit, previous: () -> Unit, next: () -> Unit,
     carousel: Boolean, index: Int, count: Int, playLabel: String, playEnabled: Boolean,
     reduceMotion: Boolean, onFocus: () -> Unit, onDown: () -> Unit, header: (@Composable () -> Unit)? = null,
-    showSynopsis: Boolean = true, compactDetail: Boolean = false, categoryActions: (@Composable () -> Unit)? = null) {
+    showSynopsis: Boolean = true, compactDetail: Boolean = false, categoryActions: (@Composable () -> Unit)? = null, showListAction: Boolean = true,
+    artworkAlignment: Alignment = Alignment.Center, shadeArtworkBounds: Boolean = false, leftAligned: Boolean = false,
+    supportingTitle: Boolean = false, fitArtwork: Boolean = false) {
     val context = LocalContext.current
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     var drag by remember { mutableFloatStateOf(0f) }
@@ -134,9 +146,14 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 AsyncImage(ImageRequest.Builder(context).data(url).size(if (portraitPoster) 780 else 1280, if (portraitPoster) 1170 else 720)
                     .transformations(DiscoveryPhoneBackdropTransformation()).crossfade(false).build(), null,
                     Modifier.fillMaxSize(),
-                    contentScale = if (compactDetail && !portraitPoster) ContentScale.FillWidth else ContentScale.Crop,
-                    alignment = if (compactDetail && !portraitPoster) Alignment.TopCenter else Alignment.Center)
+                    contentScale = if (fitArtwork) ContentScale.Fit else if (compactDetail && !portraitPoster) ContentScale.FillWidth else ContentScale.Crop,
+                    alignment = if (compactDetail && !portraitPoster) Alignment.TopCenter else artworkAlignment)
             }
+            if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                0f to Color(0xD9090B10), .3f to Color.Transparent, .6f to Color(0x66090B10), 1f to Color(0xFF090B10))))
+            if (shadeArtworkBounds) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
+                0f to Color(0xCC090B10), .16f to Color(0x33090B10), .36f to Color.Transparent,
+                .64f to Color.Transparent, .84f to Color(0x33090B10), 1f to Color(0xCC090B10))))
             // Gesture area excludes the actions so a swipe cannot release into Play/Add.
             Box(Modifier.fillMaxWidth().height((height * .53f).coerceAtLeast(180.dp)).align(Alignment.TopCenter)
                 .pointerInput(carousel, dragThreshold) {
@@ -148,16 +165,17 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 header?.invoke()
                 Spacer(Modifier.height(if (compactDetail) 64.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .25f).coerceAtLeast(100.dp)))
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (loading) LinearProgressIndicator(Modifier.width(110.dp))
-                    rank?.let { Text("#$it · TRENDING TODAY", color = Color(0xFFE5E5EA), fontSize = 11.sp,
+                    if (supportingTitle) Spacer(Modifier.height(with(LocalDensity.current) { 24.sp.toDp() }))
+                    rank?.let { Text("#$it · TRENDING TODAY", color = Color(0xFFE5E5EA), fontSize = 11.sp, lineHeight = 24.sp,
                         letterSpacing = 1.sp, fontWeight = FontWeight.Bold) }
                     var logoReady by remember(card?.key, card?.titleLogo) { mutableStateOf(false) }
-                    Box(Modifier.fillMaxWidth().height(82.dp * fontScale), contentAlignment = Alignment.Center) {
-                        if (!logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
-                            fontSize = 28.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        if (!card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
+                    Box(Modifier.fillMaxWidth().height(82.dp * fontScale), contentAlignment = if (supportingTitle) Alignment.BottomCenter else if (leftAligned) Alignment.CenterStart else Alignment.Center) {
+                        if (supportingTitle || !logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
+                            fontSize = if (supportingTitle) 17.sp else 28.sp, lineHeight = if (supportingTitle) 22.sp else 32.sp, fontWeight = if (supportingTitle) FontWeight.Medium else FontWeight.Bold,
+                            textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = if (supportingTitle) 2 else 3, overflow = TextOverflow.Ellipsis)
+                        if (!supportingTitle && !card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
                             Modifier.fillMaxSize().graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
                             onSuccess = { logoReady = true }, onError = { logoReady = false })
                     }
@@ -165,17 +183,20 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         it.runtime?.takeIf { detail }?.let { minutes -> "${minutes} min" },
                         it.genres.take(if (detail) 3 else 2).joinToString(" · ").takeIf(String::isNotBlank),
                         it.certification?.takeIf { detail }).joinToString(" · ") }.orEmpty()
-                    Box(Modifier.fillMaxWidth().height(36.dp * fontScale), contentAlignment = Alignment.Center) {
+                    if (!leftAligned || metadata.isNotBlank()) Box(Modifier.fillMaxWidth().height(36.dp * fontScale), contentAlignment = if (leftAligned) Alignment.CenterStart else Alignment.Center) {
                         if (metadata.isNotBlank()) Text(metadata, color = Color(0xFFCDCDD3), fontSize = 13.sp, lineHeight = 18.sp,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     Row(Modifier.fillMaxWidth().onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
-                    }, horizontalArrangement = Arrangement.spacedBy(if (compactDetail) 8.dp else 12.dp, Alignment.CenterHorizontally),
+                    }, horizontalArrangement = Arrangement.spacedBy(if (compactDetail) 8.dp else 12.dp, if (leftAligned) Alignment.Start else Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically) {
-                        if (!detail) PhoneHeroIcon(if (inList) "Remove from My List" else "Add to My List",
+                        if (!detail && showListAction) PhoneHeroIcon(if (inList) "Remove from My List" else "Add to My List",
                             if (inList) Icons.Default.Check else Icons.Default.Add, card != null, add,
                             Modifier.onFocusChanged { if (it.isFocused) onFocus() })
+                        // Keep the primary action centred exactly as Home's Add / Play / Info row.
+                        // Saved heroes omit Add, but retain its non-interactive layout slot.
+                        if (!detail && !showListAction && supportingTitle) Spacer(Modifier.size(48.dp))
                         Surface(onClick = play, enabled = card != null && playEnabled, shape = RoundedCornerShape(if (compactDetail) 10.dp else 24.dp),
                             color = Color.White, contentColor = Color.Black,
                             modifier = Modifier.then(if (detail) Modifier.weight(1f) else Modifier.widthIn(min = 140.dp))

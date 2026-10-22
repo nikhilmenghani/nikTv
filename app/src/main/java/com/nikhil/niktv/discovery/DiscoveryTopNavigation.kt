@@ -147,16 +147,9 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
     library: DiscoveryLibraryDestination? = null) {
-    Column(Modifier.fillMaxWidth().padding(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, modifier = Modifier.focusRequester(tab).focusProperties { down = play }, onClick = back)
-            Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.size(36.dp))
-            Spacer(Modifier.weight(1f))
-            DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
-            DiscoveryBrowseMenu(menu, changeMenu, surface, classic, null)
-        }
+    DiscoveryPhoneHeader(surface, false, tab, play, back, select, classic, menu, changeMenu,
+        customize = {}, categoryManagerOpen = categoryManagerOpen, categoryPopupChanged = categoryPopupChanged)
 
-    }
 }
 
 /** A direct entry to the same profile/type-scoped selections used by classic browsing. */

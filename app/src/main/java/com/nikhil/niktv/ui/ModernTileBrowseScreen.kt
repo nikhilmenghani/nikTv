@@ -343,7 +343,9 @@ internal fun ModernTileBrowseScreen(
 
                 else -> {
                     Column(Modifier.fillMaxSize()) {
-                        if (!wide) {
+                        if (!wide && !(state.discoveryExperienceEnabled &&
+                                com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv) &&
+                                state.selectedType == CatalogType.LIVE_TV && !state.homeOpen)) {
                             ModernTilePhoneHeader(
                                 state = state,
                                 youtubeNavigation =

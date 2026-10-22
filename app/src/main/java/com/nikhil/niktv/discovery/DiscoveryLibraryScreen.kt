@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -38,7 +41,16 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
     Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
     DiscoveryBackdrop(presentation, android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f)
     CompositionLocalProvider(LocalLibraryTab provides tab) {
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+    val phoneHero = phone && destination == DiscoveryLibraryDestination.MY_LIST &&
+        libraryFavoriteHeroes(state.favorites, state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()).isNotEmpty()
+    if (phoneHero) Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        Box(Modifier.fillMaxSize().focusRequester(body).focusGroup()) { content() }
+        Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(
+            listOf(Color(0xE6090B10), Color(0x99090B10), Color.Transparent)))) {
+            DiscoveryPhoneNavigation(DashboardSurface.HOME, tab, body, back, select, navigate,
+                menu, { menu = it }, library = destination)
+        }
+    } else Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         if (phone) DiscoveryPhoneNavigation(DashboardSurface.HOME, tab, body, back, select, navigate,
             menu, { menu = it }, library = destination)
         else DiscoveryTopNavigation(DashboardSurface.HOME, state.savedProfile?.name.orEmpty(), tab, body,

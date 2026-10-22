@@ -350,7 +350,7 @@ internal fun LibrarySavedPoster(entry: LibraryEntry, state: NikTvState, width: D
 }
 
 @Composable
-private fun LibraryRemoveDialog(favorite: FavoriteItem, close: () -> Unit, remove: () -> Unit) {
+internal fun LibraryRemoveDialog(favorite: FavoriteItem, close: () -> Unit, remove: () -> Unit) {
     val cancel = remember { FocusRequester() }
     LaunchedEffect(Unit) { withFrameNanos { }; runCatching { cancel.requestFocus() } }
     AlertDialog(onDismissRequest = close, containerColor = Color(0xFF181B22),

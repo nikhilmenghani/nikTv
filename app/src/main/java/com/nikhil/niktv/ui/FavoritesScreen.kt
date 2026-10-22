@@ -127,7 +127,8 @@ internal fun ModernFavoritesScreen(
     openSettings: () -> Unit,
     closeFavorites: () -> Unit,
     discoveryChrome: Boolean = false,
-    refreshLiveProgramme: (MediaItem) -> Unit = {}
+    refreshLiveProgramme: (MediaItem) -> Unit = {},
+    heroPresentation: (com.nikhil.niktv.discovery.DiscoveryCard?) -> Unit = {}
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -139,6 +140,9 @@ internal fun ModernFavoritesScreen(
     var entryFocusComplete by rememberSaveable(profileKey) { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     val posterColumns = modernPosterColumns(configuration, isTv)
+    val phoneLibrary = discoveryChrome && com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
+    val discoveryCards = discoveryChrome &&
+        !com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv)
     val groups = FavoriteKind.entries.mapNotNull { kind ->
         state.favorites.filter { it.kind == kind }.takeIf { it.isNotEmpty() }?.let { kind to it }
     }
@@ -159,7 +163,7 @@ internal fun ModernFavoritesScreen(
     LazyVerticalGrid(
         // Match the dashboard's Continue Watching geometry. The old adaptive
         // 180dp rule collapsed compact phones to one nearly full-width poster.
-        columns = if (discoveryChrome) GridCells.FixedSize((if (configuration.smallestScreenWidthDp < 600 && !isTv)
+        columns = if (discoveryCards) GridCells.FixedSize((if (configuration.smallestScreenWidthDp < 600 && !isTv)
             com.nikhil.niktv.discovery.phoneDiscoveryPosterWidth(configuration.screenWidthDp)
             else com.nikhil.niktv.discovery.discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat())).dp)
             else GridCells.Fixed(posterColumns),
@@ -169,7 +173,11 @@ internal fun ModernFavoritesScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
+        if (phoneLibrary) item("favorites-hero", span = { GridItemSpan(maxLineSpan) }) {
+            com.nikhil.niktv.discovery.DiscoveryFavoritesHero(state, gridState.isScrollInProgress || gridState.firstVisibleItemIndex > 0,
+                openFavorite, toggleFavorite, heroPresentation)
+        }
+        if (!phoneLibrary) item("favorites-top", span = { GridItemSpan(maxLineSpan) }) {
             if (discoveryChrome) ModernSectionHeader("My List", "Saved for this profile")
             else ModernScreenTopBar("My List", closeFavorites, openSearch, openSettings,
                 backModifier = if (firstFavoriteKey == null) Modifier.focusRequester(entryFocusRequester) else Modifier)
@@ -186,12 +194,17 @@ internal fun ModernFavoritesScreen(
         } else {
             groups.forEach { (kind, favorites) ->
                 item("header-${kind.name}", span = { GridItemSpan(maxLineSpan) }) {
-                    ModernSectionHeader(kind.sectionTitle(), "${favorites.size} saved")
+                    if (phoneLibrary) Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(kind.sectionTitle(), color = Color.White, style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("${favorites.size} saved", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    } else ModernSectionHeader(kind.sectionTitle(), "${favorites.size} saved")
                 }
                 items(
                     items = favorites,
                     key = { it.key },
-                    span = { if (discoveryChrome && it.kind in setOf(FavoriteKind.CHANNEL, FavoriteKind.EPISODE)) GridItemSpan(minOf(2, maxLineSpan)) else GridItemSpan(1) }
+                    span = { if (discoveryCards && it.kind in setOf(FavoriteKind.CHANNEL, FavoriteKind.EPISODE)) GridItemSpan(minOf(2, maxLineSpan)) else GridItemSpan(1) }
                 ) { favorite ->
                     ModernFavoriteCard(
                         favorite = favorite,
@@ -199,7 +212,7 @@ internal fun ModernFavoritesScreen(
                         open = { openFavorite(favorite) },
                         remove = { toggleFavorite(favorite) },
                         modifier = if (favorite.key == firstFavoriteKey) Modifier.focusRequester(entryFocusRequester) else Modifier,
-                        discoveryState = state.takeIf { discoveryChrome }, refreshLiveProgramme = refreshLiveProgramme
+                        discoveryState = state.takeIf { discoveryCards }, refreshLiveProgramme = refreshLiveProgramme
                     )
                 }
             }
