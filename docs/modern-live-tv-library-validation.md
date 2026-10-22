@@ -151,3 +151,13 @@ Changed implementation files for this task: discovery/DiscoveryLibraryScreen.kt,
 - Final focused checks: `:app:testDebugUnitTest --tests '*DiscoveryLibraryFeedTest' --tests '*DiscoveryLibraryRoutingTest' --tests '*DiscoveryNavigationLayoutTest' --tests '*DiscoveryPhoneLayoutTest' :app:assembleDebug --no-daemon --max-workers=1` passed (21 tests, 0 failures; build successful in 1m 7s). `git diff --check` passed and source credential scan had 0 findings. No full lint/frame benchmark was run for this presentation change.
 - Reinstalled on tablet with `adb -s 6889f3db install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (Success). Evidence: `D:/workspace/niktv-playback-tests/tablet-mylist-wide-hero.png`. All edits remain uncommitted.
 - Final tablet D-pad verification passed: My List tab → Down → Open → Down → first saved tile → Up → Open. Manual Next changed Friends to Taarak Mehta; no media playback was started and no favorites were removed.
+
+
+### Simplified tablet/TV My List (2026-10-22)
+
+- Removed the My List filter/search/sort/action strip and duplicate Continue Watching rail. The landing collection now includes saved channels, movies and series only; saved episode records remain untouched. Existing per-row View all and item actions remain available. Live TV's own controls remain unchanged.
+- Artwork now renders within the scrolling landscape favorites hero, with a bottom fade to the solid page background. My List no longer paints a full-screen backdrop behind collection rows. Phone hero continues to render its own artwork.
+- Adjusted saved-row indices from two preceding items to one so D-pad row alignment/restoration still matches the new LazyColumn structure.
+- Added a focused model regression covering the three collection kinds, profile isolation, exclusion of activity-only items/episodes and preservation of underlying favorites. Validation results follow below.
+- Validation: focused library-feed/routing/navigation/phone tests passed (22 tests, zero failures); `:app:assembleDebug` passed in 1m 9s. `git diff --check` and source credential scan passed. No full lint or frame benchmark was run for this presentation change.
+- Installed on Xiaomi Pad 5 with `adb -s 6889f3db install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (Success). Screenshot `D:/workspace/niktv-playback-tests/tablet-mylist-saved-only.png` confirms header-bounded artwork fading above the Saved series rail, with no All/filter/search/sort strip or Continue Watching rail. Existing test profile has two saved series; the channel/movie rows are omitted when empty. D-pad tab → Open → first saved tile → Open passed. Fire TV remains on the previous build pending installation request.

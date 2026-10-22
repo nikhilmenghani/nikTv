@@ -22,6 +22,17 @@ class DiscoveryLibraryFeedTest {
         assertEquals(listOf(movie, series), libraryFavoriteHeroes(favorites, "a"))
         assertTrue(libraryFavoriteHeroes(favorites, "missing").isEmpty())
     }
+    @Test fun collectionLandingContainsOnlySavedChannelsMoviesAndSeriesWithoutActivityDuplicates() {
+        val saved = FavoriteKind.entries.map { FavoriteItem(it, media(it.name), profileKey = "a") }
+        val state = NikTvState(favorites = saved + saved.first().copy(profileKey = "b"),
+            recentlyPlayed = listOf(RecentItem(FavoriteKind.MOVIE, media("recent-only"), profileKey = "a")))
+        val rows = libraryCollectionRows(state, "a")
+        assertEquals(listOf("saved:CHANNEL", "saved:MOVIE", "saved:SERIES"), rows.map { it.key })
+        assertEquals(3, rows.flatMap { it.entries }.size)
+        assertTrue(rows.flatMap { it.entries }.all { it.favorite?.profileKey == "a" })
+        assertTrue(libraryCollectionRows(state, "missing").isEmpty())
+        assertEquals(saved, state.favorites.filter { it.profileKey == "a" })
+    }
     @Test fun savedFiltersSortAndSearchAreLocalAndProfileScoped() {
         val state = NikTvState(favorites = listOf(
             FavoriteItem(FavoriteKind.MOVIE, media("m1", "Zulu"), addedAtMillis = 2, profileKey = "a"),

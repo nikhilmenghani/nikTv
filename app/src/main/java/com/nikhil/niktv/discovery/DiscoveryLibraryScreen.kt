@@ -47,7 +47,7 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
         }
     }
     Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
-    DiscoveryBackdrop(presentation, android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f)
+    if (destination == DiscoveryLibraryDestination.LIVE_TV) DiscoveryBackdrop(presentation, android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f)
     CompositionLocalProvider(LocalLibraryTab provides tab, LocalDiscoveryLibraryOptions provides options, LocalMobileGlassArtwork provides glassSource?.artwork,
         LocalMobileGlassBounds provides (glassSource?.bounds ?: androidx.compose.ui.geometry.Rect.Zero),
         LocalMobileGlassFit provides (glassSource?.fit ?: false), LocalMobileGlassTopAligned provides (glassSource?.topAligned ?: false),

@@ -24,6 +24,12 @@ internal fun librarySavedRows(state: NikTvState, profile: String, kind: Favorite
         }, it) }
     }
 }
+/** My List's landing page is a collection, not a second activity feed. */
+internal fun libraryCollectionRows(state: NikTvState, profile: String): List<LibraryRow> =
+    librarySavedRows(state, profile, null, "", LibrarySort.RECENT).filter { row ->
+        row.entries.firstOrNull()?.kind in setOf(FavoriteKind.CHANNEL, FavoriteKind.MOVIE, FavoriteKind.SERIES)
+    }
+
 internal fun libraryLiveRows(state: NikTvState, profile: String, pins: Map<String, List<String>>): List<LibraryRow> {
     val cache = state.browseCachesByType[CatalogType.LIVE_TV]?.takeIf { it.profileKey == profile }
     val categories = state.categories.filter { it.type == CatalogType.LIVE_TV }

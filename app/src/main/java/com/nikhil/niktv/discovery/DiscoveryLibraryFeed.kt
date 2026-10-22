@@ -68,9 +68,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val live = destination == DiscoveryLibraryDestination.LIVE_TV
     val favoritesHero = !live && libraryFavoriteHeroes(state.favorites, profile).isNotEmpty()
-    var filter by rememberSaveable(profile, destination) { mutableStateOf<FavoriteKind?>(null) }
-    var sort by rememberSaveable(profile, destination) { mutableStateOf(LibrarySort.RECENT) }
-    var query by rememberSaveable(profile, destination) { mutableStateOf("") }
+    val firstRowIndex = if (live) 2 else 1
     var pinRevision by remember(profile) { mutableIntStateOf(0) }
     val pins = remember(profile, state.categories, pinRevision) { state.categories.associate {
         it.id to IptvPinPreferences.pinnedChannelOrder(context, profile, it.id)
@@ -78,13 +76,9 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val progress = rememberDiscoveryProgressLookup(profile, state.recentlyPlayed, state.playbackProgress)
     val feedIdentity = "$profile:$destination"
     val loadedRows by produceState(feedIdentity to emptyList<LibraryRow>(), state.playbackProgress, progress,
-        state.favorites, state.recentlyPlayed, state.browseCachesByType, state.categories, profile, live, filter, query, sort, pins) {
+        state.favorites, state.recentlyPlayed, state.browseCachesByType, state.categories, profile, live, pins) {
         value = feedIdentity to withContext(Dispatchers.Default) {
-        if (live) libraryLiveRows(state, profile, pins) else {
-            val savedRows = librarySavedRows(state, profile, filter, query, sort)
-            val underway = savedRows.flatMap { it.entries }.filter { progress?.provider(it.type, it.media.id)?.let { fraction -> fraction > 0f && fraction < .98f } == true }
-            if (underway.isEmpty()) savedRows else listOf(LibraryRow("continue-saved", "Continue watching", underway)) + savedRows
-        }
+        if (live) libraryLiveRows(state, profile, pins) else libraryCollectionRows(state, profile)
         }
     }
     val rows = loadedRows.takeIf { it.first == feedIdentity }?.second.orEmpty()
@@ -125,7 +119,6 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val tab = LocalLibraryTab.current
     var remove by remember { mutableStateOf<FavoriteItem?>(null) }
     var guide by remember { mutableStateOf<MediaItem?>(null) }
-    var sortOpen by remember { mutableStateOf(false) }
     val now by produceState(System.currentTimeMillis(), profile) { while (true) { delay(30_000); value = System.currentTimeMillis() } }
     val current = selected?.takeIf { it.live }?.media?.let { state.withCachedLiveGuide(profile, it) }
     val programme = current?.currentLiveProgramme(now)
@@ -164,7 +157,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
             return true
         }
         val row = rows.getOrNull(rowIndex) ?: return false
-        coordinator.move(list, rowIndex + 2, reduceMotion) { rowRequesters[row.key]?.invoke() == true }
+        coordinator.move(list, rowIndex + firstRowIndex, reduceMotion) { rowRequesters[row.key]?.invoke() == true }
         return true
     }
     LaunchedEffect(Unit) {
@@ -174,7 +167,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                 snapshotFlow { latestRows.indexOfFirst { it.key == selectedRow } }.first { it >= 0 }
             } ?: -1
             if (returnToHero) { runCatching { (if (returnToInfo) info else play).requestFocus() }; returning = false }
-            else if (index >= 0) coordinator.move(list, index + 2, reduceMotion) {
+            else if (index >= 0) coordinator.move(list, index + firstRowIndex, reduceMotion) {
                 (rowRequesters[selectedRow]?.invoke() == true).also { if (it) returning = false }
             }
         } else returning = false
@@ -218,7 +211,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                     }
                 }
             }
-            item("controls") {
+            if (live) item("controls") {
                 DiscoveryHorizontalFocusViewport(16.dp) {
                     LazyRow(Modifier.onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) false else when(event.key) {
@@ -227,24 +220,9 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                             else -> false
                         }
                     }, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (live) {
-                            item { DiscoveryAction("All categories", Icons.Default.GridView, onClick = browseCategories) }
-                            item { DiscoveryAction("Choose categories", Icons.Default.Tune, onClick = configureCategories) }
-                            item { DiscoveryAction("Search channels", Icons.Default.Search, onClick = search) }
-                        } else {
-                            items(listOf<FavoriteKind?>(null) + FavoriteKind.entries, key = { it?.name ?: "all" }) { kind ->
-                                DiscoveryAction(kind?.let { when(it) { FavoriteKind.CHANNEL -> "Live TV"; FavoriteKind.MOVIE -> "Movies"; FavoriteKind.SERIES -> "Series"; else -> "Episodes" } } ?: "All",
-                                    selected = filter == kind) { filter = kind }
-                            }
-                            item { DiscoveryCollectionSearch(query, { query = it }, phone) }
-                            item { Box {
-                                DiscoveryAction(sort.title, Icons.Default.Sort) { sortOpen = true }
-                                DropdownMenu(sortOpen, { sortOpen = false }) { LibrarySort.entries.forEach { choice ->
-                                    NikDropdownMenuItem(text = { Text(choice.title) }, onClick = { sort = choice; sortOpen = false })
-                                } }
-                            } }
-                            item { DiscoveryAction("View all", Icons.Default.GridView) { browseSaved(filter) } }
-                        }
+                        item { DiscoveryAction("All categories", Icons.Default.GridView, onClick = browseCategories) }
+                        item { DiscoveryAction("Choose categories", Icons.Default.Tune, onClick = configureCategories) }
+                        item { DiscoveryAction("Search channels", Icons.Default.Search, onClick = search) }
                     }
                 }
             }
@@ -266,7 +244,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                 Column {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(row.title, Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        if (!live || row.category != null) DiscoveryAction("View all", Icons.Default.ChevronRight) { row.category?.let(openCategory) ?: browseSaved(row.entries.firstOrNull()?.kind ?: filter) }
+                        if (!live || row.category != null) DiscoveryAction("View all", Icons.Default.ChevronRight) { row.category?.let(openCategory) ?: browseSaved(row.entries.firstOrNull()?.kind) }
                     }
                     DiscoveryHorizontalFocusViewport(16.dp) {
                         LazyRow(Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
@@ -282,7 +260,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
                                 LaunchedEffect(focused) {
                                     if (focused) {
                                         selectedRow = row.key; selectedId = entry.key; selectedIndex = ordinal; last = key
-                                        coordinator.align(list, index + 2, reduceMotion)
+                                        coordinator.align(list, index + firstRowIndex, reduceMotion)
                                         if (entry.live) { delay(150); enrichGuides(row.entries.drop((ordinal - 2).coerceAtLeast(0)).take(8).map { it.media }) }
                                     }
                                 }
@@ -318,7 +296,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
             }
             if (rows.isEmpty()) item("empty") {
                 Text(if (live) "Open a category to load its channels. Recently watched and cached categories will appear here." else
-                    if (query.isNotBlank()) "No saved titles match your search." else "Save movies, series or channels to build your collection.",
+                    "Save movies, series or channels to build your collection.",
                     Modifier.padding(24.dp), color = Color.LightGray)
             }
         }

@@ -1,6 +1,11 @@
 package com.nikhil.niktv.discovery
 
 import android.provider.Settings
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -101,6 +106,12 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
         }
     }) {
         if (!phone) {
+            // Artwork belongs to this scrolling header, never behind the saved rows.
+            Box(Modifier.matchParentSize().clipToBounds()) {
+                DiscoveryBackdrop(card?.let { it.copy(backdrop = it.backdrop?.takeIf(String::isNotBlank) ?: it.poster) }, reduced)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                    0f to Color.Transparent, .65f to Color.Transparent, 1f to Color(0xFF090B10))))
+            }
             DiscoveryHero(card, null, (configuration.screenHeightDp.dp * .55f).coerceIn(235.dp, 355.dp),
                 landscape = true, compact = false, detail = false, loading = cached == null,
                 inList = true, playRequester = play, infoRequester = info,
