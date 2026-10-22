@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -85,8 +86,10 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
                 item("heading", span = { GridItemSpan(maxLineSpan) }) {
                     Column {
                         Text(category.title, color = Color.White, style = MaterialTheme.typography.titleLarge)
-                        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
-                            placeholder = { Text("Search this category") }, leadingIcon = { Icon(Icons.Default.Search, null) })
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            DiscoveryCollectionSearch(query, { query = it }, compact = phone)
+                            DiscoveryAction("Refresh", Icons.Default.Refresh, iconOnly = true, onClick = refresh)
+                        }
                         if (app.loading || app.catalogLoadingMore) LinearProgressIndicator(Modifier.fillMaxWidth())
                         if (app.error != null) DiscoveryAction("Retry", onClick = refresh)
                         if (!app.loading && items.isEmpty()) Text("No titles found", color = Color.LightGray)

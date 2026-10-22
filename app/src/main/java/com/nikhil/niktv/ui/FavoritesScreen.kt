@@ -144,7 +144,7 @@ internal fun ModernFavoritesScreen(
     }
     val firstFavoriteKey = groups.firstOrNull()?.second?.firstOrNull()?.key
     LaunchedEffect(remoteNavigationActive, firstFavoriteKey) {
-        if (!remoteNavigationActive || entryFocusComplete) return@LaunchedEffect
+        if (discoveryChrome || !remoteNavigationActive || entryFocusComplete) return@LaunchedEffect
         // The top bar and first group heading precede the first media tile.
         gridState.scrollToItem(if (discoveryChrome || firstFavoriteKey == null) 0 else 2)
         repeat(6) { attempt ->
@@ -159,7 +159,10 @@ internal fun ModernFavoritesScreen(
     LazyVerticalGrid(
         // Match the dashboard's Continue Watching geometry. The old adaptive
         // 180dp rule collapsed compact phones to one nearly full-width poster.
-        columns = GridCells.Fixed(posterColumns),
+        columns = if (discoveryChrome) GridCells.FixedSize((if (configuration.smallestScreenWidthDp < 600 && !isTv)
+            com.nikhil.niktv.discovery.phoneDiscoveryPosterWidth(configuration.screenWidthDp)
+            else com.nikhil.niktv.discovery.discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat())).dp)
+            else GridCells.Fixed(posterColumns),
         state = gridState,
         modifier = Modifier.fillMaxSize().background(Color(0xFF090909)),
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 32.dp),
@@ -187,7 +190,8 @@ internal fun ModernFavoritesScreen(
                 }
                 items(
                     items = favorites,
-                    key = { it.key }
+                    key = { it.key },
+                    span = { if (discoveryChrome && it.kind in setOf(FavoriteKind.CHANNEL, FavoriteKind.EPISODE)) GridItemSpan(minOf(2, maxLineSpan)) else GridItemSpan(1) }
                 ) { favorite ->
                     ModernFavoriteCard(
                         favorite = favorite,
@@ -225,7 +229,18 @@ internal fun ModernFavoriteCard(
         }
     }
 
-    if (favorite.kind == FavoriteKind.MOVIE || favorite.kind == FavoriteKind.SERIES) {
+    if (discoveryState != null && favorite.kind in setOf(FavoriteKind.MOVIE, FavoriteKind.SERIES)) {
+        BoxWithConstraints(modifier.fillMaxWidth()) {
+            val context = LocalContext.current
+            val locked = (favorite.media.isAdult || com.nikhil.niktv.data.adultContentLabel(favorite.media.title)) &&
+                com.nikhil.niktv.data.ParentalControls.enabled(context) && !com.nikhil.niktv.data.ParentalControls.unlocked(context)
+            val progress = com.nikhil.niktv.discovery.rememberDiscoveryProgressLookup(favorite.profileKey, discoveryState.recentlyPlayed, discoveryState.playbackProgress)
+            val type = if (favorite.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES
+            com.nikhil.niktv.discovery.LibrarySavedPoster(com.nikhil.niktv.discovery.LibraryEntry(favorite.media, favorite.kind, favorite = favorite),
+                discoveryState, maxWidth, locked, progress?.provider(type, favorite.media.id), open,
+                { removalConfirmationOpen = true }, {}, com.nikhil.niktv.discovery.discoveryPosterFocusInset(maxWidth.value).dp)
+        }
+    } else if (favorite.kind == FavoriteKind.MOVIE || favorite.kind == FavoriteKind.SERIES) {
         ModernCompactMediaCard(
             item = favorite.media,
             subtitle = listOfNotNull(

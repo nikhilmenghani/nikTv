@@ -921,8 +921,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openCatalogType(type: CatalogType) {
         _state.update { current ->
-            current.copy(
-                discoverySurface = null,
+            current.enterCatalogRoot(type).copy(
                 modernTmdbSection = null,
                 modernIptvCategory = null,
                 modernSectionOriginHome = false,

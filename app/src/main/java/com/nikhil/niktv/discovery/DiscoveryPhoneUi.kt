@@ -40,7 +40,7 @@ import com.nikhil.niktv.ui.remoteCombinedClickable
 import com.nikhil.niktv.ui.tileFocusOutline
 
 internal enum class DiscoveryPhoneDestination(val title: String) {
-    HOME("Home"), LIVE("Live TV"), SEARCH("Search"), LIBRARY("My List")
+    HOME("Home"), LIVE("Live TV"), MOVIES("Movies"), SERIES("Series"), LIBRARY("My List")
 }
 
 /** Geometry is device-width based; text scale never changes artwork ratios. */
@@ -59,7 +59,8 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                 val icon = when (destination) {
                     DiscoveryPhoneDestination.HOME -> Icons.Default.Home
                     DiscoveryPhoneDestination.LIVE -> Icons.Default.LiveTv
-                    DiscoveryPhoneDestination.SEARCH -> Icons.Default.Search
+                    DiscoveryPhoneDestination.MOVIES -> Icons.Default.Movie
+                    DiscoveryPhoneDestination.SERIES -> Icons.Default.Tv
                     DiscoveryPhoneDestination.LIBRARY -> Icons.Default.VideoLibrary
                 }
                 Surface(onClick = { select(destination) },
@@ -103,33 +104,13 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             }
             Spacer(Modifier.weight(1f))
             if (!detail) {
-                DiscoveryAction("Settings", Icons.Default.AccountCircle, iconOnly = true) { classic("Settings") }
+                DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
+                DiscoveryAction("Settings", Icons.Default.AccountCircle, iconOnly = true, modifier = Modifier.focusRequester(tab).focusProperties { down = play }) { classic("Settings") }
                 Spacer(Modifier.width(6.dp))
                 DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize)
             }
         }
-        if (!detail) {
-            Spacer(Modifier.height(12.dp))
-            Surface(shape = RoundedCornerShape(24.dp), color = Color(0xBE27272D),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = .22f))) {
-                Row(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    trialSurfaces.forEach { destination ->
-                        val active = destination == surface
-                        Surface(onClick = { select(destination) },
-                            modifier = Modifier.weight(1f).heightIn(min = 44.dp)
-                                .semantics { contentDescription = destination.trialTitle(); selected = active }
-                                .then(if (active) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier),
-                            shape = RoundedCornerShape(20.dp), color = if (active) Color.White else Color.Transparent,
-                            contentColor = if (active) Color.Black else Color(0xFFDDDEE3)) {
-                            Box(Modifier.padding(horizontal = 4.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
-                                Text(if (destination == DashboardSurface.HOME) "All" else destination.trialTitle().removeSuffix(" 2"),
-                                    fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+
     }
 }
 

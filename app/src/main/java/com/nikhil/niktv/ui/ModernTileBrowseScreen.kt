@@ -824,7 +824,7 @@ private fun ModernDestinationHub(
         seriesCategories.map { "series:${it.id}" }
     fun hubEntryModifier(key: String) = if (hubEntryTile == key) Modifier.focusRequester(hubEntryRequester) else Modifier
     LaunchedEffect(hubViewportKey, hubRemoteNavigation, hubEntryTile, availableHubTiles) {
-        if (!hubRemoteNavigation || (dashboardSurface == DashboardSurface.HOME && recents.isNotEmpty()) || hubEntryFocusComplete || hubEntryTile == null) return@LaunchedEffect
+        if ((state.discoveryExperienceEnabled && dashboardSurface == DashboardSurface.LIVE_TV && hubReturnTile == null) || !hubRemoteNavigation || (dashboardSurface == DashboardSurface.HOME && recents.isNotEmpty()) || hubEntryFocusComplete || hubEntryTile == null) return@LaunchedEffect
         if (hubEntryTile !in availableHubTiles) return@LaunchedEffect
         if (hubReturnTile == null) hubGridState.scrollToItem(0)
         else restoredHubViewport?.let { hubGridState.scrollToItem(it.index, it.offset) }

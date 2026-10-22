@@ -5,6 +5,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.lazy.LazyLayoutScrollScope
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.*
@@ -109,6 +111,38 @@ internal class DiscoveryScrollCoordinator(private val scope: CoroutineScope) {
             scroll(state, index, reduceMotion)
             aligned = true // Oversized rows may never fit completely; still focus them.
             transfer?.join()
+        }
+    }
+
+    /** Same bounded curve and cancellation owner for the full collection grid. */
+    fun moveGrid(state: LazyGridState, index: Int, columns: Int, alignRow: Boolean,
+        reduceMotion: Boolean, focus: () -> Boolean): Job = start(index) {
+        coroutineScope {
+            val transfer = launch(start = CoroutineStart.UNDISPATCHED) {
+                withTimeoutOrNull(2_000L) {
+                    while (isActive) {
+                        if (focus()) break
+                        withFrameNanos { }
+                    }
+                }
+            }
+            val info = state.layoutInfo
+            val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+            val first = info.visibleItemsInfo.firstOrNull()
+            val offset = item?.offset?.y?.toFloat() ?: first?.let {
+                it.offset.y + (index / columns - it.index / columns) * (it.size.height + info.mainAxisItemSpacing)
+            }?.toFloat() ?: 0f
+            val height = item?.size?.height ?: first?.size?.height ?: 0
+            val available = info.viewportEndOffset - info.afterContentPadding
+            val distance = when {
+                alignRow -> offset
+                offset < 0 -> offset
+                offset + height > available -> offset + height - available
+                else -> 0f
+            }
+            if (reduceMotion) state.scroll { scrollBy(distance) }
+            else state.animateScrollBy(distance, tween(240, easing = FastOutSlowInEasing))
+            transfer.join()
         }
     }
 

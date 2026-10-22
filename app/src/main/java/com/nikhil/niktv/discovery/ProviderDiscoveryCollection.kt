@@ -13,6 +13,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
+import android.provider.Settings
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.dp
@@ -67,6 +69,13 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
     var query by rememberSaveable(state.identity, type) { mutableStateOf("") }
     var selected by rememberSaveable(state.identity, type) { mutableStateOf<String?>(null) }
     val grid = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    val coordinator = remember(scope) { DiscoveryScrollCoordinator(scope) }
+    val context = LocalContext.current
+    val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    val tileWidth = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp)
+        else discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat())
+    DisposableEffect(coordinator) { onDispose { coordinator.cancel() } }
     val back = remember { FocusRequester() }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     var entryHandled by remember { mutableStateOf(false) }
@@ -85,28 +94,46 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
             .distinctUntilChanged().collect { last -> if (last >= all.size - 8) currentMore() }
     }
     BackHandler(onBack = close)
-    StableTileFocusViewport {
+    DiscoveryVerticalFocusViewport(coordinator) {
         Column(Modifier.fillMaxSize().background(Color(0xFF090B10)).safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true,
                     modifier = Modifier.focusRequester(back), onClick = close)
                 Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f).padding(top = 6.dp))
+                DiscoveryCollectionSearch(query, { query = it }, compact = phone, onActivate = { entryHandled = true })
                 DiscoveryAction("Refresh", Icons.Default.Refresh, iconOnly = true, enabled = type !in state.loading) { load(true) }
             }
-            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 12.dp)
-                .onFocusChanged { if (it.isFocused) entryHandled = true },
-                singleLine = true, placeholder = { Text("Search selected categories") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = if (query.isNotEmpty()) ({ IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Clear search") } }) else null)
             Text("${items.size} titles · ${state.categories[type].orEmpty().size} categories" +
                 if (state.hasMore(type)) " · More titles available" else "",
                 Modifier.padding(horizontal = 14.dp, vertical = 8.dp), color = Color.LightGray,
                 style = MaterialTheme.typography.labelMedium)
             if (type in state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            LazyVerticalGrid(GridCells.Fixed(if (phone) 3 else if (configuration.screenWidthDp >= 1000) 7 else 6),
-                Modifier.fillMaxSize(), state = grid, contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val columns = discoveryCollectionColumns(maxWidth.value, tileWidth)
+            LazyVerticalGrid(GridCells.FixedSize(tileWidth.dp),
+                Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+                    if (!remote || event.type != KeyEventType.KeyDown) false else {
+                        val index = items.indexOfFirst { it.id == selected }
+                        val delta = when (event.key) {
+                            Key.DirectionUp -> -columns
+                            Key.DirectionDown -> columns
+                            Key.DirectionLeft -> -1
+                            Key.DirectionRight -> 1
+                            else -> 0
+                        }
+                        val target = if (delta == 0) null else discoveryGridTarget(index, delta, columns, items.size)
+                        if (target == null) false else {
+                            val id = items[target].id
+                            selected = id
+                            coordinator.moveGrid(grid, target, columns, index / columns != target / columns, reduceMotion) {
+                                runCatching { requesters[id]?.requestFocus() == true }.getOrDefault(false)
+                            }
+                            true
+                        }
+                    }
+                }, state = grid, contentPadding = PaddingValues(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(if (phone) 16.dp else 0.dp)) {
                 items(items, key = { it.id }) { item ->
                     val requester = remember(item.id) { requesters.getOrPut(item.id) { FocusRequester() } }
                     DisposableEffect(requester) { onDispose { requesters.remove(item.id) } }
@@ -119,7 +146,8 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
                         val progress = progressLookup?.provider(type, item.id)
                         if (phone) DiscoveryPhoneMediaCard(item.title, item.logo, subtitle, maxWidth, false,
                             modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
-                        else DiscoveryPosterTile(item.title, item.logo, subtitle, maxWidth,
+                        else DiscoveryPosterTile(item.title, item.logo, subtitle, maxWidth, reduceMotion = reduceMotion,
+                            focusVerticalInset = discoveryPosterFocusInset(maxWidth.value).dp,
                             modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
                         ModernTileActionsMenu(popup, app.favorites.any { it.key == saved.key },
                             dismiss = { popup = false; runCatching { requester.requestFocus() } },
@@ -138,6 +166,7 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
                             DiscoveryAction(if (type in state.errors) "Retry" else "Load more titles", onClick = { load(false) })
                     }
                 }
+            }
             }
         }
     }

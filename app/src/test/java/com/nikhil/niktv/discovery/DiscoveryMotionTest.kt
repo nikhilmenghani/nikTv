@@ -68,4 +68,24 @@ class DiscoveryMotionTest {
             assertTrue(move.isCancelled)
         } finally { coordinator.cancel(); scope.cancel() }
     }
+    @Test fun reversingGridNavigationCancelsTheOldFocusTransfer() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + androidx.compose.runtime.BroadcastFrameClock())
+        val coordinator = DiscoveryScrollCoordinator(scope)
+        val grid = androidx.compose.foundation.lazy.grid.LazyGridState()
+        val calls = mutableListOf<Int>()
+        try {
+            val old = coordinator.moveGrid(grid, 16, 8, true, false) { calls += 16; false }
+            shadowOf(Looper.getMainLooper()).idle()
+            val latest = coordinator.moveGrid(grid, 8, 8, true, false) { calls += 8; false }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(old.isCancelled)
+            assertTrue(latest.isActive)
+            val count = calls.count { it == 16 }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(count, calls.count { it == 16 })
+            coordinator.cancel()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(latest.isCancelled)
+        } finally { scope.cancel() }
+    }
 }

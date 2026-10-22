@@ -645,8 +645,7 @@ internal fun DiscoveryPreviewScreen(
                                     providerVm.load(type, categoryIds = sources.mapTo(mutableSetOf()) { it.id })
                             }
                         }
-                        val width = if (landscape) minOf(((configuration.screenWidthDp - 64) / 7.4f - 12).dp.coerceIn(92.dp, 132.dp),
-                            ((screenHeight.value - 224) / 3f).dp.coerceIn(88.dp, 132.dp))
+                        val width = if (landscape) discoveryPosterWidth(configuration.screenWidthDp.toFloat(), screenHeight.value).dp
                             else ((configuration.screenWidthDp - 40) / 3.15f - 10).dp.coerceIn(88.dp, 120.dp)
                         DiscoveryRail(row, width, reduceMotion, returnRequesters, navigationIndex = index, phone = phonePortrait,
                             popupChanged = { tilePopupOpen = it },
@@ -1085,10 +1084,10 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
 @Composable
 internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: String, width: Dp,
     modifier: Modifier = Modifier, aspect: Float = 2f / 3f, reduceMotion: Boolean = false, progress: Float? = null, matchCount: Int? = null,
-    onClick: () -> Unit, onLongClick: (() -> Unit)? = null, onFocus: () -> Unit = {}) {
+    onClick: () -> Unit, onLongClick: (() -> Unit)? = null, onFocus: () -> Unit = {}, focusVerticalInset: Dp = 0.dp) {
     var focused by remember { mutableStateOf(false) }
     var artworkFailed by remember(artwork) { mutableStateOf(false) }
-    val scale = animateFloatAsState(if (focused && !reduceMotion) 1.05f else 1f,
+    val scale = animateFloatAsState(if (focused && !reduceMotion) DiscoveryPosterFocusScale else 1f,
         tween(if (reduceMotion) 0 else if (focused) 380 else 320, easing = CubicBezierEasing(.2f, 0f, 0f, 1f)), label = "discoveryTileScale")
     val border = animateFloatAsState(if (focused) 1f else 0f, tween(if (reduceMotion) 0 else 180), label = "discoveryTileBorder")
     val shape = remember { RoundedCornerShape(10.dp) }
@@ -1099,7 +1098,9 @@ internal fun DiscoveryPosterTile(title: String, artwork: String?, subtitle: Stri
     val textScale = (width.value / 120f).coerceIn(.85f, 1.15f)
     Column(modifier.width(width).onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
         .remoteCombinedClickable(onClick = onClick, onLongClick = onLongClick, interactionSource = remember { MutableInteractionSource() }, showIndication = false)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(aspect).graphicsLayer {
+        // Reserve focus expansion inside the focusable layout, not only in the
+        // grid padding, which scrolling can consume at the viewport edge.
+        Box(Modifier.padding(vertical = focusVerticalInset).fillMaxWidth().aspectRatio(aspect).graphicsLayer {
             scaleX = scale.value; scaleY = scale.value; shadowElevation = if (focused) 4.dp.toPx() else 0f; this.shape = shape
         }.tileFocusOutline(true, border, shape, Color(0xFF2B303A), 2.dp).clip(shape).background(Color(0xFF1C222C))) {
             AsyncImage(request,

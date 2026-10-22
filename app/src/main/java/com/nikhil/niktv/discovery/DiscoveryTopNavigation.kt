@@ -149,25 +149,13 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
     library: DiscoveryLibraryDestination? = null) {
     Column(Modifier.fillMaxWidth().padding(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
+            DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, modifier = Modifier.focusRequester(tab).focusProperties { down = play }, onClick = back)
             Image(painterResource(R.drawable.niktv_logo_foreground), "NikTV", Modifier.size(36.dp))
             Spacer(Modifier.weight(1f))
             DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
             DiscoveryBrowseMenu(menu, changeMenu, surface, classic, null)
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            trialSurfaces.forEach { entry ->
-                DiscoveryAction(entry.trialTitle(), visualLabel = entry.trialTitle().removeSuffix(" 2"),
-                    selected = library == null && entry == surface, horizontalPadding = 12.dp,
-                    modifier = Modifier.heightIn(min = 48.dp)
-                        .then(if (library == null && entry == surface) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier),
-                    onClick = { select(entry) })
-            }
-            DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
-                modifier = if (library == DiscoveryLibraryDestination.LIVE_TV) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { classic("Live TV") }
-            DiscoveryAction("My List", selected = library == DiscoveryLibraryDestination.MY_LIST, horizontalPadding = 12.dp,
-                modifier = if (library == DiscoveryLibraryDestination.MY_LIST) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { classic("My List") }
-        }
+
     }
 }
 
