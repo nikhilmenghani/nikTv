@@ -47,6 +47,7 @@ import kotlinx.coroutines.NonCancellable
 
 data class NikTvState(
     val discoveryExperienceEnabled: Boolean = true,
+    val profileSwitcherOpen: Boolean = false,
     val discoverySurface: DashboardSurface? = null,
     val discoveryNavigationId: Long = 0,
     val discoveryMatchCounts: Map<String, Int> = emptyMap(),
@@ -920,6 +921,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openCatalogType(type: CatalogType) {
+        com.nikhil.niktv.discovery.modernCatalogSurface(type)?.let { openDiscovery(it); return }
         _state.update { current ->
             current.enterCatalogRoot(type).copy(
                 modernTmdbSection = null,
@@ -2305,7 +2307,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         store.setAutomaticReauthentication(enabled)
     }
 
-    fun setModernUiEnabled(enabled: Boolean) {
+    fun setModernUiEnabled(requested: Boolean) {
+        val enabled = true
         _state.update { current ->
             current.copy(
                 modernUiEnabled = enabled,
@@ -7265,15 +7268,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun editProfile() = _state.update { it.copy(session = null, settingsOpen = false, profileEditorOpen = true) }
     fun addProfile() = _state.update { it.copy(session = null, savedProfile = null, settingsOpen = false, profileEditorOpen = true) }
-    fun openProfileSwitcher() {
-        cancelPendingPlayback()
-        val snapshot = _state.value
-        if (snapshot.profiles.size < 2) return
-        val currentIndex = snapshot.profiles.indexOfFirst {
-            it.cacheKey() == snapshot.savedProfile?.cacheKey()
-        }.takeIf { it >= 0 } ?: 0
-        switchProfile(snapshot.profiles[(currentIndex + 1) % snapshot.profiles.size])
-    }
+    fun openProfileSwitcher() { _state.update { it.copy(profileSwitcherOpen = true) } }
+    fun closeProfileSwitcher() { _state.update { it.copy(profileSwitcherOpen = false) } }
     fun exportBackup(uri: Uri) = viewModelScope.launch {
         runCatching {
             com.nikhil.niktv.data.BackupActivityLog.track(getApplication(), "Profile export · Device") {
@@ -7502,6 +7498,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return authenticateProfileForOpening(profile).also { store.save(it) }
     }
     fun switchProfile(profile: PortalProfile) = task {
+        closeProfileSwitcher()
         profilePreparationJob?.cancel()
         searchPreviewJob?.cancel()
         searchServerJob?.cancel()
@@ -7612,6 +7609,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         )) }
     }
     fun openHome() {
+        if (_state.value.discoveryExperienceEnabled) { openDiscovery(DashboardSurface.HOME); return }
         cancelPendingPlayback()
         _state.update { it.copy(
             discoverySurface = null,
@@ -7642,13 +7640,6 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun closeHome() = _state.update { it.copy(homeOpen = false) }
 
     /** Trial routes deliberately do not call loadDashboardDiscovery or resolve any provider title. */
-    fun setDiscoveryExperienceEnabled(enabled: Boolean) {
-        com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.setEnabled(getApplication(), enabled)
-        _state.update { it.copy(discoveryExperienceEnabled = enabled) }
-        if (_state.value.session != null) {
-            if (enabled) openDiscovery(DashboardSurface.HOME) else openHome()
-        }
-    }
 
     fun openDiscovery(surface: DashboardSurface) {
         cancelPendingPlayback()

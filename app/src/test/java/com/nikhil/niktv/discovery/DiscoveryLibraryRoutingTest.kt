@@ -12,11 +12,17 @@ class DiscoveryLibraryRoutingTest {
         assertNull(destination(type = CatalogType.MOVIES))
         assertNull(destination(type = CatalogType.SERIES))
     }
-    @Test fun originalUiAndSecondaryRoutesKeepTheirOwners() {
+    @Test fun secondaryRoutesKeepTheirOwners() {
         assertNull(destination(enabled = false))
         assertNull(destination(overlay = true))
         assertNull(destination(detail = true))
         assertNull(destination(favorites = true, overlay = true))
+    }
+    @Test fun catalogueMovieAndSeriesRootsAlwaysResolveToModernSurfaces() {
+        assertEquals(com.nikhil.niktv.model.DashboardSurface.MOVIES, modernCatalogSurface(CatalogType.MOVIES))
+        assertEquals(com.nikhil.niktv.model.DashboardSurface.SERIES, modernCatalogSurface(CatalogType.SERIES))
+        assertNull(modernCatalogSurface(CatalogType.LIVE_TV))
+        assertNull(modernCatalogSurface(CatalogType.RADIO))
     }
     private fun destination(enabled: Boolean = true, home: Boolean = false, type: CatalogType = CatalogType.LIVE_TV,
         favorites: Boolean = false, overlay: Boolean = false, detail: Boolean = false) =

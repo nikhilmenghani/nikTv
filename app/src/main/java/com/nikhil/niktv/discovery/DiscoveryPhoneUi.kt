@@ -21,6 +21,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -61,7 +64,7 @@ internal fun usesDiscoveryPhoneLayout(smallestWidthDp: Int, television: Boolean)
 internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?,
     select: (DiscoveryPhoneDestination) -> Unit, modifier: Modifier = Modifier) {
     Surface(modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(26.dp), color = Color(0xF01B1D23),
+        shape = RoundedCornerShape(10.dp), color = Color(0xB31B1D23),
         border = BorderStroke(1.dp, Color(0xFF484A51)), shadowElevation = 5.dp) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             DiscoveryPhoneDestination.entries.forEach { destination ->
@@ -75,7 +78,7 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
                 }
                 Surface(onClick = { select(destination) },
                     modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { this.selected = active },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = if (active) Color(0xFF3D3E45) else Color.Transparent,
                     contentColor = if (active) Color.White else Color(0xFFB1B1B9)) {
                     Column(Modifier.padding(horizontal = 2.dp, vertical = 7.dp),
@@ -95,7 +98,8 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
 internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, tab: FocusRequester,
     play: FocusRequester, back: () -> Unit, select: (DashboardSurface) -> Unit,
     classic: (String) -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit,
-    customize: () -> Unit, categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
+    customize: (() -> Unit)?, profile: String = "", categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
+    CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (detail) DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
@@ -113,14 +117,15 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
                     .graphicsLayer { scaleX = 2.4f; scaleY = 2.4f })
             }
             Spacer(Modifier.weight(1f))
-            if (!detail) {
+            if (!detail) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
-                DiscoveryAction("Settings", Icons.Default.AccountCircle, iconOnly = true, modifier = Modifier.focusRequester(tab).focusProperties { down = play }) { classic("Settings") }
-                Spacer(Modifier.width(6.dp))
+                DiscoveryAction("Profile: $profile", visualLabel = profile.trim().firstOrNull()?.uppercase() ?: "N",
+                    horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $profile" }.focusRequester(tab).focusProperties { down = play }) { classic("Profile") }
                 DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize)
             }
         }
 
+    }
     }
 }
 
@@ -140,8 +145,17 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
     val dragThreshold = with(LocalDensity.current) { 56.dp.toPx() }
     val portraitPoster = card?.backdrop.isNullOrBlank()
     val picture = thumbnailArtworkUrl(card?.backdrop ?: card?.poster, if (portraitPoster) 780 else 1280)
+    var heroBounds by remember(picture) { mutableStateOf(Rect.Zero) }
+    val glassSource = MobileGlassSource(picture, heroBounds, fitArtwork,
+        (compactDetail && !portraitPoster) || artworkAlignment == Alignment.TopCenter, compactDetail && !portraitPoster && !fitArtwork)
+    val publishGlass = LocalPublishMobileGlassSource.current
+    LaunchedEffect(glassSource) { publishGlass(glassSource) }
+    DisposableEffect(publishGlass) { onDispose { publishGlass(null) } }
+    CompositionLocalProvider(LocalMobileGlassEnabled provides true, LocalMobileGlassArtwork provides picture,
+        LocalMobileGlassBounds provides heroBounds, LocalMobileGlassFit provides glassSource.fit,
+        LocalMobileGlassTopAligned provides glassSource.topAligned, LocalMobileGlassFillWidth provides glassSource.fillWidth) {
     Column(Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().heightIn(min = height)) {
+        Box(Modifier.fillMaxWidth().heightIn(min = height).onGloballyPositioned { heroBounds = Rect(it.positionInRoot(), it.size.toSize()) }) {
             Crossfade(picture, modifier = Modifier.matchParentSize(), animationSpec = tween(if (reduceMotion) 0 else 250), label = "phoneHeroArtwork") { url ->
                 AsyncImage(ImageRequest.Builder(context).data(url).size(if (portraitPoster) 780 else 1280, if (portraitPoster) 1170 else 720)
                     .transformations(DiscoveryPhoneBackdropTransformation()).crossfade(false).build(), null,
@@ -166,13 +180,21 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 Spacer(Modifier.height(if (compactDetail) 64.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .25f).coerceAtLeast(100.dp)))
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
                     horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (loading) LinearProgressIndicator(Modifier.width(110.dp))
-                    if (supportingTitle) Spacer(Modifier.height(with(LocalDensity.current) { 24.sp.toDp() }))
-                    rank?.let { Text("#$it · TRENDING TODAY", color = Color(0xFFE5E5EA), fontSize = 11.sp, lineHeight = 24.sp,
-                        letterSpacing = 1.sp, fontWeight = FontWeight.Bold) }
+                    // Keep rank/loading in one fixed slot: content arrival must not move actions.
+                    if (!detail || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
+                        contentAlignment = Alignment.Center) {
+                        if (loading) LinearProgressIndicator(Modifier.width(110.dp).semantics { contentDescription = "Loading featured title" })
+                        else rank?.let { Text("#$it · TRENDING TODAY", color = Color(0xFFE5E5EA), fontSize = 11.sp, lineHeight = 24.sp,
+                            letterSpacing = 1.sp, fontWeight = FontWeight.Bold) }
+                    }
                     var logoReady by remember(card?.key, card?.titleLogo) { mutableStateOf(false) }
                     Box(Modifier.fillMaxWidth().height(82.dp * fontScale), contentAlignment = if (supportingTitle) Alignment.BottomCenter else if (leftAligned) Alignment.CenterStart else Alignment.Center) {
-                        if (supportingTitle || !logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
+                        if (loading && card == null) Column(horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.width(220.dp).height(18.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF252B35)))
+                            Box(Modifier.width(150.dp).height(12.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF252B35)))
+                        }
+                        else if (supportingTitle || !logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
                             fontSize = if (supportingTitle) 17.sp else 28.sp, lineHeight = if (supportingTitle) 22.sp else 32.sp, fontWeight = if (supportingTitle) FontWeight.Medium else FontWeight.Bold,
                             textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = if (supportingTitle) 2 else 3, overflow = TextOverflow.Ellipsis)
                         if (!supportingTitle && !card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
@@ -184,7 +206,8 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         it.genres.take(if (detail) 3 else 2).joinToString(" · ").takeIf(String::isNotBlank),
                         it.certification?.takeIf { detail }).joinToString(" · ") }.orEmpty()
                     if (!leftAligned || metadata.isNotBlank()) Box(Modifier.fillMaxWidth().height(36.dp * fontScale), contentAlignment = if (leftAligned) Alignment.CenterStart else Alignment.Center) {
-                        if (metadata.isNotBlank()) Text(metadata, color = Color(0xFFCDCDD3), fontSize = 13.sp, lineHeight = 18.sp,
+                        if (loading && card == null) Box(Modifier.width(160.dp).height(10.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF252B35)))
+                        else if (metadata.isNotBlank()) Text(metadata, color = Color(0xFFCDCDD3), fontSize = 13.sp, lineHeight = 18.sp,
                             textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     Row(Modifier.fillMaxWidth().onPreviewKeyEvent {
@@ -197,9 +220,10 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         // Keep the primary action centred exactly as Home's Add / Play / Info row.
                         // Saved heroes omit Add, but retain its non-interactive layout slot.
                         if (!detail && !showListAction && supportingTitle) Spacer(Modifier.size(48.dp))
-                        Surface(onClick = play, enabled = card != null && playEnabled, shape = RoundedCornerShape(if (compactDetail) 10.dp else 24.dp),
-                            color = Color.White, contentColor = Color.Black,
-                            modifier = Modifier.then(if (detail) Modifier.weight(1f) else Modifier.widthIn(min = 140.dp))
+                        DiscoveryMobileGlassContainer(if (detail) Modifier.weight(1f) else Modifier) {
+                        Surface(onClick = play, enabled = card != null && playEnabled, shape = RoundedCornerShape(10.dp),
+                            color = Color.Transparent, contentColor = Color.White,
+                            modifier = Modifier.then(if (detail) Modifier.fillMaxWidth() else Modifier.widthIn(min = 140.dp))
                                 .heightIn(min = 48.dp).focusRequester(playRequester).onFocusChanged { if (it.isFocused) onFocus() }) {
                             Row(Modifier.padding(horizontal = if (compactDetail) 8.dp else 18.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
@@ -208,6 +232,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                                     fontWeight = FontWeight.Bold, fontSize = if (compactDetail) 13.sp else 15.sp,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
+                        }
                         }
                         if (detail && compactDetail) DiscoveryAction(if (inList) "In My List" else "My List",
                             if (inList) Icons.Default.Check else Icons.Default.Add, enabled = card != null,
@@ -226,14 +251,14 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                                 if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                             }) { actions() }
                     }
-                    if (carousel) Row(Modifier.onPreviewKeyEvent {
+                    if (carousel || !detail) Row(Modifier.heightIn(min = 48.dp).onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                     }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        PhoneHeroIcon("Previous featured title", Icons.Default.ChevronLeft, true, previous,
+                        PhoneHeroIcon("Previous featured title", Icons.Default.ChevronLeft, carousel, previous,
                             Modifier.onFocusChanged { if (it.isFocused) onFocus() })
-                        Text("${index + 1} / $count", Modifier.width((48f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp),
+                        Text(if (count > 0) "${index + 1} / $count" else "— / —", Modifier.width((48f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp),
                             color = Color.LightGray, fontSize = 11.sp, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                        PhoneHeroIcon("Next featured title", Icons.Default.ChevronRight, true, next,
+                        PhoneHeroIcon("Next featured title", Icons.Default.ChevronRight, carousel, next,
                             Modifier.onFocusChanged { if (it.isFocused) onFocus() })
                     }
                 }
@@ -242,14 +267,17 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
         if (detail && showSynopsis && !card?.overview.isNullOrBlank()) Text(card?.overview.orEmpty(),
             Modifier.padding(horizontal = 20.dp, vertical = 12.dp), color = Color(0xFFD6D6DC), fontSize = 15.sp, lineHeight = 23.sp)
     }
+    }
 }
 
 @Composable
 private fun PhoneHeroIcon(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector,
     enabled: Boolean, click: () -> Unit, modifier: Modifier = Modifier) {
+    DiscoveryMobileGlassContainer {
     Surface(onClick = click, enabled = enabled, modifier = modifier.size(48.dp).semantics { contentDescription = label },
-        shape = CircleShape, color = Color(0xC42A2B32), border = BorderStroke(1.dp, Color(0xFF62636B)), contentColor = Color.White) {
+        shape = RoundedCornerShape(10.dp), color = Color.Transparent, border = null, contentColor = Color.White) {
         Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(24.dp)) }
+    }
     }
 }
 

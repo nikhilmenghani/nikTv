@@ -185,7 +185,7 @@ class ProfileStore @JvmOverloads constructor(
     }
     val modernUiEnabled: Flow<Boolean> = preferences.data.map {
         // Existing and new installs both default to the tile-first interface.
-        (it[modernUiEnabledKey] ?: 1) == 1
+        true
     }
     val playbackEngine: Flow<PlaybackEngine> = preferences.data.map { prefs ->
         prefs[playbackEngineKey]?.let { runCatching { PlaybackEngine.valueOf(it) }.getOrNull() }
@@ -365,7 +365,7 @@ class ProfileStore @JvmOverloads constructor(
         it[automaticReauthenticationKey] = if (enabled) 1 else 0
     }
     suspend fun setModernUiEnabled(enabled: Boolean) = preferences.edit {
-        it[modernUiEnabledKey] = if (enabled) 1 else 0
+        it[modernUiEnabledKey] = 1
     }
     suspend fun setPlaybackEngine(engine: PlaybackEngine) = preferences.edit {
         it[playbackEngineKey] = if (engine == PlaybackEngine.EXOPLAYER) PlaybackEngine.MEDIA3.name else engine.name

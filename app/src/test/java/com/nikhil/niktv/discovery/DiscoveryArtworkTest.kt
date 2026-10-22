@@ -22,6 +22,25 @@ class DiscoveryArtworkTest {
         assertTrue(Color.red(result.getPixel(48, 27)) in 1..254)
         assertEquals(0, Color.red(result.getPixel(10, 27)))
     }
+    @Test fun portraitGlassTextureRetainsArtworkAspectRatio() = runBlocking {
+        val source = Bitmap.createBitmap(200, 300, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.RED) }
+        val result = DiscoveryGlassTransformation().transform(source, Size(192, 108))
+        assertEquals(96, result.width)
+        assertEquals(144, result.height)
+        assertEquals(200, source.width)
+        assertEquals(300, source.height)
+    }
+    @Test fun glassUsesSharedHeroCoordinatesForCropFitAndScrolledArtwork() {
+        val image = androidx.compose.ui.geometry.Size(200f, 300f)
+        val viewport = androidx.compose.ui.geometry.Rect(0f, 100f, 300f, 700f)
+        assertEquals(androidx.compose.ui.geometry.Rect(-50f, 100f, 350f, 700f), discoveryGlassImageRect(viewport, image))
+        assertEquals(androidx.compose.ui.geometry.Rect(0f, 100f, 300f, 550f), discoveryGlassImageRect(viewport, image, fit = true, topAligned = true))
+        assertEquals(androidx.compose.ui.geometry.Rect(-50f, -200f, 350f, 400f),
+            discoveryGlassImageRect(androidx.compose.ui.geometry.Rect(0f, -200f, 300f, 400f), image))
+    }
+    @Test fun unknownGlassBoundsNeverRefitTheEntireArtworkIntoAButton() {
+        assertNull(discoveryGlassImageRect(androidx.compose.ui.geometry.Rect.Zero, androidx.compose.ui.geometry.Size(200f, 300f)))
+    }
     @Test fun backdropShadingPreservesSourceAndProducesOpaqueCachedOutput() = runBlocking {
         val source = Bitmap.createBitmap(128, 72, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
         val result = DiscoveryBackdropTransformation().transform(source, Size(128, 72))

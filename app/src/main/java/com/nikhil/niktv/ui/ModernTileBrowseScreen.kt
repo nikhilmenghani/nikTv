@@ -468,11 +468,6 @@ private fun ModernTilePhoneHeader(
                         expanded = profileMenuOpen,
                         onDismissRequest = { profileMenuOpen = false }
                     ) {
-                        com.nikhil.niktv.discovery.trialSurfaces.forEach { surface ->
-                            DropdownMenuItem(text = { Text(when (surface) {
-                                DashboardSurface.MOVIES -> "Movies 2"; DashboardSurface.SERIES -> "Series 2"; else -> "Home 2"
-                            }) }, onClick = { profileMenuOpen = false; openDiscovery(surface) })
-                        }
                         DropdownMenuItem(
                             text = { Text("Switch profile") },
                             leadingIcon = { Icon(Icons.Default.AccountCircle, null) },
@@ -850,7 +845,13 @@ private fun ModernDestinationHub(
                 hubGridState.firstVisibleItemIndex, hubGridState.firstVisibleItemScrollOffset)
         }
     }
+    val libraryOptions = com.nikhil.niktv.discovery.LocalDiscoveryLibraryOptions.current
+    DisposableEffect(libraryOptions) {
+        libraryOptions?.open = { customizeHomeOpen = true }
+        onDispose { libraryOptions?.open = null }
+    }
     Column(modifier.fillMaxSize()) {
+        if (!(libraryOptions?.live == true && com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv))) {
             Row(
                 Modifier.fillMaxWidth().padding(
                     start = if (isTv) 32.dp else if (isTablet) 24.dp else 14.dp,
@@ -902,6 +903,7 @@ private fun ModernDestinationHub(
                 )
 
             }
+        }
         Spacer(Modifier.height(if (isTv || isTablet) 38.dp else 12.dp))
     LazyVerticalGrid(
         columns = GridCells.Fixed(destinationColumns),

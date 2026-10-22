@@ -28,14 +28,19 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nikhil.niktv.data.*
 import com.nikhil.niktv.model.*
 import com.nikhil.niktv.ui.NikTvState
+import com.nikhil.niktv.ui.isTvLikeDevice
 import kotlinx.coroutines.delay
 import java.io.File
 
 /** Reuse Home's artwork/gesture presentation without resolving provider availability. */
 @Composable
 internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
-    open: (FavoriteItem) -> Unit, toggleFavorite: (FavoriteItem) -> Unit, presentation: (DiscoveryCard?) -> Unit) {
+    open: (FavoriteItem) -> Unit, toggleFavorite: (FavoriteItem) -> Unit, presentation: (DiscoveryCard?) -> Unit,
+    playRequester: FocusRequester? = null, infoRequester: FocusRequester? = null,
+    showInfo: ((FavoriteItem) -> Unit)? = null, onDown: () -> Unit = {}, onUp: () -> Boolean = { false }) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, context.isTvLikeDevice(configuration))
     val profile = state.session?.profile?.cacheKey() ?: state.savedProfile?.cacheKey().orEmpty()
     val favorites = remember(state.favorites, profile) { libraryFavoriteHeroes(state.favorites, profile) }
     var removal by remember(profile) { mutableStateOf<FavoriteItem?>(null) }
@@ -51,7 +56,11 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
     }
     val card = cached?.takeIf { it.first == identity }?.second ?: entry?.let { providerDetailFallback(it.media, it.type) }
     val publish by rememberUpdatedState(presentation)
-    LaunchedEffect(identity, card) { publish(card) }
+    LaunchedEffect(identity, card, phone) {
+        // Prefer cached landscape artwork; retain a provider poster fallback when no
+        // backdrop is available, rather than leaving the wide hero empty.
+        publish(if (phone) card else card?.let { it.copy(backdrop = it.backdrop?.takeIf(String::isNotBlank) ?: it.poster) })
+    }
     DisposableEffect(Unit) { onDispose { publish(null) } }
     if (favorite == null) return
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -75,8 +84,15 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
             }
         }
     }
-    val play = remember { FocusRequester() }
-    val info = remember { FocusRequester() }
+    val localPlay = remember { FocusRequester() }
+    val localInfo = remember { FocusRequester() }
+    val play = playRequester ?: localPlay
+    val info = infoRequester ?: localInfo
+    val openInfo: () -> Unit = {
+        if (showInfo != null) showInfo(favorite)
+        else if (favorite.source == FavoriteSource.TMDB) open(favorite)
+        else details(requireNotNull(entry).type, favorite.media, listOf(favorite.media))
+    }
     Box(Modifier.wrapContentWidth(unbounded = true).requiredWidth(LocalConfiguration.current.screenWidthDp.dp).onFocusChanged { focused = it.hasFocus }.focusGroup().pointerInput(identity) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -84,8 +100,16 @@ internal fun DiscoveryFavoritesHero(state: NikTvState, scrolling: Boolean,
             try { waitForUpOrCancellation(pass = PointerEventPass.Initial) } finally { touching = false }
         }
     }) {
-        DiscoveryPhoneHero(card?.let { if (!it.poster.isNullOrBlank()) it.copy(backdrop = null) else it }, null, phoneDiscoveryHeroHeight(), false, false, true, play, info,
-            play = { open(favorite) }, add = { removal = favorite }, info = { if (favorite.source == FavoriteSource.TMDB) open(favorite) else details(requireNotNull(entry).type, favorite.media, listOf(favorite.media)) },
+        if (!phone) {
+            DiscoveryHero(card, null, (configuration.screenHeightDp.dp * .55f).coerceIn(235.dp, 355.dp),
+                landscape = true, compact = false, detail = false, loading = cached == null,
+                inList = true, playRequester = play, infoRequester = info,
+                play = { open(favorite) }, add = { removal = favorite }, info = openInfo,
+                onFocus = {}, onDown = onDown, onUp = onUp,
+                previous = { move(-1) }, next = { move(1) }, carousel = favorites.size > 1,
+                index = index, count = favorites.size, playLabel = "Open")
+        } else DiscoveryPhoneHero(card?.let { if (!it.poster.isNullOrBlank()) it.copy(backdrop = null) else it }, null, phoneDiscoveryHeroHeight(), false, false, true, play, info,
+            play = { open(favorite) }, add = { removal = favorite }, info = openInfo,
             previous = { move(-1) }, next = { move(1) }, carousel = favorites.size > 1,
             index = index, count = favorites.size, playLabel = "Open", playEnabled = true,
             reduceMotion = reduced, onFocus = {}, onDown = {},

@@ -61,7 +61,7 @@ internal val LocalDiscoveryNavigationTrace = staticCompositionLocalOf<((String) 
 private val Background = Color(0xFF090B10)
 private val Accent = Color(0xFFE50925)
 internal val trialSurfaces = listOf(DashboardSurface.HOME, DashboardSurface.MOVIES, DashboardSurface.SERIES)
-internal fun DashboardSurface.trialTitle() = when (this) { DashboardSurface.MOVIES -> "Movies 2"; DashboardSurface.SERIES -> "Series 2"; else -> "Home 2" }
+internal fun DashboardSurface.trialTitle() = when (this) { DashboardSurface.MOVIES -> "Movies"; DashboardSurface.SERIES -> "Series"; else -> "Home" }
 
 private data class RailEntry(val key: String, val title: String, val artwork: String?, val card: DiscoveryCard? = null,
     val subtitle: String = "", val progress: Float? = null, val open: () -> Unit,
@@ -584,7 +584,7 @@ internal fun DiscoveryPreviewScreen(
                         DiscoveryHero(displayed, if (state.detail == null) state.feeds[if (displayed?.series == true) TmdbHomeSection.TRENDING_SERIES else TmdbHomeSection.TRENDING_MOVIES]
                             .orEmpty().take(10).indexOfFirst { it.key == displayed?.key }.takeIf { it >= 0 }?.plus(1) else null,
                             height = heroHeight, landscape = landscape, compact = compactLandscape, detail = state.detail != null,
-                            loading = displayed == null && (state.loading.isNotEmpty() || candidate != null),
+                            loading = displayed == null && (state.loading.isNotEmpty() || candidate != null || (state.feeds.isEmpty() && state.errors.isEmpty())),
                             inList = if (focusedProvider != null) focusedProvider.id in favorites.profileMediaIds
                                 else displayed?.let { card -> card.media.id in favorites.profileMediaIds } == true,
                             playRequester = playRequester, infoRequester = infoFocusRequester,
@@ -605,9 +605,9 @@ internal fun DiscoveryPreviewScreen(
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
                             index = state.heroIndex, count = state.heroes.size,
                             categoryActions = if (state.detail == null) ({
-                                DiscoveryCategoryAccess(surface, app.categoryManagerOpen, popupChanged = { categoryPopup = it },
+                                DiscoveryCategoryAccess(surface, app.categoryManagerOpen, modifier = if (phone) Modifier.widthIn(min = 144.dp) else Modifier, popupChanged = { categoryPopup = it },
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } })
-                                DiscoveryAction("TMDB categories", modifier = Modifier.focusRequester(tmdbCategoriesRequester),
+                                DiscoveryAction("TMDB categories", modifier = Modifier.then(if (phone) Modifier.widthIn(min = 144.dp) else Modifier).focusRequester(tmdbCategoriesRequester),
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }) { restoreTmdbCategories = true; configure = true }
                             }) else null,
                             portraitPhone = phonePortrait,
@@ -615,11 +615,11 @@ internal fun DiscoveryPreviewScreen(
                                 DiscoveryPhoneHeader(surface, state.detail != null, tabRequester, playRequester,
                                     back = ::closeRoute,
                                     select = { if (it != surface) selectRoute(it) }, classic = ::classicRoute,
-                                    menu = menu, changeMenu = { menu = it }, customize = { configure = true },
+                                    menu = menu, changeMenu = { menu = it }, customize = { configure = true }, profile = app.savedProfile?.name.orEmpty(),
                                     categoryManagerOpen = app.categoryManagerOpen, categoryPopupChanged = { categoryPopup = it })
                             }) else null)
                         state.errors.filterKeys { it == "detail" }.values.forEach { Text(it, Modifier.padding(horizontal = 24.dp), color = Color.LightGray, fontSize = 13.sp) }
-                        if (candidate == null && state.loading.isEmpty()) Text("Discovery is unavailable. Check your TMDB configuration or retry below.", Modifier.padding(24.dp), color = Color.LightGray)
+                        if (candidate == null && state.loading.isEmpty() && (state.feeds.isNotEmpty() || state.errors.isNotEmpty())) Text("Discovery is unavailable. Check your TMDB configuration or retry below.", Modifier.padding(24.dp), color = Color.LightGray)
                     }
                     if (state.detail?.series == true) item("seasons") {
                         val seasonEntry = remember { FocusRequester() }
@@ -901,11 +901,20 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     Column(Modifier.fillMaxWidth().heightIn(min = height).padding(horizontal = if (landscape) 32.dp else 18.dp, vertical = if (compact) 8.dp else 16.dp)
         .pointerInput(carousel) { if (carousel) detectHorizontalDragGestures(onDragStart = { drag = 0f }, onDragEnd = { if (drag < -70f) next() else if (drag > 70f) previous() }) { change, amount -> change.consume(); drag += amount } },
         verticalArrangement = Arrangement.Bottom) {
-        if (loading) { LinearProgressIndicator(Modifier.width(160.dp)); Spacer(Modifier.height(16.dp)) }
-        rank?.let { Text("#$it · TRENDING TODAY", color = Color.LightGray, fontSize = 11.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold) }
+        // Landing heroes keep the same geometry before feeds, artwork and metadata arrive.
+        // Detail pages retain their full, variable-length synopsis.
+        if (!detail) Box(Modifier.height(24.dp * fontScale), contentAlignment = Alignment.CenterStart) {
+            if (loading) LinearProgressIndicator(Modifier.width(160.dp))
+            else rank?.let { Text("#$it · TRENDING TODAY", color = Color.LightGray, fontSize = 11.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold) }
+        } else if (loading) {
+            LinearProgressIndicator(Modifier.width(160.dp)); Spacer(Modifier.height(16.dp))
+        }
         var logoReady by remember(card?.titleLogo) { mutableStateOf(false) }
         Box(Modifier.widthIn(max = if (landscape) 560.dp else 400.dp).height((if (landscape && !compact) 76.dp else 64.dp) * fontScale), contentAlignment = Alignment.CenterStart) {
-            if (!logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
+            if (loading && card == null) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.width(280.dp).height(20.dp).background(Color.White.copy(alpha = .10f), RoundedCornerShape(4.dp)))
+                Box(Modifier.width(180.dp).height(16.dp).background(Color.White.copy(alpha = .07f), RoundedCornerShape(4.dp)))
+            } else if (!logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
                 fontSize = if (landscape && !compact) 32.sp else 26.sp, lineHeight = if (landscape && !compact) 36.sp else 30.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (!card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
                 Modifier.widthIn(max = 400.dp).fillMaxHeight().graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
@@ -913,9 +922,23 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         }
         val metadata = card?.let { listOfNotNull(it.date?.take(4), it.runtime?.let { n -> "${n} min" }, it.genres.take(3).joinToString(" · ").takeIf(String::isNotBlank),
             it.rating?.takeIf { n -> n > 0 }?.let { n -> "★ %.1f".format(n) }, it.certification).joinToString(" · ") }.orEmpty()
-        if (metadata.isNotBlank()) Text(metadata, Modifier.padding(top = if (compact) 4.dp else 6.dp), color = Color.LightGray, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        card?.overview?.takeIf { showSynopsis && it.isNotBlank() }?.let { Text(it, Modifier.widthIn(max = if (landscape) 600.dp else 500.dp).padding(top = if (compact) 6.dp else 8.dp),
-            color = Color(0xFFD6D8DC), fontSize = if (compact) 12.sp else 13.sp, lineHeight = if (compact) 16.sp else 18.sp, maxLines = if (detail) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis) }
+        Box(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp)
+            .then(if (!detail) Modifier.height(36.dp * fontScale) else Modifier), contentAlignment = Alignment.TopStart) {
+            if (metadata.isNotBlank()) Text(metadata, Modifier.padding(top = if (compact) 4.dp else 6.dp),
+                color = Color.LightGray, fontSize = 12.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            else if (loading && !detail) Box(Modifier.padding(top = 6.dp).width(220.dp).height(12.dp)
+                .background(Color.White.copy(alpha = .07f), RoundedCornerShape(4.dp)))
+        }
+        if (showSynopsis) Box(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp)
+            .then(if (!detail) Modifier.height((if (compact) 44.dp else 52.dp) * fontScale) else Modifier)) {
+            card?.overview?.takeIf(String::isNotBlank)?.let { Text(it, Modifier.padding(top = if (compact) 6.dp else 8.dp),
+                color = Color(0xFFD6D8DC), fontSize = if (compact) 12.sp else 13.sp, lineHeight = if (compact) 16.sp else 18.sp,
+                maxLines = if (detail) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis) }
+            if (loading && card == null) Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.width(300.dp).height(10.dp).background(Color.White.copy(alpha = .07f), RoundedCornerShape(4.dp)))
+                Box(Modifier.width(240.dp).height(10.dp).background(Color.White.copy(alpha = .05f), RoundedCornerShape(4.dp)))
+            }
+        }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {
@@ -933,27 +956,26 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()
-            // Trending can arrive after the category actions. Append its controls so
-            // the existing controls never change position while that feed loads.
-            if (landscape && carousel) {
-                DiscoveryCarouselControls(index, count, onFocus, previous, next)
+            // Reserve carousel width even before trending arrives, including wrapped rows.
+            if (landscape && (carousel || !detail)) {
+                DiscoveryCarouselControls(index, count, onFocus, previous, next, enabled = carousel)
             }
         }
-        if (!landscape && (carousel || categoryActions != null)) FlowRow(Modifier.padding(top = 8.dp),
+        if (!landscape && (carousel || !detail || categoryActions != null)) FlowRow(Modifier.padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             categoryActions?.invoke()
-            if (carousel) DiscoveryCarouselControls(index, count, onFocus, previous, next)
+            if (carousel || !detail) DiscoveryCarouselControls(index, count, onFocus, previous, next, enabled = carousel)
         }
     }
 }
 
 @Composable
-private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Unit, previous: () -> Unit, next: () -> Unit, modifier: Modifier = Modifier) {
+private fun DiscoveryCarouselControls(index: Int, count: Int, onFocus: () -> Unit, previous: () -> Unit, next: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        DiscoveryAction("Previous featured title", Icons.Default.ChevronLeft, iconOnly = true, onFocus = onFocus, onClick = previous)
-        Text("${index + 1} / $count", Modifier.width((48f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp),
+        DiscoveryAction("Previous featured title", Icons.Default.ChevronLeft, iconOnly = true, enabled = enabled, onFocus = onFocus, onClick = previous)
+        Text(if (count > 0) "${index + 1} / $count" else "— / —", Modifier.width((48f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp),
             color = Color.LightGray, fontSize = 11.sp, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        DiscoveryAction("Next featured title", Icons.Default.ChevronRight, iconOnly = true, onFocus = onFocus, onClick = next)
+        DiscoveryAction("Next featured title", Icons.Default.ChevronRight, iconOnly = true, enabled = enabled, onFocus = onFocus, onClick = next)
     }
 }
 
@@ -1028,9 +1050,15 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
                 } else move(if (event.key == Key.DirectionUp) -1 else 1)
             } else false
         }, state = rowState, contentPadding = PaddingValues(start = if (phone) 16.dp else 24.dp, top = 10.dp, end = if (phone) 16.dp else 24.dp, bottom = if (phone) 12.dp else 4.dp), horizontalArrangement = Arrangement.spacedBy(if (phone) 10.dp else 12.dp)) {
-            if (row.entries.isEmpty() && skeleton) items(5) { Box(Modifier.width(tileWidth)
-                .height(if (phone) phoneDiscoveryCardHeight(tileWidth.value, phoneWide, LocalDensity.current.fontScale).dp else tileWidth * 1.5f)
-                .clip(RoundedCornerShape(10.dp)).background(Color(0xFF1B1F27))) }
+            if (row.entries.isEmpty() && skeleton) items(5) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    if (row.ranked) Box(Modifier.width(32.dp).height(if (phone) 64.dp else 44.dp)
+                        .padding(bottom = if (phone) 50.dp else 46.dp))
+                    Box(Modifier.width(tileWidth)
+                        .height(if (phone) phoneDiscoveryCardHeight(tileWidth.value, phoneWide, LocalDensity.current.fontScale).dp else tileWidth * 1.5f)
+                        .clip(RoundedCornerShape(10.dp)).background(Color(0xFF1B1F27)))
+                }
+            }
             itemsIndexed(row.entries, key = { _, entry -> entry.key }) { index, entry ->
                 val requester = remember(entry.key) { requesters.getOrPut(entry.key) { FocusRequester() } }
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -1136,15 +1164,18 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
     visualLabel: String = label, horizontalPadding: Dp = 14.dp,
     onFocus: () -> Unit = {}, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 40.dp)
+    DiscoveryMobileGlassContainer {
+    Surface(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = if (LocalMobileGlassEnabled.current) 48.dp else 40.dp)
+        .widthIn(min = if (LocalMobileGlassEnabled.current) 48.dp else 0.dp)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() },
         shape = RoundedCornerShape(10.dp), color = if (focused) Color.White else if (selected) Accent
-            else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
-        border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
+            else if (LocalMobileGlassEnabled.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
+        border = if (LocalMobileGlassEnabled.current) null else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
         contentColor = if (focused) Color.Black else Color.White) {
         Row(Modifier.padding(horizontal = if (iconOnly) 10.dp else horizontalPadding, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
             icon?.let { Icon(it, if (iconOnly) label else null, Modifier.size(20.dp)) }
             if (!iconOnly) Text(visualLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
     }
 }

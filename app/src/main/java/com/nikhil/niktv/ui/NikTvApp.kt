@@ -517,7 +517,6 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     androidx.compose.runtime.CompositionLocalProvider(
-        com.nikhil.niktv.discovery.LocalSetDiscoveryExperience provides vm::setDiscoveryExperienceEnabled,
         com.nikhil.niktv.discovery.LocalOpenDiscovery provides vm::openDiscovery,
         com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode provides vm::openDiscoveryEpisode,
         com.nikhil.niktv.discovery.LocalDownloadDiscoveryEpisode provides vm::downloadDiscoveryEpisode,
@@ -532,7 +531,7 @@ fun NikTvApp(vm: NikTvViewModel = viewModel()) {
             openDiscovery = vm::openDiscovery,
             classic = { label -> when (label) {
                 "Home" -> vm.openHome(); "Live TV" -> vm.openCatalogType(CatalogType.LIVE_TV)
-                "Movies" -> vm.openCatalogType(CatalogType.MOVIES); "Series" -> vm.openCatalogType(CatalogType.SERIES)
+                "Movies" -> vm.openDiscovery(DashboardSurface.MOVIES); "Series" -> vm.openDiscovery(DashboardSurface.SERIES)
                 "My List" -> vm.openFavorites(); "Offline" -> vm.openOfflineDownloads(); "Search" -> vm.openSearch()
                 "Settings" -> vm.openSettings(); "Profile" -> vm.openProfileSwitcher()
             } }, favorite = { vm.toggleFavorite(it) }, playEpisode = vm::openDiscoveryEpisode,
@@ -624,6 +623,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val requiredUpdate = discoveredUpdate ?: pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     MaterialTheme(colorScheme = profileColors) {
+        if (state.profileSwitcherOpen) ModernProfileSwitchDialog(state.profiles, state.savedProfile,
+            close = vm::closeProfileSwitcher, select = vm::switchProfile)
         ParentalPinPrompt(vm)
         Surface(Modifier.fillMaxSize()) {
           if (updateEnforcementEnabled && (checkingForRequiredUpdate || requiredUpdate != null)) {

@@ -16,10 +16,10 @@ private val speculativeImages = Semaphore(2)
 
 /** Small, cached three-pass box blur; no full-screen blur pass while navigating. */
 internal class DiscoveryGlassTransformation : Transformation() {
-    override val cacheKey = "niktv-discovery-glass-v1"
+    override val cacheKey = "niktv-discovery-glass-v2"
     override suspend fun transform(input: android.graphics.Bitmap, size: Size): android.graphics.Bitmap = withContext(Dispatchers.Default) {
         val width = 96
-        val height = (width.toFloat() * input.height / input.width).toInt().coerceIn(1, 96)
+        val height = (width.toFloat() * input.height / input.width).toInt().coerceIn(1, 384)
         val scaled = android.graphics.Bitmap.createScaledBitmap(input, width, height, true)
         var pixels = IntArray(width * height)
         scaled.getPixels(pixels, 0, width, 0, 0, width, height)

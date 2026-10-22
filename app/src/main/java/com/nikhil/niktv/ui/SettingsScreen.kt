@@ -776,17 +776,6 @@ internal fun ModernSettingsScreen(
                 17f
 
         SettingsSection("Device & display") {
-            val setDiscoveryExperience = com.nikhil.niktv.discovery.LocalSetDiscoveryExperience.current
-            CompactSettingsOptionRow(
-                icon = Icons.Default.AutoAwesome,
-                title = "Modern discovery UI",
-                subtitle = "Use the new Home, Movies and Series design. Turn off to return to the original UI.",
-                trailingContent = {
-                    SettingsSwitch(checked = state.discoveryExperienceEnabled,
-                        onCheckedChange = setDiscoveryExperience)
-                }
-            )
-            SettingsDivider()
             if (showMobileAppearance) {
                 val onScreenDpad by rememberOnScreenDpadEnabled()
                 CompactSettingsOptionRow(

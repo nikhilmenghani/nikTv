@@ -40,6 +40,18 @@ internal fun TrailerDialog(item: MediaItem, series: Boolean, launch: (String) ->
         catch (_: Exception) { message = "Trailer lookup failed. You can still search YouTube." }
         finally { loading = false }
     }
+    if (loading) {
+        Dialog(onDismissRequest = dismiss) {
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                color = androidx.compose.ui.graphics.Color(0xEE181B22)) {
+                Column(Modifier.width(180.dp).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Loading trailer", style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
+        }
+        return
+    }
     val uri = key?.let { Uri.parse("https://www.youtube.com/watch?v=$it") }
         ?: Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(item.title + " official trailer"))
     val apps = remember(uri) {
@@ -74,7 +86,6 @@ internal fun TrailerDialog(item: MediaItem, series: Boolean, launch: (String) ->
             Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(item.title, style = MaterialTheme.typography.titleLarge)
-                if (loading) Text("Finding trailer...")
                 message?.let { Text(it, color = androidx.compose.ui.graphics.Color.LightGray) }
                 if (!loading) {
                     key?.let { videoKey ->

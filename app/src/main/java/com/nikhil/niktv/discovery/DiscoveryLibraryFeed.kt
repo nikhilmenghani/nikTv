@@ -67,6 +67,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, tv)
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val live = destination == DiscoveryLibraryDestination.LIVE_TV
+    val favoritesHero = !live && libraryFavoriteHeroes(state.favorites, profile).isNotEmpty()
     var filter by rememberSaveable(profile, destination) { mutableStateOf<FavoriteKind?>(null) }
     var sort by rememberSaveable(profile, destination) { mutableStateOf(LibrarySort.RECENT) }
     var query by rememberSaveable(profile, destination) { mutableStateOf("") }
@@ -115,7 +116,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
         }
     }
     val card = cachedPresentation?.takeIf { it.first == presentationKey && !locked }?.second
-    SideEffect { if (!scrolling) background(card) }
+    SideEffect { if (!favoritesHero && !scrolling) background(card) }
     DisposableEffect(Unit) { onDispose { background(null) } }
     val entryRequesters = remember(profile, destination) { mutableMapOf<String, FocusRequester>() }
     val rowRequesters = remember(profile, destination) { mutableMapOf<String, suspend () -> Boolean>() }
@@ -156,7 +157,12 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     fun closeGuide() { guide = null; scope.launch { withFrameNanos { }; runCatching { info.requestFocus() } } }
     fun restoreTile() { scope.launch { withFrameNanos { }; runCatching { entryRequesters["$selectedRow:$selectedId:$selectedIndex"]?.requestFocus() } } }
     fun move(rowIndex: Int): Boolean {
-        if (rowIndex < 0) { runCatching { play.requestFocus() }; return true }
+        if (rowIndex < 0) {
+            // The landscape hero can be outside LazyColumn's composed viewport.
+            // Reveal it before requesting its action, using the same cancellable coordinator.
+            coordinator.move(list, 0, reduceMotion) { runCatching { play.requestFocus() }.getOrDefault(false) }
+            return true
+        }
         val row = rows.getOrNull(rowIndex) ?: return false
         coordinator.move(list, rowIndex + 2, reduceMotion) { rowRequesters[row.key]?.invoke() == true }
         return true
@@ -177,7 +183,12 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
         LazyColumn(Modifier.fillMaxSize(), state = list, verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(bottom = 24.dp)) {
             item("hero") {
-                Column(Modifier.fillMaxWidth().heightIn(min = if (selected == null) 130.dp else if (phone && live) 175.dp else if (phone) 220.dp else if (configuration.screenHeightDp < 600) 185.dp else 240.dp)
+                if (favoritesHero) DiscoveryFavoritesHero(state, scrolling || list.firstVisibleItemIndex > 0,
+                    open = { favorite -> open(LibraryEntry(favorite.media, favorite.kind, favorite = favorite), hero = true) },
+                    toggleFavorite = toggleFavorite, presentation = background, playRequester = play, infoRequester = info,
+                    showInfo = { favorite -> showInfo(LibraryEntry(favorite.media, favorite.kind, favorite = favorite)) },
+                    onDown = { move(0) }, onUp = { runCatching { tab?.requestFocus() == true }.getOrDefault(false) })
+                else Column(Modifier.fillMaxWidth().heightIn(min = if (selected == null) 130.dp else if (phone && live) 175.dp else if (phone) 220.dp else if (configuration.screenHeightDp < 600) 185.dp else 240.dp)
                     .padding(horizontal = if (phone) 16.dp else 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(if (live) listOfNotNull("LIVE TV", livePresentation?.context, livePresentation?.quality).joinToString(" · ") else "YOUR COLLECTION", color = Color(0xFFBFC3CD), style = MaterialTheme.typography.labelMedium)
                     Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (phone) 25.sp else 32.sp,

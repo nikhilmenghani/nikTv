@@ -23,10 +23,10 @@ class DiscoveryPhoneLayoutTest {
     private val context get() = RuntimeEnvironment.getApplication()
     @Before fun reset() { context.getSharedPreferences("discovery_experience", 0).edit().clear().commit() }
 
-    @Test fun originalUiChoiceSurvivesRereadingAndCanBeReenabled() {
+    @Test fun storedOriginalUiOptOutMigratesToModernWithoutClearingData() {
         assertTrue(DiscoveryExperiencePreferences.enabled(context))
         DiscoveryExperiencePreferences.setEnabled(context, false)
-        assertFalse(DiscoveryExperiencePreferences.enabled(context.applicationContext))
+        assertTrue(DiscoveryExperiencePreferences.enabled(context.applicationContext))
         DiscoveryExperiencePreferences.setEnabled(context, true)
         assertTrue(DiscoveryExperiencePreferences.enabled(context))
     }

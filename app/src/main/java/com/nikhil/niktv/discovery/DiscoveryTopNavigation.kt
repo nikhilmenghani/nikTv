@@ -42,15 +42,18 @@ import java.util.Date
 @Composable
 internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     surface: DashboardSurface, classic: (String) -> Unit, customize: (() -> Unit)?) {
-    val setExperience = LocalSetDiscoveryExperience.current
+    val configure = LocalConfigureProviderDiscovery.current
+    val options = LocalDiscoveryLibraryOptions.current
     Box {
-        DiscoveryAction("Browse menu", Icons.Default.MoreHoriz, iconOnly = true) { change(true) }
-        DropdownMenu(expanded, { change(false) }, containerColor = Color(0xFF202020), shape = RoundedCornerShape(12.dp)) {
-            NikDropdownMenuItem(text = { Text("Use original UI") }, onClick = { change(false); setExperience(false) })
-            listOf("Home", "Live TV", "Movies", "Series", "My List", "Offline", "Settings", "Profile").forEach { label ->
+        DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true) { change(true) }
+        DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
+            if (options?.live == true) NikDropdownMenuItem(text = { Text("Customize Live TV") },
+                onClick = { change(false); options.open?.invoke() ?: configure(CatalogType.LIVE_TV) })
+            customize?.let { action -> NikDropdownMenuItem(text = { Text("Customize ${surface.trialTitle().removeSuffix(" 2")}") },
+                onClick = { change(false); action() }) }
+            listOf("Offline", "Settings").forEach { label ->
                 NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); classic(label) })
             }
-            customize?.let { action -> NikDropdownMenuItem(text = { Text("Customize ${surface.trialTitle()}") }, onClick = { change(false); action() }) }
         }
     }
 }
@@ -146,16 +149,16 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
     menu: Boolean, changeMenu: (Boolean) -> Unit,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
-    library: DiscoveryLibraryDestination? = null) {
+    library: DiscoveryLibraryDestination? = null, profile: String = "") {
     DiscoveryPhoneHeader(surface, false, tab, play, back, select, classic, menu, changeMenu,
-        customize = {}, categoryManagerOpen = categoryManagerOpen, categoryPopupChanged = categoryPopupChanged)
+        customize = null, profile = profile, categoryManagerOpen = categoryManagerOpen, categoryPopupChanged = categoryPopupChanged)
 
 }
 
 /** A direct entry to the same profile/type-scoped selections used by classic browsing. */
 @Composable
 internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boolean, compact: Boolean = false,
-    popupChanged: (Boolean) -> Unit = {}, onFocus: () -> Unit = {}) {
+    popupChanged: (Boolean) -> Unit = {}, onFocus: () -> Unit = {}, modifier: Modifier = Modifier) {
     val configure = LocalConfigureProviderDiscovery.current
     val requester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -177,7 +180,7 @@ internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boo
     }
     DisposableEffect(chooseType) { popupChanged(chooseType); onDispose { popupChanged(false) } }
     DiscoveryAction("IPTV categories", if (compact) Icons.Default.Tune else null, iconOnly = compact,
-        modifier = Modifier.focusRequester(requester), onFocus = onFocus) {
+        modifier = modifier.focusRequester(requester), onFocus = onFocus) {
         val type = when (surface) { DashboardSurface.MOVIES -> CatalogType.MOVIES; DashboardSurface.SERIES -> CatalogType.SERIES; else -> null }
         if (type == null) chooseType = true else { openedHere = true; configure(type) }
     }

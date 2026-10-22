@@ -436,7 +436,7 @@ internal fun CatalogScreen(
                     app = state, surface = requireNotNull(state.discoverySurface), selectSurface = openTrial,
                     exit = openHome, classic = { label -> when (label) {
                         "Home" -> openHome(); "Live TV" -> selectType(CatalogType.LIVE_TV)
-                        "Movies" -> selectType(CatalogType.MOVIES); "Series" -> selectType(CatalogType.SERIES)
+                        "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                         "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                         "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
                     } }, playCard = { card -> if (card.series) openTrendingSeries(com.nikhil.niktv.data.TrendingSeries(card.show()))
@@ -451,7 +451,7 @@ internal fun CatalogScreen(
                     com.nikhil.niktv.discovery.DiscoveryProviderCategory(state, requireNotNull(state.modernIptvCategory),
                         close = closeModernSection, selectSurface = openTrial,
                         classic = { label -> when (label) {
-                            "Home" -> openHome(); "Movies" -> selectType(CatalogType.MOVIES); "Series" -> selectType(CatalogType.SERIES)
+                            "Home" -> openHome(); "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                             "Live TV" -> selectType(CatalogType.LIVE_TV); "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
                             "Search" -> openSearch(); "Settings" -> openSettings(); "Profile" -> openProfileSwitcher()
                         } }, open = { item, queue, filter -> playInContext?.invoke(item, queue, filter) ?: play(item) },

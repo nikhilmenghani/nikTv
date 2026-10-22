@@ -26,6 +26,7 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -44,6 +45,11 @@ class TrailerPlayerActivity : ComponentActivity() {
     private lateinit var header: TextView
     private lateinit var footer: LinearLayout
     private lateinit var status: TextView
+    private lateinit var loadingProgress: ProgressBar
+    private lateinit var captions: Button
+    private var captionsEnabled = false
+    private var firstFrame = false
+    private var touchStarted = false
     private lateinit var progress: SeekBar
     private lateinit var times: TextView
     private lateinit var play: Button
@@ -62,7 +68,7 @@ class TrailerPlayerActivity : ComponentActivity() {
     private var durationMs = 0L
     private var revealKey: Int? = null
     private val startupTimeout = Runnable {
-        if (!ready && !failed && foreground && !destroyed) fail("YouTube is taking too long to load. Choose Open with to play externally.")
+        if (!firstFrame && !failed && foreground && !destroyed) fail("YouTube is taking too long to load. Choose Open with to play externally.")
     }
     private val hideControls = Runnable { if (ready && foreground && !dragging) hideChrome() }
 
@@ -91,11 +97,16 @@ class TrailerPlayerActivity : ComponentActivity() {
         header.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(0xB3000000.toInt(), Color.TRANSPARENT))
         status = TextView(this).apply {
-            text = "Loading trailer..."; setTextColor(Color.LTGRAY)
+            visibility = View.GONE; maxWidth = dp(560); setTextColor(Color.LTGRAY)
             setPadding(dp(12), dp(8), dp(12), dp(8))
         }
         status.gravity = Gravity.CENTER
         status.setBackgroundColor(0xCC181818.toInt())
+        loadingProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            indeterminateTintList = ColorStateList.valueOf(0xFFE50914.toInt())
+            contentDescription = "Loading trailer"
+        }
         val player = runCatching { WebView(this).apply {
             setBackgroundColor(Color.BLACK)
             isFocusable = false
@@ -122,8 +133,13 @@ class TrailerPlayerActivity : ComponentActivity() {
                 }
             }
             setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_UP) showChrome(focusPlay = false)
-                false
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> touchStarted = ready || failed
+                    MotionEvent.ACTION_UP -> { if (touchStarted) showChrome(focusPlay = false); touchStarted = false }
+                    MotionEvent.ACTION_CANCEL -> touchStarted = false
+                }
+                // Native chrome owns gestures; do not forward taps into iframe controls.
+                true
             }
         } }.getOrNull()
         webView = player
@@ -131,7 +147,8 @@ class TrailerPlayerActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(header, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
-        root.addView(status, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+        root.addView(loadingProgress, FrameLayout.LayoutParams(dp(160), dp(4), Gravity.CENTER))
+        root.addView(status, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply { setMargins(dp(24), 0, dp(24), 0) })
         footer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -175,6 +192,9 @@ class TrailerPlayerActivity : ComponentActivity() {
         rewind = action("−10s", "Back 10 seconds") { skip(-10_000) }
         play = action("Pause", "Pause", primary = true) { togglePlayback() }
         forward = action("+10s", "Forward 10 seconds") { skip(10_000) }
+        captions = action("CC Off", "Captions off") {
+            if (ready) { captionsEnabled = !captionsEnabled; command("captions", if (captionsEnabled) 1.0 else 0.0); updateControls() }
+        }
         val close = action("Close", "Close trailer") { finish() }
         external = action("Open with", "Choose an external trailer player") {
             val video = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$key"))
@@ -185,7 +205,7 @@ class TrailerPlayerActivity : ComponentActivity() {
                     showChrome()
                 }
         }
-        listOf(rewind, play, forward, close, external).forEach { button ->
+        listOf(rewind, play, forward, captions, close, external).forEach { button ->
             button.setOnKeyListener { _, code, event ->
                 if ((code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) && progress.isEnabled) {
                     if (event.action == KeyEvent.ACTION_DOWN) progress.requestFocus()
@@ -268,6 +288,9 @@ class TrailerPlayerActivity : ComponentActivity() {
         play.text = if (playbackRequested) "Pause" else "Play"
         play.contentDescription = play.text
         play.isEnabled = ready; rewind.isEnabled = ready; forward.isEnabled = ready
+        captions.isEnabled = ready
+        captions.text = if (captionsEnabled) "CC On" else "CC Off"
+        captions.contentDescription = if (captionsEnabled) "Captions on" else "Captions off"
         progress.isEnabled = ready && durationMs > 0
         progress.max = durationMs.coerceAtLeast(1).toInt()
         if (!dragging) { progress.progress = positionMs.toInt(); times.text = "${time(positionMs)} / ${time(durationMs)}" }
@@ -291,7 +314,7 @@ class TrailerPlayerActivity : ComponentActivity() {
     }
     private fun fail(message: String) {
         status.text = message; status.visibility = View.VISIBLE
-        failed = true; handler.removeCallbacks(startupTimeout)
+        failed = true; loadingProgress.visibility = View.GONE; handler.removeCallbacks(startupTimeout)
         ready = false; updateControls(); showChrome(); external.requestFocus()
     }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -304,7 +327,11 @@ class TrailerPlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER,
             KeyEvent.KEYCODE_ENTER)
         if (navigation && event.action == KeyEvent.ACTION_DOWN) {
-            if (!controlsVisible) { revealKey = code; showChrome(); return true }
+            if (!controlsVisible) {
+                revealKey = code
+                if (event.repeatCount == 0 && (ready || failed)) showChrome()
+                return true
+            }
             scheduleHide()
         }
         if (code in setOf(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY,
@@ -326,13 +353,15 @@ class TrailerPlayerActivity : ComponentActivity() {
     private inner class PlayerBridge {
         private fun update(block: () -> Unit) = runOnUiThread { if (!destroyed) block() }
         @JavascriptInterface fun ready() = update {
-            ready = true; failed = false; handler.removeCallbacks(startupTimeout)
+            ready = true; failed = false
             status.visibility = View.GONE; updateControls()
+            command("captions", if (captionsEnabled) 1.0 else 0.0)
             command(if (foreground) "play" else "pause")
             android.util.Log.i("NikTvTrailer", "YouTube API ready")
         }
         @JavascriptInterface fun state(value: Int) = update {
             if (value !in -1..5) return@update
+            if (value == 1) { firstFrame = true; loadingProgress.visibility = View.GONE; handler.removeCallbacks(startupTimeout) }
             if (value == 1) playbackRequested = true else if (value == 2 || value == 0) playbackRequested = false
             if (currentState != value) {
                 currentState = value; updateControls(); scheduleHide()
@@ -374,7 +403,7 @@ class TrailerPlayerActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume(); foreground = true; webView?.onResume()
         enterFullscreen(); scheduleHide()
-        if (!ready && !failed) handler.postDelayed(startupTimeout, 15_000L)
+        if (!firstFrame && !failed) handler.postDelayed(startupTimeout, 15_000L)
     }
     override fun finish() {
         setResult(RESULT_OK, Intent().putExtra("remote_navigation", ::root.isInitialized && !root.isInTouchMode))
@@ -394,15 +423,22 @@ internal fun trailerPlayerHtml(key: String, origin: String): String = """
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <style>html,body{margin:0;height:100%;background:black;overflow:hidden}#player{width:100%;height:100%;display:block}</style>
 </head><body><div id="player"></div><script>
-var player,ready=false;
+var player,ready=false,captionsEnabled=false;
+function applyCaptions(){if(!ready||!player)return;
+try {var modules=player.getOptions?player.getOptions():[];
+if(captionsEnabled){if(modules.indexOf('captions')<0&&typeof player.loadModule==='function')player.loadModule('captions');}
+else if(modules.indexOf('captions')>=0&&typeof player.unloadModule==='function')player.unloadModule('captions');
+}catch(e){}}
 function onYouTubeIframeAPIReady(){player=new YT.Player('player',{
 width:'100%',height:'100%',videoId:'$key',
-playerVars:{autoplay:0,controls:0,disablekb:1,fs:0,playsinline:1,rel:0,origin:'$origin'},
-events:{onReady:function(){ready=true;NikTvTrailer.ready();},
+playerVars:{autoplay:0,controls:0,cc_load_policy:0,disablekb:1,fs:0,playsinline:1,rel:0,origin:'$origin'},
+events:{onReady:function(){ready=true;applyCaptions();NikTvTrailer.ready();},
+onApiChange:function(){applyCaptions();},
 onStateChange:function(e){NikTvTrailer.state(e.data);},onError:function(e){NikTvTrailer.error(e.data);}}});}
 function niktvCommand(action,value){if(!ready)return;
 if(action==='play')player.playVideo();else if(action==='pause')player.pauseVideo();
-else if(action==='seek')player.seekTo(value,true);}
+else if(action==='seek')player.seekTo(value,true);
+else if(action==='captions'){captionsEnabled=value===1;applyCaptions();}}
 setInterval(function(){if(ready)NikTvTrailer.progress(player.getCurrentTime(),player.getDuration());},500);
 </script><script src="https://www.youtube.com/iframe_api"></script></body></html>
 """.trimIndent()

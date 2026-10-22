@@ -106,3 +106,48 @@ Changed implementation files for this task: discovery/DiscoveryLibraryScreen.kt,
 - Follow-up: mobile favorites hero now spans the screen with top-aligned artwork and header overlay, explicit top/bottom fades, left-aligned title/actions, no redundant My List subtitle, and compact category-style saved-group headings/counts.
 
 - Final mobile navigation order: Home, Movies, Series, Live TV, My List. Primary hero action bounds verified identical on Samsung: Home Play and My List Open both [458,1620][983,1800]. Saved hero checkmark opens themed Keep/Remove confirmation; Keep tested without changing favorites. Artwork uses fitted portrait posters with four-edge fades and a small supporting title.
+
+## Modern-only navigation and mobile glass controls
+
+- Mobile headers show a profile initial and an explicit profile chooser. Opening/canceling the chooser preserves the current session; switching delegates to existing profile loading.
+- Phone controls use squarish geometry and the existing bounded cached-artwork glass texture, with translucent fallback under resource pressure. Continuous screen blur and new rendering dependencies are not used.
+- Mobile Live TV omits its redundant title/options row; the existing Live TV options dialog is available under the header Options menu.
+- Options keeps contextual customization, Offline and Settings. Duplicate destination links, original-UI switch, display toggle and numbered trial labels have been removed. Movie/series root callbacks now resolve to modern discovery, while existing category, search, download, playback and settings owners remain available.
+- Stored old-layout opt-outs no longer select a retired experience. Added regression checks for restored preferences and modern catalog root routing.
+- Validation: 46 targeted tests passed across discovery routing/feed/layout, catalog navigation/back behavior and profile-store dispatch; debug APK builds passed. Phone UI inspection covered the initial profile button, simplified menu and relocated Live TV options; final profile-dialog recheck follows installation. Fire TV has not been operated or updated for this change.
+- Follow-up validation: Samsung profile chooser opened with Current marker; Close retained the active profile. Glass controls were corrected to a single measured outline, equal 48dp header controls, and matched category button sizes. Final blur mapping uses shared un-clipped hero root coordinates, preserves portrait aspect ratio, mirrors fit/crop/alignment, and has no per-button whole-artwork fallback. Five artwork tests (including three new mapping/aspect regressions) plus 13 navigation/layout/routing tests passed; debug build and installs on Samsung/Poco passed. Home and My List were visually rechecked on Samsung.
+
+## Trailer loading and initial controls
+
+- Trailer lookup uses a compact cancellable progress card; the fullscreen host uses a 160dp indeterminate progress bar until Playing rather than a full-width loading text strip. Startup timeout now covers an API-ready player that never starts playback.
+- Native controls remain hidden until deliberate touch or fresh remote input. Repeated launch-key events are consumed without revealing controls or pausing. WebView taps are handled by native chrome instead of being forwarded into iframe controls. Error fallback retains Open with.
+- Captions default off, with a native CC toggle and module-state reapplication after YouTube API changes. The implementation does not alter captions burned into video pixels.
+- Validation: `:app:testDebugUnitTest --tests '*TrailerPlayerActivityTest' --tests '*PlaybackSeekTargetTest' :app:assembleDebug` passed (6 tests). `node tools/test-trailer-player.cjs` passed against the actual embedded script, covering initial/late caption modules, opt-in/out, no module callback loops and preserved playback/seek dispatch.
+- Updated build installed on Samsung and Poco. Poco launched a Moana trailer through Watch trailer and reached Playing with native controls hidden; screenshot captured. Captions toggle verified in deterministic tests; the touch-toggle device capture exceeded the auto-hide interval, so it is not claimed as verified on device. The test trailer was closed and music volume restored to its original 8/25. Fire TV unchanged.
+
+## Stable phone discovery loading layout
+
+- Reproduced Poco Series first-entry movement: the rank and carousel were added after loading, while a premature unavailable message was removed, shifting actions and the first rail.
+- Rank/progress, title/logo, metadata and carousel now reserve fixed slots from the first frame. Neutral title/metadata placeholders replace content in place; controls remain disabled until their content is available. Ranked poster skeletons reserve the same number gutter and poster footprint as loaded tiles.
+- Unavailable messaging waits for a completed feed/error result instead of showing during initial binding.
+- Validation: debug APK plus 14 focused phone layout/navigation/poster-geometry tests passed. Installed on Poco and Samsung. Captured early/loaded Home, Movies and Series on Poco. Loaded Play bounds were identical `[361,1140][720,1264]`; category bounds were identical `[161,1295][530,1418]` and `[551,1295][920,1418]` on all three destinations. Cached transitions were visually stable; this was a layout check, not a frame-time benchmark. No user data/cache was cleared. Fire TV unchanged.
+
+
+### Tablet hero loading geometry (2026-10-22)
+
+- Tested Home → Movies → Series on Xiaomi Pad 5 (`6889f3db`) without clearing personal data. Cached transitions did not reproduce a button shift: Play `[68,850][237,952]`, IPTV categories `[504,850][765,952]`, and TMDB categories `[786,850][1066,952]` remained identical across the captured early/loaded states. These are cached transitions, not a controlled slow-network test.
+- Inspection found the separate tablet/TV hero still conditionally inserted loading, rank, metadata, synopsis and carousel layout. Landing heroes now reserve rank, two-line metadata/synopsis and carousel space from first composition; loading placeholders replace content in place. Empty carousel buttons remain disabled until usable. Full detail synopsis remains variable length.
+- Fire TV was left untouched. Tablet reinstall and post-install validation results follow below.
+- Focused verification: `:app:testDebugUnitTest --tests '*DiscoveryPhoneLayoutTest' --tests '*DiscoveryNavigationLayoutTest' --tests '*DiscoveryPosterGeometryTest' :app:assembleDebug --no-daemon --max-workers=1` passed, 14 tests / 0 failures. Final build successful in 50 seconds. `git diff --check` passed; source credential scan reported 0 findings. No full lint or performance benchmark was run for this layout-only change.
+- Installed using `adb -s 6889f3db install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (Success), retaining data. Rechecked all three tab transitions after installation. Initial pass confirmed unchanged button bounds across all six early/loaded captures; visual review prompted additional two-line synopsis height allowance for font metrics.
+
+
+### My List landscape hero (2026-10-22)
+
+- Tablet/TV My List now reuses Home's landscape hero and the same profile-isolated favorites hero controller as phones: saved movies/series, eight-second idle rotation, cache-only public metadata, guarded sensitive-content exclusion, manual carousel, Open / In My List / Info. Existing collection rows, filters, local search, sort and View all remain below. Phone rendering remains unchanged.
+- Cached landscape artwork is preferred; a saved item's poster can provide the background if no backdrop is cached. No provider matching or media stream is started by rotation. Lifecycle, scrolling, focus, touch and remove-confirmation states pause rotation.
+- On Xiaomi Pad 5, verified the Friends hero and manually navigating between the two eligible saved series. D-pad entry stayed on My List; Down entered Open, another Down reached the saved row, Up returned to the selected top tab from the hero. Testing found Up from the first saved row could target an uncomposed hero; changed that path to reveal hero item 0 with the existing cancellable scroll coordinator before requesting Open. Final validation follows below.
+- Fire TV was not touched or installed during this change. TV shares the landscape implementation but still needs actual Fire TV validation.
+- Final focused checks: `:app:testDebugUnitTest --tests '*DiscoveryLibraryFeedTest' --tests '*DiscoveryLibraryRoutingTest' --tests '*DiscoveryNavigationLayoutTest' --tests '*DiscoveryPhoneLayoutTest' :app:assembleDebug --no-daemon --max-workers=1` passed (21 tests, 0 failures; build successful in 1m 7s). `git diff --check` passed and source credential scan had 0 findings. No full lint/frame benchmark was run for this presentation change.
+- Reinstalled on tablet with `adb -s 6889f3db install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (Success). Evidence: `D:/workspace/niktv-playback-tests/tablet-mylist-wide-hero.png`. All edits remain uncommitted.
+- Final tablet D-pad verification passed: My List tab → Down → Open → Down → first saved tile → Up → Open. Manual Next changed Friends to Taarak Mehta; no media playback was started and no favorites were removed.
