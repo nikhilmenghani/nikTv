@@ -69,6 +69,7 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
     var query by rememberSaveable(state.identity, type) { mutableStateOf("") }
     var selected by rememberSaveable(state.identity, type) { mutableStateOf<String?>(null) }
     val grid = rememberLazyGridState()
+    var contentPositionEstablished by rememberSaveable(state.identity, type) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val coordinator = remember(scope) { DiscoveryScrollCoordinator(scope) }
     val context = LocalContext.current
@@ -84,6 +85,13 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
     val items by produceState(all, all, query) {
         if (query.isNotBlank()) delay(100)
         value = withContext(Dispatchers.Default) { searchProviderDiscovery(all, query) }
+    }
+    LaunchedEffect(items.isNotEmpty()) {
+        if (items.isNotEmpty() && !contentPositionEstablished) {
+            coordinator.cancel()
+            grid.scrollToItem(0)
+            contentPositionEstablished = true
+        }
     }
     val categoryTitles = remember(state.categories, type) { state.categories[type].orEmpty().associate { it.id to it.title } }
     val currentMore by rememberUpdatedState { load(false) }

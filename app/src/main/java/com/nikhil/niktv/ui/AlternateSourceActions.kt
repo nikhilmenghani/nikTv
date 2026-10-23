@@ -1,7 +1,7 @@
 package com.nikhil.niktv.ui
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
@@ -64,7 +64,7 @@ internal fun AlternateSourceMenuItem(
     val request = alternateSourceRequest(item, inferredType, series, season, episode) ?: return
     NikDropdownMenuItem(
         text = { Text("Play from another source") },
-        leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+        leadingIcon = { Icon(Icons.Default.AltRoute, contentDescription = null) },
         onClick = { dismiss(); play(request) }
     )
 }

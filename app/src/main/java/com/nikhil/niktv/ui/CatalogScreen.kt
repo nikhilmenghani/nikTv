@@ -445,7 +445,7 @@ internal fun CatalogScreen(
                     playEpisode = playTrialEpisode, openRecent = openRecent, openWatched = openWatchedEpisode,
                     toggleFavorite = toggleFavoriteEntry, openCategory = openModernIptvCategory, openSection = openModernTmdbSection,
                     removeRecent = removeRecent, markWatched = markEpisodeWatched, dismissEpisode = dismissWatchedEpisode,
-                    detailVisibilityChanged = { phoneDetailOpen = it }
+                    detailVisibilityChanged = { phoneDetailOpen = it }, dismissRecommendation = dismissRecommendation
                     )
                 }
                 previewProviderCategory -> browseStateHolder.SaveableStateProvider("provider-trial:${state.savedProfile?.cacheKey()}:${state.modernIptvCategory?.id}:${state.modernIptvCategoryOpenId}") {

@@ -45,10 +45,13 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.NonCancellable
 
+data class TmdbIptvLookupMiss(val request: AlternateSourceRequest, val profileKey: String)
+
 data class NikTvState(
     val discoveryExperienceEnabled: Boolean = true,
     val profileSwitcherOpen: Boolean = false,
     val alternateSources: AlternateSourcePickerState? = null,
+    val tmdbIptvLookupMiss: TmdbIptvLookupMiss? = null,
     val discoverySurface: DashboardSurface? = null,
     val discoveryNavigationId: Long = 0,
     val discoveryMatchCounts: Map<String, Int> = emptyMap(),
@@ -3917,6 +3920,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             modernTmdbMovieMatches = latest.modernTmdbMovieMatches + (id to found))
                         else latest.copy(modernTmdbSeriesMatches = latest.modernTmdbSeriesMatches + (id to found))
                     }
+                    if (found.isEmpty() && manualId != null) {
+                        val media = if (type == CatalogType.MOVIES) movieEntries.first { it.tmdb.id == id }.tmdb.asMediaItem()
+                            else seriesEntries.first { it.tmdb.id == id }.tmdb.asMediaItem()
+                        showTmdbIptvLookupMiss(AlternateSourceRequest(media, type), profileKey)
+                    }
                     if (catalog == null) delay(2_000L)
                 }
                 // One explicit tile refresh, never a page-wide background retry.
@@ -4239,9 +4247,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 else resolveInitialTmdbMovieCandidates(session, entry)
             val candidates = lookup.matches
             if (candidates.isEmpty()) {
-                error(
-                    "\"${entry.tmdb.title}\" was not found in this IPTV profile."
-                )
+                showTmdbIptvLookupMiss(AlternateSourceRequest(entry.tmdb.asMediaItem(), CatalogType.MOVIES), session.profile.cacheKey(), requestId)
+                return@playbackTask
             }
             if (candidates.size > 1) {
                 _state.update {
@@ -4361,9 +4368,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 return@task
             }
-            error(
-                "\"${entry.tmdb.name}\" was not found in this IPTV profile."
-            )
+            showTmdbIptvLookupMiss(AlternateSourceRequest(entry.tmdb.asMediaItem(), CatalogType.SERIES), session.profile.cacheKey())
+            return@task
         }
         if (candidates.size > 1) {
             _state.update {
@@ -6200,6 +6206,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     // supplier, and never read a decoder belonging to an obsolete playback attempt.
     private data class AlternatePositionReader(val attemptId: String, val progressKey: String, val read: () -> Long)
     private var alternatePositionReader: AlternatePositionReader? = null
+    internal fun showTmdbIptvLookupMiss(request: AlternateSourceRequest, profileKey: String, requestId: Long? = null) {
+        if (requestId != null && !latestPlaybackRequest.isCurrent(requestId)) return
+        if (profileKey != alternateProfile() || request.type !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) return
+        pendingDiscoveryEpisode = null
+        _state.update { it.copy(error = null, tmdbIptvLookupMiss = TmdbIptvLookupMiss(request, profileKey)) }
+    }
+
+    fun dismissTmdbIptvLookupMiss() = _state.update { it.copy(tmdbIptvLookupMiss = null) }
+
+    fun findAlternateSourcesAfterIptvMiss() {
+        val miss = _state.value.tmdbIptvLookupMiss ?: return
+        dismissTmdbIptvLookupMiss()
+        if (miss.profileKey == alternateProfile()) openAlternateSources(miss.request)
+    }
+
     private fun alternateProfile() = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey().orEmpty()
 
     fun closeAlternateSources() {
@@ -7905,7 +7926,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(seriesMatchSelection = card.show(), seriesMatchCandidates = candidates) }
             } else {
                 val series = candidates.singleOrNull() ?: resolveTmdbSeriesMovieFallback(session, card.show())
-                    ?: error("This series was not found in the current IPTV profile.")
+                if (series == null) {
+                    val show = card.show().asMediaItem()
+                    showTmdbIptvLookupMiss(AlternateSourceRequest(show.copy(seasonNumber = season, episodeNumber = episode),
+                        CatalogType.SERIES, show, season, episode), intent.profile, intent.request)
+                    return@playbackTask
+                }
                 playDiscoveryEpisode(intent, series, confirmedByUser = saved?.confirmedByUser == true)
             }
         }
@@ -8322,7 +8348,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private fun playbackTask(requestId: Long, block: suspend () -> Unit) {
         viewModelScope.launch {
             if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
-            _state.update { it.copy(loading = true, error = null) }
+            _state.update { it.copy(loading = true, error = null, tmdbIptvLookupMiss = null) }
             try {
                 withTimeout(90_000L) { latestPlaybackRequest.run(requestId) { block() } }
             } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
@@ -8340,7 +8366,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun task(block: suspend () -> Unit) {
         viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null) }
+            _state.update { it.copy(loading = true, error = null, tmdbIptvLookupMiss = null) }
             try {
                 withTimeout(90_000L) {
                     try {

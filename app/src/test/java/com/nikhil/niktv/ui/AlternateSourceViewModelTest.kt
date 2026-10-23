@@ -35,6 +35,86 @@ import java.time.Duration
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class AlternateSourceViewModelTest {
+    @Test fun iptvMissDoesNotLookUpExternalSourcesUntilChosenAndCanBeDismissed() {
+        mutableState.value = mutableState.value.copy(items = listOf(movie))
+        vm.showTmdbIptvLookupMiss(AlternateSourceRequest(movie, CatalogType.MOVIES), profile.cacheKey())
+        scheduler.runCurrent()
+        assertNotNull(vm.state.value.tmdbIptvLookupMiss)
+        assertNull(vm.state.value.alternateSources)
+        assertNull(vm.state.value.error)
+        vm.dismissTmdbIptvLookupMiss()
+        assertNull(vm.state.value.tmdbIptvLookupMiss)
+        assertEquals(listOf(movie), vm.state.value.items)
+    }
+
+    @Test fun iptvMovieMissOpensExistingNativePickerWithoutStartingPlayback() {
+        val calls = mutableListOf<AlternateSourceTarget>()
+        vm.alternateSourceLookup = { calls += it; listOf(stream("external")) }
+        vm.showTmdbIptvLookupMiss(AlternateSourceRequest(movie, CatalogType.MOVIES), profile.cacheKey())
+        vm.findAlternateSourcesAfterIptvMiss()
+        scheduler.runCurrent()
+        assertNull(vm.state.value.tmdbIptvLookupMiss)
+        assertEquals(12, calls.single().tmdbId)
+        assertEquals("external", vm.state.value.alternateSources!!.streams.single().id)
+        assertNull(vm.state.value.nowPlaying)
+        assertNull(vm.state.value.session)
+    }
+
+    @Test fun iptvSeriesMissLetsUserChooseEpisodeBeforeNetworkLookup() {
+        vm.showTmdbIptvLookupMiss(AlternateSourceRequest(series, CatalogType.SERIES), profile.cacheKey())
+        vm.findAlternateSourcesAfterIptvMiss()
+        scheduler.runCurrent()
+        assertTrue(vm.state.value.alternateSources!!.target.series)
+        assertEquals(21, vm.state.value.alternateSources!!.target.tmdbId)
+        assertFalse(vm.state.value.alternateSources!!.loading)
+    }
+
+    @Test fun iptvEpisodeMissPreservesSeasonAndEpisode() {
+        val calls = mutableListOf<AlternateSourceTarget>()
+        vm.alternateSourceLookup = { calls += it; listOf(stream("episode")) }
+        val episode = series.copy(title = "Episode nine", seasonNumber = 3, episodeNumber = 9)
+        vm.showTmdbIptvLookupMiss(AlternateSourceRequest(episode, CatalogType.SERIES, series, 3, 9), profile.cacheKey())
+        vm.findAlternateSourcesAfterIptvMiss()
+        scheduler.runCurrent()
+        val target = calls.single()
+        assertEquals(series.title, target.title)
+        assertEquals(21, target.tmdbId)
+        assertEquals(3, target.season)
+        assertEquals(9, target.episode)
+    }
+
+    @Test fun obsoleteProfileAndPlaybackRequestsCannotPublishOrUseMissingMatchActions() {
+        val request = AlternateSourceRequest(movie, CatalogType.MOVIES)
+        vm.showTmdbIptvLookupMiss(request, "other-profile")
+        assertNull(vm.state.value.tmdbIptvLookupMiss)
+        vm.showTmdbIptvLookupMiss(request, profile.cacheKey(), Long.MIN_VALUE)
+        assertNull(vm.state.value.tmdbIptvLookupMiss)
+        vm.showTmdbIptvLookupMiss(request, profile.cacheKey())
+        mutableState.value = mutableState.value.copy(savedProfile = profile.copy(name = "Other", portalUrl = "https://other.invalid"))
+        vm.findAlternateSourcesAfterIptvMiss()
+        scheduler.runCurrent()
+        assertNull(vm.state.value.alternateSources)
+        assertNull(vm.state.value.tmdbIptvLookupMiss)
+    }
+
+    @Test fun externalFallbackRetainsParentalChecks() {
+        vm.showTmdbIptvLookupMiss(AlternateSourceRequest(movie.copy(isAdult = true), CatalogType.MOVIES), profile.cacheKey())
+        vm.findAlternateSourcesAfterIptvMiss()
+        scheduler.runCurrent()
+        assertNotNull(vm.state.value.parentalPrompt)
+        assertNull(vm.state.value.alternateSources)
+    }
+
+    @Test fun dismissingRecommendationRemovesOnlyThatProfilesRowImmediately() {
+        val row = com.nikhil.niktv.data.HistoryRecommendationRow("MOVIES:12", "Because you chose Fixture", profile = profile.cacheKey())
+        val other = row.copy(profile = "other-profile")
+        mutableState.value = mutableState.value.copy(session = PortalSession(profile, "fixture", "https://provider.invalid", "fixture", "fixture", "fixture"),
+            historyRecommendations = listOf(row, other))
+        vm.dismissRecommendation(other)
+        assertEquals(2, vm.state.value.historyRecommendations.size)
+        vm.dismissRecommendation(row)
+        assertEquals(listOf(other), vm.state.value.historyRecommendations)
+    }
     private val scheduler = TestCoroutineScheduler()
     private val pending = mutableListOf<CompletableDeferred<List<AlternateStream>>>()
     private lateinit var vm: NikTvViewModel

@@ -2595,6 +2595,16 @@ internal fun ModernTileActionsMenu(
                 alternateSource?.type ?: recommendationType ?: if (trailerSeries) CatalogType.SERIES else null,
                 dismiss, alternateSource?.series, alternateSource?.season, alternateSource?.episode)
         }
+        openSeries?.let { openAction ->
+            NikDropdownMenuItem(
+                text = { Text("Open series") },
+                leadingIcon = { Icon(Icons.Default.Tv, null) },
+                onClick = {
+                    dismiss()
+                    openAction()
+                }
+            )
+        }
         downloadAction?.let { action ->
             NikDropdownMenuItem(text = { Text("Download") }, leadingIcon = { Icon(Icons.Default.Download, null) },
                 onClick = { dismiss(); action() })
@@ -2642,16 +2652,7 @@ internal fun ModernTileActionsMenu(
                 }
             )
         }
-        openSeries?.let { openAction ->
-            NikDropdownMenuItem(
-                text = { Text("Open series") },
-                leadingIcon = { Icon(Icons.Default.Tv, null) },
-                onClick = {
-                    dismiss()
-                    openAction()
-                }
-            )
-        }
+
         NikDropdownMenuItem(
             text = {
                 Text(if (isFavorite) "Remove from My List" else "Add to My List")

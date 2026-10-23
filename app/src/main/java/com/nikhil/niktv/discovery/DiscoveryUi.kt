@@ -68,7 +68,8 @@ private data class RailEntry(val key: String, val title: String, val artwork: St
     val matchCount: Int? = null, val providerMedia: MediaItem? = null, val providerType: CatalogType? = null,
     val popup: (@Composable (Boolean, () -> Unit, () -> Boolean) -> Unit)? = null)
 private data class Rail(val key: String, val title: String, val entries: List<RailEntry>, val ranked: Boolean = false,
-    val section: TmdbHomeSection? = null, val providerType: CatalogType? = null, val providerCategory: Category? = null)
+    val section: TmdbHomeSection? = null, val providerType: CatalogType? = null, val providerCategory: Category? = null,
+    val recommendation: com.nikhil.niktv.data.HistoryRecommendationRow? = null)
 
 @Composable
 internal fun DiscoveryPreviewScreen(
@@ -80,7 +81,8 @@ internal fun DiscoveryPreviewScreen(
     removeRecent: (RecentItem) -> Unit, markWatched: (WatchedSeries, MediaItem) -> Unit,
     dismissEpisode: (WatchedSeries, MediaItem) -> Unit,
     vm: DiscoveryViewModel = viewModel(key = "discovery2:${app.savedProfile?.cacheKey()}"),
-    detailVisibilityChanged: (Boolean) -> Unit = {}
+    detailVisibilityChanged: (Boolean) -> Unit = {},
+    dismissRecommendation: ((com.nikhil.niktv.data.HistoryRecommendationRow) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
@@ -127,6 +129,7 @@ internal fun DiscoveryPreviewScreen(
     }
     SideEffect { if (providerQueues.first == profile) providerVm.retainedRows = providerQueues }
     var providerCollection by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
+    var providerCollectionVisit by rememberSaveable(profile, surface) { mutableIntStateOf(0) }
     var providerCollectionCategory by rememberSaveable(profile, surface) { mutableStateOf<String?>(null) }
     LaunchedEffect(profile, app.session, providerSelections, app.cacheIntervalMinutes) {
         providerVm.bind(app.session, providerSelections, app.cacheIntervalMinutes.coerceAtLeast(1) * 60_000L, preview = true, pageLoader = providerPageLoader)
@@ -358,7 +361,7 @@ internal fun DiscoveryPreviewScreen(
                 state.feeds[TmdbHomeSection.TRENDING_SERIES].orEmpty().take(10).map { cardEntry(it, "daily-series") }, true, TmdbHomeSection.TRENDING_SERIES))
             if (surface == DashboardSurface.HOME) app.historyRecommendations.filter { it.profile == profile }.forEach { row ->
                 val cards = (row.movies.map { it.discovery() } + row.series.map { it.discovery() }).filter { it.released() }
-                if (cards.isNotEmpty()) add(Rail("personal:${row.key}", row.title, cards.map { cardEntry(it, "personal:${row.key}") }))
+                if (cards.isNotEmpty()) add(Rail("personal:${row.key}", row.title, cards.map { cardEntry(it, "personal:${row.key}") }, recommendation = row))
             }
             state.sections.filterNot { it in setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES) }.forEach { section ->
                 add(Rail("section:${section.name}", section.title, state.feeds[section].orEmpty().map { cardEntry(it, "section:${section.name}") }, section = section))
@@ -414,11 +417,11 @@ internal fun DiscoveryPreviewScreen(
     var glassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     providerCollection?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
         DisposableEffect(Unit) { detailVisibilityChanged(true); onDispose { detailVisibilityChanged(false) } }
-        saved.SaveableStateProvider("provider-collection:${type.name}:$providerCollectionCategory") {
+        saved.SaveableStateProvider("provider-collection:${type.name}:$providerCollectionCategory:$providerCollectionVisit") {
             val category = providerSelections[type].orEmpty().firstOrNull { it.id == providerCollectionCategory }
             ProviderDiscoveryCollectionRoute(type, category?.let { listOf(it) } ?: providerSelections[type].orEmpty(),
                 category?.title ?: "Your IPTV ${type.title}", app,
-                close = { providerCollection = null; providerCollectionCategory = null }, favorite = toggleFavorite)
+                close = { saved.removeState("provider-collection:${type.name}:$providerCollectionCategory:$providerCollectionVisit"); providerCollection = null; providerCollectionCategory = null }, favorite = toggleFavorite)
         }
         return
     }
@@ -667,6 +670,10 @@ internal fun DiscoveryPreviewScreen(
                         val width = if (landscape) discoveryPosterWidth(configuration.screenWidthDp.toFloat(), screenHeight.value).dp
                             else ((configuration.screenWidthDp - 40) / 3.15f - 10).dp.coerceIn(88.dp, 120.dp)
                         DiscoveryRail(row, width, reduceMotion, returnRequesters, navigationIndex = index, phone = phonePortrait,
+                            dismissRow = row.recommendation?.takeIf { dismissRecommendation != null }?.let { recommendation -> {
+                                if (remoteNavigation) moveRow(index, -1)
+                                dismissRecommendation?.invoke(recommendation)
+                            } },
                             popupChanged = { tilePopupOpen = it },
                             prefetch = presentationActive && !scrolling && anchorIndex == index,
                             presentationEnabled = presentationActive && !scrolling,
@@ -689,7 +696,7 @@ internal fun DiscoveryPreviewScreen(
                                 }
                             },
                             move = { delta -> moveRow(index, delta) }, reenter = { focusRow(index) },
-                            viewAll = row.providerType?.let { type -> { focusOrigins.returningTo = "${row.key}:all"; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
+                            viewAll = row.providerType?.let { type -> { focusOrigins.returningTo = "${row.key}:all"; providerCollectionVisit++; providerCollectionCategory = row.providerCategory?.id; providerCollection = type.name } }
                                 ?: row.section?.let { section -> { focusOrigins.returningTo = "${row.key}:all"; openSection(section) } })
                         row.providerType?.let { type ->
                             if (row.entries.isEmpty() && type in providerState.errors) {
@@ -794,7 +801,7 @@ internal fun DiscoveryPreviewScreen(
                                     }
                                     if (type == CatalogType.LIVE_TV) items(categories, key = { it.id }) { category -> DiscoveryAction(category.title) { openCategory(category) } }
                                     else if (providerSelections[type].orEmpty().isNotEmpty()) item("search-selected") {
-                                        DiscoveryAction("Search selected categories", Icons.Default.Search) { providerCollectionCategory = null; providerCollection = type.name }
+                                        DiscoveryAction("Search selected categories", Icons.Default.Search) { providerCollectionVisit++; providerCollectionCategory = null; providerCollection = type.name }
                                     }
                                 }
                             }
@@ -1003,8 +1010,9 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
     popupChanged: (Boolean) -> Unit,
     prefetch: Boolean, presentationEnabled: Boolean, skeleton: Boolean,
     register: (suspend () -> Boolean) -> Unit, unregister: () -> Unit, focused: (RailEntry) -> Unit,
-    present: (RailEntry) -> Unit, move: (Int) -> Boolean, reenter: () -> Unit, viewAll: (() -> Unit)?) {
+    present: (RailEntry) -> Unit, move: (Int) -> Boolean, reenter: () -> Unit, viewAll: (() -> Unit)?, dismissRow: (() -> Unit)? = null) {
     val rowState = rememberLazyListState()
+    val dismissRequester = remember(row.key) { FocusRequester() }
     val popupScope = rememberCoroutineScope()
     val context = LocalContext.current
     val phoneWide = phone && row.key in setOf("continue", "episodes")
@@ -1046,6 +1054,14 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
         Row(Modifier.fillMaxWidth().padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(row.title, Modifier.weight(1f).padding(start = if (phone) 16.dp else 24.dp, top = 4.dp), color = Color.White,
             fontSize = if (phone) 19.sp else 16.sp, lineHeight = if (phone) 24.sp else 20.sp, fontWeight = FontWeight.SemiBold)
+        if (dismissRow != null) DiscoveryAction("Dismiss ${row.title}", Icons.Default.Close, iconOnly = true,
+            modifier = Modifier.focusRequester(dismissRequester).onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                    Key.DirectionDown, Key.DirectionLeft -> { reenter(); true }
+                    Key.DirectionUp -> move(-1)
+                    else -> false
+                }
+            }, onClick = dismissRow)
         if (row.providerType != null && viewAll != null) {
             val key = "${row.key}:all"
             val requester = remember(key) { requesters.getOrPut(key) { FocusRequester() } }
@@ -1064,7 +1080,9 @@ private fun DiscoveryRail(row: Rail, width: Dp, reduceMotion: Boolean, requester
         }
         DiscoveryLazyRow(Modifier.fillMaxWidth().onFocusChanged { if (!it.hasFocus) focusedCard = null }.focusGroup().onPreviewKeyEvent { event ->
             if (event.type == KeyEventType.KeyDown && event.key in listOf(Key.DirectionUp, Key.DirectionDown)) {
-                if (event.key == Key.DirectionUp && row.providerType != null && viewAll != null) {
+                if (event.key == Key.DirectionUp && dismissRow != null) {
+                    runCatching { dismissRequester.requestFocus() }.getOrDefault(false)
+                } else if (event.key == Key.DirectionUp && row.providerType != null && viewAll != null) {
                     selected = "${row.key}:all"; reenter(); true
                 } else move(if (event.key == Key.DirectionUp) -1 else 1)
             } else false

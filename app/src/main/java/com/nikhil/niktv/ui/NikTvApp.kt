@@ -930,6 +930,25 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     )
                 }
             }
+            state.tmdbIptvLookupMiss?.takeIf { it.profileKey == (state.session?.profile ?: state.savedProfile)?.cacheKey() }?.let { miss ->
+                val actionFocus = remember(miss) { FocusRequester() }
+                LaunchedEffect(miss) { withFrameNanos { }; runCatching { actionFocus.requestFocus() } }
+                AlertDialog(
+                    onDismissRequest = vm::dismissTmdbIptvLookupMiss,
+                    title = { Text("Not found on IPTV") },
+                    text = { Text("No IPTV matches were found for \"${(miss.request.series ?: miss.request.item).title}\". You can look for another source to play in NikTV.") },
+                    confirmButton = {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            NikTvPrimaryActionButton(onClick = vm::findAlternateSourcesAfterIptvMiss,
+                                modifier = Modifier.fillMaxWidth().focusRequester(actionFocus)) {
+                                Icon(Icons.Default.AltRoute, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Find alternate sources")
+                            }
+                            NikTvSecondaryActionButton(onClick = vm::dismissTmdbIptvLookupMiss, modifier = Modifier.fillMaxWidth()) { Text("Close") }
+                        }
+                    })
+            }
             state.error?.let { error ->
                 val authorizationExpired = error.isAuthorizationFailureText()
                 var showDiagnostics by remember(error) { mutableStateOf(!authorizationExpired) }

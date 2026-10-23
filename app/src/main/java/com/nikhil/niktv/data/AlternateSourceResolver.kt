@@ -122,20 +122,46 @@ class AlternateSourceResolver(
         // Two independent, bounded lookups. A failed source cannot discard another's results.
         return coroutineScope {
             val slots = Semaphore(2)
-            val searches = listOf(AlternateSourceProvider.MOVY, AlternateSourceProvider.AUTO,
-                AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX).map { provider ->
+            val providers = listOf(AlternateSourceProvider.MOVY, AlternateSourceProvider.AUTO,
+                AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX)
+            val searches = providers.map { provider ->
                 async {
                     slots.withPermit {
                     try {
                         withTimeoutOrNull(7_000) { lookupNative(target.copy(provider = provider)) }
-                            ?.let { it to null } ?: (emptyList<AlternateStream>() to AlternateSourceException("Source lookup timed out."))
+                            ?.let { it to null } ?: (emptyList<AlternateStream>() to AlternateSourceException("Source lookup timed out.", stage = "source timeout"))
                     } catch (cancelled: CancellationException) { throw cancelled }
                       catch (failure: AlternateSourceException) { emptyList<AlternateStream>() to failure }
                     }
                 }
             }.map { it.await() }
             val streams = searches.flatMap { it.first.take(8) }.distinctBy { it.url }.take(40)
-            if (streams.isEmpty()) searches.firstNotNullOfOrNull { it.second }?.let { throw it }
+            if (streams.isEmpty() && searches.any { it.second != null }) {
+                val summary = providers.zip(searches).joinToString("\n") { (provider, result) ->
+                    val name = when (provider) {
+                        AlternateSourceProvider.MOVY -> "Movy"
+                        AlternateSourceProvider.AUTO -> "Unity / fallback"
+                        AlternateSourceProvider.ATLANTIC_ATHENA -> "Athena"
+                        AlternateSourceProvider.RIVE_PRIMEVIDS -> "Rive Primevids"
+                        AlternateSourceProvider.RIVE_CITADEL -> "Rive Citadel"
+                        AlternateSourceProvider.ONLYFLIX -> "OnlyFlix"
+                        else -> provider.name
+                    }
+                    val failure = result.second
+                    val status = when {
+                        failure == null -> "No results"
+                        failure.httpCode != null -> "HTTP ${failure.httpCode}"
+                        failure.stage == "source timeout" -> "Timed out"
+                        failure.kind == AlternateSourceFailure.CHALLENGE -> "Browser verification required"
+                        failure.kind == AlternateSourceFailure.AUTHORIZATION -> "Access refused"
+                        failure.kind == AlternateSourceFailure.PROTECTED_MEDIA -> "Protected media"
+                        failure.kind == AlternateSourceFailure.IDENTITY -> "Title mismatch"
+                        else -> "Lookup failed"
+                    }
+                    "$name: $status"
+                }
+                throw AlternateSourceException("Auto found no playable sources after checking ${providers.size} source groups.\n$summary")
+            }
             streams
         }
     }
