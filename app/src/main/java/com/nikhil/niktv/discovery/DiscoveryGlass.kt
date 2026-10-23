@@ -66,7 +66,8 @@ internal fun discoveryHeaderWidths(available: Float, desiredMenu: Float, desired
 /** Blur only cached artwork, never the controls or live screen content. Works on older Fire OS too. */
 @Composable
 internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropBounds: Rect,
-    focused: Boolean = false, fitArtwork: Boolean = false, topAligned: Boolean = false, fillWidth: Boolean = false, content: @Composable BoxScope.() -> Unit) {
+    focused: Boolean = false, fitArtwork: Boolean = false, topAligned: Boolean = false, fillWidth: Boolean = false,
+    baseColor: Color = Color(0x77171B24), content: @Composable BoxScope.() -> Unit) {
     val context = LocalContext.current
     var position by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     // MemoryInfo is a system-service call; never put that IPC on a focus/scroll frame.
@@ -86,7 +87,7 @@ internal fun DiscoveryGlassPanel(modifier: Modifier, artwork: String?, backdropB
         Brush.verticalGradient(listOf(Color.White.copy(alpha = .12f), Color.Transparent, Color.Black.copy(alpha = .12f)))
     }
     Box(modifier.onGloballyPositioned { position = it.positionInRoot() }.clip(shape)
-        .background(Color(0x77171B24)).border(if (focused) 2.dp else 1.dp,
+        .background(baseColor).border(if (focused) 2.dp else 1.dp,
             if (focused) Color.White else Color(0x777F899B), shape)) {
         Canvas(Modifier.matchParentSize()) {
             val intrinsic = painter.intrinsicSize

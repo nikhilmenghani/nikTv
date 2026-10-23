@@ -63,9 +63,13 @@ internal fun usesDiscoveryPhoneLayout(smallestWidthDp: Int, television: Boolean)
 @Composable
 internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?,
     select: (DiscoveryPhoneDestination) -> Unit, modifier: Modifier = Modifier) {
-    Surface(modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp), color = Color(0xB31B1D23),
-        border = BorderStroke(1.dp, Color(0xFF484A51)), shadowElevation = 5.dp) {
+    DiscoveryGlassPanel(modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
+        artwork = LocalMobileGlassArtwork.current, backdropBounds = LocalMobileGlassBounds.current,
+        fitArtwork = LocalMobileGlassFit.current, topAligned = LocalMobileGlassTopAligned.current,
+        fillWidth = LocalMobileGlassFillWidth.current,
+        // Keep scrolling titles from showing sharply through the floating navigation.
+        // The shared cached-artwork blur is used where artwork actually sits behind it.
+        baseColor = Color(0xF2171B24)) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             DiscoveryPhoneDestination.entries.forEach { destination ->
                 val active = destination == selected
