@@ -18,6 +18,14 @@ class DiscoveryLibraryRoutingTest {
         assertNull(destination(detail = true))
         assertNull(destination(favorites = true, overlay = true))
     }
+    @Test fun returningFromMyListDoesNotWrapDiscoveryPagesInALiveTvHeader() {
+        // My List clears homeOpen but retains the discovery surface and selected catalogue type.
+        // On Back, Home/Movies/Series render their own header even with that legacy state.
+        assertNull(discoveryLibraryDestination(true, false, CatalogType.LIVE_TV,
+            favorites = false, overlay = false, detail = false, discoveryPageVisible = true))
+        assertEquals(DiscoveryLibraryDestination.MY_LIST, destination(favorites = true))
+        assertEquals(DiscoveryLibraryDestination.LIVE_TV, destination())
+    }
     @Test fun catalogueMovieAndSeriesRootsAlwaysResolveToModernSurfaces() {
         assertEquals(com.nikhil.niktv.model.DashboardSurface.MOVIES, modernCatalogSurface(CatalogType.MOVIES))
         assertEquals(com.nikhil.niktv.model.DashboardSurface.SERIES, modernCatalogSurface(CatalogType.SERIES))

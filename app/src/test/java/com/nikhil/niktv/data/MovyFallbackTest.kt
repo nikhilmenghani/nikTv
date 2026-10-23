@@ -12,22 +12,21 @@ import org.robolectric.annotation.Config
 class MovyFallbackTest {
     private val target = AlternateSourceTarget("The Matrix", false, tmdbId = 603, provider = AlternateSourceProvider.MOVY)
 
-    @Test fun failedNativeRequestOffersOnlyAnExplicitEmbeddedRouteWithoutCallingOtherSources() = runBlocking {
+    @Test fun failedNativeRequestDoesNotOfferRemovedVidyRouteOrCallOtherSources() = runBlocking {
         val requests = mutableListOf<String>()
         val resolver = AlternateSourceResolver(fetch = {
             requests += it.url
             AlternateSourceHttpResponse(it.url, 403, "Unavailable")
         })
-        val choices = resolver.resolve(target)
-        assertEquals(listOf(AlternatePlaybackRoute.VIDY_EMBEDDED), choices.map { it.route })
-        assertEquals("https://vidy.st/movie/603", choices.single().url)
+        try { resolver.resolve(target); fail("Authorization failure must be reported") }
+        catch (failure: AlternateSourceException) { assertEquals(AlternateSourceFailure.AUTHORIZATION, failure.kind) }
         assertEquals(1, requests.size)
         assertTrue(requests.single().startsWith("https://api.wecollege.net/seed?"))
     }
 
-    @Test fun overallNativeTimeoutOffersFallbackButConsumerCancellationDoesNot() = runBlocking {
+    @Test fun timeoutAndConsumerCancellationNeverOfferRemovedEmbeddedRoute() = runBlocking {
         val resolver = AlternateSourceResolver(fetch = { delay(60_000); error("Unexpected completion") }, timeoutMillis = 20)
-        assertEquals(AlternatePlaybackRoute.VIDY_EMBEDDED, resolver.resolve(target).single().route)
+        try { resolver.resolve(target); fail("Timeout must be reported") } catch (_: AlternateSourceException) { }
         val started = CompletableDeferred<Unit>()
         val pendingResolver = AlternateSourceResolver(fetch = { started.complete(Unit); delay(60_000); error("Unexpected completion") })
         val pending = async { pendingResolver.resolve(target) }

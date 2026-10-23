@@ -77,7 +77,7 @@ internal class MovySourceResolver(
                                 }
                                 streams += AlternateStream(sourceId, "${label ?: "Auto"} · Movy ${server.replaceFirstChar(Char::uppercaseChar)}", finalUrl.toString(), headers, "dash", label?.dropLast(1)?.toIntOrNull())
                             }
-                            else -> throw AlternateSourceException("Movy did not provide a supported native stream. Try its embedded player.", stage = "Movy playlist")
+                            else -> throw AlternateSourceException("Movy did not provide a supported native stream. Retry or choose another source.", stage = "Movy playlist")
                         }
                     } catch (failure: AlternateSourceException) {
                         if (failure.kind != AlternateSourceFailure.SOURCE) throw failure
@@ -125,13 +125,13 @@ internal class MovySourceResolver(
         private const val SITE = "https://www.movy.sx"
         private val API = "https://api.wecollege.net".toHttpUrlOrNull()!!
         private val apiHeaders = mapOf("Origin" to SITE, "Referer" to "$SITE/", "Accept" to "application/json")
-        private fun changed() = AlternateSourceException("Movy's public source format has changed. Try its embedded player.", stage = "Movy public format")
+        private fun changed() = AlternateSourceException("Movy's public source format has changed. Retry or choose another source.", stage = "Movy public format")
     }
 }
 
 /** The public frontend's version-2 response codec, not a media encryption/DRM implementation. */
 internal fun decodeMovyPayload(payload: String, seed: String, mediaId: Int): String {
-    fun bad(): Nothing = throw AlternateSourceException("Movy's source response could not be read. Try its embedded player.", stage = "Movy public format")
+    fun bad(): Nothing = throw AlternateSourceException("Movy's source response could not be read. Retry or choose another source.", stage = "Movy public format")
     if (payload.length > 1024 * 1024 || payload.isBlank()) bad()
     val encoded = payload.trim()
     if (!encoded.matches(Regex("[A-Za-z0-9_+/=-]+"))) bad()

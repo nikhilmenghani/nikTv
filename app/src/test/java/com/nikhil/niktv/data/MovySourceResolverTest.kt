@@ -122,13 +122,13 @@ class MovySourceResolverTest {
         assertEquals(1, fixture.requests.size)
     }
 
-    @Test fun sourceFanOutIsBoundedAndUnsupportedResponsesRequestEmbedFallback() = runBlocking {
+    @Test fun sourceFanOutIsBoundedAndUnsupportedResponsesSuggestAnotherSource() = runBlocking {
         val fixture = Fixture().apply {
             body = "<html>ordinary unsupported player page</html>"
             payload.put("sources", JSONArray().apply { repeat(30) { put(JSONObject().put("url", "https://media.example.test/$it.m3u8")) } })
         }
         try { fixture.resolver.resolve(movie); fail("HTML accepted as native media") }
-        catch (failure: AlternateSourceException) { assertTrue(failure.message.orEmpty().contains("embedded player")) }
+        catch (failure: AlternateSourceException) { assertTrue(failure.message.orEmpty().contains("choose another source")) }
         assertEquals(6, fixture.requests.size) // one seed, one server, four bounded media probes
         assertFalse(fixture.requests.any { it.url.toHttpUrl().encodedPath == "/boise/sources" })
     }

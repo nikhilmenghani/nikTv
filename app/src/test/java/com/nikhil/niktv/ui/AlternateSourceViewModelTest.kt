@@ -645,4 +645,38 @@ class AlternateSourceViewModelTest {
     private fun deferred() = CompletableDeferred<List<AlternateStream>>().also { pending += it }
     private fun stream(id: String, revision: String = "first") = AlternateStream(id, "Fixture $id",
         "https://fixture.invalid/$id/$revision.m3u8", mapOf("Referer" to "https://fixture.invalid/"))
+
+    @Test fun cinejoyNativeHandoffPreservesIdentityPositionAndPause() {
+        vm.alternateSourceLookup = { listOf(com.nikhil.niktv.data.cinejoyWebStream(it)) }
+        vm.openAlternateSources(AlternateSourceRequest(movie, CatalogType.MOVIES))
+        scheduler.runCurrent()
+        vm.findAlternateSources(vm.state.value.alternateSources!!.target.copy(provider = AlternateSourceProvider.CINEJOY))
+        scheduler.runCurrent()
+        vm.chooseAlternateStream("cinejoy-web"); scheduler.runCurrent()
+        val original = vm.state.value.nowPlaying!!
+        vm.setPlaybackIntent(original.playbackAttemptId, false)
+        val paused = vm.state.value.nowPlaying!!
+        vm.cinejoyNativeLookup = { listOf(stream("cinejoy-native")) }
+        vm.playDetectedCinejoyStream(stream("observed"), 65_000, paused) { fail(it) }
+        scheduler.runCurrent()
+        assertEquals(stream("cinejoy-native").url, vm.state.value.nowPlaying?.url)
+        assertEquals(65_000L, vm.state.value.nowPlaying?.resumePositionMillis)
+        assertFalse(vm.state.value.nowPlaying!!.playWhenReady)
+        assertEquals(original.progressKey, vm.state.value.nowPlaying?.progressKey)
+        assertTrue(vm.state.value.playbackUrls.isEmpty())
+    }
+
+    @Test fun closingCinejoyDuringValidationCannotResurrectItsNativeStream() {
+        vm.alternateSourceLookup = { listOf(com.nikhil.niktv.data.cinejoyWebStream(it)) }
+        vm.openAlternateSources(AlternateSourceRequest(movie, CatalogType.MOVIES)); scheduler.runCurrent()
+        vm.findAlternateSources(vm.state.value.alternateSources!!.target.copy(provider = AlternateSourceProvider.CINEJOY)); scheduler.runCurrent()
+        vm.chooseAlternateStream("cinejoy-web"); scheduler.runCurrent()
+        val delayed = deferred()
+        vm.cinejoyNativeLookup = { withContext(NonCancellable) { delayed.await() } }
+        vm.playDetectedCinejoyStream(stream("observed"), 60_000, vm.state.value.nowPlaying!!) { fail(it) }
+        scheduler.runCurrent()
+        vm.closePlayer(); delayed.complete(listOf(stream("late"))); scheduler.runCurrent()
+        assertNull(vm.state.value.nowPlaying)
+        assertNull(vm.state.value.alternateSources)
+    }
 }

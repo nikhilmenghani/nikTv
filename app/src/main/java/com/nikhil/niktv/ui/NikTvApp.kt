@@ -649,30 +649,6 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                  */
                 state.nowPlaying != null -> {
                   val playback = state.nowPlaying!!
-                  val embedded = playback.alternateSource?.takeIf { source -> source.streams.any {
-                      it.id == source.selectedId && it.route == com.nikhil.niktv.data.AlternatePlaybackRoute.VIDY_EMBEDDED
-                  } }
-                  if (embedded != null) {
-                    var embeddedPosition by remember(playback.playbackAttemptId) { mutableLongStateOf(playback.resumePositionMillis) }
-                    VidyEmbeddedPlayer(
-                        target = embedded.target,
-                        resumePositionMillis = playback.resumePositionMillis,
-                        playWhenReady = playback.playWhenReady,
-                        onClose = vm::closePlayer,
-                        onProgress = { position, duration ->
-                            if (vm.state.value.nowPlaying?.playbackAttemptId == playback.playbackAttemptId) {
-                                embeddedPosition = position
-                                vm.savePlaybackProgress(playback.progressKey, position, duration)
-                            }
-                        },
-                        onCompleted = {
-                            if (vm.state.value.nowPlaying?.playbackAttemptId == playback.playbackAttemptId &&
-                                playback.playWhenReady && playback.nextEpisode != null) vm.playNextEpisode()
-                        },
-                        onPlaybackIntentChanged = { vm.setPlaybackIntent(playback.playbackAttemptId, it) },
-                        onChooseSource = { vm.openPlayingAlternateSources(embeddedPosition, playback) }
-                    )
-                  } else {
                   val profileKey = state.session?.profile?.cacheKey()
                       ?: state.savedProfile?.cacheKey().orEmpty()
                   val channelCategoryId = state.nowPlaying?.media?.portalCategoryId
@@ -772,7 +748,6 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     onPlaybackEngineChanged = vm::setPlaybackEngine,
                     startFullscreen = true
                 )
-                  }
                 }
 
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }

@@ -218,7 +218,21 @@ internal fun DiscoveryPreviewScreen(
         onDispose { vm.pause() }
     }
     LaunchedEffect(state.hero?.key) { if (state.detail == null) featured = state.hero }
-    BackHandler(onBack = ::closeRoute)
+    var lastHomeBack by remember(profile, surface, state.detail?.key) { mutableLongStateOf(0L) }
+    LaunchedEffect(foreground, menu, configure, tilePopupOpen, categoryPopup, actor) { lastHomeBack = 0L }
+    BackHandler {
+        if (phone && surface == DashboardSurface.HOME && state.detail == null) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (lastHomeBack != 0L && now - lastHomeBack <= 2_000L) {
+                var host: android.content.Context = context
+                while (host is android.content.ContextWrapper && host !is android.app.Activity) host = host.baseContext
+                (host as? android.app.Activity)?.finish()
+            } else {
+                lastHomeBack = now
+                android.widget.Toast.makeText(context, "Press Back again to exit", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        } else closeRoute()
+    }
     fun details(card: DiscoveryCard, origin: String) {
         parkRouteFocus()
         navigationTrace?.invoke("details-open surface=$surface from=${state.detail?.key ?: "landing"} origin=$origin target=${card.key}")

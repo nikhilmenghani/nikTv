@@ -6246,7 +6246,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         alternateLookupJob = viewModelScope.launch {
             try {
                 alternateResolver.invalidate(target)
-                val identified = if (target.provider == com.nikhil.niktv.data.AlternateSourceProvider.MOVY && target.tmdbId == null)
+                val identified = if (target.provider != com.nikhil.niktv.data.AlternateSourceProvider.AUTO && target.tmdbId == null)
                     alternateIdentity.resolve(target) else target
                 val streams = alternateSourceLookup(identified)
                 if (generation != alternateLookupGeneration || alternateProfile() != picker.profileKey) return@launch
@@ -6290,6 +6290,32 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 selection.copy(playWhenReady = current?.playWhenReady ?: selection.playWhenReady) else selection
             commitAlternateStream(committedSelection, stream, requestId)
         } }
+    }
+
+    internal var cinejoyNativeLookup: suspend (com.nikhil.niktv.data.AlternateStream) -> List<com.nikhil.niktv.data.AlternateStream> =
+        { com.nikhil.niktv.data.validateCinejoyNativeStream(it) }
+    private var cinejoyHandoffJob: Job? = null
+    fun playDetectedCinejoyStream(candidate: com.nikhil.niktv.data.AlternateStream, position: Long,
+        playing: PlayingMedia, failed: (String) -> Unit) {
+        val source = playing.alternateSource ?: return
+        if (source.target.provider !in setOf(com.nikhil.niktv.data.AlternateSourceProvider.CINEJOY, com.nikhil.niktv.data.AlternateSourceProvider.CNO) ||
+            !samePlaybackAttempt(_state.value.nowPlaying ?: return, playing)) return
+        cinejoyHandoffJob?.cancel()
+        cinejoyHandoffJob = viewModelScope.launch {
+            try {
+                val streams = cinejoyNativeLookup(candidate)
+                if (kotlinx.coroutines.currentCoroutineContext()[Job]?.isActive != true) return@launch
+                if (!samePlaybackAttempt(_state.value.nowPlaying ?: return@launch, playing) || source.profileKey != alternateProfile()) return@launch
+                cinejoyHandoffJob = null
+                openPlayingAlternateSources(position, playing)
+                _state.update { it.copy(alternateSources = it.alternateSources?.copy(streams = source.streams + streams)) }
+                chooseAlternateStream(streams.first().id)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (_: Exception) {
+                if (_state.value.nowPlaying?.playbackAttemptId == playing.playbackAttemptId)
+                    failed("This stream could not be opened natively. Retry or choose another source.")
+            }
+        }
     }
 
     private fun alternateProtectedMedia(request: AlternateSourceRequest): MediaItem = request.item.copy(
@@ -6535,6 +6561,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private fun beginPlaybackRequest(): Long {
+        cinejoyHandoffJob?.cancel(); cinejoyHandoffJob = null
         closeAlternateSources()
         discoveryMetadataRequests.cancel()
         pendingDiscoveryEpisode = null
@@ -7258,6 +7285,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlayer() {
+        cinejoyHandoffJob?.cancel(); cinejoyHandoffJob = null
         // A guide can finish into the browse cache after Back; it never starts playback.
         cancelPendingPlayback(cancelGuide = false)
         val snapshot = _state.value

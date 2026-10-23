@@ -240,7 +240,8 @@ internal fun CatalogScreen(
     val discoveryLibrary = com.nikhil.niktv.discovery.discoveryLibraryDestination(
         state.discoveryExperienceEnabled, state.homeOpen && state.modernIptvCategory?.type != CatalogType.LIVE_TV, state.selectedType, state.favoritesOpen,
         state.settingsOpen || state.searchOpen || state.offlineDownloadsOpen || state.movieMatchSelection != null || state.seriesMatchSelection != null,
-        state.selectedSeries != null && !state.favoritesOpen)
+        state.selectedSeries != null && !state.favoritesOpen,
+        discoveryPageVisible = previewVisible || previewProviderCategory)
     // Phones retain the established Live TV and My List browsers inside modern chrome.
     val useClassicPhoneLibrary = phoneExperience && discoveryLibrary != null
     var libraryMenuEpoch by rememberSaveable { mutableLongStateOf(0L) }

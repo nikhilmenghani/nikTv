@@ -11,6 +11,29 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.nikhil.niktv.data.AlternateSourceTarget
@@ -18,6 +41,7 @@ import com.nikhil.niktv.data.AlternateStream
 import com.nikhil.niktv.data.AlternateSourceProvider
 import com.nikhil.niktv.data.providerSeriesTmdbTitle
 import com.nikhil.niktv.data.providerTmdbTitle
+import com.nikhil.niktv.data.nativeSourceProviders
 import com.nikhil.niktv.model.CatalogType
 import java.security.MessageDigest
 
@@ -99,6 +123,7 @@ internal fun alternateRetryStream(source: com.nikhil.niktv.model.AlternatePlayba
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () -> Unit,
     search: (AlternateSourceTarget) -> Unit, play: (String) -> Unit) {
     var title by remember(state.request) { mutableStateOf(state.target.title) }
@@ -115,54 +140,149 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
         withFrameNanos { }; runCatching { entry.requestFocus() }
     }
     Dialog(onDismissRequest = close) {
-        Surface(color = Color(0xFF181B22), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)) {
-            Column(Modifier.widthIn(max = 620.dp).padding(20.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Play from another source", style = MaterialTheme.typography.titleLarge)
-                Text("Plays in NikTV. This selection does not use IPTV lookup.", color = Color.LightGray,
-                    style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AlternateSourceProvider.entries.forEach { provider ->
-                        NikTvSecondaryActionButton({ search(editedTarget(provider)) }, Modifier.weight(1f),
-                            enabled = validInput && provider != state.target.provider) {
-                            Text(if (provider == AlternateSourceProvider.AUTO) "Auto sources" else "Movy (native)")
-                        }
+        Surface(color = Color(0xFF151820), contentColor = Color.White,
+            border = BorderStroke(1.dp, Color(0xFF343945)), shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.widthIn(max = 620.dp).heightIn(max = 680.dp).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(shape = RoundedCornerShape(10.dp), color = Color(0x33E50925)) {
+                        Icon(Icons.Default.PlayArrow, null, Modifier.padding(10.dp).size(22.dp), tint = Color(0xFFFF6778))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Playback sources", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Choose a source and quality", fontSize = 12.sp, color = Color(0xFFADB5C5))
+                    }
+                    SourcePickerButton("Close", close, Modifier.size(48.dp), icon = Icons.Default.Close)
+                }
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                nativeSourceProviders.chunked(3).forEach { providers ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    providers.forEach { provider ->
+                        SourcePickerButton(
+                            when (provider) { AlternateSourceProvider.AUTO -> "Auto"; AlternateSourceProvider.MOVY -> "Movy";
+                                AlternateSourceProvider.STREAMING_UNITY -> "Unity"; AlternateSourceProvider.ATLANTIC_ATHENA -> "Athena";
+                                AlternateSourceProvider.RIVE_PRIMEVIDS -> "Primevids"; AlternateSourceProvider.RIVE_CITADEL -> "Citadel";
+                                else -> error("Browser sources are not selectable") },
+                            { if (provider != state.target.provider) search(editedTarget(provider)) }, Modifier.weight(1f),
+                            enabled = validInput, chosen = provider == state.target.provider)
                     }
                 }
-                OutlinedTextField(title, { title = it }, label = { Text("Title") }, singleLine = true,
-                    enabled = !state.loading, modifier = Modifier.fillMaxWidth())
+                }
+                AlternateSourceInput(title, { title = it }, "Title", !state.loading, Modifier.fillMaxWidth())
                 if (state.target.series) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(season, { season = it.filter(Char::isDigit).take(3) }, label = { Text("Season") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !state.loading, modifier = Modifier.weight(1f))
-                    OutlinedTextField(episode, { episode = it.filter(Char::isDigit).take(5) }, label = { Text("Episode") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !state.loading, modifier = Modifier.weight(1f))
+                    AlternateSourceInput(season, { season = it.filter(Char::isDigit).take(3) }, "Season", !state.loading, Modifier.weight(1f), KeyboardType.Number)
+                    AlternateSourceInput(episode, { episode = it.filter(Char::isDigit).take(5) }, "Episode", !state.loading, Modifier.weight(1f), KeyboardType.Number)
                 }
                 if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                state.error?.let { Text(it, color = Color.LightGray) }
-                if (state.target.provider == AlternateSourceProvider.MOVY && !state.loading && state.streams.isNotEmpty()) {
-                    Text(if (state.streams.any { it.route == com.nikhil.niktv.data.AlternatePlaybackRoute.NATIVE })
-                        "Try a native source first. The embedded player is available as a fallback."
-                        else "Movy did not return a usable native stream. Retry below, or choose the separate Vidy embedded option.",
-                        style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
-                }
-                state.streams.forEachIndexed { index, stream ->
-                    if (stream.route == com.nikhil.niktv.data.AlternatePlaybackRoute.VIDY_EMBEDDED) {
-                        Text("Vidy embedded fallback", style = MaterialTheme.typography.titleSmall)
+                state.error?.let { Text(it, color = Color(0xFFFFB9C0), fontSize = 13.sp) }
+                if (state.streams.isNotEmpty()) Text("AVAILABLE SOURCES", fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold, color = Color(0xFFADB5C5), letterSpacing = 1.sp)
+                alternateServerRows(state.streams).forEachIndexed { rowIndex, row ->
+                    Surface(color = Color(0xFF1D222D), contentColor = Color.White, shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color(0xFF323A49))) {
+                    Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(row.title.replace("StreamingUnity", "Streaming Unity"), Modifier.weight(.8f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        BoxWithConstraints(Modifier.weight(1.9f)) {
+                        val columns = if (maxWidth < 300.dp) 2 else 4
+                        val buttonWidth = (maxWidth - 6.dp * (columns - 1)) / columns
+                        FlowRow(maxItemsInEachRow = columns, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            row.streams.forEachIndexed { index, stream ->
+                                SourcePickerButton(alternateQualityLabel(stream), { play(stream.id) },
+                                    Modifier.width(buttonWidth).then(if (rowIndex == 0 && index == 0) Modifier.focusRequester(entry) else Modifier),
+                                    chosen = stream.id == state.selectedId)
+                            }
+                        }
+                        }
                     }
-                    NikTvSecondaryActionButton({ play(stream.id) }, Modifier.fillMaxWidth()
-                        .then(if (index == 0) Modifier.focusRequester(entry) else Modifier)) {
-                        Text(stream.label + if (stream.id == state.selectedId) " · Current" else "")
                     }
                 }
-                NikTvSecondaryActionButton({
+                }
+                HorizontalDivider(color = Color(0xFF303644))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SourcePickerButton("Close", close, Modifier.weight(.8f))
+                SourcePickerButton(if (state.streams.isEmpty()) "Find sources" else "Refresh", {
                     search(editedTarget())
-                }, Modifier.fillMaxWidth().then(if (state.streams.isEmpty()) Modifier.focusRequester(entry) else Modifier),
-                    enabled = !state.loading && validInput) {
-                    Text(if (state.target.provider == AlternateSourceProvider.MOVY) "Retry Movy native sources"
-                        else if (state.streams.isEmpty()) "Find sources" else "Refresh sources")
+                }, Modifier.weight(1.2f).then(if (state.streams.isEmpty()) Modifier.focusRequester(entry) else Modifier),
+                    enabled = !state.loading && validInput, icon = Icons.Default.Refresh)
                 }
-                NikTvSecondaryActionButton(close, Modifier.fillMaxWidth()) { Text("Close") }
             }
         }
     }
+}
+
+@Composable
+private fun SourcePickerButton(label: String, click: () -> Unit, modifier: Modifier = Modifier,
+    enabled: Boolean = true, chosen: Boolean = false, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(onClick = click, enabled = enabled,
+        modifier = modifier.onFocusChanged { focused = it.isFocused }.semantics { selected = chosen },
+        shape = RoundedCornerShape(10.dp), contentColor = if (enabled) Color.White else Color(0xFF7E8797),
+        color = when { focused -> Color(0xFF354052); chosen -> Color(0xFF55202D); else -> Color(0xFF272D39) },
+        border = BorderStroke(if (focused) 2.dp else 1.dp,
+            when { focused -> Color.White; chosen -> Color(0xFFED536A); else -> Color(0xFF414B5D) })) {
+        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = if (icon == Icons.Default.Close) 0.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            if (icon != null) Icon(icon, if (icon == Icons.Default.Close) label else null, Modifier.size(18.dp))
+            if (icon != Icons.Default.Close) {
+                if (icon != null) Spacer(Modifier.width(6.dp))
+                Text(label, fontSize = 13.sp, fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1, softWrap = false)
+            }
+        }
+    }
+}
+
+internal data class AlternateServerRow(val title: String, val streams: List<AlternateStream>)
+internal fun alternateServerRows(streams: List<AlternateStream>): List<AlternateServerRow> =
+    streams.filter { it.route == com.nikhil.niktv.data.AlternatePlaybackRoute.NATIVE }
+        .groupBy { if (it.route == com.nikhil.niktv.data.AlternatePlaybackRoute.NATIVE) it.label.substringAfter(" · ", it.label)
+            else it.label.substringBefore(" · ") }
+        .map { (title, choices) -> AlternateServerRow(title, choices) }
+
+internal fun alternateQualityLabel(stream: AlternateStream): String = when {
+    stream.route == com.nikhil.niktv.data.AlternatePlaybackRoute.CNO_WEB -> "Web player"
+    stream.route != com.nikhil.niktv.data.AlternatePlaybackRoute.NATIVE -> "Play"
+    stream.height != null -> "${stream.height}p"
+    else -> stream.label.substringBefore(" · ").takeIf { it == "Auto" || it.startsWith("Quality ") } ?: "Auto"
+}
+
+/** Remote focus is navigation; only a completed Select/touch gesture starts editing. */
+@Composable
+private fun AlternateSourceInput(value: String, change: (String) -> Unit, label: String, enabled: Boolean,
+    modifier: Modifier, type: KeyboardType = KeyboardType.Text) {
+    var editing by remember { mutableStateOf(false) }
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
+    fun activate() {
+        if (!enabled) return
+        editing = true
+        scope.launch { withFrameNanos { }; focus.requestFocus(); keyboard?.show() }
+    }
+    OutlinedTextField(value, change, label = { Text(label, fontSize = 12.sp) }, singleLine = true, enabled = enabled,
+        textStyle = MaterialTheme.typography.bodyMedium, shape = RoundedCornerShape(10.dp),
+        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+            focusedBorderColor = Color(0xFFED536A), unfocusedBorderColor = Color(0xFF465064),
+            focusedLabelColor = Color(0xFFFF8C9E), unfocusedLabelColor = Color(0xFFADB5C5),
+            cursorColor = Color(0xFFFF6778)),
+        readOnly = !editing, keyboardOptions = KeyboardOptions(keyboardType = type, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { editing = false; keyboard?.hide() }),
+        modifier = modifier.focusRequester(focus).onFocusChanged {
+            if (!it.isFocused) { editing = false; keyboard?.hide() }
+        }.onPreviewKeyEvent {
+            if (!editing && it.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
+                if (it.type == KeyEventType.KeyUp) activate()
+                true
+            } else false
+        }.pointerInput(enabled) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (waitForUpOrCancellation(pass = PointerEventPass.Initial) != null) activate()
+            }
+        })
 }

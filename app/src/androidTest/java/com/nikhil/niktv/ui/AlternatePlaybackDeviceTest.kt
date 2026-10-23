@@ -256,7 +256,7 @@ class AlternatePlaybackDeviceTest {
             }
             if (label("Source and quality") == null) click("More controls")
             click("Source and quality")
-            await("Source and quality chooser must open") { vm.state.value.alternateSources != null && label("Play from another source") != null }
+            await("Source and quality chooser must open") { vm.state.value.alternateSources != null && label("Playback sources") != null }
         }
         fun verifyIsolation() {
             assertNull("Alternate playback must not require a provider session", vm.state.value.session)
@@ -283,6 +283,29 @@ class AlternatePlaybackDeviceTest {
 
     /** Explicitly opt in: these checks make public media requests, never private IPTV requests. */
     @Test fun movyMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3)
+    @Test fun allNativeSourcesPlayInVlc() = verifyNativeSources(PlaybackEngine.VLC)
+    @Test fun allNativeSourcesPlayInMpv() {
+        org.junit.Assume.assumeTrue(mpvSupportedSdk(android.os.Build.VERSION.SDK_INT))
+        verifyNativeSources(PlaybackEngine.MPV)
+    }
+    @Test fun allNativeSourcesPlayInFlow() = verifyNativeSources(PlaybackEngine.FLOW)
+    private fun verifyNativeSources(engine: PlaybackEngine) {
+        val failures = mutableListOf<String>()
+        for (provider in listOf(com.nikhil.niktv.data.AlternateSourceProvider.MOVY,
+            com.nikhil.niktv.data.AlternateSourceProvider.STREAMING_UNITY,
+            com.nikhil.niktv.data.AlternateSourceProvider.ATLANTIC_ATHENA,
+            com.nikhil.niktv.data.AlternateSourceProvider.RIVE_PRIMEVIDS,
+            com.nikhil.niktv.data.AlternateSourceProvider.RIVE_CITADEL)) {
+            instrumentation.sendStatus(0, android.os.Bundle().apply { putString("native_source_check", "$provider on $engine") })
+            try { movyPlayback(engine, provider) }
+            catch (failure: AssertionError) { failures += "$provider: ${failure.message}" }
+        }
+        assertTrue("$engine failures: ${failures.joinToString()}", failures.isEmpty())
+    }
+    @Test fun unityMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.STREAMING_UNITY)
+    @Test fun athenaMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.ATLANTIC_ATHENA)
+    @Test fun rivePrimevidsMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.RIVE_PRIMEVIDS)
+    @Test fun riveCitadelMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.RIVE_CITADEL)
     @Test fun movyMoviePlaysInVlc() = movyPlayback(PlaybackEngine.VLC)
     @Test fun movyMoviePlaysInFlow() = movyPlayback(PlaybackEngine.FLOW)
     @Test fun movyMoviePlaysInMpv() {
@@ -290,13 +313,13 @@ class AlternatePlaybackDeviceTest {
         movyPlayback(PlaybackEngine.MPV)
     }
 
-    private fun movyPlayback(engine: PlaybackEngine) = silently {
+    private fun movyPlayback(engine: PlaybackEngine, provider: com.nikhil.niktv.data.AlternateSourceProvider = com.nikhil.niktv.data.AlternateSourceProvider.MOVY) = silently {
         org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("publicAlternateNetwork") == "true")
         val resolver = com.nikhil.niktv.data.AlternateSourceResolver()
         LocalHls().use { server ->
             val item = MediaItem("tmdb-movie:603", "The Matrix", null, null, externalTmdbId = 603)
             Harness(engine, server, item, { target ->
-                resolver.resolve(target.copy(provider = com.nikhil.niktv.data.AlternateSourceProvider.MOVY))
+                resolver.resolve(target.copy(provider = provider))
                     .filter { it.route == com.nikhil.niktv.data.AlternatePlaybackRoute.NATIVE }
             }).use { harness ->
                 harness.start()

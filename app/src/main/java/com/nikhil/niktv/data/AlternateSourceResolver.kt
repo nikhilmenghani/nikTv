@@ -13,14 +13,19 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 
-enum class AlternateSourceProvider { AUTO, MOVY }
-enum class AlternatePlaybackRoute { NATIVE, VIDY_EMBEDDED }
+enum class AlternateSourceProvider { AUTO, MOVY, CINEJOY, CNO, STREAMING_UNITY, RIVE_VANGUARD, RIVE_PRIMEVIDS, RIVE_CITADEL, ATLANTIC_ATHENA }
+internal val nativeSourceProviders = listOf(AlternateSourceProvider.AUTO, AlternateSourceProvider.MOVY,
+    AlternateSourceProvider.STREAMING_UNITY, AlternateSourceProvider.ATLANTIC_ATHENA,
+    AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL)
+enum class AlternatePlaybackRoute { NATIVE, VIDY_EMBEDDED, CINEJOY_WEB, CNO_WEB }
 
 data class AlternateSourceTarget(
     val title: String,
@@ -63,6 +68,7 @@ class AlternateSourceResolver(
     private val now: () -> Long = System::currentTimeMillis,
     private val timeoutMillis: Long = 25_000L,
     private val identityLookup: suspend (AlternateSourceTarget) -> AlternateSourceTarget = { it },
+    private val movyLookup: (suspend (AlternateSourceTarget) -> List<AlternateStream>)? = null,
 ) {
     private data class Cached(val expiresAt: Long, val streams: List<AlternateStream>)
     private val cache = object : LinkedHashMap<AlternateSourceTarget, Cached>(16, .75f, true) {
@@ -70,6 +76,7 @@ class AlternateSourceResolver(
     }
 
     suspend fun resolve(target: AlternateSourceTarget): List<AlternateStream> = withContext(Dispatchers.IO) {
+        if (target.provider !in nativeSourceProviders) throw AlternateSourceException("This browser source is no longer supported. Choose a native source.")
         if (target.title.isBlank()) throw AlternateSourceException("This title has no searchable name.")
         if (target.series && (target.season == null || target.season < 0 || target.episode == null || target.episode < 1)) {
             throw AlternateSourceException("Choose a season and episode before looking for an alternate source.")
@@ -77,7 +84,6 @@ class AlternateSourceResolver(
         synchronized(cache) { cache[target]?.takeIf { now() < it.expiresAt } }?.let {
             return@withContext it.streams
         }
-        var timedOutFallback: AlternateStream? = null
         withTimeoutOrNull(timeoutMillis.coerceIn(1L, 25_000L)) {
             concurrentLookups.withPermit {
                 val identified = if (target.tmdbId?.let { it > 0 } == true) target else try {
@@ -90,7 +96,6 @@ class AlternateSourceResolver(
                 if (identified.series != target.series || identified.season != target.season || identified.episode != target.episode) {
                     throw AlternateSourceException("The alternate source identity did not match the selected episode.", AlternateSourceFailure.IDENTITY)
                 }
-                if (identified.provider == AlternateSourceProvider.MOVY) timedOutFallback = vidyFallbackStream(identified)
                 val streams = lookup(identified)
                 if (streams.isNotEmpty()) {
                     val timestamp = now()
@@ -104,14 +109,37 @@ class AlternateSourceResolver(
                 }
                 streams
             }
-        } ?: timedOutFallback?.let { listOf(it) }
-            ?: throw AlternateSourceException("The alternate source took too long. Try again later.")
+        } ?: throw AlternateSourceException("The alternate source took too long. Try again later.")
     }
 
     /** Explicit retry discards an unplayable or revoked signed URL before resolving it again. */
     fun invalidate(target: AlternateSourceTarget) { synchronized(cache) { cache.remove(target) } }
 
     private suspend fun lookup(target: AlternateSourceTarget): List<AlternateStream> {
+        if (target.provider !in nativeSourceProviders) throw AlternateSourceException("This browser source is no longer supported. Choose a native source.")
+        if (target.provider != AlternateSourceProvider.AUTO) return lookupNative(target)
+        // Two independent, bounded lookups. A failed source cannot discard another's results.
+        return coroutineScope {
+            val slots = Semaphore(2)
+            val searches = listOf(AlternateSourceProvider.MOVY, AlternateSourceProvider.AUTO,
+                AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL).map { provider ->
+                async {
+                    slots.withPermit {
+                    try {
+                        withTimeoutOrNull(7_000) { lookupNative(target.copy(provider = provider)) }
+                            ?.let { it to null } ?: (emptyList<AlternateStream>() to AlternateSourceException("Source lookup timed out."))
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                      catch (failure: AlternateSourceException) { emptyList<AlternateStream>() to failure }
+                    }
+                }
+            }.map { it.await() }
+            val streams = searches.flatMap { it.first.take(8) }.distinctBy { it.url }.take(40)
+            if (streams.isEmpty()) searches.firstNotNullOfOrNull { it.second }?.let { throw it }
+            streams
+        }
+    }
+
+    private suspend fun lookupNative(target: AlternateSourceTarget): List<AlternateStream> {
         var remainingRequests = 12
         suspend fun read(url: HttpUrl, headers: Map<String, String> = emptyMap(), maxBytes: Int = MAX_PAGE_BYTES, phase: String = "source"): AlternateSourceHttpResponse {
             if (--remainingRequests < 0) throw AlternateSourceException("The source required too many requests.")
@@ -142,24 +170,20 @@ class AlternateSourceResolver(
             return response
         }
         if (target.provider == AlternateSourceProvider.MOVY) {
-            val fallback = vidyFallbackStream(target)
-            return try {
-                MovySourceResolver(read = { request, phase ->
+            movyLookup?.let { return it(target) }
+            return MovySourceResolver(read = { request, phase ->
                     read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase)
-                }).resolve(target) + listOfNotNull(fallback)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: AlternateSourceException) {
-                // A separate, explicit browser choice may work when this service cannot
-                // offer a native stream. Never turn identity rejection into another title.
-                if (failure.kind == AlternateSourceFailure.IDENTITY || fallback == null) throw failure
-                alternateSourceTrace("Movy native unavailable kind ${failure.kind} HTTP ${failure.httpCode ?: 0}; embedded choice available")
-                listOf(fallback)
-            }
+                }).resolve(target)
+        }
+        if (target.provider in setOf(AlternateSourceProvider.RIVE_VANGUARD, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL)) {
+            return RiveSourceResolver { request, phase -> read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase) }.resolve(target)
+        }
+        if (target.provider == AlternateSourceProvider.ATLANTIC_ATHENA) {
+            return AthenaSourceResolver { request, phase -> read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase) }.resolve(target)
         }
         var preferredIssue: AlternateSourceException? = null
         var preferredEmpty = false
-        if (target.tmdbId?.let { it > 0 } == true) {
+        if (target.provider != AlternateSourceProvider.STREAMING_UNITY && target.tmdbId?.let { it > 0 } == true) {
             try {
                 val preferred = VidSparkSourceResolver { request, phase ->
                     read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase)
@@ -369,7 +393,7 @@ internal fun rejectDrm(manifest: String) {
 private val alternateHttpClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
     .connectTimeout(5, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).callTimeout(10, TimeUnit.SECONDS).build()
 
-private suspend fun fetchAlternateSource(request: AlternateSourceHttpRequest): AlternateSourceHttpResponse {
+internal suspend fun fetchAlternateSource(request: AlternateSourceHttpRequest): AlternateSourceHttpResponse {
     var url = requirePublicHttps(request.url)
     repeat(5) { redirects ->
         val networkRequest = Request.Builder().url(url).apply { request.headers.forEach { (name, value) -> header(name, value) } }.build()
