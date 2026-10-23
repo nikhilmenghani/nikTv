@@ -342,6 +342,8 @@ fun PlayerScreen(
     fullscreenOverride: Boolean? = null,
     onFullscreenChanged: ((Boolean) -> Unit)? = null,
     onPlaybackIntentChanged: (Boolean) -> Unit = {},
+    onChooseAlternateSource: ((Long, () -> Long) -> Unit)? = null,
+    alternateSourceChooserOpen: Boolean = false,
     onReauthenticate: ((Long) -> Unit)? = null,
     reauthenticating: Boolean = false,
     onVideoFrameRendered: () -> Unit = {},
@@ -455,6 +457,8 @@ fun PlayerScreen(
             liveQueueXtream = liveQueueXtream,
             onProgress = onProgress,
             onPlaybackIntentChanged = onPlaybackIntentChanged,
+            onChooseAlternateSource = onChooseAlternateSource,
+            alternateSourceChooserOpen = alternateSourceChooserOpen,
             onVideoFrameRendered = onVideoFrameRendered,
             onDownload = onDownload,
             offlineDownloadPresent = offlineDownloadPresent,
@@ -551,7 +555,10 @@ fun PlayerScreen(
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
-    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible
+    // The parent owns this picker, while the player retains its originating
+    // control. A replacement playback attempt cannot inherit a pending return.
+    var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
+    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
@@ -653,6 +660,7 @@ fun PlayerScreen(
     val audioFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val sourceFocusRequester = remember(media.progressKey) { FocusRequester() }
     val refreshFocusRequester = remember(media.progressKey) { FocusRequester() }
     val resizeFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -668,6 +676,18 @@ fun PlayerScreen(
     val nextFocusRequester = remember(media.progressKey) { FocusRequester() }
     val progressFocusRequester = remember(media.progressKey) { FocusRequester() }
     val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val errorBackFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val errorRetryFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val errorPlayerFocusRequester = remember(media.progressKey) { FocusRequester() }
+
+    LaunchedEffect(alternateSourceChooserOpen) {
+        if (alternateSourceChooserOpen) {
+            sourceChooserWasOpen = true
+        } else if (sourceChooserWasOpen) {
+            sourceChooserWasOpen = false
+            returnControlFocus = if (playbackError != null || startupTimedOut) errorRetryFocusRequester else sourceFocusRequester
+        }
+    }
 
     LaunchedEffect(returnControlFocus) {
         val target = returnControlFocus ?: return@LaunchedEffect
@@ -693,9 +713,6 @@ fun PlayerScreen(
             restorePlayerSwitchFocus = false
         }
     }
-    val errorBackFocusRequester = remember(media.progressKey) { FocusRequester() }
-    val errorRetryFocusRequester = remember(media.progressKey) { FocusRequester() }
-    val errorPlayerFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val pipActivity = activity as? MainActivity
     val pipAvailable = remember(context) {
@@ -2132,12 +2149,13 @@ fun PlayerScreen(
                 if (media.catalogType != CatalogType.LIVE_TV) {
                     add(subtitleFocusRequester)
                     if (audioTracks.size > 1) add(audioFocusRequester)
-                    if (media.nativeSabr == null) add(downloadFocusRequester)
+                    if (media.nativeSabr == null && onChooseAlternateSource == null) add(downloadFocusRequester)
                 }
                 if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) add(refreshFocusRequester)
                 add(resizeFocusRequester)
                 add(pictureModeFocusRequester)
                 if (media.nativeSabr == null) add(playerSwitchFocusRequester)
+                if (onChooseAlternateSource != null) add(sourceFocusRequester)
                 add(controlsTimeoutFocusRequester)
                 add(moreFocusRequester)
                 if (pipAvailable) add(pipFocusRequester)
@@ -2155,7 +2173,7 @@ fun PlayerScreen(
             val controlRowScrollState = rememberScrollState()
             val playbackDetailLines = buildList {
                 videoDetails.takeIf { it.isNotBlank() }?.let { add(it) }
-                add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
+                add("${if (media.offlinePlayback) "Offline" else if (onChooseAlternateSource != null) "Alternate source" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · ${effectiveEngine.playerEngineLabel()} · Video fit · ${resizeMode.label}")
                 add("Picture · ${activeAppearanceProfile.name} · Controls · ${controlsTimeoutSeconds}s")
             }
@@ -2269,7 +2287,7 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        if (media.catalogType != CatalogType.LIVE_TV && media.nativeSabr == null) {
+                        if (media.catalogType != CatalogType.LIVE_TV && media.nativeSabr == null && onChooseAlternateSource == null) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                 contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
@@ -2324,6 +2342,24 @@ PlayerChromeIconButton(
                                     selected = false,
                                     onFocused = { controlsFocused = it }
                                 )
+                        if (onChooseAlternateSource != null) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.VideoSettings,
+                                contentDescription = "Source and quality",
+                                onClick = {
+                                    onChooseAlternateSource(player.currentPosition.coerceAtLeast(0L)) {
+                                        player.currentPosition.coerceAtLeast(0L)
+                                    }
+                                },
+                                modifier = Modifier.playerSecondaryFocus(
+                                    sourceFocusRequester, secondaryActionRequesters,
+                                    extraControlsRequester, lastPlaybackActionRequester,
+                                    if (seekable) progressFocusRequester else backFocusRequester
+                                ),
+                                size = if (compactMobileControls) 44.dp else 48.dp,
+                                onFocused = { controlsFocused = it }
+                            )
+                        }
                         
                         PlayerChromeIconButton(
                             icon = Icons.Default.Timer,
@@ -2704,6 +2740,7 @@ PlayerChromeIconButton(
         PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
+            alternateSeries = media.series,
             pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
             favoriteIds = queueFavoriteIds,
@@ -2896,6 +2933,9 @@ PlayerChromeIconButton(
                             { authenticate(playbackRestartPosition(media.catalogType, player.currentPosition)) }
                         },
                         reauthenticating = reauthenticating,
+                        onChooseSource = onChooseAlternateSource?.let { choose -> {
+                            choose(player.currentPosition.coerceAtLeast(0L)) { player.currentPosition.coerceAtLeast(0L) }
+                        } },
                         retryModifier = Modifier.focusRequester(errorRetryFocusRequester)
                             .playerControlFocus(RoundedCornerShape(12.dp)) { controlsFocused = it }
                     )

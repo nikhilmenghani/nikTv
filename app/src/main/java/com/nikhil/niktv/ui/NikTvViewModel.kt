@@ -48,6 +48,7 @@ import kotlinx.coroutines.NonCancellable
 data class NikTvState(
     val discoveryExperienceEnabled: Boolean = true,
     val profileSwitcherOpen: Boolean = false,
+    val alternateSources: AlternateSourcePickerState? = null,
     val discoverySurface: DashboardSurface? = null,
     val discoveryNavigationId: Long = 0,
     val discoveryMatchCounts: Map<String, Int> = emptyMap(),
@@ -5056,6 +5057,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openMediaFromQueue(item: MediaItem, position: Int) {
+        _state.value.nowPlaying?.takeIf { it.alternateSource != null }?.let { playing ->
+            val source = requireNotNull(playing.alternateSource)
+            retryAlternatePlayback(0, playing, source.target.copy(season = item.seasonNumber ?: source.target.season,
+                episode = item.episodeNumber ?: source.target.episode))
+            return
+        }
         playbackNavigationIndex = position
         openMediaInternal(item)
     }
@@ -6182,6 +6189,181 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             SearchContentType.EPISODES -> play(item, CatalogType.SERIES)
         }
     }
+    private val alternateIdentity by lazy { com.nikhil.niktv.data.AlternateTmdbIdentity(
+        fetch = { path, query -> tmdb.discoveryJson(path, query) }, configured = { tmdb.configured }) }
+    private val alternateResolver by lazy { com.nikhil.niktv.data.AlternateSourceResolver(identityLookup = alternateIdentity::resolve) }
+    internal var alternateSourceLookup: suspend (com.nikhil.niktv.data.AlternateSourceTarget) -> List<com.nikhil.niktv.data.AlternateStream> =
+        { target -> alternateResolver.resolve(target) }
+    private var alternateLookupJob: Job? = null
+    private var alternateLookupGeneration = 0L
+    // Holds a player only while its source picker is open. Never serialize the
+    // supplier, and never read a decoder belonging to an obsolete playback attempt.
+    private data class AlternatePositionReader(val attemptId: String, val progressKey: String, val read: () -> Long)
+    private var alternatePositionReader: AlternatePositionReader? = null
+    private fun alternateProfile() = _state.value.session?.profile?.cacheKey() ?: _state.value.savedProfile?.cacheKey().orEmpty()
+
+    fun closeAlternateSources() {
+        alternatePositionReader = null
+        alternateLookupGeneration++
+        alternateLookupJob?.cancel(); alternateLookupJob = null
+        _state.update { if (it.alternateSources == null) it else it.copy(alternateSources = null) }
+    }
+
+    fun openAlternateSources(request: AlternateSourceRequest) {
+        if (request.type !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) return
+        val protected = alternateProtectedMedia(request)
+        if (gateAdultAction(protected, request.type) { openAlternateSources(request) }) return
+        closeAlternateSources()
+        val target = alternateTargetFor(request)
+        _state.update { it.copy(alternateSources = AlternateSourcePickerState(request, target, alternateProfile())) }
+        // Series tiles ask for the episode first. Exact episode/movie actions resolve immediately.
+        if (!target.series || request.episode != null || request.item.episodeNumber != null) findAlternateSources(target)
+    }
+
+    fun openPlayingAlternateSources(position: Long, playing: PlayingMedia, positionReader: (() -> Long)? = null) {
+        if (!samePlaybackAttempt(_state.value.nowPlaying ?: return, playing)) return
+        val source = playing.alternateSource ?: return
+        closeAlternateSources()
+        alternatePositionReader = positionReader?.let { AlternatePositionReader(playing.playbackAttemptId,
+            alternateProgressKey(source.profileKey, source.target), it) }
+        val request = AlternateSourceRequest(playing.media, playing.catalogType, playing.series,
+            source.target.season, source.target.episode)
+        _state.update { it.copy(alternateSources = AlternateSourcePickerState(request, source.target, source.profileKey,
+            streams = source.streams, resumePositionMillis = position.coerceAtLeast(0), playWhenReady = playing.playWhenReady,
+            selectedId = source.selectedId)) }
+    }
+
+    fun findAlternateSources(target: com.nikhil.niktv.data.AlternateSourceTarget) {
+        val picker = _state.value.alternateSources ?: return
+        if (picker.profileKey != alternateProfile()) { closeAlternateSources(); return }
+        val protected = alternateProtectedMedia(picker.request).copy(title = target.title)
+        if (gateAdultAction(protected, picker.request.type) { findAlternateSources(target) }) return
+        alternateLookupJob?.cancel()
+        val generation = ++alternateLookupGeneration
+        _state.update { it.copy(alternateSources = picker.copy(target = target, loading = true, streams = emptyList(), error = null,
+            resumePositionMillis = picker.resumePositionMillis.takeIf { alternateProgressKey(picker.profileKey, picker.target) == alternateProgressKey(picker.profileKey, target) },
+            selectedId = picker.selectedId.takeIf { picker.target == target })) }
+        alternateLookupJob = viewModelScope.launch {
+            try {
+                alternateResolver.invalidate(target)
+                val identified = if (target.provider == com.nikhil.niktv.data.AlternateSourceProvider.MOVY && target.tmdbId == null)
+                    alternateIdentity.resolve(target) else target
+                val streams = alternateSourceLookup(identified)
+                if (generation != alternateLookupGeneration || alternateProfile() != picker.profileKey) return@launch
+                _state.update { current -> current.copy(alternateSources = current.alternateSources?.copy(
+                    target = identified, loading = false, streams = streams, error = if (streams.isEmpty()) "No playable sources found for this title." else null)) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (error: Exception) {
+                if (generation == alternateLookupGeneration && alternateProfile() == picker.profileKey)
+                    _state.update { current -> current.copy(alternateSources = current.alternateSources?.copy(
+                        loading = false, error = error.message ?: "Source lookup failed. Try again.")) }
+            }
+        }
+    }
+
+    fun chooseAlternateStream(id: String) {
+        val picker = _state.value.alternateSources ?: return
+        val stream = picker.streams.firstOrNull { it.id == id } ?: return
+        if (picker.profileKey != alternateProfile()) { closeAlternateSources(); return }
+        val protected = alternateProtectedMedia(picker.request).copy(title = picker.target.title)
+        if (gateAdultAction(protected, picker.request.type) { chooseAlternateStream(id) }) return
+        val active = _state.value.nowPlaying
+        if (active?.alternateSource?.target == picker.target && active.alternateSource.selectedId == id && active.url == stream.url) {
+            closeAlternateSources(); return
+        }
+        val currentKey = alternateProgressKey(picker.profileKey, picker.target)
+        val sameActiveTitle = active?.alternateSource?.let {
+            alternateProgressKey(it.profileKey, it.target) == currentKey
+        } == true
+        // Playback continues during source lookup. Sample only at the user's
+        // final selection, before beginPlaybackRequest closes and releases the
+        // supplier, so changing quality does not rewind by the dialog dwell time.
+        val currentPosition = alternatePositionReader?.takeIf {
+            it.attemptId == active?.playbackAttemptId && it.progressKey == currentKey && sameActiveTitle
+        }?.let { reader -> runCatching { reader.read().coerceAtLeast(0L) }.getOrNull() }
+        val selection = picker.copy(resumePositionMillis = currentPosition ?: picker.resumePositionMillis,
+            playWhenReady = active?.playWhenReady?.takeIf { sameActiveTitle } ?: picker.playWhenReady)
+        val requestId = beginPlaybackRequest()
+        playbackTask(requestId) { latestPlaybackRequest.run(requestId) {
+            val current = _state.value.nowPlaying
+            val committedSelection = if (sameActiveTitle && current?.playbackAttemptId == active?.playbackAttemptId)
+                selection.copy(playWhenReady = current?.playWhenReady ?: selection.playWhenReady) else selection
+            commitAlternateStream(committedSelection, stream, requestId)
+        } }
+    }
+
+    private fun alternateProtectedMedia(request: AlternateSourceRequest): MediaItem = request.item.copy(
+        isAdult = isAdultMedia(request.item, request.type) || request.series?.let { isAdultMedia(it, CatalogType.SERIES) } == true)
+
+    private fun alternateSameTitle(request: AlternateSourceRequest, target: com.nikhil.niktv.data.AlternateSourceTarget): Boolean {
+        val original = alternateTargetFor(request)
+        return original.title == target.title &&
+            (original.tmdbId == null || target.tmdbId == null || original.tmdbId == target.tmdbId) &&
+            (original.year == null || target.year == null || original.year == target.year)
+    }
+
+    private fun alternateSeriesMedia(request: AlternateSourceRequest, target: com.nikhil.niktv.data.AlternateSourceTarget): MediaItem? {
+        if (!target.series) return null
+        if (alternateSameTitle(request, target)) return request.series ?: request.item
+        return MediaItem(id = alternateProgressKey("", target.copy(season = null, episode = null)),
+            title = target.title, logo = null, command = null, externalTmdbId = target.tmdbId,
+            isAdult = alternateProtectedMedia(request).isAdult)
+    }
+
+    private fun alternateEpisodeMedia(request: AlternateSourceRequest, target: com.nikhil.niktv.data.AlternateSourceTarget): MediaItem {
+        if (!target.series) return if (alternateSameTitle(request, target)) request.item else
+            MediaItem(alternateProgressKey("", target), target.title, null, null,
+                externalTmdbId = target.tmdbId, isAdult = alternateProtectedMedia(request).isAdult)
+        val series = requireNotNull(alternateSeriesMedia(request, target))
+        val sameEpisode = alternateSameTitle(request, target) && request.item.seasonNumber == target.season && request.item.episodeNumber == target.episode
+        val episode = if (sameEpisode) request.item else MediaItem("", "", series.logo, null, isAdult = series.isAdult)
+        return episode.copy(id = "${series.id}:alternate:${target.season}:${target.episode}",
+            title = "${target.title} · S${target.season} E${target.episode}",
+            seasonNumber = target.season, episodeNumber = target.episode, externalTmdbId = target.tmdbId)
+    }
+
+    private fun commitAlternateStream(picker: AlternateSourcePickerState, stream: com.nikhil.niktv.data.AlternateStream, requestId: Long) {
+        if (!latestPlaybackRequest.isCurrent(requestId) || picker.profileKey != alternateProfile()) return
+        val target = picker.target
+        val item = alternateEpisodeMedia(picker.request, target)
+        val key = alternateProgressKey(picker.profileKey, target)
+        val position = picker.resumePositionMillis ?: _state.value.playbackProgress.firstOrNull { it.key == key }?.positionMillis ?: 0L
+        val source = AlternatePlaybackSource(target, picker.streams, stream.id, picker.profileKey)
+        liveGuideScheduler.pause()
+        channelScheduleJob?.cancel(); playbackQueuePrefetches.cancelUnfinished()
+        _state.update { it.copy(nowPlaying = PlayingMedia(item, stream.url, picker.request.type,
+            series = alternateSeriesMedia(picker.request, target),
+            episodeQueue = listOf(item),
+            previousEpisode = target.episode?.takeIf { target.series && it > 1 }?.let { number -> alternateEpisodeMedia(picker.request, target.copy(episode = number - 1)) },
+            nextEpisode = target.episode?.takeIf { target.series }?.let { number -> alternateEpisodeMedia(picker.request, target.copy(episode = number + 1)) },
+            resumePositionMillis = position, progressKey = key, directFullscreen = true,
+            streamRequestHeaders = stream.headers, playbackFormat = stream.format,
+            playWhenReady = picker.playWhenReady, alternateSource = source),
+            error = null, playbackReturnFocusId = if (it.nowPlaying != null)
+                it.playbackReturnFocusId ?: picker.request.item.id else picker.request.item.id,
+            playbackQueueScope = null, playbackQueueHasMore = false, playbackQueueLoadingMore = false) }
+    }
+
+    private fun retryAlternatePlayback(position: Long, playing: PlayingMedia, target: com.nikhil.niktv.data.AlternateSourceTarget? = null) {
+        val source = playing.alternateSource ?: return
+        val requested = target ?: source.target
+        if (!samePlaybackAttempt(_state.value.nowPlaying ?: return, playing)) return
+        val protected = alternateProtectedMedia(AlternateSourceRequest(playing.media, playing.catalogType, playing.series)).copy(title = requested.title)
+        if (gateAdultAction(protected, playing.catalogType) { retryAlternatePlayback(position, playing, target) }) return
+        val requestId = beginPlaybackRequest()
+        playbackTask(requestId) { latestPlaybackRequest.run(requestId) {
+            alternateResolver.invalidate(requested)
+            val streams = alternateSourceLookup(requested)
+            if (!latestPlaybackRequest.isCurrent(requestId) || source.profileKey != alternateProfile()) return@run
+            val selected = alternateRetryStream(source, streams)
+                ?: error("No playable alternate source is currently available.")
+            val request = AlternateSourceRequest(playing.media, playing.catalogType, playing.series, requested.season, requested.episode)
+            val active = _state.value.nowPlaying?.takeIf { samePlaybackAttempt(it, playing) } ?: return@run
+            commitAlternateStream(AlternateSourcePickerState(request, requested, source.profileKey, streams = streams,
+                resumePositionMillis = position, playWhenReady = active.playWhenReady), selected, requestId)
+        } }
+    }
+
     private fun play(item: MediaItem, type: CatalogType, series: MediaItem? = null, episodes: List<MediaItem> = emptyList()) {
         val requestId = beginPlaybackRequest()
         playbackNavigationIndex = null
@@ -6218,6 +6400,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun downloadNowPlaying() {
+        if (_state.value.nowPlaying?.alternateSource != null) return
         val playing = _state.value.nowPlaying ?: return
         if (playing.catalogType == CatalogType.LIVE_TV) {
             _state.update { it.copy(error = "Live recording needs a start/stop or duration and is not available as an offline download.") }
@@ -6352,6 +6535,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private fun beginPlaybackRequest(): Long {
+        closeAlternateSources()
         discoveryMetadataRequests.cancel()
         pendingDiscoveryEpisode = null
         portal.prioritizePlayback()
@@ -6808,7 +6992,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     (durationMillis > 0 && positionMillis >= durationMillis - 5_000)) {
                     store.saveRecommendationProgress(PlaybackProgress(key, positionMillis, durationMillis))
                 }
-                if (playing != null && profile != null && dismissedRecommendationCategories[profile].orEmpty().isNotEmpty()) {
+                if (playing != null && playing.alternateSource == null && profile != null && dismissedRecommendationCategories[profile].orEmpty().isNotEmpty()) {
                     try {
                         val identity = when (playing.catalogType) {
                             CatalogType.MOVIES -> mediaIdentities.resolve(profile, CatalogType.MOVIES, playing.media)
@@ -6888,6 +7072,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     fun playNextEpisode() {
         val snapshot = _state.value
         val playing = snapshot.nowPlaying ?: return
+        playing.alternateSource?.let { source ->
+            source.target.episode?.takeIf { source.target.series }?.let { episode ->
+                retryAlternatePlayback(0, playing, source.target.copy(episode = episode + 1))
+            }
+            return
+        }
         val queue = playbackNavigationQueue(playing)
 
         val index = navigationCursor.index(queue.map { it.id }, playing.media.id)
@@ -6919,6 +7109,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playPreviousEpisode() {
         val playing = _state.value.nowPlaying ?: return
+        playing.alternateSource?.let { source ->
+            source.target.episode?.takeIf { source.target.series && it > 1 }?.let { episode ->
+                retryAlternatePlayback(0, playing, source.target.copy(episode = episode - 1))
+            }
+            return
+        }
         val queue = playbackNavigationQueue(playing)
 
         val index = navigationCursor.index(queue.map { it.id }, playing.media.id)
@@ -7051,6 +7247,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun cancelPendingPlayback(cancelGuide: Boolean = true) {
+        closeAlternateSources()
         val hadPendingPlayback = latestPlaybackRequest.isRunning
         latestPlaybackRequest.cancel()
         if (hadPendingPlayback) _state.update { it.copy(loading = false) }
@@ -7106,6 +7303,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning || !samePlaybackAttempt(playing, failedPlayback)) return
         // An explicit Retry can start playback; a later pause while resolving is retained at commit.
         _state.update { it.copy(nowPlaying = playing.copy(playWhenReady = true)) }
+        if (playing.alternateSource != null) { retryAlternatePlayback(positionMillis.coerceAtLeast(0), playing); return }
         val requestId = beginPlaybackRequest()
         viewModelScope.launch {
             if (!latestPlaybackRequest.isCurrent(requestId)) return@launch
@@ -7183,6 +7381,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val playing = _state.value.nowPlaying ?: return
         if (pendingNavigationId != null || latestPlaybackRequest.isRunning ||
             !samePlaybackAttempt(playing, failedPlayback)) return
+        // Alternate hosts must never trigger portal reauthentication.
+        if (playing.alternateSource != null) return
         if (playing.authorizationRetryCount > 0) return
         if (!_state.value.automaticReauthentication) {
             _state.update { it.copy(error = "Authorization failed.") }
@@ -7498,6 +7698,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return authenticateProfileForOpening(profile).also { store.save(it) }
     }
     fun switchProfile(profile: PortalProfile) = task {
+        closeAlternateSources()
         closeProfileSwitcher()
         profilePreparationJob?.cancel()
         searchPreviewJob?.cancel()

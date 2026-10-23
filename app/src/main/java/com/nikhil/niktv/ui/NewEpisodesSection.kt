@@ -218,6 +218,8 @@ private fun CompactNewEpisodeRow(
         }
         ModernTileActionsMenu(menuOpen, isFavorite, { menuOpen = false }, favorite,
             recommendationItem = series, trailerSeries = true,
+            alternateSource = AlternateSourceRequest(episode, CatalogType.SERIES, series,
+                episode.seasonNumber, episode.episodeNumber),
             openSeries = openSeries, markWatched = markWatched, clear = clear)
     }
 }

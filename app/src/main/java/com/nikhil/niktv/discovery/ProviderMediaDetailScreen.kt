@@ -244,9 +244,14 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                     else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) { if (type == CatalogType.SERIES) (episodeDown ?: down)(); true } else false
                 }, contentPadding = PaddingValues(start = if (phone) 14.dp else 24.dp, end = if (phone) 14.dp else 24.dp, top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(related, key = { _, card -> card.key }) { index, card ->
+                        var alternateOpen by remember(card.key) { mutableStateOf(false) }
+                        Box {
                         DiscoveryPhoneMediaCard(card.title, card.poster, card.date?.take(4).orEmpty(), if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else 112.dp,
                             wide = false, modifier = if (index == 0) Modifier.focusRequester(relatedEntry) else Modifier,
-                            onClick = { relatedDetail = card }, onLongClick = null, onFocus = {})
+                            onClick = { relatedDetail = card }, onLongClick = { alternateOpen = true }, onFocus = {})
+                        AlternateSourceOnlyMenu(alternateOpen, card.media,
+                            if (card.series) CatalogType.SERIES else CatalogType.MOVIES, dismiss = { alternateOpen = false })
+                        }
                     }
                 }
             } else if (type == CatalogType.SERIES) {

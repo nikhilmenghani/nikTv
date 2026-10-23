@@ -2513,6 +2513,9 @@ internal fun ModernCompactMediaCard(
             openSeries = onOpenSeries,
             trailerItem = item.takeUnless { it.episodeNumber != null },
             trailerSeries = onOpenSeries != null || subtitle.startsWith("Series"),
+            alternateSource = item.takeIf { it.episodeNumber != null }?.let {
+                AlternateSourceRequest(it, CatalogType.SERIES, season = it.seasonNumber, episode = it.episodeNumber)
+            },
             onTrailerReturned = returningTile.requestFocus,
             markWatched = onMarkWatched,
             clear = onClear
@@ -2543,7 +2546,8 @@ internal fun ModernTileActionsMenu(
     trailerSeries: Boolean = false,
     onTrailerReturned: (() -> Boolean)? = null,
     playAction: (() -> Unit)? = null,
-    downloadAction: (() -> Unit)? = null
+    downloadAction: (() -> Unit)? = null,
+    alternateSource: AlternateSourceRequest? = null
 ) {
     val trailerContext = LocalContext.current
     var trailerOpen by remember(trailerItem?.id) { mutableStateOf(false) }
@@ -2584,6 +2588,12 @@ internal fun ModernTileActionsMenu(
             NikDropdownMenuItem(text = { Text("Play") },
                 leadingIcon = { Icon(Icons.Default.PlayArrow, null) },
                 onClick = { dismiss(); action() })
+        }
+        val alternateItem = alternateSource?.item ?: recommendationItem ?: trailerItem
+        alternateItem?.let { item ->
+            AlternateSourceMenuItem(item,
+                alternateSource?.type ?: recommendationType ?: if (trailerSeries) CatalogType.SERIES else null,
+                dismiss, alternateSource?.series, alternateSource?.season, alternateSource?.episode)
         }
         downloadAction?.let { action ->
             NikDropdownMenuItem(text = { Text("Download") }, leadingIcon = { Icon(Icons.Default.Download, null) },

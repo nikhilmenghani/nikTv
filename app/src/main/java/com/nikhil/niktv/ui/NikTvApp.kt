@@ -517,6 +517,7 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 @Composable
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     androidx.compose.runtime.CompositionLocalProvider(
+        LocalPlayAlternateSource provides vm::openAlternateSources,
         com.nikhil.niktv.discovery.LocalOpenDiscovery provides vm::openDiscovery,
         com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode provides vm::openDiscoveryEpisode,
         com.nikhil.niktv.discovery.LocalDownloadDiscoveryEpisode provides vm::downloadDiscoveryEpisode,
@@ -623,6 +624,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
     val requiredUpdate = discoveredUpdate ?: pendingUpdate ?: updateDownloadState.updateInfoOrNull()
     val profileColors = if (state.savedProfile?.portalType == PortalType.XTREAM) XtreamColors else NikColors
     MaterialTheme(colorScheme = profileColors) {
+        state.alternateSources?.let { sources -> AlternateSourceDialog(sources, vm::closeAlternateSources, vm::findAlternateSources, vm::chooseAlternateStream) }
         if (state.profileSwitcherOpen) ModernProfileSwitchDialog(state.profiles, state.savedProfile,
             close = vm::closeProfileSwitcher, select = vm::switchProfile)
         ParentalPinPrompt(vm)
@@ -647,6 +649,30 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                  */
                 state.nowPlaying != null -> {
                   val playback = state.nowPlaying!!
+                  val embedded = playback.alternateSource?.takeIf { source -> source.streams.any {
+                      it.id == source.selectedId && it.route == com.nikhil.niktv.data.AlternatePlaybackRoute.VIDY_EMBEDDED
+                  } }
+                  if (embedded != null) {
+                    var embeddedPosition by remember(playback.playbackAttemptId) { mutableLongStateOf(playback.resumePositionMillis) }
+                    VidyEmbeddedPlayer(
+                        target = embedded.target,
+                        resumePositionMillis = playback.resumePositionMillis,
+                        playWhenReady = playback.playWhenReady,
+                        onClose = vm::closePlayer,
+                        onProgress = { position, duration ->
+                            if (vm.state.value.nowPlaying?.playbackAttemptId == playback.playbackAttemptId) {
+                                embeddedPosition = position
+                                vm.savePlaybackProgress(playback.progressKey, position, duration)
+                            }
+                        },
+                        onCompleted = {
+                            if (vm.state.value.nowPlaying?.playbackAttemptId == playback.playbackAttemptId &&
+                                playback.playWhenReady && playback.nextEpisode != null) vm.playNextEpisode()
+                        },
+                        onPlaybackIntentChanged = { vm.setPlaybackIntent(playback.playbackAttemptId, it) },
+                        onChooseSource = { vm.openPlayingAlternateSources(embeddedPosition, playback) }
+                    )
+                  } else {
                   val profileKey = state.session?.profile?.cacheKey()
                       ?: state.savedProfile?.cacheKey().orEmpty()
                   val channelCategoryId = state.nowPlaying?.media?.portalCategoryId
@@ -663,7 +689,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     media = playback,
                     onBack = vm::closePlayer,
                     onRetry = { vm.retryPlayback(it, playback) },
-                    onReauthenticate = if (playback.offlinePlayback) null else
+                    onReauthenticate = if (playback.offlinePlayback || playback.alternateSource != null) null else
                         { position -> vm.reauthenticatePlayback(position, playback) },
                     reauthenticating = state.reauthenticating,
                     onRetryAlternateDecoder = { position -> vm.retryPlaybackWithAlternateDecoder(position, playback) },
@@ -671,6 +697,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     onPlayPrevious = vm::playPreviousEpisode,
                     onPlayNext = vm::playNextEpisode,
                     onProgress = vm::savePlaybackProgress,
+                    onChooseAlternateSource = playback.alternateSource?.let { { position, positionReader -> vm.openPlayingAlternateSources(position, playback, positionReader) } },
+                    alternateSourceChooserOpen = state.alternateSources != null,
                     onPlaybackIntentChanged = { vm.setPlaybackIntent(playback.playbackAttemptId, it) },
                     onDownload = {
                         val present = state.offlineDownloads.any { download ->
@@ -744,6 +772,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     onPlaybackEngineChanged = vm::setPlaybackEngine,
                     startFullscreen = true
                 )
+                  }
                 }
 
                 state.restoring -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }

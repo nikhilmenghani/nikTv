@@ -1,14 +1,20 @@
 package com.nikhil.niktv.ui
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.PixelCopy
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewConfiguration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +34,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.Key as ComposeKey
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -35,6 +42,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
@@ -63,6 +71,62 @@ import java.io.File
 // A replacement stream must wait for the previous native decoder to stop.
 private val vlcPlaybackLifecycle = kotlinx.coroutines.sync.Mutex()
 
+/** One bounded, session-local video still; never stored on disk or shared across titles. */
+private class VlcSourceStill {
+    var bitmap by mutableStateOf<Bitmap?>(null)
+    var closed = false
+    var copying = false
+    var menuGeneration = 0L
+    // Published bitmaps can still belong to Compose's painter/render node.
+    // Drop ownership instead of recycling pixels that a frame may still use.
+    fun close() { closed = true; menuGeneration++; bitmap = null }
+}
+
+private fun captureVlcSourceStill(view: View?, still: VlcSourceStill, nativeFrameAvailable: Boolean,
+    openChooser: () -> Unit) {
+    if (still.closed) return
+    val menuGeneration = ++still.menuGeneration
+    if (still.copying) { openChooser(); return }
+    // The bundled VLC layout names video and subtitle surfaces separately.
+    val surface = (view as? VLCVideoLayout)?.findViewById<SurfaceView>(org.videolan.R.id.surface_video)
+    if (!nativeFrameAvailable || surface == null || surface.width <= 0 || surface.height <= 0 || !surface.holder.surface.isValid) {
+        openChooser(); return
+    }
+    val scale = minOf(1.0, 1280.0 / maxOf(surface.width, surface.height),
+        kotlin.math.sqrt(921_600.0 / (surface.width.toDouble() * surface.height)))
+    val bitmap = try { Bitmap.createBitmap((surface.width * scale).toInt().coerceAtLeast(1),
+        (surface.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888) }
+        catch (_: OutOfMemoryError) { openChooser(); return }
+    still.copying = true
+    val handler = Handler(Looper.getMainLooper())
+    var opened = false
+    val open = Runnable { if (!opened && !still.closed && menuGeneration == still.menuGeneration) { opened = true; openChooser() } }
+    // PixelCopy is asynchronous; a stalled surface cannot hold the source menu.
+    handler.postDelayed(open, 250L)
+    try {
+        PixelCopy.request(surface, bitmap, { result ->
+            still.copying = false
+            handler.removeCallbacks(open)
+            if (result == PixelCopy.SUCCESS && !still.closed && menuGeneration == still.menuGeneration) {
+                still.bitmap = bitmap
+            } else bitmap.recycle()
+            open.run()
+        }, handler)
+    } catch (_: IllegalArgumentException) {
+        still.copying = false; handler.removeCallbacks(open); bitmap.recycle(); open.run()
+    }
+}
+
+@Composable
+private fun VlcRetainedStill(bitmap: Bitmap, resizeMode: VideoResizeMode) {
+    Image(bitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(),
+        contentScale = when (resizeMode) {
+            VideoResizeMode.FIT -> ContentScale.Fit
+            VideoResizeMode.FILL, VideoResizeMode.ZOOM -> ContentScale.Crop
+            VideoResizeMode.STRETCH -> ContentScale.FillBounds
+        })
+}
+
 @Composable
 internal fun VlcPlayerScreen(
     media: PlayingMedia,
@@ -82,6 +146,8 @@ internal fun VlcPlayerScreen(
     liveQueueXtream: Boolean = false,
     onProgress: (String, Long, Long) -> Unit,
     onPlaybackIntentChanged: (Boolean) -> Unit = {},
+    onChooseAlternateSource: ((Long, () -> Long) -> Unit)? = null,
+    alternateSourceChooserOpen: Boolean = false,
     onVideoFrameRendered: () -> Unit = {},
     onDownload: () -> Unit = {},
     offlineDownloadPresent: Boolean = false,
@@ -141,6 +207,9 @@ internal fun VlcPlayerScreen(
     var pendingInitialResumePosition by remember(media.progressKey, media.playbackAttemptId, media.url) {
         mutableLongStateOf(playbackRestartPosition(media.catalogType, initialResumePosition))
     }
+    val sourceStill = remember(media.progressKey) { VlcSourceStill() }
+    val currentPlaybackAttempt by rememberUpdatedState(media.playbackAttemptId)
+    DisposableEffect(sourceStill) { onDispose { sourceStill.close() } }
     var error by remember(media.progressKey, media.playbackAttemptId, media.url) { mutableStateOf<String?>(null) }
     var focusMode by remember { mutableStateOf(startFullscreen) }
     var controlsVisible by remember(media.progressKey) {
@@ -198,7 +267,8 @@ internal fun VlcPlayerScreen(
     var playerPickerFromError by remember(media.progressKey) { mutableStateOf(false) }
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
-    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible
+    var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
+    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
@@ -267,6 +337,7 @@ internal fun VlcPlayerScreen(
     val audioRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
+    val sourceRequester = remember(media.progressKey) { FocusRequester() }
     val refreshRequester = remember(media.progressKey) { FocusRequester() }
     val resizeRequester = remember(media.progressKey) { FocusRequester() }
     val pictureModeRequester = remember(media.progressKey) { FocusRequester() }
@@ -291,6 +362,15 @@ internal fun VlcPlayerScreen(
     }
     val progressRequester = remember(media.progressKey) { FocusRequester() }
     val videoSurfaceFocusRequester = remember(media.progressKey) { FocusRequester() }
+
+    LaunchedEffect(alternateSourceChooserOpen) {
+        if (alternateSourceChooserOpen) {
+            sourceChooserWasOpen = true
+        } else if (sourceChooserWasOpen) {
+            sourceChooserWasOpen = false
+            returnControlFocus = if (error != null) errorRetryRequester else sourceRequester
+        }
+    }
 
     LaunchedEffect(returnControlFocus) {
         val target = returnControlFocus ?: return@LaunchedEffect
@@ -348,8 +428,10 @@ internal fun VlcPlayerScreen(
     if (preparedSession == null) {
         BackHandler(onBack = onBack)
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (error == null) CircularProgressIndicator()
-            else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (!playbackRequested) sourceStill.bitmap?.let { VlcRetainedStill(it, resizeMode) }
+            if (error == null) {
+                if (playbackRequested || sourceStill.bitmap == null) CircularProgressIndicator()
+            } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(error.orEmpty())
                 NikTvPrimaryActionButton(onClick = { onRetry(position) }) { Text("Retry") }
                 NikTvTextActionButton(onClick = { playerPickerVisible = true }) { Text("Choose player") }
@@ -374,6 +456,11 @@ internal fun VlcPlayerScreen(
     }
     val libVlc = preparedSession.lib
     val player = preparedSession.player
+    val restoringInitialPosition = media.catalogType != CatalogType.LIVE_TV && pendingInitialResumePosition > 0L
+    var nativeClockSequence by remember(player) { mutableLongStateOf(0L) }
+    var nativeClockPosition by remember(player) { mutableLongStateOf(0L) }
+    var nativeFrameAvailable by remember(player) { mutableStateOf(false) }
+    var resumeSeekJob by remember(player) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var downloadedNativeTrackIds by remember(player) { mutableStateOf(emptySet<Int>()) }
     var attachedDownloadedTrackId by remember(player, externalSubtitleFile) { mutableStateOf<Int?>(null) }
     var nativeSubtitleAttached by remember(player, externalSubtitleFile) { mutableStateOf(false) }
@@ -417,13 +504,29 @@ internal fun VlcPlayerScreen(
     fun seekMovieTo(target: Long) {
         val bounded = seekTarget.absolute(target, duration, android.os.SystemClock.elapsedRealtime())
         android.util.Log.i("NikTvSeek", "VLC requestedMs=$bounded actualMs=${player.time}")
-        player.setTime(bounded, false)
+        // Explicit user intent replaces startup positioning. Cancel a queued
+        // resume first; this ordered native command wins over an executing one.
+        resumeSeekJob?.cancel()
+        resumeSeekJob = null
+        pendingInitialResumePosition = 0L
+        preparedSession.command { it.setTime(bounded, false) }
         position = bounded
     }
     fun skipMovie(delta: Long) {
-        val target = seekTarget.target(player.time.coerceAtLeast(0L), duration, delta,
+        val base = pendingInitialResumePosition.takeIf { it > 0L } ?: player.time.coerceAtLeast(0L)
+        val target = seekTarget.target(base, duration, delta,
             android.os.SystemClock.elapsedRealtime())
         seekMovieTo(target)
+    }
+    fun chooseAlternateSource() {
+        val choose = onChooseAlternateSource ?: return
+        val attempt = media.playbackAttemptId
+        captureVlcSourceStill(videoView, sourceStill, nativeFrameAvailable) {
+            if (currentPlaybackAttempt != attempt) return@captureVlcSourceStill
+            choose((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L)) {
+                (if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L)
+            }
+        }
     }
     val surfacePlayer = remember { arrayOfNulls<MediaPlayer>(1) }
     fun refreshSubtitleTracks() {
@@ -513,9 +616,8 @@ internal fun VlcPlayerScreen(
     val currentSetGestureFeedback by rememberUpdatedState<(Pair<Boolean, Float>?) -> Unit> { gestureFeedback = it }
     val currentPlaybackRequested by rememberUpdatedState(playbackRequested)
     val currentSetPlaybackRequested by rememberUpdatedState<(Boolean) -> Unit> { requestPlayback(it) }
-    val currentNativeSession by rememberUpdatedState(preparedSession)
+    val currentSkipMovie by rememberUpdatedState<(Long) -> Unit> { skipMovie(it) }
     val currentSeekable by rememberUpdatedState(seekable)
-    val currentDuration by rememberUpdatedState(duration)
     val currentCatalogType by rememberUpdatedState(media.catalogType)
 
     LaunchedEffect(fullscreenOverride) { fullscreenOverride?.let { focusMode = it } }
@@ -658,6 +760,12 @@ internal fun VlcPlayerScreen(
         var ownsPlaybackSlot = false
         player.setEventListener { event ->
             when (event.type) {
+                MediaPlayer.Event.TimeChanged -> {
+                    nativeClockPosition = event.timeChanged.coerceAtLeast(0L)
+                    nativeClockSequence++
+                    if (pendingInitialResumePosition > 0L && com.nikhil.niktv.BuildConfig.DEBUG && nativeClockSequence <= 12L)
+                        android.util.Log.d("NikTvVlcResume", "clockSequence=$nativeClockSequence eventNativeMs=$nativeClockPosition")
+                }
                 MediaPlayer.Event.Opening -> buffering = true
                 MediaPlayer.Event.Buffering -> {
                     // LibVLC emits Buffering for every percentage update, including
@@ -765,6 +873,9 @@ internal fun VlcPlayerScreen(
 
     LaunchedEffect(player, media.progressKey) {
         var lastProgressSave = android.os.SystemClock.elapsedRealtime()
+        val resume = VlcResumeSeekPolicy(pendingInitialResumePosition)
+        var resumeTraceSamples = 0
+        try {
         while (true) {
             if (media.catalogType == CatalogType.LIVE_TV) {
                 livePlaybackElapsedMillis = livePlaybackClock.sample(
@@ -782,25 +893,45 @@ internal fun VlcPlayerScreen(
 
             val pendingResume = pendingInitialResumePosition
 
-            if (
-                pendingResume > 0L &&
-                player.isPlaying &&
-                knownDuration > 0L &&
-                media.catalogType != CatalogType.LIVE_TV
-            ) {
-                val target =
-                    pendingResume.coerceAtMost(
-                        (knownDuration - 1_000L).coerceAtLeast(0L)
-                    )
+            if (pendingResume > 0L && media.catalogType != CatalogType.LIVE_TV) {
                 val actual = player.time.coerceAtLeast(0L)
-                // Seek exactly once after VLC reaches Playing. Retrying this seek
-                // every polling tick makes keyframe-based VOD streams replay the
-                // same opening segment several times before playback can advance.
-                preparedSession.command { it.time = target }
-                pendingInitialResumePosition = 0L
-                position = target
-            } else if (pendingResume > 0L) {
-                position = pendingResume
+                val seekableNow = player.isSeekable
+                val decision = resume.sample(android.os.SystemClock.elapsedRealtime(), streamWasPlaying && error == null,
+                    playbackRequested && focus.shouldPlay, seekableNow, knownDuration, nativeClockPosition, nativeClockSequence)
+                when (decision.kind) {
+                    VlcResumeSeekPolicy.Kind.ISSUE_SEEK -> {
+                        position = decision.target
+                        if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.d("NikTvVlcResume",
+                            "requestMs=${decision.target} nativeBeforeMs=$actual durationMs=$knownDuration seekable=$seekableNow")
+                        resumeSeekJob = launch {
+                            try {
+                                val result = preparedSession.seekForResume(decision.target)
+                                resume.commandCompleted(android.os.SystemClock.elapsedRealtime(), result?.result, nativeClockSequence)
+                                if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.d("NikTvVlcResume",
+                                    "commandTargetMs=${decision.target} result=${result?.result} nativeAfterMs=${result?.nativePosition}")
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                            catch (_: Exception) { resume.commandCompleted(android.os.SystemClock.elapsedRealtime(), null, nativeClockSequence) }
+                        }
+                    }
+                    VlcResumeSeekPolicy.Kind.PENDING -> {
+                        position = decision.target
+                        if (com.nikhil.niktv.BuildConfig.DEBUG && resumeTraceSamples++ < 12)
+                            android.util.Log.d("NikTvVlcResume",
+                                "pendingTargetMs=${decision.target} nativeMs=$actual eventNativeMs=$nativeClockPosition clockSequence=$nativeClockSequence seekable=$seekableNow requested=$playbackRequested")
+                    }
+                    VlcResumeSeekPolicy.Kind.ACKNOWLEDGED -> {
+                        pendingInitialResumePosition = 0L
+                        position = actual
+                        if (com.nikhil.niktv.BuildConfig.DEBUG) android.util.Log.d("NikTvVlcResume",
+                            "acknowledgedTargetMs=${decision.target} nativeMs=$actual")
+                    }
+                    VlcResumeSeekPolicy.Kind.UNAVAILABLE -> {
+                        resumeSeekJob?.cancel()
+                        pendingInitialResumePosition = 0L
+                        position = actual
+                        android.util.Log.w("NikTvVlcResume", "Resume unavailable; native playback continues")
+                    }
+                }
             } else {
                 position = player.time.coerceAtLeast(0L)
                 seekTarget.acknowledge(position)
@@ -818,6 +949,7 @@ internal fun VlcPlayerScreen(
 
             delay(500L)
         }
+        } finally { resumeSeekJob?.cancel() }
     }
 
     // Recover only after successful live playback; startup/auth failures use the
@@ -906,7 +1038,11 @@ internal fun VlcPlayerScreen(
                     try { current.stats?.displayedPictures ?: 0 } finally { current.release() }
                 } ?: 0
             }
-            if (displayed > 0) { onVideoFrameRendered(); break }
+            nativeFrameAvailable = displayed > 0
+            // Playing frames await the resumed clock. While paused, an actual
+            // native still/keyframe may be shown without pretending the pending
+            // resume was acknowledged; Play still waits for the real clock.
+            if (displayed > 0 && (pendingInitialResumePosition == 0L || !playbackRequested)) { onVideoFrameRendered(); break }
             delay(250L)
         }
     }
@@ -1197,7 +1333,7 @@ internal fun VlcPlayerScreen(
                                 ) {
                                     currentPlayPrevious()
                                 } else {
-                                    if (currentSeekable) currentNativeSession.command { it.time = (it.time - 10_000L).coerceAtLeast(0L) }
+                                    if (currentSeekable) currentSkipMovie(-10_000L)
                                     currentShowControls()
                                 }
                                 true
@@ -1209,7 +1345,7 @@ internal fun VlcPlayerScreen(
                                 ) {
                                     currentPlayNext()
                                 } else {
-                                    if (currentSeekable) currentNativeSession.command { it.time = (it.time + 10_000L).coerceAtMost(currentDuration) }
+                                    if (currentSeekable) currentSkipMovie(10_000L)
                                     currentShowControls()
                                 }
                                 true
@@ -1274,6 +1410,11 @@ internal fun VlcPlayerScreen(
                     ) else Modifier
                 )
             )
+        // LibVLC may render opening/keyframe packets while its precise resume
+        // seek is settling. Keep them behind the startup shutter; playback and
+        // demuxing continue, and controls remain available above this video layer.
+        if (restoringInitialPosition && playbackRequested && error == null) Box(Modifier.fillMaxSize().background(Color.Black))
+        else if (!playbackRequested && !nativeFrameAvailable) sourceStill.bitmap?.let { VlcRetainedStill(it, resizeMode) }
         DownloadedSubtitleOverlay(
             file = externalSubtitleFile,
             positionMs = position,
@@ -1350,12 +1491,13 @@ internal fun VlcPlayerScreen(
                 if (media.catalogType != CatalogType.LIVE_TV) {
                     add(subtitleRequester)
                     if (audioTracks.size > 1) add(audioRequester)
-                    add(downloadRequester)
+                    if (onChooseAlternateSource == null) add(downloadRequester)
                 }
                 if (media.catalogType == CatalogType.LIVE_TV) add(refreshRequester)
                 add(resizeRequester)
                 add(pictureModeRequester)
                 add(playerSwitchRequester)
+                if (onChooseAlternateSource != null) add(sourceRequester)
                 add(controlsTimeoutRequester)
                 add(moreRequester)
                 if (pipAvailable) add(pipRequester)
@@ -1372,7 +1514,7 @@ internal fun VlcPlayerScreen(
             }
             val controlRowScrollState = rememberScrollState()
             val playbackDetailLines = buildList {
-                add("${if (media.offlinePlayback) "Offline" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
+                add("${if (media.offlinePlayback) "Offline" else if (onChooseAlternateSource != null) "Alternate source" else "IPTV stream"} · ${media.playbackFormat.ifBlank { mediaFormatLabel(media.url) }}")
                 add("Player · VLC · Video fit · ${resizeMode.label}")
                 add("Picture · ${activeAppearanceProfile.name} · Controls · ${controlsTimeoutSeconds}s")
             }
@@ -1487,7 +1629,7 @@ PlayerChromeIconButton(
                                 onFocused = { controlsFocused = it }
                             )
                         }
-                        if (media.catalogType != CatalogType.LIVE_TV) {
+                        if (media.catalogType != CatalogType.LIVE_TV && onChooseAlternateSource == null) {
                             PlayerChromeIconButton(
                                 icon = if (offlineDownloadPresent && !displayedDownloadInProgress) Icons.Default.DownloadDone else Icons.Default.DownloadForOffline,
                                 contentDescription = if (offlineDownloadPresent) "Cancel or remove offline download" else "Download for offline playback",
@@ -1542,6 +1684,20 @@ PlayerChromeIconButton(
                                 selected = false,
                                 onFocused = { controlsFocused = it }
                             )
+                        if (onChooseAlternateSource != null) {
+                            PlayerChromeIconButton(
+                                icon = Icons.Default.VideoSettings,
+                                contentDescription = "Source and quality",
+                                onClick = ::chooseAlternateSource,
+                                modifier = Modifier.playerSecondaryFocus(
+                                    sourceRequester, secondaryActionRequesters,
+                                    extraControlsRequester, lastPlaybackActionRequester,
+                                    if (seekable) progressRequester else backRequester
+                                ),
+                                size = if (compactMobileControls) 44.dp else 48.dp,
+                                onFocused = { controlsFocused = it }
+                            )
+                        }
                         
                         PlayerChromeIconButton(
                             icon = Icons.Default.Timer,
@@ -1916,6 +2072,7 @@ PlayerChromeIconButton(
         PlayerOverlayLayer {
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
+            alternateSeries = media.series,
             pinnedIds = if (media.catalogType == CatalogType.LIVE_TV) pinnedQueueIds else emptyList(),
             playingId = media.media.id,
             favoriteIds = queueFavoriteIds,
@@ -2023,13 +2180,13 @@ PlayerChromeIconButton(
             }
         )
 
-        if (buffering && error == null) Column(
+        if ((buffering || restoringInitialPosition) && playbackRequested && error == null) Column(
             Modifier.align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             CircularProgressIndicator(color = Color(0xFFE50914))
-            Text("Connecting to stream…", color = Color.White)
+            Text(if (restoringInitialPosition) "Restoring playback position…" else "Connecting to stream…", color = Color.White)
         }
         error?.let {
             Surface(
@@ -2063,6 +2220,7 @@ PlayerChromeIconButton(
                             { authenticate((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L)) }
                         },
                         reauthenticating = reauthenticating,
+                        onChooseSource = onChooseAlternateSource?.let { { chooseAlternateSource() } },
                         retryModifier = Modifier.focusRequester(errorRetryRequester)
                     )
                 }

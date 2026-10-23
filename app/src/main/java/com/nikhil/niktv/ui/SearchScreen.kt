@@ -2084,7 +2084,10 @@ private fun SearchFavoriteMenu(
         containerColor = SearchRaised,
         shape = RoundedCornerShape(12.dp)
     ) {
-        item?.let { ShowRecommendationsMenuItem(it, dismiss = onDismiss) }
+        item?.let {
+            AlternateSourceMenuItem(it, dismiss = onDismiss)
+            ShowRecommendationsMenuItem(it, dismiss = onDismiss)
+        }
         NikDropdownMenuItem(
             text = {
                 Text(

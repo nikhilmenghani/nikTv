@@ -34,7 +34,8 @@ internal fun PlayerErrorActions(
     switchPlayerModifier: Modifier = Modifier,
     showAlternatePlayer: Boolean = true,
     onReauthenticate: (() -> Unit)? = null,
-    reauthenticating: Boolean = false
+    reauthenticating: Boolean = false,
+    onChooseSource: (() -> Unit)? = null
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -106,6 +107,9 @@ internal fun PlayerErrorActions(
             } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 recoveryActions(Modifier.fillMaxWidth())
             }
+        }
+        onChooseSource?.let { choose ->
+            NikTvSecondaryActionButton(choose, Modifier.fillMaxWidth()) { Text("Choose source and quality") }
         }
     }
 }

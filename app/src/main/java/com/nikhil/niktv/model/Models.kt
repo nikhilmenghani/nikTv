@@ -366,7 +366,16 @@ data class PlayingMedia(
     val queueFilter: PlaybackQueueFilter? = null,
     val playWhenReady: Boolean = true,
     val decoderSessionId: String = java.util.UUID.randomUUID().toString(),
-    val decoderRecoveryCount: Int = 0
+    val decoderRecoveryCount: Int = 0,
+    /** Explicit alternate playback is ephemeral and never replaces an IPTV mapping. */
+    val alternateSource: AlternatePlaybackSource? = null
+)
+
+data class AlternatePlaybackSource(
+    val target: com.nikhil.niktv.data.AlternateSourceTarget,
+    val streams: List<com.nikhil.niktv.data.AlternateStream>,
+    val selectedId: String,
+    val profileKey: String
 )
 
 @Serializable

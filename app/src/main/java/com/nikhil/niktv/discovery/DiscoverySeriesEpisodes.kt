@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.unit.dp
 import com.nikhil.niktv.model.SeriesStartSeason
+import com.nikhil.niktv.model.CatalogType
 import com.nikhil.niktv.ui.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
@@ -28,6 +29,7 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
     play: (DiscoveryCard, Int, Int) -> Unit, download: (DiscoveryCard, Int, Int) -> Unit,
     onFocus: () -> Unit, up: () -> Boolean, down: () -> Boolean) {
     val card = state.detail ?: return
+    val alternateSource = LocalPlayAlternateSource.current
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
     val wide = configuration.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(configuration)
@@ -172,6 +174,21 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
                 onFocus = { focused = identity; onFocus() }, onClick = { play(card, episode.season, episode.number) }, onLongClick = { options = true })
             if (options) AlertDialog(onDismissRequest = { options = false }, title = { Text(episode.title) },
                 text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    alternateSource?.let { playAlternate ->
+                        NikTvSecondaryActionButton({
+                            options = false
+                            playAlternate(AlternateSourceRequest(card.media.copy(
+                                id = "${card.media.id}:s${episode.season}:e${episode.number}",
+                                title = episode.title, logo = episode.still ?: card.poster,
+                                description = episode.overview, seasonNumber = episode.season,
+                                episodeNumber = episode.number), CatalogType.SERIES, card.media,
+                                episode.season, episode.number))
+                        }, Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Play from another source")
+                        }
+                    }
                     NikTvSecondaryActionButton({ options = false; download(card, episode.season, episode.number) }, Modifier.fillMaxWidth()) { Text("Download") }
                     if (!episode.overview.isNullOrBlank()) NikTvSecondaryActionButton({ options = false; description = true }, Modifier.fillMaxWidth()) { Text("Description") }
                 } }, confirmButton = { NikTvSecondaryActionButton({ options = false }) { Text("Close") } })

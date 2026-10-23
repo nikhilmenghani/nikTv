@@ -1099,6 +1099,10 @@ internal fun ModernEpisodeCard(
         containerColor = Color(0xFF202020),
         shape = RoundedCornerShape(12.dp)
     ) {
+        AlternateSourceMenuItem(episode, CatalogType.SERIES,
+            dismiss = { episodeActionsExpanded = false }, series = series,
+            season = episode.seasonNumber ?: episode.title.seasonNumberFromTitle(),
+            episode = episode.episodeNumber ?: episode.title.episodeNumberFromTitle())
         if (offlineDownload == null || displayedOfflineStatus in setOf(
                 OfflineDownloadStatus.FAILED,
                 OfflineDownloadStatus.MISSING

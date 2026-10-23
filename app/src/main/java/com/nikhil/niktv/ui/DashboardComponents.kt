@@ -763,6 +763,7 @@ internal fun ModernPosterCard(
             containerColor = Color(0xFF202020),
             shape = RoundedCornerShape(12.dp)
         ) {
+            AlternateSourceMenuItem(item, dismiss = { menuOpen = false })
             ShowRecommendationsMenuItem(item, dismiss = { menuOpen = false })
             toggleFavorite?.let { action ->
                 NikDropdownMenuItem(
@@ -1122,6 +1123,9 @@ internal fun ModernMediaListCard(
             containerColor = Color(0xFF202020),
             shape = RoundedCornerShape(12.dp)
         ) {
+            AlternateSourceMenuItem(item,
+                if (channelStyle) com.nikhil.niktv.model.CatalogType.LIVE_TV else null,
+                dismiss = { menuOpen = false })
             ShowRecommendationsMenuItem(item,
                 if (channelStyle) com.nikhil.niktv.model.CatalogType.LIVE_TV else null,
                 dismiss = { menuOpen = false })

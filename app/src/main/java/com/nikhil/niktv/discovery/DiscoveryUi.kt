@@ -305,6 +305,9 @@ internal fun DiscoveryPreviewScreen(
                             { currentToggleFavorite(saved) }, clear = { currentRemoveRecent(recent) },
                             openSeries = if (recent.kind == FavoriteKind.SERIES) currentOpenProviderSeries?.let { open -> { open(recent.series ?: recent.media) } } else null,
                             trailerItem = recent.media.takeUnless { it.episodeNumber != null }, trailerSeries = recent.kind == FavoriteKind.SERIES,
+                            alternateSource = if (recent.kind == FavoriteKind.SERIES && recent.lastPlayed != null)
+                                AlternateSourceRequest(recent.lastPlayed, CatalogType.SERIES, recent.series ?: recent.media,
+                                    recent.lastPlayed.seasonNumber, recent.lastPlayed.episodeNumber) else null,
                             recommendationItem = recent.media, recommendationType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                             viewDescription = recent.media.description?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
                             onTrailerReturned = restore, playAction = { (currentProviderRecent ?: currentOpenRecent)(recent) })
@@ -326,6 +329,8 @@ internal fun DiscoveryPreviewScreen(
                                 { currentToggleFavorite(saved) }, clear = { currentDismissEpisode(group.watched, episode) },
                                 markWatched = { currentMarkWatched(group.watched, episode) },
                                 recommendationItem = group.watched.series, recommendationType = CatalogType.SERIES, trailerSeries = true,
+                                alternateSource = AlternateSourceRequest(episode, CatalogType.SERIES, group.watched.series,
+                                    episode.seasonNumber, episode.episodeNumber),
                                 openSeries = currentOpenProviderSeries?.let { open -> { open(group.watched.series) } },
                                 viewDescription = episode.description?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
                                 onTrailerReturned = restore, playAction = { currentOpenWatched(group.watched, episode) })

@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.nikhil.niktv.ui.StableTileFocusViewport
+import com.nikhil.niktv.ui.AlternateSourceOnlyMenu
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 
@@ -68,11 +69,15 @@ internal fun DiscoveryActorDialog(person: DiscoveryPerson,
                         verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         items(cards, key = { it.key }) { card ->
                             val requester = remember(card.key) { requesters.getOrPut(card.key) { FocusRequester() } }
+                            var alternateOpen by remember(card.key) { mutableStateOf(false) }
                             BoxWithConstraints {
                                 DiscoveryPosterTile(card.title, card.poster,
                                     listOfNotNull(if (card.series) "Series" else "Movie", card.date?.take(4)).joinToString(" · "),
                                     width = maxWidth, reduceMotion = reduceMotion, modifier = Modifier.focusRequester(requester),
-                                    onFocus = { selected = card.key }, onClick = { open(card) })
+                                    onFocus = { selected = card.key }, onClick = { open(card) }, onLongClick = { alternateOpen = true })
+                                AlternateSourceOnlyMenu(alternateOpen, card.media,
+                                    if (card.series) com.nikhil.niktv.model.CatalogType.SERIES else com.nikhil.niktv.model.CatalogType.MOVIES,
+                                    dismiss = { alternateOpen = false; runCatching { requester.requestFocus() } })
                             }
                         }
                     }

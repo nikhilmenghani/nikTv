@@ -653,6 +653,7 @@ private fun QueueArtworkFallback(item: MediaItem) {
 internal fun PlayerQueueOverlay(
     items: List<MediaItem>,
     playingId: String,
+    alternateSeries: MediaItem? = null,
     pinnedIds: List<String> = emptyList(),
     favoriteIds: Set<String> = emptySet(),
     onToggleFavorite: ((MediaItem) -> Unit)? = null,
@@ -1220,6 +1221,9 @@ internal fun PlayerQueueOverlay(
                     togglePin = onTogglePin?.let { pin -> { pin(item) } },
                     refreshProgramme = onRefreshProgramme?.let { refresh -> { refresh(item) } },
                     recommendationItem = item,
+                    alternateSource = if (!liveChannelQueue) alternateSourceRequest(item,
+                        if (isEpisodeQueue) com.nikhil.niktv.model.CatalogType.SERIES else com.nikhil.niktv.model.CatalogType.MOVIES,
+                        series = alternateSeries) else null,
                     recommendationType = com.nikhil.niktv.model.CatalogType.LIVE_TV
                 )
             }
