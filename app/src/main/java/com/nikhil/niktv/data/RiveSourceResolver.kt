@@ -41,8 +41,13 @@ internal class RiveSourceResolver(private val read: suspend (AlternateSourceHttp
             // Fixed-quality media playlists may have an advertised height; never invent one.
             val height = Regex("(?:^|[^0-9])(2160|1080|720|480|360)p\\b", RegexOption.IGNORE_CASE)
                 .find(source.optString("quality"))?.groupValues?.get(1)?.toIntOrNull()
-            streams += if (height != null && !manifest.body.contains("#EXT-X-STREAM-INF:"))
+            val mirror = source.optString("quality").substringBefore('|').trim().takeIf {
+                it.matches(Regex("[a-z][a-z0-9_-]{1,23}", RegexOption.IGNORE_CASE)) &&
+                    it.lowercase() !in setOf("auto", "hls", "unknown", "hd", "fhd", "uhd")
+            }
+            val choices = if (height != null && !manifest.body.contains("#EXT-X-STREAM-INF:"))
                 parsed.map { it.copy(height = height, label = "${height}p · $label") } else parsed
+            streams += choices.map { it.copy(sourceVariant = mirror) }
         }
         return streams.distinctBy { it.url }.take(16)
     }

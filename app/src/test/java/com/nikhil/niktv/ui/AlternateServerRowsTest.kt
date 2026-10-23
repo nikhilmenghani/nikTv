@@ -5,6 +5,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AlternateServerRowsTest {
+    @Test fun distinctMirrorChoicesHaveDistinctLabelsWithoutLosingAnyStream() {
+        val auto = AlternateStream("t:auto", "Auto · Rive Primevids", "https://media.example.test/t.m3u8", sourceVariant = "tcloud")
+        val streams = listOf(auto, auto.copy(id = "t:720", height = 720),
+            auto.copy(id = "d:auto", sourceVariant = "dcloud"), auto.copy(id = "ip:auto", sourceVariant = "ipcloud"))
+        assertEquals(listOf("Auto · Tcloud", "720p · Tcloud", "Auto · Dcloud", "Auto · Ipcloud"), alternateQualityChoiceLabels(streams))
+        assertEquals(streams, alternateServerRows(streams).single().streams)
+    }
+    @Test fun unnamedMirrorsAreNumberedButUniqueQualitiesStayUnchanged() {
+        val auto = AlternateStream("a", "Auto · Server", "https://media.example.test/a.m3u8")
+        val streams = listOf(auto, auto.copy(id = "b"), auto.copy(id = "c", height = 1080))
+        assertEquals(listOf("Auto 1", "Auto 2", "1080p"), alternateQualityChoiceLabels(streams))
+        assertEquals(listOf("Auto"), alternateQualityChoiceLabels(listOf(auto)))
+    }
     @Test fun groupsResolutionsByServerAndKeepsStreamIdentities() {
         val auto = AlternateStream("auto", "Auto · Movy Miami", "https://media.example.test/master.m3u8")
         val high = auto.copy(id = "high", label = "1080p · Movy Miami", height = 1080)
@@ -18,7 +31,8 @@ class AlternateServerRowsTest {
         val target = AlternateSourceTarget("Movie", false, tmdbId = 603)
         val rows = alternateServerRows(listOfNotNull(cinejoyWebStream(target), cnoWebStream(target), vidyFallbackStream(target)))
         assertTrue(rows.isEmpty())
-        assertEquals(6, nativeSourceProviders.size)
+        assertEquals(7, nativeSourceProviders.size)
+        assertTrue(AlternateSourceProvider.ONLYFLIX in nativeSourceProviders)
         assertFalse(AlternateSourceProvider.CINEJOY in nativeSourceProviders)
         assertFalse(AlternateSourceProvider.CNO in nativeSourceProviders)
     }

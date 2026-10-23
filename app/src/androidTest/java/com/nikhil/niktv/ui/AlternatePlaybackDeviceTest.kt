@@ -302,6 +302,13 @@ class AlternatePlaybackDeviceTest {
         }
         assertTrue("$engine failures: ${failures.joinToString()}", failures.isEmpty())
     }
+    @Test fun onlyflixMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX)
+    @Test fun onlyflixMoviePlaysInVlc() = movyPlayback(PlaybackEngine.VLC, com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX)
+    @Test fun onlyflixMoviePlaysInFlow() = movyPlayback(PlaybackEngine.FLOW, com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX)
+    @Test fun onlyflixMoviePlaysInMpv() {
+        org.junit.Assume.assumeTrue(mpvSupportedSdk(android.os.Build.VERSION.SDK_INT))
+        movyPlayback(PlaybackEngine.MPV, com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX)
+    }
     @Test fun unityMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.STREAMING_UNITY)
     @Test fun athenaMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.ATLANTIC_ATHENA)
     @Test fun rivePrimevidsMoviePlaysInExo() = movyPlayback(PlaybackEngine.MEDIA3, com.nikhil.niktv.data.AlternateSourceProvider.RIVE_PRIMEVIDS)
@@ -353,6 +360,27 @@ class AlternatePlaybackDeviceTest {
                 assertEquals(603, harness.lookups.single().tmdbId)
                 harness.verifyIsolation()
                 android.util.Log.i("NikTvAlternateFixture", "publicMovie=603 engine=$engine firstFrames=${harness.firstFrames.get()} positionMs=$position")
+            }
+        }
+    }
+
+    @Test fun onlyflixSeriesEpisodePlaysInNikTv() = silently {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("publicAlternateNetwork") == "true")
+        val resolver = com.nikhil.niktv.data.AlternateSourceResolver()
+        LocalHls().use { server ->
+            val series = MediaItem("tmdb-series:1396", "Breaking Bad", null, null, externalTmdbId = 1396)
+            Harness(PlaybackEngine.MEDIA3, server, series, { target ->
+                resolver.resolve(target.copy(provider = com.nikhil.niktv.data.AlternateSourceProvider.ONLYFLIX))
+            }).use { harness ->
+                harness.start(series = true, season = 5, episode = 16)
+                harness.sources()
+                val before = harness.position()
+                Thread.sleep(3_000L)
+                assertTrue("OnlyFlix episode must keep advancing", harness.position() > before + 1_000L)
+                assertEquals(1396, harness.lookups.single().tmdbId)
+                assertEquals(5, harness.lookups.single().season)
+                assertEquals(16, harness.lookups.single().episode)
+                harness.verifyIsolation()
             }
         }
     }

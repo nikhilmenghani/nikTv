@@ -18,6 +18,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
@@ -126,6 +128,9 @@ internal fun alternateRetryStream(source: com.nikhil.niktv.model.AlternatePlayba
 @OptIn(ExperimentalLayoutApi::class)
 internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () -> Unit,
     search: (AlternateSourceTarget) -> Unit, play: (String) -> Unit) {
+    val configuration = LocalConfiguration.current
+    val phone = configuration.smallestScreenWidthDp < 600 &&
+        configuration.uiMode and Configuration.UI_MODE_TYPE_MASK != Configuration.UI_MODE_TYPE_TELEVISION
     var title by remember(state.request) { mutableStateOf(state.target.title) }
     var season by remember(state.request) { mutableStateOf((state.target.season ?: 1).toString()) }
     var episode by remember(state.request) { mutableStateOf((state.target.episode ?: 1).toString()) }
@@ -164,10 +169,12 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
                             when (provider) { AlternateSourceProvider.AUTO -> "Auto"; AlternateSourceProvider.MOVY -> "Movy";
                                 AlternateSourceProvider.STREAMING_UNITY -> "Unity"; AlternateSourceProvider.ATLANTIC_ATHENA -> "Athena";
                                 AlternateSourceProvider.RIVE_PRIMEVIDS -> "Primevids"; AlternateSourceProvider.RIVE_CITADEL -> "Citadel";
+                                AlternateSourceProvider.ONLYFLIX -> "OnlyFlix";
                                 else -> error("Browser sources are not selectable") },
                             { if (provider != state.target.provider) search(editedTarget(provider)) }, Modifier.weight(1f),
                             enabled = validInput, chosen = provider == state.target.provider)
                     }
+                    repeat(3 - providers.size) { Spacer(Modifier.weight(1f)) }
                 }
                 }
                 AlternateSourceInput(title, { title = it }, "Title", !state.loading, Modifier.fillMaxWidth())
@@ -182,21 +189,37 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
                 alternateServerRows(state.streams).forEachIndexed { rowIndex, row ->
                     Surface(color = Color(0xFF1D222D), contentColor = Color.White, shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, Color(0xFF323A49))) {
-                    Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(row.title.replace("StreamingUnity", "Streaming Unity"), Modifier.weight(.8f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        BoxWithConstraints(Modifier.weight(1.9f)) {
-                        val columns = if (maxWidth < 300.dp) 2 else 4
-                        val buttonWidth = (maxWidth - 6.dp * (columns - 1)) / columns
-                        FlowRow(maxItemsInEachRow = columns, horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            row.streams.forEachIndexed { index, stream ->
-                                SourcePickerButton(alternateQualityLabel(stream), { play(stream.id) },
-                                    Modifier.width(buttonWidth).then(if (rowIndex == 0 && index == 0) Modifier.focusRequester(entry) else Modifier),
-                                    chosen = stream.id == state.selectedId)
+                    val serverTitle = row.title.replace("StreamingUnity", "Streaming Unity")
+                        .replace("OnlyFlix Onetouchtv", "OnlyFlix \u00b7 OneTouchTV")
+                    val qualities: @Composable (Modifier) -> Unit = { modifier ->
+                        BoxWithConstraints(modifier) {
+                            val columns = if (phone || maxWidth < 300.dp) 2 else 3
+                            val labels = alternateQualityChoiceLabels(row.streams)
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                row.streams.withIndex().toList().chunked(columns).forEach { cells ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        cells.forEach { (index, stream) ->
+                                            SourcePickerButton(labels[index], { play(stream.id) },
+                                                Modifier.weight(1f).then(if (rowIndex == 0 && index == 0) Modifier.focusRequester(entry) else Modifier),
+                                                chosen = stream.id == state.selectedId, compact = true)
+                                        }
+                                        repeat(columns - cells.size) { Spacer(Modifier.weight(1f)) }
+                                    }
+                                }
                             }
                         }
+                    }
+                    if (phone) {
+                        Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(serverTitle, Modifier.fillMaxWidth(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            qualities(Modifier.fillMaxWidth())
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(serverTitle, Modifier.weight(.8f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            qualities(Modifier.weight(1.9f))
                         }
                     }
                     }
@@ -217,7 +240,7 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
 
 @Composable
 private fun SourcePickerButton(label: String, click: () -> Unit, modifier: Modifier = Modifier,
-    enabled: Boolean = true, chosen: Boolean = false, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
+    enabled: Boolean = true, chosen: Boolean = false, icon: androidx.compose.ui.graphics.vector.ImageVector? = null, compact: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
     Surface(onClick = click, enabled = enabled,
         modifier = modifier.onFocusChanged { focused = it.isFocused }.semantics { selected = chosen },
@@ -225,12 +248,12 @@ private fun SourcePickerButton(label: String, click: () -> Unit, modifier: Modif
         color = when { focused -> Color(0xFF354052); chosen -> Color(0xFF55202D); else -> Color(0xFF272D39) },
         border = BorderStroke(if (focused) 2.dp else 1.dp,
             when { focused -> Color.White; chosen -> Color(0xFFED536A); else -> Color(0xFF414B5D) })) {
-        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = if (icon == Icons.Default.Close) 0.dp else 8.dp),
+        Row(Modifier.heightIn(min = if (compact) 44.dp else 48.dp).padding(horizontal = if (icon == Icons.Default.Close) 0.dp else if (compact) 4.dp else 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             if (icon != null) Icon(icon, if (icon == Icons.Default.Close) label else null, Modifier.size(18.dp))
             if (icon != Icons.Default.Close) {
                 if (icon != null) Spacer(Modifier.width(6.dp))
-                Text(label, fontSize = 13.sp, fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Medium,
+                Text(label, fontSize = if (compact) 12.sp else 13.sp, fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Medium,
                     maxLines = 1, softWrap = false)
             }
         }
@@ -249,6 +272,22 @@ internal fun alternateQualityLabel(stream: AlternateStream): String = when {
     stream.route != com.nikhil.niktv.data.AlternatePlaybackRoute.NATIVE -> "Play"
     stream.height != null -> "${stream.height}p"
     else -> stream.label.substringBefore(" · ").takeIf { it == "Auto" || it.startsWith("Quality ") } ?: "Auto"
+}
+
+/** Preserve distinct mirrors, but never present indistinguishable quality choices. */
+internal fun alternateQualityChoiceLabels(streams: List<AlternateStream>): List<String> {
+    val bases = streams.map { stream ->
+        alternateQualityLabel(stream) + (stream.sourceVariant?.let { " · ${it.replaceFirstChar(Char::uppercaseChar)}" } ?: "")
+    }
+    val counts = bases.groupingBy { it }.eachCount()
+    val seen = mutableMapOf<String, Int>()
+    return bases.map { base ->
+        if (counts.getValue(base) == 1) base else {
+            val number = (seen[base] ?: 0) + 1
+            seen[base] = number
+            "$base $number"
+        }
+    }
 }
 
 /** Remote focus is navigation; only a completed Select/touch gesture starts editing. */

@@ -11,6 +11,18 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = android.app.Application::class, manifest = Config.NONE)
 class RiveSourceResolverTest {
+    @Test fun mirrorIdentifiersArePreservedWithoutInventingResolutions() = runBlocking {
+        val streams = RiveSourceResolver { r, _ -> AlternateSourceHttpResponse(r.url, 200,
+            if (r.url.contains("/api/provider")) """{"data":{"sources":[
+                {"url":"https://media.example.test/t.m3u8","format":"hls","quality":"tcloud"},
+                {"url":"https://media.example.test/d.m3u8","format":"hls","quality":"dcloud"},
+                {"url":"https://media.example.test/ip.m3u8","format":"hls","quality":"ipcloud"}]}}"""
+            else "#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST\n")
+        }.resolve(AlternateSourceTarget("Spider-Man: Brand New Day", false, tmdbId = 969681, provider = AlternateSourceProvider.RIVE_PRIMEVIDS))
+        assertEquals(listOf("tcloud", "dcloud", "ipcloud"), streams.map { it.sourceVariant })
+        assertTrue(streams.all { it.height == null })
+        assertEquals(3, streams.map { it.id }.distinct().size)
+    }
     private val movie = AlternateSourceTarget("Movie", false, tmdbId = 603, provider = AlternateSourceProvider.RIVE_CITADEL)
     @Test fun movieAndEpisodeUseExactAdvertisedIdentityAndOnlyPublicMediaHeaders() = runBlocking {
         val requests = mutableListOf<AlternateSourceHttpRequest>()

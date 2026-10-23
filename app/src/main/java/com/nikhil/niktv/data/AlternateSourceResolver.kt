@@ -21,10 +21,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 
-enum class AlternateSourceProvider { AUTO, MOVY, CINEJOY, CNO, STREAMING_UNITY, RIVE_VANGUARD, RIVE_PRIMEVIDS, RIVE_CITADEL, ATLANTIC_ATHENA }
+enum class AlternateSourceProvider { AUTO, MOVY, CINEJOY, CNO, STREAMING_UNITY, RIVE_VANGUARD, RIVE_PRIMEVIDS, RIVE_CITADEL, ATLANTIC_ATHENA, ONLYFLIX }
 internal val nativeSourceProviders = listOf(AlternateSourceProvider.AUTO, AlternateSourceProvider.MOVY,
     AlternateSourceProvider.STREAMING_UNITY, AlternateSourceProvider.ATLANTIC_ATHENA,
-    AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL)
+    AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX)
 enum class AlternatePlaybackRoute { NATIVE, VIDY_EMBEDDED, CINEJOY_WEB, CNO_WEB }
 
 data class AlternateSourceTarget(
@@ -45,6 +45,7 @@ data class AlternateStream(
     val format: String = "hls",
     val height: Int? = null,
     val route: AlternatePlaybackRoute = AlternatePlaybackRoute.NATIVE,
+    val sourceVariant: String? = null,
 )
 
 /** Injectable transport keeps source parsing deterministic and never requires a provider profile. */
@@ -122,7 +123,7 @@ class AlternateSourceResolver(
         return coroutineScope {
             val slots = Semaphore(2)
             val searches = listOf(AlternateSourceProvider.MOVY, AlternateSourceProvider.AUTO,
-                AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL).map { provider ->
+                AlternateSourceProvider.ATLANTIC_ATHENA, AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX).map { provider ->
                 async {
                     slots.withPermit {
                     try {
@@ -150,7 +151,8 @@ class AlternateSourceResolver(
                 throw cancelled
             } catch (safe: AlternateSourceException) {
                 throw safe
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
+                alternateSourceTrace("$phase transport ${failure.javaClass.simpleName}")
                 // Transport exceptions can contain a full signed URL. Never expose it in UI/logs.
                 throw AlternateSourceException("Could not connect to the alternate source. Try again later.", stage = phase)
             }
@@ -180,6 +182,9 @@ class AlternateSourceResolver(
         }
         if (target.provider == AlternateSourceProvider.ATLANTIC_ATHENA) {
             return AthenaSourceResolver { request, phase -> read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase) }.resolve(target)
+        }
+        if (target.provider == AlternateSourceProvider.ONLYFLIX) {
+            return OnlyFlixSourceResolver { request, phase -> read(requirePublicHttps(request.url), request.headers, request.maxBytes, phase) }.resolve(target)
         }
         var preferredIssue: AlternateSourceException? = null
         var preferredEmpty = false
