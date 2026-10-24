@@ -27,6 +27,7 @@ internal val nativeSourceProviders = listOf(AlternateSourceProvider.AUTO, Altern
     AlternateSourceProvider.RIVE_PRIMEVIDS, AlternateSourceProvider.RIVE_CITADEL, AlternateSourceProvider.ONLYFLIX)
 enum class AlternatePlaybackRoute { NATIVE, VIDY_EMBEDDED, CINEJOY_WEB, CNO_WEB }
 
+@kotlinx.serialization.Serializable
 data class AlternateSourceTarget(
     val title: String,
     val series: Boolean,
@@ -35,6 +36,7 @@ data class AlternateSourceTarget(
     val season: Int? = null,
     val episode: Int? = null,
     val provider: AlternateSourceProvider = AlternateSourceProvider.AUTO,
+    val preferredHeight: Int? = null,
 )
 
 data class AlternateStream(

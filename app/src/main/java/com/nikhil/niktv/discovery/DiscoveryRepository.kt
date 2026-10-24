@@ -3,6 +3,7 @@ package com.nikhil.niktv.discovery
 import android.content.Context
 import com.nikhil.niktv.data.TmdbClient
 import com.nikhil.niktv.model.TmdbHomeSection
+import com.nikhil.niktv.model.regionalLanguage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -20,11 +21,11 @@ internal class DiscoveryRepository(context: Context, private val tmdb: TmdbClien
         return cache.load(key, ttl, serializer, stale) { slots.withPermit { load() } }
     }
     override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit): List<DiscoveryCard> =
-        cached("feed-v3:${section.name}", DiscoveryCache.FEED_TTL, ListSerializer(DiscoveryCard.serializer()), stale) {
+        cached("feed-v4:${section.name}", DiscoveryCache.FEED_TTL, ListSerializer(DiscoveryCard.serializer()), stale) {
             val (path, query) = discoveryFeedRequest(section)
-            val first = cards(tmdb.discoveryJson(path, query + ("page" to "1")), section.series)
+            val first = cards(tmdb.discoveryJson(path, query + ("page" to "1")), section.series).filter { it.originalLanguage == section.regionalLanguage }
             if (first.size >= 10) first
-            else (first + cards(tmdb.discoveryJson(path, query + ("page" to "2")), section.series)).distinctBy { it.key }.take(30)
+            else (first + cards(tmdb.discoveryJson(path, query + ("page" to "2")), section.series).filter { it.originalLanguage == section.regionalLanguage }).distinctBy { it.key }.take(30)
         }.filter { it.released() }
 
     override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails =

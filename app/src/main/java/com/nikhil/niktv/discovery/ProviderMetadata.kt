@@ -1,5 +1,6 @@
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.data.providerDisplayTitle
 import com.nikhil.niktv.data.providerTmdbTitle
 import com.nikhil.niktv.data.providerSeriesTmdbTitle
 import com.nikhil.niktv.model.*
@@ -10,7 +11,7 @@ data class ProviderMovieDetails(val profile: String, val item: MediaItem,
     val queue: List<MediaItem>, val filter: PlaybackQueueFilter? = null)
 
 internal fun providerDetailFallback(item: MediaItem, type: CatalogType) = DiscoveryCard(
-    item.externalTmdbId?.takeIf { it > 0 } ?: 0, type == CatalogType.SERIES, item.title,
+    item.externalTmdbId?.takeIf { it > 0 } ?: 0, type == CatalogType.SERIES, providerDisplayTitle(item.title, type),
     item.description, item.logo, adult = item.isAdult)
 
 /** Trusted identity hint only; provider artwork URLs can contain private credentials. */

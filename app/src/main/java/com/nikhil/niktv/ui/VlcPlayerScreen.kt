@@ -796,6 +796,13 @@ internal fun VlcPlayerScreen(
                 MediaPlayer.Event.EndReached -> {
                     streamTerminated = true
                     playing = false
+                    val endedEarly = !streamWasPlaying || (player.length > 0L && player.time.coerceAtLeast(0L) < player.length - 2_000L)
+                    if (media.catalogType != CatalogType.LIVE_TV && endedEarly) {
+                        buffering = false
+                        error = "VLC could not continue this source. Retry, switch player or choose another source."
+                        controlsVisible = true
+                        return@setEventListener
+                    }
                     if (
                         media.catalogType == CatalogType.SERIES &&
                         completion.claim(true, playbackRequested, currentNextEpisode != null, autoPlayCancelled) &&
@@ -862,11 +869,22 @@ internal fun VlcPlayerScreen(
             if (media.progressKey.isNotBlank() &&
                 media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES)) {
                 onProgress(media.progressKey,
-                    if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else finalTiming.first,
+                    if (!streamWasPlaying) media.resumePositionMillis else if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else finalTiming.first,
                     finalTiming.second)
             }
             } finally {
                 if (ownsPlaybackSlot) vlcPlaybackLifecycle.unlock()
+            }
+        }
+    }
+
+    LaunchedEffect(player, media.playbackAttemptId, playbackRequested) {
+        if (playbackRequested) {
+            delay(20_000L)
+            if (!streamWasPlaying && playbackRequested && error == null) {
+                buffering = false
+                error = "VLC did not start this source. Retry, switch player or choose another source."
+                controlsVisible = true
             }
         }
     }
@@ -940,7 +958,7 @@ internal fun VlcPlayerScreen(
             if (
                 media.progressKey.isNotBlank() &&
                 media.catalogType in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
-                pendingInitialResumePosition == 0L &&
+                pendingInitialResumePosition == 0L && error == null && player.isPlaying &&
                 android.os.SystemClock.elapsedRealtime() - lastProgressSave >= 5_000L
             ) {
                 onProgress(media.progressKey, position, duration)

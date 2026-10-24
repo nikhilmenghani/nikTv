@@ -799,7 +799,7 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     openFavorites = vm::openFavorites,
                     closeFavorites = vm::closeFavorites,
                     openHome = vm::openHome,
-                    openRecent = { recent -> if (recent.kind == FavoriteKind.MOVIE) vm.openProviderMovieDetails(recent.media) else vm.openRecent(recent) },
+                    openRecent = vm::openRecent,
                     openSeriesFromHome = vm::openSeriesFromHome,
                     removeRecent = vm::removeRecent,
                     dismissRecommendation = vm::dismissRecommendation,

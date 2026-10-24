@@ -1,5 +1,6 @@
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.data.providerDisplayTitle
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
@@ -104,7 +105,7 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
                     BoxWithConstraints {
                         val recent = app.recentlyPlayed.firstOrNull { it.profileKey == profile && it.media.id == item.id }
                         val progress = recent?.let { discoveryRecentProgress(it, app.playbackProgress) }
-                        DiscoveryPosterTile(item.title, item.logo, "", maxWidth,
+                        DiscoveryPosterTile(providerDisplayTitle(item.title, category.type), item.logo, "", maxWidth,
                             progress = progress?.takeIf { it.durationMillis > 0 }?.let { (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f) },
                             modifier = Modifier.focusRequester(requester), onClick = { choose(index) },
                             onLongClick = { popup = true },

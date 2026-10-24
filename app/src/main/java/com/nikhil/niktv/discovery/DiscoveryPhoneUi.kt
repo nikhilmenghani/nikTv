@@ -99,7 +99,8 @@ internal fun DiscoveryPhoneBottomNavigation(selected: DiscoveryPhoneDestination?
 internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, tab: FocusRequester,
     play: FocusRequester, back: () -> Unit, select: (DashboardSurface) -> Unit,
     classic: (String) -> Unit, menu: Boolean, changeMenu: (Boolean) -> Unit,
-    customize: (() -> Unit)?, profile: String = "", categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
+    customize: (() -> Unit)?, profile: String = "", categoryManagerOpen: Boolean = false,
+    categoryPopupChanged: (Boolean) -> Unit = {}, searchActive: Boolean = false) {
     CompositionLocalProvider(LocalMobileGlassEnabled provides true) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -119,10 +120,12 @@ internal fun DiscoveryPhoneHeader(surface: DashboardSurface, detail: Boolean, ta
             }
             Spacer(Modifier.weight(1f))
             if (!detail) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                DiscoveryAction("Search", Icons.Default.Search, iconOnly = true) { classic("Search") }
+                DiscoveryAction("Search", Icons.Default.Search, iconOnly = true, selected = searchActive,
+                    modifier = if (searchActive) Modifier.focusRequester(tab).focusProperties { down = play } else Modifier) { classic("Search") }
                 DiscoveryAction("Profile: $profile", visualLabel = profile.trim().firstOrNull()?.uppercase() ?: "N",
-                    horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $profile" }.focusRequester(tab).focusProperties { down = play }) { classic("Profile") }
-                DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize)
+                    horizontalPadding = 0.dp, modifier = Modifier.size(48.dp).semantics { contentDescription = "Switch profile: $profile" }
+                        .then(if (!searchActive) Modifier.focusRequester(tab) else Modifier).focusProperties { down = play }) { classic("Profile") }
+                DiscoveryBrowseMenu(menu, changeMenu, surface, classic, customize, categoryManagerOpen, categoryPopupChanged)
             }
         }
 
@@ -202,7 +205,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                             Modifier.fillMaxSize().graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
                             onSuccess = { logoReady = true }, onError = { logoReady = false })
                     }
-                    val metadata = card?.let { listOfNotNull(it.date?.take(4),
+                    val metadata = card?.let { listOfNotNull(if (detail) discoveryReleaseLabel(it) else it.date?.take(4),
                         it.runtime?.takeIf { detail }?.let { minutes -> "${minutes} min" },
                         it.genres.take(if (detail) 3 else 2).joinToString(" · ").takeIf(String::isNotBlank),
                         it.certification?.takeIf { detail }).joinToString(" · ") }.orEmpty()
@@ -213,7 +216,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                     }
                     Row(Modifier.fillMaxWidth().onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
-                    }, horizontalArrangement = Arrangement.spacedBy(if (compactDetail) 8.dp else 12.dp, if (leftAligned) Alignment.Start else Alignment.CenterHorizontally),
+                    }, horizontalArrangement = Arrangement.spacedBy(8.dp, if (leftAligned) Alignment.Start else Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically) {
                         if (!detail && showListAction) PhoneHeroIcon(if (inList) "Remove from My List" else "Add to My List",
                             if (inList) Icons.Default.Check else Icons.Default.Add, card != null, add,
@@ -224,7 +227,7 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         DiscoveryMobileGlassContainer(if (detail) Modifier.weight(1f) else Modifier) {
                         Surface(onClick = play, enabled = card != null && playEnabled, shape = RoundedCornerShape(10.dp),
                             color = Color.Transparent, contentColor = Color.White,
-                            modifier = Modifier.then(if (detail) Modifier.fillMaxWidth() else Modifier.widthIn(min = 140.dp))
+                            modifier = Modifier.then(if (detail) Modifier.fillMaxWidth() else Modifier.widthIn(min = 120.dp))
                                 .heightIn(min = 48.dp).focusRequester(playRequester).onFocusChanged { if (it.isFocused) onFocus() }) {
                             Row(Modifier.padding(horizontal = if (compactDetail) 8.dp else 18.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
@@ -235,17 +238,13 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                             }
                         }
                         }
-                        if (detail && compactDetail) DiscoveryAction(if (inList) "In My List" else "My List",
+                        if (detail) DiscoveryAction(if (inList) "In My List" else "My List",
                             if (inList) Icons.Default.Check else Icons.Default.Add, enabled = card != null,
                             horizontalPadding = 8.dp, onFocus = onFocus, onClick = add)
+                        DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus)
                         if (!detail) PhoneHeroIcon("Info", Icons.Default.Info, card != null, info,
                             Modifier.focusRequester(infoRequester).onFocusChanged { if (it.isFocused) onFocus() })
                     }
-                    if (detail && !compactDetail) DiscoveryAction(if (inList) "In My List" else "My List",
-                        if (inList) Icons.Default.Check else Icons.Default.Add, enabled = card != null,
-                        modifier = Modifier.onPreviewKeyEvent {
-                            if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
-                        }, onFocus = onFocus, onClick = add)
                     categoryActions?.let { actions ->
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {

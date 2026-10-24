@@ -84,17 +84,25 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         if (searchOpen && imeVisible) searchImeWasVisible = true
         else if (searchOpen && searchImeWasVisible) closeSearch()
     }
-    fun enterEpisodes() {
+    fun enterEpisodes(fromStart: Boolean = false) {
         searchImeWasVisible = false; keyboard?.hide()
         if (episodes.isEmpty()) return
-        val index = episodes.indexOfFirst { "${it.season}:${it.number}" == focused }.coerceAtLeast(0)
+        val index = if (fromStart) 0 else episodes.indexOfFirst { "${it.season}:${it.number}" == focused }.coerceAtLeast(0)
         entryJob?.cancel()
+        val target = episodes[index]
+        val targetKey = "${target.season}:${target.number}"
+        if (fromStart) focused = targetKey
+        val viewport = episodeState.layoutInfo
+        val visible = viewport.visibleItemsInfo.firstOrNull { it.index == index }
+        val fullyVisible = visible != null && visible.offset >= viewport.viewportStartOffset &&
+            visible.offset + visible.size <= viewport.viewportEndOffset
+        // A sideways handoff to an attached episode needs no scroll or delayed job.
+        if (!fromStart && fullyVisible && runCatching { requesters[targetKey]?.requestFocus() == true }.getOrDefault(false)) return
         entryJob = scope.launch {
-            episodeState.scrollToItem(index)
+            if (fromStart || !fullyVisible) episodeState.scrollToItem(index)
             repeat(20) {
                 withFrameNanos { }
-                val target = episodes.getOrNull(index) ?: return@launch
-                if (runCatching { requesters["${target.season}:${target.number}"]?.requestFocus() == true }.getOrDefault(false)) return@launch
+                if (runCatching { requesters[targetKey]?.requestFocus() == true }.getOrDefault(false)) return@launch
             }
         }
     }
@@ -105,7 +113,11 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             if (runCatching { selectedSeason.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
     }
-    Column {
+    Column(Modifier.onPreviewKeyEvent { event ->
+        if (event.type == KeyEventType.KeyDown && event.key in listOf(
+                Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) entryJob?.cancel()
+        false
+    }) {
         SeriesEpisodeToolbar(
             season = { if (wide) Text("Episodes", color = androidx.compose.ui.graphics.Color.White, style = MaterialTheme.typography.titleMedium) else Box {
                 DiscoveryAction(chosen?.let { "Season $it" } ?: "Episodes", Icons.Default.ExpandMore,
@@ -121,11 +133,12 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
             } },
             count = seriesEpisodeCountLabel(episodes.size, false, searchOpen && query.isNotBlank()),
             compact = !wide, newestFirst = newest, onNewestFirst = {
-                newest = it; scrollReset++
+                newest = it; focused = null
             },
             listView = listView, onListView = { listView = it }, searchOpen = searchOpen,
             onSearch = { if (searchOpen) closeSearch() else searchOpen = true },
             searchRequester = toolbarSearch, sortRequester = sort, layoutRequester = layout,
+            onSortApplied = { enterEpisodes(fromStart = true) },
             beforeAction = { searchImeWasVisible = false; keyboard?.hide() },
             searchField = {
                 SeriesEpisodeSearchField(query, { query = it; scrollReset++ }, ::closeSearch,
@@ -196,14 +209,16 @@ internal fun DiscoverySeriesEpisodes(state: DiscoveryState, startSeason: SeriesS
         }
         val counts = state.details?.seasonEpisodeCounts.orEmpty().mapValues { "${it.value} episodes" }.toMutableMap()
         if (chosen != null && "season" !in state.loading) counts[chosen] = "${state.episodes.size} episodes"
+        // Local function references compare equal even when their captured episode
+        // list changes. A lambda keeps the sidebar callback current after loading.
         if (wide && !listView && seasons.isNotEmpty()) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
-            loadSeason, ::enterEpisodes, { runCatching { toolbarSearch.requestFocus() } },
+            loadSeason, { enterEpisodes() }, { runCatching { toolbarSearch.requestFocus() } },
             Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), horizontal = true)
         if (listView) Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
             .height((configuration.screenHeightDp * .68f).coerceIn(260f, 620f).dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (wide && seasons.isNotEmpty()) SeriesSeasonSidebar(seasons, chosen, counts, sidebar,
-                loadSeason, ::enterEpisodes, { runCatching { seasonEntry.requestFocus() } }, Modifier.width(156.dp).fillMaxHeight())
-            LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                loadSeason, { enterEpisodes() }, { runCatching { seasonEntry.requestFocus() } }, Modifier.width(156.dp).fillMaxHeight())
+            LazyColumn(Modifier.weight(1f), state = episodeState, contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (episodes.isEmpty()) item("episode-status") {
                     Text(if ("season" in state.loading) "Loading episodes…"
                         else if (searchOpen && query.isNotBlank()) "No episodes match your search."

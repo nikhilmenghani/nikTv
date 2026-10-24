@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.data.providerDisplayTitle
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
@@ -309,7 +310,7 @@ internal fun DiscoveryPreviewScreen(
                 .filterNot { it.media.isAdult }.sortedByDescending { it.playedAtMillis }.take(30)
             if (recents.isNotEmpty()) add(Rail("continue", "Continue Watching", recents.map { recent ->
                 val progress = progressLookup?.recent(recent)
-                RailEntry("continue:${recent.key}", recent.media.title, recent.media.logo,
+                RailEntry("continue:${recent.key}", providerDisplayTitle(recent.media.title, if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES), recent.media.logo,
                     providerMedia = recent.series ?: recent.media,
                     providerType = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES,
                     subtitle = recent.lastPlayed?.title ?: recent.categoryTitle.orEmpty(),
@@ -335,7 +336,7 @@ internal fun DiscoveryPreviewScreen(
                 val episodes = newEpisodeGroups(app.watchedSeries, profile)
                 if (episodes.isNotEmpty()) add(Rail("episodes", "New Episodes", episodes.map { group ->
                     val episode = group.latest
-                    RailEntry("episodes:${group.key}", group.watched.series.title, group.watched.series.logo,
+                    RailEntry("episodes:${group.key}", providerDisplayTitle(group.watched.series.title, CatalogType.SERIES), group.watched.series.logo,
                         providerMedia = group.watched.series, providerType = CatalogType.SERIES,
                         subtitle = "S${episode.seasonNumber ?: "?"}:E${episode.episodeNumber ?: "?"} · ${episode.title}",
                         open = { focusOrigins.returningTo = "episodes:${group.key}"; currentOpenWatched(group.watched, episode) },
@@ -373,7 +374,7 @@ internal fun DiscoveryPreviewScreen(
                 add(Rail(rowKey, category.title, queue.take(30).map { item ->
                     val saved = FavoriteItem(if (type == CatalogType.SERIES) FavoriteKind.SERIES else FavoriteKind.MOVIE,
                         item, profileKey = profile, categoryTitle = category.title)
-                    RailEntry("$rowKey:${item.id}", item.title, item.logo,
+                    RailEntry("$rowKey:${item.id}", providerDisplayTitle(item.title, type), item.logo,
                         providerMedia = item, providerType = type,
                         subtitle = category.title.orEmpty(),
                         progress = progressLookup?.provider(type, item.id),
@@ -626,7 +627,7 @@ internal fun DiscoveryPreviewScreen(
                             onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }, onDown = { moveRow(positions.hero, 1) }, onUp = { moveRow(positions.hero, -1) },
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
                             index = state.heroIndex, count = state.heroes.size,
-                            categoryActions = if (state.detail == null) ({
+                            categoryActions = if (state.detail == null && !phone) ({
                                 DiscoveryCategoryAccess(surface, app.categoryManagerOpen, modifier = if (phone) Modifier.widthIn(min = 144.dp) else Modifier, popupChanged = { categoryPopup = it },
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } })
                                 DiscoveryAction("TMDB categories", modifier = Modifier.then(if (phone) Modifier.widthIn(min = 144.dp) else Modifier).focusRequester(tmdbCategoriesRequester),
@@ -824,13 +825,32 @@ internal fun DiscoveryPreviewScreen(
         }
     }
     if (configure) AlertDialog(onDismissRequest = { configure = false }, title = { Text("TMDB categories") },
-        text = { LazyColumn(Modifier.heightIn(max = 400.dp)) {
-            items(TmdbHomeSection.entries.filter { surface == DashboardSurface.HOME || it.series == (surface == DashboardSurface.SERIES) }) { section ->
-                Row(Modifier.fillMaxWidth().toggleablePreview { vm.configure(if (section in state.sections) state.sections - section else state.sections + section) }, verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(section in state.sections, onCheckedChange = { vm.configure(if (it) state.sections + section else state.sections - section) }); Text(section.title)
+        text = {
+            LazyColumn(Modifier.heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                tmdbCategoryPairs(surface).groupBy { it.hollywood.series }.forEach { (series, pairs) ->
+                    item {
+                        Text(if (series) "Series" else "Movies", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Spacer(Modifier.weight(1f))
+                            Text("Hollywood", Modifier.width(84.dp), fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            Text("Bollywood", Modifier.width(84.dp), fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                    }
+                    items(pairs, key = { it.hollywood.name }) { pair ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(pair.title, Modifier.weight(1f), fontSize = 13.sp)
+                            listOf(pair.hollywood, pair.bollywood).forEach { section ->
+                                NikTvSecondaryActionButton(onClick = { vm.configure(if (section in state.sections) state.sections - section else state.sections + section) },
+                                    modifier = Modifier.width(84.dp).heightIn(min = 44.dp).semantics { contentDescription = section.title },
+                                    contentPadding = PaddingValues(2.dp)) {
+                                    Checkbox(section in state.sections, onCheckedChange = null)
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        } }, confirmButton = { NikTvSecondaryActionButton({ configure = false }) { Text("Close") } }, containerColor = Color(0xFF181B22))
+        }, confirmButton = { NikTvSecondaryActionButton({ configure = false }) { Text("Close") } }, containerColor = Color(0xFF181B22))
 
 }
 
@@ -946,7 +966,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                 Modifier.widthIn(max = 400.dp).fillMaxHeight().graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
                 onSuccess = { logoReady = true }, onError = { logoReady = false })
         }
-        val metadata = card?.let { listOfNotNull(it.date?.take(4), it.runtime?.let { n -> "${n} min" }, it.genres.take(3).joinToString(" · ").takeIf(String::isNotBlank),
+        val metadata = card?.let { listOfNotNull(if (detail) discoveryReleaseLabel(it) else it.date?.take(4), it.runtime?.let { n -> "${n} min" }, it.genres.take(3).joinToString(" · ").takeIf(String::isNotBlank),
             it.rating?.takeIf { n -> n > 0 }?.let { n -> "★ %.1f".format(n) }, it.certification).joinToString(" · ") }.orEmpty()
         Box(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp)
             .then(if (!detail) Modifier.height(36.dp * fontScale) else Modifier), contentAlignment = Alignment.TopStart) {
@@ -979,6 +999,7 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                 modifier = Modifier.focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
                 iconOnly = !detail, enabled = card != null, onFocus = onFocus, onClick = add)
+            DiscoveryTrailerAction(card, onFocus = onFocus)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()

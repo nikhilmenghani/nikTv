@@ -1,5 +1,6 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.data.providerDisplayTitle
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -47,7 +48,7 @@ internal fun PlayerMediaTileContent(item: MediaItem, current: Boolean, isTv: Boo
                 modifier = Modifier.width(if (isTv) 52.dp else 40.dp).fillMaxHeight()
                     .clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(item.title, color = Color.White, fontWeight = FontWeight.SemiBold,
+                Text(providerDisplayTitle(item.title, if (item.seasonNumber != null || item.episodeNumber != null) com.nikhil.niktv.model.CatalogType.SERIES else com.nikhil.niktv.model.CatalogType.MOVIES), color = Color.White, fontWeight = FontWeight.SemiBold,
                     style = if (isTv) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val episodeLabel = listOfNotNull(item.seasonNumber?.let { "S$it" },

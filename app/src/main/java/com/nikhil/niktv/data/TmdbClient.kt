@@ -15,6 +15,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.nikhil.niktv.model.TmdbHomeSection
+import com.nikhil.niktv.model.regionalLanguage
 import java.io.IOException
 import java.text.Normalizer
 import java.text.SimpleDateFormat
@@ -296,49 +297,14 @@ class TmdbClient {
 
     suspend fun homeMovies(section: TmdbHomeSection, limit: Int = 50): List<TmdbMovie> = withContext(Dispatchers.IO) {
         if (!configured || section.series) return@withContext emptyList()
-        when (section) {
-            TmdbHomeSection.TRENDING_MOVIES -> trendingMovies(limit)
-            TmdbHomeSection.TOP_RATED_MOVIES -> fetchMovies("/3/movie/top_rated", limit)
-            TmdbHomeSection.NEW_HOLLYWOOD_MOVIES -> recentMovies("en", "US", limit)
-            TmdbHomeSection.NEW_BOLLYWOOD_MOVIES -> recentMovies("hi", "IN", limit)
-            TmdbHomeSection.HOLLYWOOD -> fetchMovies("/3/discover/movie", limit, mapOf("with_original_language" to "en", "region" to "US", "sort_by" to "popularity.desc"))
-            TmdbHomeSection.BOLLYWOOD -> fetchMovies("/3/discover/movie", limit, mapOf("with_original_language" to "hi", "region" to "IN", "sort_by" to "popularity.desc"))
-            TmdbHomeSection.ACTION -> discoverGenre("28", limit)
-            TmdbHomeSection.COMEDY -> discoverGenre("35", limit)
-            TmdbHomeSection.HORROR -> discoverGenre("27", limit)
-            TmdbHomeSection.THRILLER -> thrillerMovies(limit)
-            TmdbHomeSection.FAMILY -> discoverGenre("10751", limit)
-            TmdbHomeSection.DOCUMENTARY -> discoverGenre("99", limit)
-            TmdbHomeSection.TRENDING_SERIES,
-            TmdbHomeSection.TOP_RATED_SERIES,
-            TmdbHomeSection.NEW_HOLLYWOOD_SERIES,
-            TmdbHomeSection.NEW_BOLLYWOOD_SERIES,
-            TmdbHomeSection.HOLLYWOOD_SERIES,
-            TmdbHomeSection.BOLLYWOOD_SERIES,
-            TmdbHomeSection.ACTION_SERIES,
-            TmdbHomeSection.COMEDY_SERIES,
-            TmdbHomeSection.MYSTERY_SERIES,
-            TmdbHomeSection.FAMILY_SERIES,
-            TmdbHomeSection.DOCUMENTARY_SERIES -> emptyList()
-        }
+        val (path, query) = com.nikhil.niktv.model.tmdbRegionalRequest(section, currentTmdbDate())
+        fetchMovies("/3$path", limit, query, section.regionalLanguage)
     }
 
     suspend fun homeSeries(section: TmdbHomeSection, limit: Int = 50): List<TmdbSeries> = withContext(Dispatchers.IO) {
         if (!configured || !section.series) return@withContext emptyList()
-        when (section) {
-            TmdbHomeSection.TRENDING_SERIES -> trendingSeries(limit)
-            TmdbHomeSection.TOP_RATED_SERIES -> fetchSeries("/3/tv/top_rated", limit)
-            TmdbHomeSection.NEW_HOLLYWOOD_SERIES -> recentSeries("en", "US", limit)
-            TmdbHomeSection.NEW_BOLLYWOOD_SERIES -> recentSeries("hi", "IN", limit)
-            TmdbHomeSection.HOLLYWOOD_SERIES -> discoverSeries(limit, mapOf("with_original_language" to "en"))
-            TmdbHomeSection.BOLLYWOOD_SERIES -> discoverSeries(limit, mapOf("with_original_language" to "hi"))
-            TmdbHomeSection.ACTION_SERIES -> discoverSeries(limit, mapOf("with_genres" to "10759"))
-            TmdbHomeSection.COMEDY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "35"))
-            TmdbHomeSection.MYSTERY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "9648"))
-            TmdbHomeSection.FAMILY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "10751"))
-            TmdbHomeSection.DOCUMENTARY_SERIES -> discoverSeries(limit, mapOf("with_genres" to "99"))
-            else -> emptyList()
-        }
+        val (path, query) = com.nikhil.niktv.model.tmdbRegionalRequest(section, currentTmdbDate())
+        fetchSeries("/3$path", limit, query, section.regionalLanguage)
     }
 
     suspend fun confidentlyMatchSeries(item: MediaItem): TmdbSeries? = withContext(Dispatchers.IO) {
@@ -540,7 +506,8 @@ class TmdbClient {
     private fun fetchMovies(
         path: String,
         limit: Int,
-        query: Map<String, String> = emptyMap()
+        query: Map<String, String> = emptyMap(),
+        originalLanguage: String? = null
     ): List<TmdbMovie> {
         val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(5)
         return (1..pages).flatMap { page ->
@@ -548,6 +515,7 @@ class TmdbClient {
         }
             .mapNotNull { element ->
                 val obj = element.jsonObject
+                if (originalLanguage != null && obj["original_language"]?.jsonPrimitive?.contentOrNull != originalLanguage) return@mapNotNull null
                 if (obj["adult"]?.jsonPrimitive?.contentOrNull == "true") return@mapNotNull null
                 val id = obj["id"]?.jsonPrimitive?.intOrNull
                     ?: return@mapNotNull null
@@ -585,7 +553,8 @@ class TmdbClient {
     private fun fetchSeries(
         path: String,
         limit: Int,
-        query: Map<String, String> = emptyMap()
+        query: Map<String, String> = emptyMap(),
+        originalLanguage: String? = null
     ): List<TmdbSeries> {
         val pages = ((limit.coerceAtLeast(1) + 19) / 20).coerceAtMost(5)
         return (1..pages).flatMap { page ->
@@ -593,6 +562,7 @@ class TmdbClient {
         }
             .mapNotNull { element ->
                 val obj = element.jsonObject
+                if (originalLanguage != null && obj["original_language"]?.jsonPrimitive?.contentOrNull != originalLanguage) return@mapNotNull null
                 if (obj["adult"]?.jsonPrimitive?.contentOrNull == "true") return@mapNotNull null
                 val id = obj["id"]?.jsonPrimitive?.intOrNull
                     ?: return@mapNotNull null

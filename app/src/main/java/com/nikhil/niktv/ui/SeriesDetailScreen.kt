@@ -174,6 +174,7 @@ internal fun ModernSeriesDetailScreen(
     var toolbarHeightPx by remember { mutableIntStateOf(0) }
     var paginationAttempt by remember(series.id, state.selectedSeriesSeason) { mutableStateOf<Int?>(null) }
     val profile = state.savedProfile?.cacheKey().orEmpty()
+    val navigationTrace = com.nikhil.niktv.discovery.LocalDiscoveryNavigationTrace.current
     val reducedMotion = android.provider.Settings.Global.getFloat(LocalContext.current.contentResolver,
         android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val detailScope = rememberCoroutineScope()
@@ -343,24 +344,41 @@ internal fun ModernSeriesDetailScreen(
     val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) latestEpisode ?: state.items.firstOrNull()
         else state.items.firstOrNull()
 
-    fun focusLandscapeEpisode() {
+    fun requestEpisodeFocus(revealParent: Boolean, fromStart: Boolean = false) {
         if (filteredEpisodes.isEmpty()) return
-        val index = filteredEpisodes.indexOfFirst { it.id == focusedEpisodeId }.coerceAtLeast(0)
+        val index = if (fromStart) 0 else filteredEpisodes.indexOfFirst { it.id == focusedEpisodeId }.coerceAtLeast(0)
+        val targetId = filteredEpisodes[index].id
+        if (fromStart) focusedEpisodeId = targetId
         episodeMove?.cancel()
         wideFocusCoordinator.cancel()
+        val verticalIndex = seriesEpisodeVerticalIndex(index, !verticalEpisodeLayout)
+        val viewport = episodeListState.layoutInfo
+        val parentVisible = viewport.visibleItemsInfo.any { it.index == verticalIndex }
+        val innerViewport = episodeRowState.layoutInfo
+        val innerItem = innerViewport.visibleItemsInfo.firstOrNull { it.index == index }
+        val innerVisible = verticalEpisodeLayout || (innerItem != null && innerItem.offset >= innerViewport.viewportStartOffset &&
+            innerItem.offset + innerItem.size <= innerViewport.viewportEndOffset)
+        navigationTrace?.invoke("provider-episode-enter remembered=$focusedEpisodeId target=$targetId innerVisible=$innerVisible parent=$revealParent")
+        if (!fromStart && (!revealParent || parentVisible) && innerVisible) {
+            val accepted = runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)
+            navigationTrace?.invoke("provider-episode-focus target=$targetId accepted=$accepted")
+            if (accepted) return
+        }
         episodeMove = detailScope.launch {
-            val verticalIndex = seriesEpisodeVerticalIndex(index, !verticalEpisodeLayout)
-            val viewport = episodeListState.layoutInfo
             val visible = viewport.visibleItemsInfo.firstOrNull { it.index == verticalIndex }
-            if (visible == null || visible.offset < viewport.viewportStartOffset ||
-                visible.offset + visible.size > viewport.viewportEndOffset)
+            // Seasons and their episode list share this outer row. Scrolling it
+            // during Right fights the sidebar's own focus reveal on short lists.
+            if (fromStart && verticalEpisodeLayout) episodeListState.scrollToItem(verticalIndex, -toolbarHeightPx)
+            else if (revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
+                visible.offset + visible.size > viewport.viewportEndOffset))
                 episodeListState.scrollToItem(verticalIndex)
-            if (!verticalEpisodeLayout && episodeRowState.layoutInfo.visibleItemsInfo.none { it.index == index }) episodeRowState.scrollToItem(index)
+            if (!verticalEpisodeLayout && (fromStart || !innerVisible)) episodeRowState.scrollToItem(index)
             repeat(20) { withFrameNanos { }
-                if (runCatching { landscapeRequesters[filteredEpisodes[index].id]?.requestFocus() == true }.getOrDefault(false)) return@launch
+                if (runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)) return@launch
             }
         }
     }
+    fun focusLandscapeEpisode() = requestEpisodeFocus(revealParent = true)
     fun requestWideFocus(target: SeriesDetailFocus, preferred: FocusRequester? = null) {
         if (target == SeriesDetailFocus.INFO && !hasSynopsis) {
             requestWideFocus(SeriesDetailFocus.PLAY); return
@@ -482,6 +500,8 @@ internal fun ModernSeriesDetailScreen(
         Modifier.fillMaxSize().background(Color(0xFF090B10))
             .focusRequester(episodeFocusParkingRequester)
             .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key in listOf(
+                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) episodeMove?.cancel()
                 // Hold the entry cursor inside this screen while there is no episode
                 // to select. Back continues through the normal navigation handler.
                 remoteNavigationActive && pendingPlaybackReturnId != null && entryFocusTarget == SeriesEpisodeEntryFocus.Loading &&
@@ -577,12 +597,13 @@ internal fun ModernSeriesDetailScreen(
                         compact = mobileEpisodeLayout,
                         newestFirst = episodeSortDescending, onNewestFirst = {
                             episodeSortDescending = it
-                            episodeScrollReset++
+                            focusedEpisodeId = null
                         },
                         listView = episodeListView, onListView = { episodeListView = it },
                         searchOpen = expandedPanel == SeriesDetailPanel.SEARCH,
                         onSearch = { if (expandedPanel == SeriesDetailPanel.SEARCH) closeEpisodeSearch() else expandedPanel = SeriesDetailPanel.SEARCH },
                         searchRequester = toolbarRequester, sortRequester = sortRequester, layoutRequester = layoutRequester,
+                        onSortApplied = { requestEpisodeFocus(revealParent = true, fromStart = true) },
                         beforeAction = { searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide() },
                         searchField = { SeriesEpisodeSearchField(
                                     value = searchQuery, change = {
@@ -681,7 +702,7 @@ internal fun ModernSeriesDetailScreen(
 
                     if (!mobileEpisodeLayout && !episodeListView && availableSeasons.isNotEmpty()) {
                         SeriesSeasonSidebar(availableSeasons, selectedSeason, seasonCounts, seasonSidebarRequester,
-                            loadSeriesSeason, ::focusLandscapeEpisode, { requestWideFocus(SeriesDetailFocus.TOOLS) },
+                            loadSeriesSeason, { focusLandscapeEpisode() }, { requestWideFocus(SeriesDetailFocus.TOOLS) },
                             Modifier.fillMaxWidth(), horizontal = true)
                     }
                 }
@@ -774,7 +795,10 @@ internal fun ModernSeriesDetailScreen(
                             .then(if ((entryFocusTarget as? SeriesEpisodeEntryFocus.Episode)?.id == episode.id) {
                                 Modifier.focusRequester(entryEpisodeRequester)
                             } else Modifier)
-                            .onFocusChanged { if (it.hasFocus) focusedEpisodeId = episode.id }
+                            .onFocusChanged {
+                                navigationTrace?.invoke("provider-episode-changed id=${episode.id} hasFocus=${it.hasFocus}")
+                                if (it.hasFocus) focusedEpisodeId = episode.id
+                            }
                             .padding(
                                 horizontal = if (verticalEpisodeLayout) (if (mobileEpisodeLayout) 14.dp else 24.dp) else 0.dp,
                                 vertical = if (mobileEpisodeLayout) 4.dp else if (episodeListView) 0.dp else 6.dp
@@ -787,10 +811,10 @@ internal fun ModernSeriesDetailScreen(
                         .padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         if (availableSeasons.isNotEmpty()) SeriesSeasonSidebar(availableSeasons, selectedSeason,
                             seasonCounts,
-                            seasonSidebarRequester, loadSeriesSeason, ::focusLandscapeEpisode,
+                            seasonSidebarRequester, loadSeriesSeason, { requestEpisodeFocus(revealParent = false) },
                             { requestWideFocus(SeriesDetailFocus.SORT) }, Modifier.width(156.dp).fillMaxHeight())
                         LazyColumn(Modifier.weight(1f).fillMaxHeight(), state = episodeRowState,
-                            contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            contentPadding = PaddingValues(0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (filteredEpisodes.isEmpty()) item("episode-status") {
                                 Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
                                     if (state.loading) Column(horizontalAlignment = Alignment.CenterHorizontally,

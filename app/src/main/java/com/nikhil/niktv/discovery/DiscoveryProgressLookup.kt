@@ -30,7 +30,7 @@ internal class DiscoveryProgressLookup private constructor(
             for (entry in recent) {
                 if (entry.profileKey != profile) continue
                 val prefix = discoveryRecentProgressPrefix(entry)
-                val match = prefix?.let {
+                val match = if (entry.alternateTarget != null) progress.firstOrNull { it.key == prefix } else prefix?.let {
                     if (!byPrefix.containsKey(it)) byPrefix[it] = latestPrefixProgress(sorted, it)
                     byPrefix[it]
                 }

@@ -262,29 +262,44 @@ enum class DashboardSurface { HOME, LIVE_TV, MOVIES, SERIES }
 
 @Serializable
 enum class TmdbHomeSection(val title: String, val series: Boolean = false) {
-    TRENDING_MOVIES("Trending Movies"),
-    TRENDING_SERIES("Trending Series", series = true),
-    TOP_RATED_MOVIES("Top Rated Movies"),
+    TRENDING_MOVIES("Hollywood Trending Movies"),
+    TRENDING_SERIES("Hollywood Trending Series", series = true),
+    TOP_RATED_MOVIES("Hollywood Top Rated Movies"),
     NEW_HOLLYWOOD_MOVIES("New Hollywood Movies"),
     NEW_BOLLYWOOD_MOVIES("New Bollywood Movies"),
     HOLLYWOOD("Hollywood"),
     BOLLYWOOD("Bollywood"),
-    ACTION("Action"),
-    COMEDY("Comedy"),
-    HORROR("Horror"),
-    THRILLER("Thriller"),
-    FAMILY("Family"),
-    DOCUMENTARY("Documentary"),
-    TOP_RATED_SERIES("Top Rated Series", series = true),
+    ACTION("Hollywood Action"),
+    COMEDY("Hollywood Comedy"),
+    HORROR("Hollywood Horror"),
+    THRILLER("Hollywood Thriller"),
+    FAMILY("Hollywood Family"),
+    DOCUMENTARY("Hollywood Documentary"),
+    TOP_RATED_SERIES("Hollywood Top Rated Series", series = true),
     NEW_HOLLYWOOD_SERIES("New Hollywood Series", series = true),
     NEW_BOLLYWOOD_SERIES("New Bollywood Series", series = true),
     HOLLYWOOD_SERIES("Hollywood Series", series = true),
     BOLLYWOOD_SERIES("Bollywood Series", series = true),
-    ACTION_SERIES("Action & Adventure Series", series = true),
-    COMEDY_SERIES("Comedy Series", series = true),
-    MYSTERY_SERIES("Mystery Series", series = true),
-    FAMILY_SERIES("Family Series", series = true),
-    DOCUMENTARY_SERIES("Documentary Series", series = true);
+    ACTION_SERIES("Hollywood Action & Adventure Series", series = true),
+    COMEDY_SERIES("Hollywood Comedy Series", series = true),
+    MYSTERY_SERIES("Hollywood Mystery Series", series = true),
+    FAMILY_SERIES("Hollywood Family Series", series = true),
+    DOCUMENTARY_SERIES("Hollywood Documentary Series", series = true),
+    BOLLYWOOD_TRENDING_MOVIES("Bollywood Trending Movies"),
+    BOLLYWOOD_TOP_RATED_MOVIES("Bollywood Top Rated Movies"),
+    BOLLYWOOD_ACTION("Bollywood Action"),
+    BOLLYWOOD_COMEDY("Bollywood Comedy"),
+    BOLLYWOOD_HORROR("Bollywood Horror"),
+    BOLLYWOOD_THRILLER("Bollywood Thriller"),
+    BOLLYWOOD_FAMILY("Bollywood Family"),
+    BOLLYWOOD_DOCUMENTARY("Bollywood Documentary"),
+    BOLLYWOOD_TRENDING_SERIES("Bollywood Trending Series", series = true),
+    BOLLYWOOD_TOP_RATED_SERIES("Bollywood Top Rated Series", series = true),
+    BOLLYWOOD_ACTION_SERIES("Bollywood Action & Adventure Series", series = true),
+    BOLLYWOOD_COMEDY_SERIES("Bollywood Comedy Series", series = true),
+    BOLLYWOOD_MYSTERY_SERIES("Bollywood Mystery Series", series = true),
+    BOLLYWOOD_FAMILY_SERIES("Bollywood Family Series", series = true),
+    BOLLYWOOD_DOCUMENTARY_SERIES("Bollywood Documentary Series", series = true);
 
 }
 
@@ -339,7 +354,8 @@ data class RecentItem(
     val lastPlayed: MediaItem? = null,
     @EncodeDefault val playedAtMillis: Long = System.currentTimeMillis(),
     val profileKey: String = "",
-    val categoryTitle: String? = null
+    val categoryTitle: String? = null,
+    val alternateTarget: com.nikhil.niktv.data.AlternateSourceTarget? = null
 ) {
     val key: String get() = "$profileKey:${kind.name}:${media.id}"
 }

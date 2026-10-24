@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiscoveryLibraryRoutingTest {
+    @Test fun establishedLiveBrowserIsUsedAcrossDevicesWithoutChangingMyList() {
+        assertTrue(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.LIVE_TV, false))
+        assertTrue(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.LIVE_TV, true))
+        assertFalse(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.MY_LIST, false))
+        assertTrue(useEstablishedLibraryBrowser(DiscoveryLibraryDestination.MY_LIST, true))
+        assertFalse(useEstablishedLibraryBrowser(null, false))
+        assertFalse(useEstablishedLibraryBrowser(null, true))
+    }
+
     @Test fun liveAndSavedMediaUseDiscoveryWithoutChangingPersistedCatalogueTypes() {
         assertEquals(DiscoveryLibraryDestination.LIVE_TV, destination(type = CatalogType.LIVE_TV))
         assertEquals(DiscoveryLibraryDestination.MY_LIST, destination(favorites = true))

@@ -1,5 +1,6 @@
 package com.nikhil.niktv.ui
 
+import com.nikhil.niktv.data.providerDisplayTitle
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.indication
 
@@ -684,6 +685,8 @@ private fun ModernDestinationHub(
      */
     val isTablet = !isTv && configuration.screenWidthDp >= 600
     val destinationColumns = when {
+        dashboardSurface == DashboardSurface.LIVE_TV &&
+            (isTv || (configuration.smallestScreenWidthDp >= 600 && configuration.screenWidthDp >= 720)) -> 4
         isTv -> 3
         configuration.smallestScreenWidthDp < 600 -> 1
         configuration.screenWidthDp >= 1200 -> 4
@@ -851,7 +854,7 @@ private fun ModernDestinationHub(
         onDispose { libraryOptions?.open = null }
     }
     Column(modifier.fillMaxSize()) {
-        if (!(libraryOptions?.live == true && com.nikhil.niktv.discovery.usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, isTv))) {
+        if (libraryOptions?.live != true) {
             Row(
                 Modifier.fillMaxWidth().padding(
                     start = if (isTv) 32.dp else if (isTablet) 24.dp else 14.dp,
@@ -904,7 +907,7 @@ private fun ModernDestinationHub(
 
             }
         }
-        Spacer(Modifier.height(if (isTv || isTablet) 38.dp else 12.dp))
+        Spacer(Modifier.height(if (libraryOptions?.live == true) 12.dp else if (isTv || isTablet) 38.dp else 12.dp))
     LazyVerticalGrid(
         columns = GridCells.Fixed(destinationColumns),
         state = hubGridState,
@@ -2438,7 +2441,7 @@ internal fun ModernCompactMediaCard(
                     )
                 ) {
                     Text(
-                        item.title,
+                        providerDisplayTitle(item.title, if (onOpenSeries != null) CatalogType.SERIES else CatalogType.MOVIES),
                         style = when {
                             isTv -> modernTvTileTitleStyle(shadowed = true).copy(
                                 fontSize = (12f * homeCardScale * titleScale).sp,
@@ -3491,10 +3494,9 @@ private fun ModernIptvCollection(
         }
     }
     LaunchedEffect(remoteNavigationActive, initialTilesPositioned, state.loading) {
-        if (remoteNavigationActive && !initialTilesPositioned && state.loading) {
+        if (remoteNavigationActive && !initialTilesPositioned) {
             // Keep the incoming screen's cursor out of the sidebar until its
             // first media row is ready. Back still bubbles to the catalog route.
-            withFrameNanos { }
             runCatching { gridFocusParking.requestFocus() }
         }
     }
@@ -3559,7 +3561,7 @@ private fun ModernIptvCollection(
             modifier = Modifier.padding(
                 start = if (isTv) 24.dp else 18.dp,
                 end = if (isTv) 24.dp else 18.dp,
-                top = 16.dp
+                top = if (isLiveTv) 8.dp else 16.dp
             )
         )
 
@@ -3568,7 +3570,7 @@ private fun ModernIptvCollection(
                 Modifier.fillMaxWidth().padding(
                     start = if (isTv) 24.dp else 18.dp,
                     end = if (isTv) 24.dp else 18.dp,
-                    top = 12.dp
+                    top = if (isLiveTv) 4.dp else 12.dp
                 ),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -3708,11 +3710,11 @@ private fun ModernIptvCollection(
         contentPadding = PaddingValues(
             start = if (isTv) 24.dp else 18.dp,
             end = if (isTv) 24.dp else 18.dp,
-            top = if (isLiveTv && isTv) 12.dp else 16.dp,
-            bottom = if (isLiveTv && isTv) 24.dp else 54.dp
+            top = if (isLiveTv) 8.dp else 16.dp,
+            bottom = if (isLiveTv) 16.dp else 54.dp
         ),
         verticalArrangement = Arrangement.spacedBy(
-            if (isLiveTv) { if (isTv) 10.dp else 8.dp } else if (isTv) 28.dp else 16.dp
+            if (isLiveTv) { if (isTv) 8.dp else 6.dp } else if (isTv) 28.dp else 16.dp
         ),
         horizontalArrangement = Arrangement.spacedBy(
             if (isLiveTv && isTv) 12.dp else if (isTv) 20.dp else 12.dp
@@ -4092,9 +4094,12 @@ internal fun ModernLiveChannelTile(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
                 .then(
-                    if (compactTv) Modifier.height(((if (xtream) 100f else 82f) * configuration.fontScale.coerceAtLeast(1f)).dp)
-                    else if (isPhone) Modifier.height(104.dp)
-                    else Modifier.height(if (xtream) { if (isTv) 116.dp else 124.dp } else if (isTv) 96.dp else 104.dp)
+                    Modifier.height((when {
+                        compactTv -> if (xtream) 92f else 76f
+                        isPhone -> if (xtream) 94f else 82f
+                        xtream -> if (isTv) 100f else 104f
+                        else -> if (isTv) 80f else 84f
+                    } * configuration.fontScale.coerceAtLeast(1f)).dp)
                 )
                 .onFocusChanged {
                     focused = it.isFocused
@@ -4147,13 +4152,13 @@ internal fun ModernLiveChannelTile(
                         .align(Alignment.Center).padding(
                         start = if (compactTv) 10.dp else 12.dp,
                         end = if (compactTv) 10.dp else 12.dp,
-                        top = if (compactTv) 8.dp else 10.dp,
-                        bottom = if (compactTv) 16.dp else 22.dp
+                        top = 6.dp,
+                        bottom = 12.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(if (compactTv) 8.dp else 10.dp)
                 ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         presentation.context?.let {
                             Text(
                                 it,
@@ -4261,7 +4266,7 @@ internal fun ModernLiveChannelTile(
                     Canvas(
                         Modifier.align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+                            .padding(start = 12.dp, end = 12.dp, bottom = 6.dp)
                             .height(4.dp)
                     ) {
                         val radius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
@@ -4490,7 +4495,7 @@ private fun ModernCollectionPoster(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        item.title,
+                        providerDisplayTitle(item.title, if (trailerSeries) CatalogType.SERIES else CatalogType.MOVIES),
                         color = Color.White,
                         style = when {
                             isTv -> modernTvTileTitleStyle(shadowed = true)

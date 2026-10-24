@@ -1,5 +1,6 @@
 package com.nikhil.niktv.discovery
 
+import com.nikhil.niktv.data.providerDisplayTitle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -152,9 +153,9 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
                         val click = { selected = item.id; open(type, item, items) }
                         val subtitle = categoryTitles[item.portalCategoryId].orEmpty()
                         val progress = progressLookup?.provider(type, item.id)
-                        if (phone) DiscoveryPhoneMediaCard(item.title, item.logo, subtitle, maxWidth, false,
+                        if (phone) DiscoveryPhoneMediaCard(providerDisplayTitle(item.title, type), item.logo, subtitle, maxWidth, false,
                             modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
-                        else DiscoveryPosterTile(item.title, item.logo, subtitle, maxWidth, reduceMotion = reduceMotion,
+                        else DiscoveryPosterTile(providerDisplayTitle(item.title, type), item.logo, subtitle, maxWidth, reduceMotion = reduceMotion,
                             focusVerticalInset = discoveryPosterFocusInset(maxWidth.value).dp,
                             modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
                         ModernTileActionsMenu(popup, app.favorites.any { it.key == saved.key },

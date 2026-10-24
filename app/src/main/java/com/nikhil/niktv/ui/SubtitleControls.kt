@@ -62,7 +62,8 @@ internal data class SubtitleTrackOption(
 )
 
 internal fun PlayingMedia.suggestedSubtitleSearchTitle(): String {
-    var title = (series?.title ?: media.title).trim()
+    var title = com.nikhil.niktv.data.providerDisplayTitle(series?.title ?: media.title,
+        if (series != null || media.seasonNumber != null) com.nikhil.niktv.model.CatalogType.SERIES else com.nikhil.niktv.model.CatalogType.MOVIES)
     val trailingLanguageOrEdition = Regex(
         "\\s*[\\[(](?:english|hindi|french|spanish|german|italian|portuguese|arabic|turkish|urdu|tamil|telugu|korean|japanese|chinese|multi(?:[ -]?audio)?|dubbed|original|en|hi|fr|es|de|it|pt|ar)[\\])]\\s*$",
         RegexOption.IGNORE_CASE

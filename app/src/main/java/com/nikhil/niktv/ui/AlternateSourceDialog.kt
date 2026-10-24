@@ -144,11 +144,11 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
     LaunchedEffect(state.loading, state.streams, state.error) {
         withFrameNanos { }; runCatching { entry.requestFocus() }
     }
-    Dialog(onDismissRequest = close) {
+    Dialog(onDismissRequest = close, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = phone)) {
         Surface(color = Color(0xFF151820), contentColor = Color.White,
             border = BorderStroke(1.dp, Color(0xFF343945)), shape = RoundedCornerShape(16.dp)) {
-            Column(Modifier.widthIn(max = 620.dp).heightIn(max = 680.dp).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.widthIn(max = if (phone) 620.dp else 480.dp).heightIn(max = minOf(if (phone) 680 else 520, configuration.screenHeightDp - 24).dp).padding(if (phone) 16.dp else 12.dp),
+                verticalArrangement = Arrangement.spacedBy(if (phone) 14.dp else 8.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Surface(shape = RoundedCornerShape(10.dp), color = Color(0x33E50925)) {
@@ -156,13 +156,13 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
                     }
                     Column(Modifier.weight(1f)) {
                         Text("Playback sources", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Choose a source and quality", fontSize = 12.sp, color = Color(0xFFADB5C5))
+                        if (phone) Text("Choose a source and quality", fontSize = 12.sp, color = Color(0xFFADB5C5))
                     }
-                    SourcePickerButton("Close", close, Modifier.size(48.dp), icon = Icons.Default.Close)
+                    SourcePickerButton("Close", close, Modifier.size(if (phone) 48.dp else 40.dp), icon = Icons.Default.Close)
                 }
                 Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                nativeSourceProviders.chunked(3).forEach { providers ->
+                    verticalArrangement = Arrangement.spacedBy(if (phone) 14.dp else 8.dp)) {
+                nativeSourceProviders.chunked(if (phone) 3 else 4).forEach { providers ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     providers.forEach { provider ->
                         SourcePickerButton(
@@ -174,7 +174,7 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
                             { if (provider != state.target.provider) search(editedTarget(provider)) }, Modifier.weight(1f),
                             enabled = validInput, chosen = provider == state.target.provider)
                     }
-                    repeat(3 - providers.size) { Spacer(Modifier.weight(1f)) }
+                    repeat((if (phone) 3 else 4) - providers.size) { Spacer(Modifier.weight(1f)) }
                 }
                 }
                 AlternateSourceInput(title, { title = it }, "Title", !state.loading, Modifier.fillMaxWidth())
@@ -242,13 +242,16 @@ internal fun AlternateSourceDialog(state: AlternateSourcePickerState, close: () 
 private fun SourcePickerButton(label: String, click: () -> Unit, modifier: Modifier = Modifier,
     enabled: Boolean = true, chosen: Boolean = false, icon: androidx.compose.ui.graphics.vector.ImageVector? = null, compact: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
+    val config = LocalConfiguration.current
+    val dense = config.smallestScreenWidthDp >= 600 || config.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides if (dense) 40.dp else 48.dp) {
     Surface(onClick = click, enabled = enabled,
         modifier = modifier.onFocusChanged { focused = it.isFocused }.semantics { selected = chosen },
         shape = RoundedCornerShape(10.dp), contentColor = if (enabled) Color.White else Color(0xFF7E8797),
         color = when { focused -> Color(0xFF354052); chosen -> Color(0xFF55202D); else -> Color(0xFF272D39) },
         border = BorderStroke(if (focused) 2.dp else 1.dp,
             when { focused -> Color.White; chosen -> Color(0xFFED536A); else -> Color(0xFF414B5D) })) {
-        Row(Modifier.heightIn(min = if (compact) 44.dp else 48.dp).padding(horizontal = if (icon == Icons.Default.Close) 0.dp else if (compact) 4.dp else 8.dp),
+        Row(Modifier.heightIn(min = if (dense) 40.dp else if (compact) 44.dp else 48.dp).padding(horizontal = if (icon == Icons.Default.Close) 0.dp else if (compact) 4.dp else 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             if (icon != null) Icon(icon, if (icon == Icons.Default.Close) label else null, Modifier.size(18.dp))
             if (icon != Icons.Default.Close) {
@@ -257,6 +260,7 @@ private fun SourcePickerButton(label: String, click: () -> Unit, modifier: Modif
                     maxLines = 1, softWrap = false)
             }
         }
+    }
     }
 }
 
@@ -325,3 +329,20 @@ private fun AlternateSourceInput(value: String, change: (String) -> Unit, label:
             }
         })
 }
+
+internal fun alternateHistoryProvider(selected: AlternateSourceProvider, label: String): AlternateSourceProvider {
+    if (selected != AlternateSourceProvider.AUTO) return selected
+    return when {
+        label.contains("OnlyFlix", true) -> AlternateSourceProvider.ONLYFLIX
+        label.contains("Movy", true) -> AlternateSourceProvider.MOVY
+        label.contains("Unity", true) -> AlternateSourceProvider.STREAMING_UNITY
+        label.contains("Athena", true) -> AlternateSourceProvider.ATLANTIC_ATHENA
+        label.contains("Primevid", true) -> AlternateSourceProvider.RIVE_PRIMEVIDS
+        label.contains("Citadel", true) -> AlternateSourceProvider.RIVE_CITADEL
+        else -> selected
+    }
+}
+
+internal fun alternateResumeStream(streams: List<AlternateStream>, preferredHeight: Int?): AlternateStream? =
+    streams.firstOrNull { preferredHeight != null && it.height == preferredHeight }
+        ?: streams.firstOrNull { it.height != null } ?: streams.firstOrNull()

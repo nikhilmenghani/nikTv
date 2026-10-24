@@ -67,6 +67,7 @@ import androidx.compose.ui.window.DialogProperties
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.nikhil.niktv.data.artworkRequest
+import com.nikhil.niktv.discovery.DiscoveryAction
 import com.nikhil.niktv.model.*
 import kotlinx.coroutines.launch
 
@@ -77,20 +78,12 @@ private val searchVisibleTypes = listOf(
     SearchContentType.MOVIES
 )
 
-private val SearchBackground = Color(0xFF0B0B0F)
+private val SearchBackground = Color(0xFF090B10)
 private val SearchSurface = Color(0xFF151720)
 private val SearchRaised = Color(0xFF1B1E28)
 private val SearchOutline = Color(0xFF2A2D36)
 private val SearchMuted = Color(0xFFA7ABB5)
-private val SearchAccent = Color(0xFF7C8CFF)
-
-private fun SearchContentType.searchAccent(): Color = when (this) {
-    SearchContentType.ALL -> SearchAccent
-    SearchContentType.LIVE_TV -> Color(0xFFE65D68)
-    SearchContentType.MOVIES -> Color(0xFF55B8FF)
-    SearchContentType.SERIES -> Color(0xFF9A80FF)
-    SearchContentType.EPISODES -> SearchAccent
-}
+private val SearchAccent = Color(0xFFE50925)
 
 private data class SearchCategoryOption(
     val id: String,
@@ -130,7 +123,11 @@ internal fun ModernSearchScreen(
     deleteRecent: (RecentSearch) -> Unit,
     openResult: (MediaItem) -> Unit,
     loadMore: () -> Unit,
-    toggleFavorite: (FavoriteItem) -> Unit
+    toggleFavorite: (FavoriteItem) -> Unit,
+    discoveryChrome: Boolean = false,
+    headerFocusRequester: FocusRequester? = null,
+    queryFocusRequester: FocusRequester? = null,
+    headerHasFocus: Boolean = false
 ) {
     var categoryPickerOpen by rememberSaveable(state.searchType) {
         mutableStateOf(false)
@@ -144,7 +141,8 @@ internal fun ModernSearchScreen(
     var queryFocused by remember { mutableStateOf(false) }
     var showLocalSearchProgress by remember { mutableStateOf(false) }
 
-    val searchRequester = remember { FocusRequester() }
+    val fallbackSearchRequester = remember { FocusRequester() }
+    val searchRequester = queryFocusRequester ?: fallbackSearchRequester
     val clearSearchRequester = remember { FocusRequester() }
     val submitSearchRequester = remember { FocusRequester() }
     val categoryRequester = remember { FocusRequester() }
@@ -276,9 +274,10 @@ internal fun ModernSearchScreen(
         state.searchLocalLoading,
         state.searchServerLoading,
         state.searchUsedServer,
-        searchEditing
+        searchEditing,
+        headerHasFocus
     ) {
-        if (state.searchType != SearchContentType.ALL && !resultsFocused && remoteNavigationActive && !searchEditing && !queryFocused && !restoreQueryFocus &&
+        if (state.searchType != SearchContentType.ALL && !resultsFocused && remoteNavigationActive && !headerHasFocus && !searchEditing && !queryFocused && !restoreQueryFocus &&
             !state.searchLocalLoading && !state.searchServerLoading &&
             state.searchResults.isNotEmpty()
         ) {
@@ -301,7 +300,7 @@ internal fun ModernSearchScreen(
             .background(SearchBackground)
             .padding(horizontal = if (configuration.screenWidthDp < 600) 14.dp else 20.dp)
     ) {
-        SearchScreenHeader(
+        if (!discoveryChrome) SearchScreenHeader(
             title = if (state.searchScopeLocked) {
                 "Search ${state.searchType.title}"
             } else {
@@ -321,7 +320,7 @@ internal fun ModernSearchScreen(
 
         Spacer(Modifier.height(6.dp))
 
-        val searchBarShape = RoundedCornerShape(18.dp)
+        val searchBarShape = RoundedCornerShape(if (discoveryChrome) 10.dp else 18.dp)
         val queryFocusBorder =
             if (queryFocused && remoteNavigationActive) {
                 Color(0xFFFF3340)
@@ -397,6 +396,7 @@ internal fun ModernSearchScreen(
                         .fillMaxHeight()
                         .focusRequester(searchRequester)
                         .focusProperties {
+                            headerFocusRequester?.let { up = it }
                             right =
                                 if (state.searchQuery.isNotEmpty()) {
                                     clearSearchRequester
@@ -445,6 +445,17 @@ internal fun ModernSearchScreen(
                                         }
                                         true
                                     }
+                                    Key.DirectionUp -> {
+                                        // A read-only text editor can consume Up as caret
+                                        // movement before Compose follows focusProperties.
+                                        val header = headerFocusRequester
+                                        if (header != null) {
+                                            if (event.type == KeyEventType.KeyDown) {
+                                                runCatching { header.requestFocus() }
+                                            }
+                                            true
+                                        } else false
+                                    }
                                     else -> false
                                 }
                             } else false
@@ -482,7 +493,7 @@ internal fun ModernSearchScreen(
                 )
 
                 if (state.searchQuery.isNotEmpty()) {
-                    IconButton(
+                    DiscoveryAction("Clear search", Icons.Default.Close, iconOnly = true,
                         onClick = {
                             searchEditing = false
                             keyboard?.hide()
@@ -490,28 +501,28 @@ internal fun ModernSearchScreen(
                             restoreQueryFocus = true
                         },
                         modifier = Modifier
+                            .size(44.dp)
                             .focusRequester(clearSearchRequester)
                             .focusProperties {
                                 left = searchRequester
                                 right = submitSearchRequester
                                 down = typeBelowSearch
                             }
-                            .remoteFocusFrame(CircleShape)
-                    ) {
-                        Icon(Icons.Default.Close, "Clear search")
-                    }
+                    )
                 }
 
                 val canSubmit =
                     state.searchQuery.isNotBlank() &&
                         !state.searchServerLoading
-                FilledIconButton(
+                DiscoveryAction("Search", Icons.AutoMirrored.Filled.ArrowForward,
+                    iconOnly = true, selected = canSubmit,
                     onClick = {
                         searchEditing = false
                         keyboard?.hide()
                         search(false)
                     },
                     modifier = Modifier
+                        .size(44.dp)
                         .focusRequester(submitSearchRequester)
                         .focusProperties {
                             left =
@@ -521,24 +532,10 @@ internal fun ModernSearchScreen(
                                     searchRequester
                                 }
                             down = typeBelowSearch
-                        }
-                        .remoteFocusFrame(CircleShape),
+                        },
                     // Keep a remote focus target while a request is running.
-                    enabled = true,
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor =
-                            if (canSubmit) SearchAccent else SearchOutline,
-                        contentColor =
-                            if (canSubmit) Color.White else SearchMuted,
-                        disabledContainerColor = SearchOutline,
-                        disabledContentColor = SearchMuted
-                    )
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        "Search"
-                    )
-                }
+                    enabled = true
+                )
             }
         }
 
@@ -1041,9 +1038,9 @@ private fun SearchScopeButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val accent = type.searchAccent()
+    val accent = SearchAccent
     val compact = LocalConfiguration.current.screenWidthDp < 600
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(10.dp)
     val icon = when (type) {
         SearchContentType.ALL -> Icons.Default.Search
         SearchContentType.LIVE_TV -> Icons.Default.LiveTv
@@ -1055,7 +1052,7 @@ private fun SearchScopeButton(
         onClick = onClick,
         modifier = modifier.height(48.dp).remoteFocusFrame(shape),
         shape = shape,
-        color = if (selected) accent.copy(alpha = 0.18f) else SearchSurface,
+        color = if (selected) accent else SearchSurface,
         border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) accent.copy(alpha = 0.88f) else SearchOutline)
     ) {
         Row(
@@ -1064,7 +1061,7 @@ private fun SearchScopeButton(
             horizontalArrangement = Arrangement.Center
         ) {
             if (!compact) {
-                Icon(icon, null, Modifier.size(19.dp), tint = if (selected) accent else SearchMuted)
+                Icon(icon, null, Modifier.size(19.dp), tint = if (selected) Color.White else SearchMuted)
                 Spacer(Modifier.width(7.dp))
             }
             Text(
@@ -1086,8 +1083,8 @@ private fun SearchCategoryButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(14.dp)
-    val accent = contentType.searchAccent()
+    val shape = RoundedCornerShape(10.dp)
+    val accent = SearchAccent
     Surface(
         onClick = onClick,
         modifier = modifier.height(48.dp).remoteFocusFrame(shape),
@@ -1214,7 +1211,7 @@ private fun SearchCategoryPickerContent(
 ) {
     var categoryQuery by rememberSaveable(contentType) { mutableStateOf("") }
     var categorySearchEditing by rememberSaveable(contentType) { mutableStateOf(false) }
-    val accent = contentType.searchAccent()
+    val accent = SearchAccent
     val configuration = LocalConfiguration.current
     val columns = if (isTv || configuration.screenWidthDp >= 700) 2 else 1
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1222,12 +1219,11 @@ private fun SearchCategoryPickerContent(
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
-    val optionRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    val optionRequesters = remember(options) { options.associate { it.id to FocusRequester() } }
     val filteredOptions = remember(options, categoryQuery) {
         val query = categoryQuery.trim()
         if (query.isBlank()) options else options.filter { it.title.contains(query, ignoreCase = true) }
     }
-    filteredOptions.forEach { optionRequesters.getOrPut(it.id) { FocusRequester() } }
     val entryIndex = remember(filteredOptions, selectedCategoryId) {
         filteredOptions.indexOfFirst { it.id == selectedCategoryId }.takeIf { it >= 0 } ?: 0
     }

@@ -123,7 +123,7 @@ internal fun DiscoveryLibraryFeed(state: NikTvState, destination: DiscoveryLibra
     val current = selected?.takeIf { it.live }?.media?.let { state.withCachedLiveGuide(profile, it) }
     val programme = current?.currentLiveProgramme(now)
     val livePresentation = current?.let { liveTvTilePresentation(it.title, selected?.category?.title.orEmpty(), state.savedProfile?.portalType == PortalType.XTREAM) }
-    val title = if (locked) "Sensitive content" else if (live) livePresentation?.title ?: "Live TV" else card?.title ?: selected?.media?.title ?: "My List"
+    val title = if (locked) "Sensitive content" else if (live) livePresentation?.title ?: "Live TV" else card?.title ?: selected?.let { com.nikhil.niktv.data.providerDisplayTitle(it.media.title, it.type) } ?: "My List"
     val overview = if (locked) "Unlock to view this content." else if (live) programme?.let(::liveProgrammeSummary)
         ?: "Choose a channel or browse your categories." else card?.overview ?: selected?.media?.description.orEmpty()
     val width = if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else discoveryPosterWidth(configuration.screenWidthDp.toFloat(), configuration.screenHeightDp.toFloat()).dp
@@ -327,10 +327,10 @@ internal fun LibrarySavedPoster(entry: LibraryEntry, state: NikTvState, width: D
     val reduceMotion = Settings.Global.getFloat(LocalContext.current.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     val configuration = LocalConfiguration.current
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
-    if (phone && !entry.live) DiscoveryPhoneMediaCard(if (sensitive) "Sensitive content" else entry.media.title,
+    if (phone && !entry.live) DiscoveryPhoneMediaCard(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type),
         if (sensitive) null else entry.media.logo, entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
         wide = false, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus)
-    else DiscoveryPosterTile(if (sensitive) "Sensitive content" else entry.media.title, if (sensitive) null else entry.media.logo,
+    else DiscoveryPosterTile(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type), if (sensitive) null else entry.media.logo,
         entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
         reduceMotion = reduceMotion, aspect = if (entry.live) 16f / 9f else 2f / 3f, focusVerticalInset = focusInset, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus)
     ModernTileActionsMenu(menu, true, dismiss = { menu = false }, toggleFavorite = remove, clear = null,

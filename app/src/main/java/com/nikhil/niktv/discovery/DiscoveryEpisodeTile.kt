@@ -48,16 +48,16 @@ internal fun DiscoveryEpisodeTile(title: String, artwork: String?, label: String
                 }
             }
         }
-        if (listView) Row(Modifier.padding(if (compact) 10.dp else 12.dp), horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 16.dp),
+        if (listView) Row(Modifier.padding(if (compact) 10.dp else 8.dp), horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            image(Modifier.width(if (compact) 92.dp else 156.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            image(Modifier.width(if (compact) 92.dp else 112.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, color = Color.White, style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(listOf(label, metadata).filter(String::isNotBlank).joinToString(" · "),
                     color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelMedium)
                 if (!overview.isNullOrBlank()) Text(overview, color = Color(0xFFB9BDC7),
-                    style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    style = MaterialTheme.typography.bodySmall, maxLines = if (compact) 2 else 1, overflow = TextOverflow.Ellipsis)
                 remaining?.let { Text(it, color = if (resume) Color(0xFFFFA0AA) else Color(0xFFB9BDC7),
                     style = MaterialTheme.typography.labelSmall) }
             }

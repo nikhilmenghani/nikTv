@@ -131,6 +131,7 @@ private val discoveryMovieProgressSeparators = Regex("[^\\p{L}\\p{N}]+")
 
 /** Profile-scoped progress only; legacy unscoped keys cannot safely identify this profile. */
 internal fun discoveryRecentProgressPrefix(recent: RecentItem): String? {
+    recent.alternateTarget?.let { return com.nikhil.niktv.ui.alternateProgressKey(recent.profileKey, it) }
     val type = if (recent.kind == FavoriteKind.SERIES) CatalogType.SERIES else CatalogType.MOVIES
     val prefix = "progress-v2|${recent.profileKey}|${type.name}|"
     val identity = if (type == CatalogType.SERIES) {
@@ -142,6 +143,7 @@ internal fun discoveryRecentProgressPrefix(recent: RecentItem): String? {
 
 internal fun discoveryRecentProgress(recent: RecentItem, progress: List<PlaybackProgress>): PlaybackProgress? {
     val prefix = discoveryRecentProgressPrefix(recent) ?: return null
+    if (recent.alternateTarget != null) return progress.firstOrNull { it.key == prefix }
     var latest: PlaybackProgress? = null
     for (entry in progress) {
         if (entry.key.startsWith(prefix) && (latest == null || entry.updatedAtMillis > latest.updatedAtMillis)) latest = entry
@@ -149,30 +151,7 @@ internal fun discoveryRecentProgress(recent: RecentItem, progress: List<Playback
     return latest
 }
 
-internal fun discoveryFeedRequest(section: TmdbHomeSection): Pair<String, Map<String, String>> {
-    val type = if (section.series) "tv" else "movie"
-    val base = mapOf("include_adult" to "false")
-    if (section in setOf(TmdbHomeSection.TRENDING_MOVIES, TmdbHomeSection.TRENDING_SERIES)) return "/trending/$type/day" to base
-    if (section in setOf(TmdbHomeSection.TOP_RATED_MOVIES, TmdbHomeSection.TOP_RATED_SERIES)) return "/$type/top_rated" to base
-    val language = when (section) {
-        TmdbHomeSection.NEW_BOLLYWOOD_MOVIES, TmdbHomeSection.NEW_BOLLYWOOD_SERIES, TmdbHomeSection.BOLLYWOOD, TmdbHomeSection.BOLLYWOOD_SERIES -> "hi"
-        TmdbHomeSection.NEW_HOLLYWOOD_MOVIES, TmdbHomeSection.NEW_HOLLYWOOD_SERIES, TmdbHomeSection.HOLLYWOOD, TmdbHomeSection.HOLLYWOOD_SERIES -> "en"
-        else -> null
-    }
-    val genre = when (section) {
-        TmdbHomeSection.ACTION -> "28"; TmdbHomeSection.ACTION_SERIES -> "10759"
-        TmdbHomeSection.COMEDY, TmdbHomeSection.COMEDY_SERIES -> "35"
-        TmdbHomeSection.HORROR -> "27"; TmdbHomeSection.THRILLER -> "53"; TmdbHomeSection.MYSTERY_SERIES -> "9648"
-        TmdbHomeSection.FAMILY, TmdbHomeSection.FAMILY_SERIES -> "10751"
-        TmdbHomeSection.DOCUMENTARY, TmdbHomeSection.DOCUMENTARY_SERIES -> "99"
-        else -> null
-    }
-    val recent = section.name.startsWith("NEW_")
-    val query = base + mapOf("sort_by" to if (recent) { if (section.series) "first_air_date.desc" else "primary_release_date.desc" } else "popularity.desc",
-        (if (section.series) "first_air_date.lte" else "primary_release_date.lte") to currentDiscoveryDate()) +
-        listOfNotNull(language?.let { "with_original_language" to it }, genre?.let { "with_genres" to it }).toMap()
-    return "/discover/$type" to query
-}
+internal fun discoveryFeedRequest(section: TmdbHomeSection) = com.nikhil.niktv.model.tmdbRegionalRequest(section, currentDiscoveryDate())
 
 /** Personal availability counters never cross a profile or media-type boundary. */
 internal fun discoveryAvailabilityKey(profile: String, card: DiscoveryCard) = "$profile|${card.key}"

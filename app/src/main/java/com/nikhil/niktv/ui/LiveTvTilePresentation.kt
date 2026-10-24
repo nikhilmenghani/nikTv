@@ -19,6 +19,7 @@ private val liveRegions = mapOf("IN" to "India", "INDIA" to "India", "US" to "US
     "AU" to "Australia", "NZ" to "New Zealand")
 private val livePrefixLabels = liveRegions + liveLanguages.associateBy { it.uppercase(Locale.ROOT) } +
     mapOf("TM" to "Tamil", "CRIC" to "Cricket", "KIDS" to "Kids", "EN" to "English", "AR" to "Arabic")
+private val wioCategoryPrefix = Regex("(?i)^(?:upcoming|latest|netflix|amazon|disney|box office|subtitles)\\b")
 private val continuousLabel = Regex("(?i)\\b24\\s*[/x]\\s*7\\b")
 private val qualityLabel = Regex("(?i)(?<![\\p{L}\\p{N}])(?:\\((8K|4K|UHD|FHD|HD|SD)\\)|(8K|4K|UHD|FHD|HD|SD))(?![\\p{L}\\p{N}+]|\\s*\\+)")
 
@@ -54,8 +55,13 @@ internal fun liveTvTilePresentation(title: String, category: String, xtream: Boo
     if (!xtream) {
         val quality = Regex("(?i)\\s*\\((4K|8K|UHD|FHD|HD)\\)\\s*$")
         val group = category.substringBefore('|').trim()
+        val language = liveLanguages.firstOrNull { category.startsWith(it, true) }
         var name = title.replace(quality, "").trim()
-        if ('|' in category && group.isNotBlank() && name.startsWith("$group ", true)) name = name.drop(group.length).trim()
+        if ('|' in category && group.isNotBlank() && (liveLanguages.none { it.equals(group, true) } || name.endsWith(" MOVIES", true)) && name.startsWith("$group ", true)) name = name.drop(group.length).trim()
+        if (language != null && name.startsWith("$language ", true) &&
+            wioCategoryPrefix.containsMatchIn(name.drop(language.length).trim()))
+            name = name.drop(language.length).trim()
+        if (name.startsWith("ACTOR | ", true) && category.contains("MOVIES", true)) name = name.drop(8).trim()
         if (category.contains("MOVIES", true) && name.endsWith(" MOVIES", true) && name.length > 7) name = name.dropLast(7).trim()
         return LiveTvTilePresentation(name, quality = quality.find(title)?.groupValues?.get(1)?.uppercase(Locale.ROOT))
     }

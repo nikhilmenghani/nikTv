@@ -218,6 +218,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var allFavorites: List<FavoriteItem> = emptyList()
     private var allRecentlyPlayed: List<RecentItem> = emptyList()
     private var categoryFilterApplyInProgress = false
+    private var searchSeriesReturn: SearchSeriesReturn? = null
     private var allWatchedSeries: List<WatchedSeries> = emptyList()
     private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
@@ -925,6 +926,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openCatalogType(type: CatalogType) {
+        searchSeriesReturn = null
         com.nikhil.niktv.discovery.modernCatalogSurface(type)?.let { openDiscovery(it); return }
         _state.update { current ->
             current.enterCatalogRoot(type).copy(
@@ -1624,6 +1626,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadCategory(category: Category) = task {
+        searchSeriesReturn = null
         if ((category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title)) && !authorizeParental()) return@task
         val session = requireNotNull(_state.value.session)
         val profileKey = session.profile.cacheKey()
@@ -3375,6 +3378,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val session = requireNotNull(_state.value.session)
         val series = resolveSeriesContainer(session, requestedSeries)
         if (series != requestedSeries && _state.value.selectedSeries?.id == requestedSeries.id) {
+            searchSeriesReturn = searchSeriesReturn?.resolved(session.profile.cacheKey(), requestedSeries.id, series.id)
             _state.update { it.copy(selectedSeries = series) }
         }
         val profileKey = session.profile.cacheKey()
@@ -3509,6 +3513,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun openModernTmdbSection(section: TmdbHomeSection) {
+        searchSeriesReturn = null
         tmdbAvailabilityJob?.cancel()
         cancelPendingPlayback()
         val snapshot = _state.value
@@ -3539,6 +3544,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openModernIptvCategory(category: Category) {
+        searchSeriesReturn = null
         if (com.nikhil.niktv.data.ParentalControls.enabled(getApplication()) && !com.nikhil.niktv.data.ParentalControls.unlocked(getApplication()) &&
             (category.isAdult || com.nikhil.niktv.data.adultContentLabel(category.title))) {
             viewModelScope.launch { if (authorizeParental()) openModernIptvCategory(category) }
@@ -4406,6 +4412,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         resolved: MediaItem,
         confirmedByUser: Boolean
     ) {
+        searchSeriesReturn = null
         val openedFromModernSection =
             _state.value.modernUiEnabled &&
                 _state.value.modernTmdbSection?.series == true
@@ -5045,6 +5052,12 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (gateAdultAction(selected.item, CatalogType.MOVIES) {
                 if (_state.value.providerMovieDetails === selected) playProviderMovieDetails()
             }) return
+        selected.item.id.removePrefix("tmdb-movie:").toIntOrNull()?.takeIf { selected.item.id.startsWith("tmdb-movie:") }?.let { id ->
+            val item = selected.item
+            openTrendingMovie(TrendingMovie(com.nikhil.niktv.data.TmdbMovie(id, item.title, item.title,
+                item.description, item.logo, null, null, null)))
+            return
+        }
         val request = beginPlaybackRequest()
         playbackNavigationIndex = null
         navigationCursor.select(request, selected.queue.map { it.id }, selected.item.id)
@@ -5133,6 +5146,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (snapshot.selectedType == CatalogType.SERIES && snapshot.selectedSeries == null) {
+            searchSeriesReturn = null
             task {
                 val session = requireNotNull(_state.value.session)
                 _state.update {
@@ -5299,10 +5313,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         _state.update { current ->
-            current.copy(
-                searchOpen = true,
-                settingsOpen = false,
-                favoritesOpen = false,
+            current.openSearchNavigation().copy(
                 searchType = effectiveType,
                 searchServerLoading = false,
                 searchScopeLocked = tabType != null,
@@ -6177,12 +6188,19 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             SearchContentType.LIVE_TV -> play(item, CatalogType.LIVE_TV)
             SearchContentType.SERIES -> task {
                 val session = requireNotNull(_state.value.session)
+                searchSeriesReturn = SearchSeriesReturn.capture(_state.value, item)
+                searchPreviewJob?.cancel()
+                searchServerJob?.cancel()
                 _state.update {
                     it.copy(
                         searchOpen = false,
                         homeOpen = false,
+                        favoritesOpen = false,
                         selectedType = CatalogType.SERIES,
                         selectedSeries = item,
+                        seriesOpenedFromHome = false,
+                        seriesOpenedFromFavorites = false,
+                        seriesOpenedFromModernSection = false,
                         playbackReturnFocusId = null,
                         items = emptyList(),
                         availableSeriesSeasons = emptyList(),
@@ -6230,15 +6248,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { if (it.alternateSources == null) it else it.copy(alternateSources = null) }
     }
 
-    fun openAlternateSources(request: AlternateSourceRequest) {
+    fun openAlternateSources(request: AlternateSourceRequest) = openAlternateSourcesInternal(request, null)
+
+    private fun openAlternateSourcesInternal(request: AlternateSourceRequest, resumeTarget: com.nikhil.niktv.data.AlternateSourceTarget?) {
         if (request.type !in setOf(CatalogType.MOVIES, CatalogType.SERIES)) return
         val protected = alternateProtectedMedia(request)
-        if (gateAdultAction(protected, request.type) { openAlternateSources(request) }) return
+        if (gateAdultAction(protected, request.type) { openAlternateSourcesInternal(request, resumeTarget) }) return
         closeAlternateSources()
-        val target = alternateTargetFor(request)
+        val target = resumeTarget ?: alternateTargetFor(request)
         _state.update { it.copy(alternateSources = AlternateSourcePickerState(request, target, alternateProfile())) }
         // Series tiles ask for the episode first. Exact episode/movie actions resolve immediately.
-        if (!target.series || request.episode != null || request.item.episodeNumber != null) findAlternateSources(target)
+        if (!target.series || request.episode != null || request.item.episodeNumber != null) findAlternateSources(target, resumeAutomatically = resumeTarget != null)
     }
 
     fun openPlayingAlternateSources(position: Long, playing: PlayingMedia, positionReader: (() -> Long)? = null) {
@@ -6254,7 +6274,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             selectedId = source.selectedId)) }
     }
 
-    fun findAlternateSources(target: com.nikhil.niktv.data.AlternateSourceTarget) {
+    fun findAlternateSources(target: com.nikhil.niktv.data.AlternateSourceTarget, resumeAutomatically: Boolean = false) {
         val picker = _state.value.alternateSources ?: return
         if (picker.profileKey != alternateProfile()) { closeAlternateSources(); return }
         val protected = alternateProtectedMedia(picker.request).copy(title = target.title)
@@ -6273,6 +6293,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 if (generation != alternateLookupGeneration || alternateProfile() != picker.profileKey) return@launch
                 _state.update { current -> current.copy(alternateSources = current.alternateSources?.copy(
                     target = identified, loading = false, streams = streams, error = if (streams.isEmpty()) "No playable sources found for this title." else null)) }
+                if (resumeAutomatically && streams.isNotEmpty()) chooseAlternateStream(alternateResumeStream(streams, identified.preferredHeight)!!.id)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
               catch (error: Exception) {
                 if (generation == alternateLookupGeneration && alternateProfile() == picker.profileKey)
@@ -6389,6 +6410,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             error = null, playbackReturnFocusId = if (it.nowPlaying != null)
                 it.playbackReturnFocusId ?: picker.request.item.id else picker.request.item.id,
             playbackQueueScope = null, playbackQueueHasMore = false, playbackQueueLoadingMore = false) }
+        val series = alternateSeriesMedia(picker.request, target)
+        val recent = RecentItem(if (target.series) FavoriteKind.SERIES else FavoriteKind.MOVIE,
+            series ?: item, lastPlayed = item.takeIf { target.series }, profileKey = picker.profileKey,
+            alternateTarget = target.copy(provider = alternateHistoryProvider(target.provider, stream.label), preferredHeight = stream.height))
+        val updated = (listOf(recent) + _state.value.recentlyPlayed).distinctBy { it.key }.take(MAX_RECENT_ITEMS)
+        _state.update { it.copy(recentlyPlayed = updated) }
+        allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == picker.profileKey } + updated
+        val persisted = allRecentlyPlayed
+        viewModelScope.launch { store.saveRecentlyPlayed(persisted) }
+
     }
 
     private fun retryAlternatePlayback(position: Long, playing: PlayingMedia, target: com.nikhil.niktv.data.AlternateSourceTarget? = null) {
@@ -7259,7 +7290,17 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         scheduleHistoryRecommendations()
     }
 
-    fun closeSeries() = task {
+    fun closeSeries() {
+        val returned = searchSeriesReturn?.restore(_state.value)
+        searchSeriesReturn = null
+        if (returned != null) {
+            _state.value = returned
+            return
+        }
+        closeSeriesBrowse()
+    }
+
+    private fun closeSeriesBrowse() = task {
         if (_state.value.seriesOpenedFromModernSection) {
             _state.update { current ->
                 val category = current.modernIptvCategory
@@ -7469,6 +7510,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openSettings() {
+        searchSeriesReturn = null
         cancelPendingPlayback()
         _state.update {
             it.copy(settingsOpen = true, offlineDownloadsOpen = false, searchOpen = false, favoritesOpen = false, homeOpen = false)
@@ -7747,6 +7789,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return authenticateProfileForOpening(profile).also { store.save(it) }
     }
     fun switchProfile(profile: PortalProfile) = task {
+        searchSeriesReturn = null
         closeAlternateSources()
         closeProfileSwitcher()
         profilePreparationJob?.cancel()
@@ -7784,6 +7827,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openFavorites() {
+        searchSeriesReturn = null
         cancelPendingPlayback()
         _state.update {
             it.copy(
@@ -7804,6 +7848,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun closeFavorites() = _state.update { it.copy(favoritesOpen = false) }
     fun openOfflineDownloads() {
+        searchSeriesReturn = null
         cancelPendingPlayback()
         _state.update {
             it.copy(
@@ -7859,6 +7904,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         )) }
     }
     fun openHome() {
+        searchSeriesReturn = null
         if (_state.value.discoveryExperienceEnabled) { openDiscovery(DashboardSurface.HOME); return }
         cancelPendingPlayback()
         _state.update { it.copy(
@@ -7892,6 +7938,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     /** Trial routes deliberately do not call loadDashboardDiscovery or resolve any provider title. */
 
     fun openDiscovery(surface: DashboardSurface) {
+        searchSeriesReturn = null
         cancelPendingPlayback()
         com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.setEnabled(getApplication(), true)
         _state.update { it.copy(discoveryExperienceEnabled = true, discoverySurface = surface,
@@ -7993,6 +8040,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openFavorite(favorite: FavoriteItem) {
+        searchSeriesReturn = null
         val type = when (favorite.kind) {
             FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
             FavoriteKind.MOVIE -> CatalogType.MOVIES
@@ -8043,6 +8091,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSeriesFromHome(series: MediaItem) = task {
+        searchSeriesReturn = null
         discoveryMetadataRequests.cancel()
         if (isAdultMedia(series, CatalogType.SERIES) && !authorizeParental()) return@task
         val session = requireNotNull(_state.value.session)
@@ -8106,6 +8155,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openRecent(recent: RecentItem) {
+        recent.alternateTarget?.let { target ->
+            if (recent.profileKey != alternateProfile()) return
+            openAlternateSourcesInternal(AlternateSourceRequest(recent.lastPlayed ?: recent.media,
+                if (target.series) CatalogType.SERIES else CatalogType.MOVIES,
+                recent.media.takeIf { target.series }, target.season, target.episode), target)
+            return
+        }
+
         val type = when (recent.kind) {
             FavoriteKind.CHANNEL -> CatalogType.LIVE_TV
             FavoriteKind.MOVIE -> CatalogType.MOVIES
@@ -8337,6 +8394,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun dismissError() = _state.update { it.copy(error = null) }
     fun logout() = viewModelScope.launch {
+        searchSeriesReturn = null
         recommendationJob?.cancel()
         recommendationFingerprint = null
         recommendationProgress = emptyList()

@@ -41,7 +41,7 @@ internal fun DiscoveryLibraryScreen(state: NikTvState, destination: DiscoveryLib
     var menu by remember(destination) { mutableStateOf(false) }
     val remote = tv || LocalInputModeManager.current.inputMode == InputMode.Keyboard
     LaunchedEffect(destination, remote) {
-        if (remote) repeat(8) {
+        if (remote && state.modernIptvCategory == null) repeat(8) {
             withFrameNanos { }
             if (runCatching { tab.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
@@ -81,3 +81,7 @@ internal fun discoveryLibraryDestination(enabled: Boolean, home: Boolean, type: 
     !home && type == CatalogType.LIVE_TV -> DiscoveryLibraryDestination.LIVE_TV
     else -> null
 }
+
+/** Established Live TV categories/collections stay inside the modern navigation shell. */
+internal fun useEstablishedLibraryBrowser(destination: DiscoveryLibraryDestination?, phone: Boolean): Boolean =
+    destination == DiscoveryLibraryDestination.LIVE_TV || (phone && destination != null)

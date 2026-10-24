@@ -49,6 +49,7 @@ internal fun SeriesEpisodeToolbar(
     searchRequester: FocusRequester,
     sortRequester: FocusRequester,
     layoutRequester: FocusRequester,
+    onSortApplied: (() -> Unit)? = null,
     beforeAction: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -57,10 +58,13 @@ internal fun SeriesEpisodeToolbar(
     val selectedSort = remember { FocusRequester() }
     val host = LocalView.current
     var hadSortPopup by remember { mutableStateOf(false) }
+    var sortSelected by remember { mutableStateOf(false) }
+    val currentSortApplied by rememberUpdatedState(onSortApplied)
     fun dismissSort() { sortOpen = false }
     LaunchedEffect(sortOpen) {
         if (sortOpen) {
             hadSortPopup = true
+            sortSelected = false
             repeat(12) {
                 withFrameNanos { }
                 if (runCatching { selectedSort.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
@@ -69,7 +73,14 @@ internal fun SeriesEpisodeToolbar(
             hadSortPopup = false
             repeat(30) {
                 withFrameNanos { }
-                if (host.hasWindowFocus() && runCatching { sortRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                if (host.hasWindowFocus()) {
+                    if (sortSelected && currentSortApplied != null) {
+                        sortSelected = false
+                        currentSortApplied?.invoke()
+                        return@LaunchedEffect
+                    }
+                    if (runCatching { sortRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+                }
             }
         }
     }
@@ -110,7 +121,7 @@ internal fun SeriesEpisodeToolbar(
                         NikDropdownMenuItem(text = { Text(label) },
                             modifier = if (newestFirst == descending) Modifier.focusRequester(selectedSort) else Modifier,
                             leadingIcon = if (newestFirst == descending) {{ Icon(Icons.Default.Check, null) }} else null,
-                            onClick = { onNewestFirst(descending); dismissSort() })
+                            onClick = { sortSelected = true; onNewestFirst(descending); dismissSort() })
                     }
                 }
             }

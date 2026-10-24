@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import com.nikhil.niktv.R
 import com.nikhil.niktv.model.DashboardSurface
 import com.nikhil.niktv.model.CatalogType
+import com.nikhil.niktv.ui.isTvLikeDevice
 import com.nikhil.niktv.ui.NikTvSecondaryActionButton
 import com.nikhil.niktv.ui.NikDropdownMenuItem
 import com.nikhil.niktv.ui.StableTileFocusViewport
@@ -41,15 +42,22 @@ import java.util.Date
 
 @Composable
 internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
-    surface: DashboardSurface, classic: (String) -> Unit, customize: (() -> Unit)?) {
+    surface: DashboardSurface, classic: (String) -> Unit, customize: (() -> Unit)?,
+    categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
     val configure = LocalConfigureProviderDiscovery.current
     val options = LocalDiscoveryLibraryOptions.current
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
+    var categoryTrigger by remember { mutableIntStateOf(0) }
+    if (phone && customize != null) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
         DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true) { change(true) }
         DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
-            if (options?.live == true) NikDropdownMenuItem(text = { Text("Customize Live TV") },
+            if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); options.open?.invoke() ?: configure(CatalogType.LIVE_TV) })
-            customize?.let { action -> NikDropdownMenuItem(text = { Text("Customize ${surface.trialTitle().removeSuffix(" 2")}") },
+            if (phone && customize != null && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
+                onClick = { change(false); categoryTrigger++ })
+            customize?.let { action -> NikDropdownMenuItem(text = { Text("TMDB categories") },
                 onClick = { change(false); action() }) }
             listOf("Offline", "Settings").forEach { label ->
                 NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); classic(label) })
@@ -67,7 +75,7 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
     backdrop: String? = null, backdropBounds: Rect = Rect.Zero,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
-    library: DiscoveryLibraryDestination? = null) {
+    library: DiscoveryLibraryDestination? = null, searchActive: Boolean = false) {
     val tabs = rememberScrollState()
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -89,15 +97,17 @@ internal fun DiscoveryTopNavigation(surface: DashboardSurface, profile: String,
                         .graphicsLayer { scaleX = 1.8f; scaleY = 1.8f })
                 }
                 DiscoveryAction("Back", Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = back)
-                DiscoveryAction("Search", Icons.Default.Search, horizontalPadding = 10.dp, onFocus = headerFocus) { classic("Search") }
+                DiscoveryAction("Search", Icons.Default.Search, selected = searchActive, horizontalPadding = 10.dp,
+                    modifier = if (searchActive) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier,
+                    onFocus = headerFocus) { classic("Search") }
                 StableTileFocusViewport {
                     Row(Modifier.weight(1f, fill = false).horizontalScroll(tabs), horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         trialSurfaces.forEach { tab ->
                             DiscoveryAction(tab.trialTitle(), visualLabel = tab.trialTitle().removeSuffix(" 2"),
-                                selected = library == null && surface == tab, horizontalPadding = 12.dp,
+                                selected = !searchActive && library == null && surface == tab, horizontalPadding = 12.dp,
                                 modifier = Modifier.semantics { contentDescription = tab.trialTitle() }
-                                    .then(if (library == null && tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
+                                    .then(if (!searchActive && library == null && tab == surface) Modifier.focusRequester(tabRequester).focusProperties { down = playRequester } else Modifier),
                                 onFocus = headerFocus) { select(tab) }
                         }
                         DiscoveryAction("Live TV", selected = library == DiscoveryLibraryDestination.LIVE_TV, horizontalPadding = 12.dp,
@@ -149,16 +159,18 @@ internal fun DiscoveryPhoneNavigation(surface: DashboardSurface, tab: FocusReque
     menu: Boolean, changeMenu: (Boolean) -> Unit,
     categoryManagerOpen: Boolean = false, categoriesEnabled: Boolean = false,
     categoryPopupChanged: (Boolean) -> Unit = {},
-    library: DiscoveryLibraryDestination? = null, profile: String = "") {
+    library: DiscoveryLibraryDestination? = null, profile: String = "", searchActive: Boolean = false) {
     DiscoveryPhoneHeader(surface, false, tab, play, back, select, classic, menu, changeMenu,
-        customize = null, profile = profile, categoryManagerOpen = categoryManagerOpen, categoryPopupChanged = categoryPopupChanged)
+        customize = null, profile = profile, categoryManagerOpen = categoryManagerOpen,
+        categoryPopupChanged = categoryPopupChanged, searchActive = searchActive)
 
 }
 
 /** A direct entry to the same profile/type-scoped selections used by classic browsing. */
 @Composable
 internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boolean, compact: Boolean = false,
-    popupChanged: (Boolean) -> Unit = {}, onFocus: () -> Unit = {}, modifier: Modifier = Modifier) {
+    popupChanged: (Boolean) -> Unit = {}, onFocus: () -> Unit = {}, modifier: Modifier = Modifier,
+    showButton: Boolean = true, openTrigger: Int = 0) {
     val configure = LocalConfigureProviderDiscovery.current
     val requester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -166,7 +178,7 @@ internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boo
     var chooseType by remember { mutableStateOf(false) }
     var openedHere by remember { mutableStateOf(false) }
     var managerSeen by remember { mutableStateOf(false) }
-    fun restore() { scope.launch {
+    fun restore() { if (!showButton) return; scope.launch {
         repeat(30) {
             withFrameNanos { }
             if (view.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
@@ -179,10 +191,14 @@ internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boo
         }
     }
     DisposableEffect(chooseType) { popupChanged(chooseType); onDispose { popupChanged(false) } }
-    DiscoveryAction("IPTV categories", if (compact) Icons.Default.Tune else null, iconOnly = compact,
-        modifier = modifier.focusRequester(requester), onFocus = onFocus) {
+    fun openCategories() {
         val type = when (surface) { DashboardSurface.MOVIES -> CatalogType.MOVIES; DashboardSurface.SERIES -> CatalogType.SERIES; else -> null }
         if (type == null) chooseType = true else { openedHere = true; configure(type) }
+    }
+    LaunchedEffect(openTrigger) { if (openTrigger > 0) openCategories() }
+    if (showButton) DiscoveryAction("IPTV categories", if (compact) Icons.Default.Tune else null, iconOnly = compact,
+        modifier = modifier.focusRequester(requester), onFocus = onFocus) {
+        openCategories()
     }
     if (chooseType) {
         val first = remember { FocusRequester() }
