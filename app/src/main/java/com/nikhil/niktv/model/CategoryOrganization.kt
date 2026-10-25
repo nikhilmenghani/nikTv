@@ -95,6 +95,14 @@ object CategoryOrganization {
             .map { (label, members) -> collection(label, members) }
     }
 
+    /** A specific provider name remains findable even when its tile is grouped under a broad facet. */
+    fun search(organized: List<Category>, provider: List<Category>, query: String): List<Category> {
+        if (query.isBlank()) return organized
+        val matches = titleMatcher(query)
+        return (organized + provider.filterNot { it.isAdult || adultContentLabel(it.title) })
+            .distinctBy { it.id }.filter { matches(it.title) }
+    }
+
     fun select(items: List<MediaItem>, category: Category): List<MediaItem> {
         val members = category.sourceCategoryIds.toHashSet()
         return items.filter { it.portalCategoryId in members && !it.isAdult && !adultContentLabel(it.title) }

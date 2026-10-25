@@ -999,7 +999,7 @@ internal fun VlcPlayerScreen(
     // Observe actual video output, independently of VLC's media clock. Read native
     // statistics on a worker, retain/release the media reference, and never log URLs.
     LaunchedEffect(player) {
-        if (media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) return@LaunchedEffect
+        if (!com.nikhil.niktv.BuildConfig.DEBUG || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) return@LaunchedEffect
         var previous: IMedia.Stats? = null
         var sampledAt = android.os.SystemClock.elapsedRealtime()
         while (true) {

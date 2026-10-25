@@ -127,6 +127,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -761,8 +763,8 @@ private fun ModernDestinationHub(
             } else CategoryOrganization.organize(providerCategories, categoryBrowseMode)
         }
     }
-    val matchingCategories = remember(organizedCategories, categoryQuery, pinnedLiveCategories, pinnedMovieCategories, pinnedSeriesCategories) {
-        organizedCategories.filter { CategoryOrganization.matchesTitle(it.title, categoryQuery) }
+    val matchingCategories = remember(organizedCategories, providerCategories, state.rawCategoriesByType, categoryQuery, pinnedLiveCategories, pinnedMovieCategories, pinnedSeriesCategories) {
+        CategoryOrganization.search(organizedCategories, state.rawCategoriesByType[browseType].orEmpty(), categoryQuery)
             .sortedBy { category -> category.id !in when (category.type) {
                 CatalogType.LIVE_TV -> pinnedLiveCategories
                 CatalogType.MOVIES -> pinnedMovieCategories
@@ -849,10 +851,8 @@ private fun ModernDestinationHub(
         }
     }
     val libraryOptions = com.nikhil.niktv.discovery.LocalDiscoveryLibraryOptions.current
-    DisposableEffect(libraryOptions) {
-        libraryOptions?.open = { customizeHomeOpen = true }
-        onDispose { libraryOptions?.open = null }
-    }
+    val refreshProviderCategories = LocalRefreshProviderCategories.current
+
     Column(modifier.fillMaxSize()) {
         if (libraryOptions?.live != true) {
             Row(
@@ -935,7 +935,7 @@ private fun ModernDestinationHub(
             else 12.dp
         )
     ) {
-        if (organizedBrowse) {
+        if (organizedBrowse || dashboardSurface == DashboardSurface.LIVE_TV) {
             item("category-browse-controls", span = fullSpan) {
                 CategoryBrowseControls(categoryBrowseMode, categoryQuery,
                     onMode = {
@@ -943,7 +943,11 @@ private fun ModernDestinationHub(
                         CategoryCollectionPreferences.saveBrowseMode(context, profileKey, browseType, it)
                         hubGridState.requestScrollToItem(0)
                     }, onQuery = { categoryQuery = it; hubGridState.requestScrollToItem(0) },
-                    create = { createCollection = true })
+                    create = { createCollection = true }, organized = organizedBrowse,
+                    refresh = { refreshProviderCategories(browseType) },
+                    refreshing = (profileKey to browseType) in state.categoryRefreshes,
+                    visibleCount = providerCategories.size,
+                    totalCount = state.rawCategoriesByType[browseType]?.size ?: providerCategories.size)
             }
             if (matchingCategories.isEmpty()) {
                 item("no-matching-categories", span = fullSpan) {
@@ -1223,11 +1227,14 @@ internal fun ModernHeaderOptionsIcon(label: String, icon: ImageVector, onClick: 
         NikTvSecondaryActionButton(
             onClick = onClick,
             modifier = Modifier.size(48.dp)
-                .graphicsLayer { scaleX = focusScale; scaleY = focusScale }
+                .semantics { contentDescription = label }
                 .onFocusChanged { focused = it.isFocused },
             contentPadding = PaddingValues(0.dp)
         ) {
-            Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
+            // Animate inside the fixed button, so its focus border never crosses
+            // the lazy grid's clipped viewport at the top edge.
+            Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp)
+                .graphicsLayer { scaleX = focusScale; scaleY = focusScale })
         }
     }
 }
@@ -2550,8 +2557,15 @@ internal fun ModernTileActionsMenu(
     onTrailerReturned: (() -> Boolean)? = null,
     playAction: (() -> Unit)? = null,
     downloadAction: (() -> Unit)? = null,
-    alternateSource: AlternateSourceRequest? = null
+    alternateSource: AlternateSourceRequest? = null,
+    movieForVersionChoice: com.nikhil.niktv.data.TmdbMovie? = null
 ) {
+    val chooseVersion = LocalChooseIptvMovieVersion.current
+    val versionItem = trailerItem ?: recommendationItem
+    val versionMovie = movieForVersionChoice ?: versionItem?.takeIf { it.id.startsWith("tmdb-movie:") }
+        ?.let { item -> item.id.substringAfter(':').toIntOrNull()?.let { id ->
+            com.nikhil.niktv.data.TmdbMovie(id, item.title, item.title, item.description, item.logo, null, null, null)
+        } }
     val trailerContext = LocalContext.current
     var trailerOpen by remember(trailerItem?.id) { mutableStateOf(false) }
     var restoringTrailerFocus by remember(trailerItem?.id) { mutableStateOf(false) }
@@ -2634,6 +2648,11 @@ internal fun ModernTileActionsMenu(
                 leadingIcon = { Icon(Icons.Default.Refresh, null) },
                 onClick = { dismiss(); refresh() }
             )
+        }
+        if (versionMovie != null && chooseVersion != null) {
+            NikDropdownMenuItem(text = { Text("Choose IPTV version") },
+                leadingIcon = { Icon(Icons.Default.Tune, null) },
+                onClick = { dismiss(); chooseVersion(versionMovie) })
         }
         refreshProgramme?.let { refresh ->
             NikDropdownMenuItem(
@@ -4094,7 +4113,7 @@ internal fun ModernLiveChannelTile(
             modifier = modifier.then(returningTile.modifier)
                 .fillMaxWidth()
                 .then(
-                    Modifier.height((when {
+                    Modifier.heightIn(min = (when {
                         compactTv -> if (xtream) 92f else 76f
                         isPhone -> if (xtream) 94f else 82f
                         xtream -> if (isTv) 100f else 104f
@@ -4153,7 +4172,9 @@ internal fun ModernLiveChannelTile(
                         start = if (compactTv) 10.dp else 12.dp,
                         end = if (compactTv) 10.dp else 12.dp,
                         top = 6.dp,
-                        bottom = 12.dp
+                        // The progress track occupies the bottom 10dp. Reserve
+                        // a separate gap and let wrapped text grow the tile.
+                        bottom = if (programmeProgress != null && currentProgrammeTitle != null) 22.dp else 12.dp
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(if (compactTv) 8.dp else 10.dp)

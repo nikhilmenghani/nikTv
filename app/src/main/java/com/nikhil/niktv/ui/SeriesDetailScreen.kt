@@ -381,7 +381,7 @@ internal fun ModernSeriesDetailScreen(
     fun focusLandscapeEpisode() = requestEpisodeFocus(revealParent = true)
     fun requestWideFocus(target: SeriesDetailFocus, preferred: FocusRequester? = null) {
         if (target == SeriesDetailFocus.INFO && !hasSynopsis) {
-            requestWideFocus(SeriesDetailFocus.PLAY); return
+            requestWideFocus(SeriesDetailFocus.TOOLS); return
         }
         if (target == SeriesDetailFocus.EPISODES) { focusLandscapeEpisode(); return }
         episodeMove?.cancel()
@@ -402,9 +402,7 @@ internal fun ModernSeriesDetailScreen(
         }
     }
     fun moveWideFocus(from: SeriesDetailFocus, delta: Int) {
-        val next = adjacentSeriesDetailFocus(from, delta, false)
-        val target = if (next == SeriesDetailFocus.INFO && !hasSynopsis) adjacentSeriesDetailFocus(next, delta, false) else next
-        target?.let { requestWideFocus(it) }
+        adjacentSeriesDetailFocus(from, delta, false, hasSynopsis)?.let { requestWideFocus(it) }
     }
     DisposableEffect(profile, series.id, selectedSeason, activeSearchQuery, episodeSortDescending, episodeListView) {
         onDispose { episodeMove?.cancel(); wideFocusCoordinator.cancel() }
@@ -516,6 +514,12 @@ internal fun ModernSeriesDetailScreen(
             openTmdbMovie = openTmdbMovie, openTmdbSeries = openTmdbSeries,
             playLabel = if (primaryEpisodeToPlay == null) "Loading episodes…" else if (recentEpisode != null) "Resume ${primaryEpisodeToPlay.actionEpisodeLabel()}" else if (episodeSortDescending) "Play latest" else "Start series",
             playEnabled = primaryEpisodeToPlay != null,
+            progressLabel = recentEpisode?.let { episode ->
+                listOfNotNull(episode.actionEpisodeLabel(), episodeRemainingLabel(progressByEpisode[episode.id])).joinToString(" · ")
+            },
+            progressFraction = recentEpisode?.let { progressByEpisode[it.id] }?.takeIf { it.durationMillis > 0 }?.let {
+                (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f)
+            },
             castUp = { if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.TOOLS, castButtonRequester) else runCatching { castButtonRequester.requestFocus() } },
             relatedUp = { if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.TOOLS, relatedButtonRequester) else runCatching { relatedButtonRequester.requestFocus() } },
             playRequester = detailPlayRequester, backRequester = heroActionRequesters[0],
@@ -536,8 +540,8 @@ internal fun ModernSeriesDetailScreen(
                 }
             }, tools = {
                 com.nikhil.niktv.discovery.DiscoveryAction(
-                    if (isWatched) "Following" else "Notify me", Icons.Default.Notifications,
-                    selected = isWatched, onClick = toggleSeriesWatch)
+                    if (isWatched) "Following" else "Notify me", if (isWatched) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
+                    iconOnly = mobileEpisodeLayout, modifier = Modifier.semantics { selected = isWatched }, onClick = toggleSeriesWatch)
                 Box {
                     com.nikhil.niktv.discovery.DiscoveryAction("Series options", Icons.Default.MoreHoriz, iconOnly = true) { moreActionsExpanded = true }
                     DropdownMenu(moreActionsExpanded, { moreActionsExpanded = false }) {
@@ -554,13 +558,97 @@ internal fun ModernSeriesDetailScreen(
                     }
                 }
             }, layout = { hero, castRow, supplementary, focusCast, focusRelated ->
+        val detailsTools: @Composable () -> Unit = {
+            if (mobileEpisodeLayout) {
+                var detailsMenuOpen by remember { mutableStateOf(false) }
+                Box {
+                    com.nikhil.niktv.discovery.DiscoveryAction("Details", Icons.Default.MoreHoriz, iconOnly = true,
+                        modifier = Modifier.focusRequester(castButtonRequester).focusRequester(relatedButtonRequester)) { detailsMenuOpen = true }
+                    DropdownMenu(detailsMenuOpen, { detailsMenuOpen = false }) {
+                        if (focusCast != null) NikDropdownMenuItem(
+                            text = { Text(if (expandedPanel == SeriesDetailPanel.CAST) "Hide cast" else "Cast") },
+                            leadingIcon = { Icon(Icons.Default.People, null) }, onClick = {
+                                detailsMenuOpen = false
+                                expandedPanel = if (expandedPanel == SeriesDetailPanel.CAST) null else SeriesDetailPanel.CAST
+                            })
+                        if (focusRelated != null) NikDropdownMenuItem(
+                            text = { Text(if (expandedPanel == SeriesDetailPanel.RELATED) "Hide related" else "Related") },
+                            leadingIcon = { Icon(Icons.Default.Movie, null) }, onClick = {
+                                detailsMenuOpen = false
+                                expandedPanel = if (expandedPanel == SeriesDetailPanel.RELATED) null else SeriesDetailPanel.RELATED
+                            })
+                    }
+                }
+            } else {
+                    FlowRow(modifier = if (!mobileEpisodeLayout) Modifier.onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                            Key.DirectionUp -> { moveWideFocus(SeriesDetailFocus.TOOLS, -1); true }
+                            Key.DirectionDown -> {
+                                if (expandedPanel == null) {
+                                    requestWideFocus(SeriesDetailFocus.SORT); true
+                                } else false
+                            }
+                            else -> false
+                        }
+                    } else Modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        focusCast?.let { target -> SeriesToolbarButton(
+                            if (expandedPanel == SeriesDetailPanel.CAST) Icons.Default.ExpandLess else Icons.Default.People, "Cast",
+                            modifier = Modifier.focusRequester(castButtonRequester).semantics { selected = expandedPanel == SeriesDetailPanel.CAST }
+                                .onPreviewKeyEvent { event ->
+                                    if (expandedPanel == SeriesDetailPanel.CAST && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                        detailScope.launch {
+                                            repeat(12) { withFrameNanos { }; if (target()) return@launch }
+                                        }; true
+                                    } else false
+                                }) { expandedPanel = if (expandedPanel == SeriesDetailPanel.CAST) null else SeriesDetailPanel.CAST }
+                        }
+                        focusRelated?.let { target -> SeriesToolbarButton(
+                            if (expandedPanel == SeriesDetailPanel.RELATED) Icons.Default.ExpandLess else Icons.Default.Movie, "Related",
+                            modifier = Modifier.focusRequester(relatedButtonRequester).semantics { selected = expandedPanel == SeriesDetailPanel.RELATED }
+                                .onPreviewKeyEvent { event ->
+                                    if (expandedPanel == SeriesDetailPanel.RELATED && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                        detailScope.launch {
+                                            repeat(12) { withFrameNanos { }; if (target()) return@launch }
+                                        }; true
+                                    } else false
+                                }) { expandedPanel = if (expandedPanel == SeriesDetailPanel.RELATED) null else SeriesDetailPanel.RELATED }
+                        }
+                    }
+        }
+        }
+        val detailsPanel: @Composable () -> Unit = {
+
+                AnimatedContent(expandedPanel, contentAlignment = Alignment.TopStart,
+                    transitionSpec = {
+                        (fadeIn(tween(if (reducedMotion) 0 else 120)) togetherWith fadeOut(tween(if (reducedMotion) 0 else 90)))
+                            .using(SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(if (reducedMotion) 0 else 180, easing = FastOutSlowInEasing) }))
+                    }, label = "seriesDetailsPanel") { panel ->
+                    Box(Modifier.fillMaxWidth().onFocusChanged {
+                        inlinePanelFocused = it.hasFocus
+                        if (it.hasFocus) focusedPanel = panel
+                    }) {
+                        when (panel) {
+                            SeriesDetailPanel.SEARCH -> Unit
+                            SeriesDetailPanel.CAST -> castRow()
+                            SeriesDetailPanel.RELATED -> supplementary()
+                            null -> Unit
+                        }
+                    }
+                }
+
+        }
         val seriesContent: @Composable () -> Unit = {
         LazyColumn(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
             state = episodeListState,
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
-            item("series-hero") { hero() }
+            item("series-hero") {
+                CompositionLocalProvider(
+                    com.nikhil.niktv.discovery.LocalProviderSynopsisActions provides detailsTools,
+                    com.nikhil.niktv.discovery.LocalProviderSynopsisPanel provides detailsPanel
+                ) { hero() }
+            }
 
             val controls: @Composable LazyItemScope.() -> Unit = {
                 Column(
@@ -619,7 +707,7 @@ internal fun ModernSeriesDetailScreen(
                                                     searchImeWasVisible = false
                                                     episodeTextEditing = false
                                                     keyboardController?.hide()
-                                                    if (!mobileEpisodeLayout) requestWideFocus(SeriesDetailFocus.INFO) else runCatching { sortRequester.requestFocus() }; true
+                                                    if (!mobileEpisodeLayout) moveWideFocus(SeriesDetailFocus.SORT, -1) else runCatching { sortRequester.requestFocus() }; true
                                                 }
                                                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
                                                     searchImeWasVisible = false
@@ -650,59 +738,22 @@ internal fun ModernSeriesDetailScreen(
                             if (!mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                 Key.DirectionUp -> {
                                     searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide()
-                                    requestWideFocus(SeriesDetailFocus.INFO); true
+                                    moveWideFocus(SeriesDetailFocus.SORT, -1); true
                                 }
                                 Key.DirectionDown -> {
-                                    if (expandedPanel == SeriesDetailPanel.SEARCH) {
-                                        searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide()
-                                        focusLandscapeEpisode(); true
-                                    }
-                                    else runCatching { (if (focusCast != null) castButtonRequester else relatedButtonRequester).requestFocus() }.getOrDefault(false)
+                                    searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide()
+                                    if (!episodeListView && availableSeasons.isNotEmpty()) requestWideFocus(SeriesDetailFocus.SEASONS)
+                                    else focusLandscapeEpisode()
+                                    true
                                 }
                                 else -> false
                             } else false
                         }
                     )
-                    FlowRow(modifier = if (!mobileEpisodeLayout) Modifier.onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                            Key.DirectionUp -> { moveWideFocus(SeriesDetailFocus.TOOLS, -1); true }
-                            Key.DirectionDown -> {
-                                if (expandedPanel == null) {
-                                    if (!episodeListView && availableSeasons.isNotEmpty()) requestWideFocus(SeriesDetailFocus.SEASONS) else focusLandscapeEpisode(); true
-                                } else false
-                            }
-                            else -> false
-                        }
-                    } else Modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        focusCast?.let { target -> SeriesToolbarButton(
-                            if (expandedPanel == SeriesDetailPanel.CAST) Icons.Default.ExpandLess else Icons.Default.People, "Cast",
-                            modifier = Modifier.focusRequester(castButtonRequester).semantics { selected = expandedPanel == SeriesDetailPanel.CAST }
-                                .onPreviewKeyEvent { event ->
-                                    if (expandedPanel == SeriesDetailPanel.CAST && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                        detailScope.launch {
-                                            episodeListState.scrollToItem(SERIES_INLINE_DETAILS_INDEX, -toolbarHeightPx)
-                                            repeat(12) { withFrameNanos { }; if (target()) return@launch }
-                                        }; true
-                                    } else false
-                                }) { expandedPanel = if (expandedPanel == SeriesDetailPanel.CAST) null else SeriesDetailPanel.CAST }
-                        }
-                        focusRelated?.let { target -> SeriesToolbarButton(
-                            if (expandedPanel == SeriesDetailPanel.RELATED) Icons.Default.ExpandLess else Icons.Default.Movie, "Related",
-                            modifier = Modifier.focusRequester(relatedButtonRequester).semantics { selected = expandedPanel == SeriesDetailPanel.RELATED }
-                                .onPreviewKeyEvent { event ->
-                                    if (expandedPanel == SeriesDetailPanel.RELATED && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                        detailScope.launch {
-                                            episodeListState.scrollToItem(SERIES_INLINE_DETAILS_INDEX, -toolbarHeightPx)
-                                            repeat(12) { withFrameNanos { }; if (target()) return@launch }
-                                        }; true
-                                    } else false
-                                }) { expandedPanel = if (expandedPanel == SeriesDetailPanel.RELATED) null else SeriesDetailPanel.RELATED }
-                        }
-                    }
 
                     if (!mobileEpisodeLayout && !episodeListView && availableSeasons.isNotEmpty()) {
                         SeriesSeasonSidebar(availableSeasons, selectedSeason, seasonCounts, seasonSidebarRequester,
-                            loadSeriesSeason, { focusLandscapeEpisode() }, { requestWideFocus(SeriesDetailFocus.TOOLS) },
+                            loadSeriesSeason, { focusLandscapeEpisode() }, { requestWideFocus(SeriesDetailFocus.SORT) },
                             Modifier.fillMaxWidth(), horizontal = true)
                     }
                 }
@@ -712,23 +763,7 @@ internal fun ModernSeriesDetailScreen(
             else item("series-controls", content = controls)
 
             item("series-inline-details") {
-                AnimatedContent(expandedPanel, contentAlignment = Alignment.TopStart,
-                    transitionSpec = {
-                        (fadeIn(tween(if (reducedMotion) 0 else 120)) togetherWith fadeOut(tween(if (reducedMotion) 0 else 90)))
-                            .using(SizeTransform(clip = true, sizeAnimationSpec = { _, _ -> tween(if (reducedMotion) 0 else 180, easing = FastOutSlowInEasing) }))
-                    }, label = "seriesDetailsPanel") { panel ->
-                    Box(Modifier.fillMaxWidth().onFocusChanged {
-                        inlinePanelFocused = it.hasFocus
-                        if (it.hasFocus) focusedPanel = panel
-                    }) {
-                        when (panel) {
-                            SeriesDetailPanel.SEARCH -> Unit
-                            SeriesDetailPanel.CAST -> castRow()
-                            SeriesDetailPanel.RELATED -> supplementary()
-                            null -> Unit
-                        }
-                    }
-                }
+                // Retain the slot so saved episode and pagination indices stay stable.
             }
 
             if (state.items.isEmpty() && state.loading && !(episodeListView && !mobileEpisodeLayout)) {
@@ -786,7 +821,7 @@ internal fun ModernSeriesDetailScreen(
                             .focusRequester(landscapeRequesters.getOrPut(episode.id) { FocusRequester() })
                             .onPreviewKeyEvent { event ->
                                 if (episodeListView && !mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
-                                    Key.DirectionUp -> if (episode.id == filteredEpisodes.firstOrNull()?.id) { requestWideFocus(SeriesDetailFocus.TOOLS); true } else false
+                                    Key.DirectionUp -> if (episode.id == filteredEpisodes.firstOrNull()?.id) { requestWideFocus(SeriesDetailFocus.SORT); true } else false
                                     Key.DirectionLeft -> if (availableSeasons.isNotEmpty()) runCatching { seasonSidebarRequester.requestFocus() }.getOrDefault(false) else false
                                     else -> false
                                 } else false
@@ -904,7 +939,7 @@ private fun SeriesToolbarButton(
 ) {
     NikTvSecondaryActionButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = 44.dp).widthIn(min = 44.dp),
+        modifier = modifier.heightIn(min = 48.dp).widthIn(min = 48.dp),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
     ) {
         Icon(icon, null, Modifier.size(18.dp))
@@ -971,7 +1006,7 @@ internal fun ModernEpisodeCard(
     val mobileLayout =
         !isTv &&
             episodeConfiguration.smallestScreenWidthDp < 600
-    val imageUrl = episode.logo ?: series.logo
+    val imageUrl = episode.logo?.takeIf(String::isNotBlank) ?: series.logo
     val episodeDescription = episode.description?.takeUnless { description ->
         description.trim().equals(series.description?.trim(), ignoreCase = true)
     }
@@ -1015,6 +1050,7 @@ internal fun ModernEpisodeCard(
                 onLongClick = { episodeActionsExpanded = true }
             )
     ) {
+        Column {
         Row(
             modifier = Modifier.padding(
                 horizontal = if (mobileLayout) 8.dp else 10.dp,
@@ -1030,7 +1066,7 @@ internal fun ModernEpisodeCard(
                     .then(
                         if (mobileLayout) {
                             Modifier
-                                .width(80.dp)
+                                .width(92.dp)
                                 .aspectRatio(16f / 9f)
                         } else {
                             Modifier
@@ -1081,40 +1117,39 @@ internal fun ModernEpisodeCard(
                     epNumber != null -> "EP $epNumber"
                     else -> null
                 }
-                Row(Modifier.fillMaxWidth().heightIn(min = 24.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Box(Modifier.weight(.3f)) { badge?.let { EpisodeMetadataBadge(it, modifier = Modifier.fillMaxWidth()) } }
-                    Box(Modifier.weight(.38f)) { episode.displayAirDate()?.let { EpisodeMetadataBadge(it, modifier = Modifier.fillMaxWidth(), muted = true) } }
-                    Box(Modifier.weight(.32f)) { episodeRemainingLabel(progress)?.let {
-                        EpisodeMetadataBadge(it, highlighted = isCurrentResume, modifier = Modifier.fillMaxWidth())
-                    } }
-                }
-                episode.episodeAddedAtMillis?.let { added ->
-                    Text("Added ${formatEpisodeAddedTime(added)}", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA8ADB7))
-                }
-
                 Text(
                     text = episode.displayTitle(series),
                     style = if (mobileLayout) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    maxLines = 2,
-                    minLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    fontWeight = FontWeight.SemiBold, color = Color.White,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    badge?.let { Text(it, color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelSmall) }
+                    episode.displayAirDate()?.let { Text(it, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall) }
+                    episodeRemainingLabel(progress)?.let { EpisodeMetadataBadge(it, highlighted = isCurrentResume) }
+                }
+                if (!mobileLayout) episode.episodeAddedAtMillis?.let { added ->
+                    Text("Added ${formatEpisodeAddedTime(added)}", style = MaterialTheme.typography.labelSmall, color = Color(0xFFA8ADB7))
+                }
 
-                if (!episodeDescription.isNullOrBlank()) {
+                if (!mobileLayout && !episodeDescription.isNullOrBlank()) {
                     Text(
                         text = episodeDescription,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.LightGray.copy(alpha = 0.8f),
                         maxLines = if (mobileLayout) 2 else 1,
-                        minLines = if (mobileLayout) 2 else 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
+        }
+        if (mobileLayout && !episodeDescription.isNullOrBlank()) {
+            Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) {
+                InlineEpisodeDescription(episodeDescription) { descriptionDialogOpen = true }
+            }
+        }
         }
     }
     DropdownMenu(
@@ -1194,15 +1229,10 @@ internal fun ModernEpisodeCard(
 
 @Composable
 private fun EpisodeMetadataBadge(text: String, highlighted: Boolean = false, modifier: Modifier = Modifier, muted: Boolean = false) {
-    val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)
-    val lines = if (fontScale > 1.25f) 2 else 1
     Surface(modifier = modifier, shape = RoundedCornerShape(5.dp),
-        color = if (highlighted) Color(0xFF3A2226) else Color(0xFF292D35),
-        border = BorderStroke(1.dp, if (highlighted) Color(0xFF8E4149) else Color.White.copy(alpha = .1f))) {
-        Box(Modifier.height((if (lines == 2) 40.dp else 24.dp) * fontScale).padding(horizontal = 3.dp), contentAlignment = Alignment.Center) {
-            Text(text, color = if (muted) Color(0xFFA8ADB7) else Color(0xFFF2B8BD),
-                style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = lines, overflow = TextOverflow.Ellipsis)
-        }
+        color = if (highlighted) Color(0xFF3A2226) else Color(0xFF292D35)) {
+        Text(text, Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+            color = if (highlighted) Color(0xFFFFB4BE) else Color(0xFFB9BDC7),
+            style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium)
     }
 }

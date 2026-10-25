@@ -2,6 +2,8 @@ package com.nikhil.niktv.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
@@ -31,7 +33,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 /** One toolbar for both provider and TMDB episodes. Search stays local to the loaded season. */
 @Composable
@@ -87,34 +94,32 @@ internal fun SeriesEpisodeToolbar(
     LaunchedEffect(listView) {
         if (restoreLayoutFocus) {
             withFrameNanos { }
-            runCatching { layoutRequester.requestFocus() }
+            runCatching { (if (compact) sortRequester else layoutRequester).requestFocus() }
             restoreLayoutFocus = false
         }
     }
     fun selectLayout(value: Boolean) {
         if (value != listView) { beforeAction(); restoreLayoutFocus = true; onListView(value) }
     }
-    val searchWidth by animateDpAsState(if (searchOpen && !compact) 220.dp else 44.dp,
+    val searchWidth by animateDpAsState(if (searchOpen && !compact) 220.dp else 48.dp,
         tween(220, easing = FastOutSlowInEasing), label = "episodeSearchWidth")
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(3.dp).height(40.dp).padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.width(3.dp).height(48.dp).padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primary) {}
                 }
-                Column(Modifier.padding(start = 10.dp)) {
-                    season()
-                    Text(count, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
-                }
+                Box(Modifier.padding(start = 10.dp).heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) { season() }
             }
-            Box(Modifier.width(searchWidth).height(44.dp).clip(RoundedCornerShape(12.dp))) {
+            Box(Modifier.width(searchWidth).height(48.dp).clip(RoundedCornerShape(12.dp))) {
                 if (searchOpen && !compact) Box(Modifier.fillMaxSize().focusRequester(searchRequester)) { searchField() }
                 else EpisodeToolbarIcon(Icons.Default.Search, "Search episodes", searchOpen,
                     Modifier.focusRequester(searchRequester), onSearch)
             }
             Box {
-                EpisodeToolbarIcon(Icons.AutoMirrored.Filled.Sort, "Sort episodes", sortOpen,
+                EpisodeToolbarIcon(if (compact) Icons.Default.MoreHoriz else Icons.AutoMirrored.Filled.Sort,
+                    if (compact) "Episode options" else "Sort episodes", sortOpen,
                     Modifier.focusRequester(sortRequester)) { beforeAction(); sortOpen = true }
                 DropdownMenu(sortOpen, ::dismissSort) {
                     listOf(true to "Latest first", false to "Earliest first").forEach { (descending, label) ->
@@ -123,19 +128,28 @@ internal fun SeriesEpisodeToolbar(
                             leadingIcon = if (newestFirst == descending) {{ Icon(Icons.Default.Check, null) }} else null,
                             onClick = { sortSelected = true; onNewestFirst(descending); dismissSort() })
                     }
+                    if (compact) {
+                        HorizontalDivider()
+                        listOf(true to "List view", false to "Grid view").forEach { (list, label) ->
+                            NikDropdownMenuItem(text = { Text(label) },
+                                leadingIcon = { Icon(if (listView == list) Icons.Default.Check else if (list) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView, null) },
+                                onClick = { selectLayout(list); dismissSort() })
+                        }
+                    }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (!compact) Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 EpisodeToolbarIcon(Icons.AutoMirrored.Filled.ViewList, "Episode list view", listView,
                     if (!listView) Modifier.focusRequester(layoutRequester) else Modifier) { selectLayout(true) }
                 EpisodeToolbarIcon(Icons.Default.GridView, "Episode grid view", !listView,
                     if (listView) Modifier.focusRequester(layoutRequester) else Modifier) { selectLayout(false) }
             }
         }
+        Text(count, Modifier.padding(start = 13.dp), color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall)
         AnimatedVisibility(searchOpen && compact,
             enter = expandVertically(tween(220)) + fadeIn(tween(150)),
             exit = shrinkVertically(tween(220)) + fadeOut(tween(120))) {
-            Box(Modifier.fillMaxWidth().height(44.dp)) { searchField() }
+            Box(Modifier.fillMaxWidth().height(48.dp)) { searchField() }
         }
     }
 }
@@ -144,9 +158,11 @@ internal fun SeriesEpisodeToolbar(
 private fun EpisodeToolbarIcon(icon: ImageVector, label: String, active: Boolean,
     modifier: Modifier = Modifier, click: () -> Unit) {
     NikTvSecondaryActionButton(click,
-        modifier.size(44.dp).semantics { contentDescription = label; selected = active },
+        modifier.size(48.dp).semantics { contentDescription = label; selected = active },
         contentPadding = PaddingValues(0.dp)) {
-        Icon(icon, null, Modifier.size(19.dp), tint = if (active) MaterialTheme.colorScheme.primary else Color.White)
+        Box(Modifier.fillMaxSize().then(if (active) Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = .14f)) else Modifier), contentAlignment = Alignment.Center) {
+            Icon(icon, null, Modifier.size(19.dp), tint = if (active) MaterialTheme.colorScheme.primary else Color.White)
+        }
     }
 }
 
@@ -157,13 +173,12 @@ internal fun SeriesSeasonSidebar(seasons: List<Int>, selected: Int?, counts: Map
     modifier: Modifier = Modifier, horizontal: Boolean = false) {
     val ordered = remember(seasons, selected) { (seasons + listOfNotNull(selected)).distinct().sorted() }
     val list = rememberLazyListState()
-    LaunchedEffect(selected, ordered) {
-        val index = ordered.indexOf(selected)
-        if (index >= 0 && list.layoutInfo.visibleItemsInfo.none { it.index == index }) list.scrollToItem(index)
-    }
+    val density = LocalDensity.current
+    var rowHeight by remember(density.fontScale) { mutableIntStateOf(0) }
     val tile: @Composable (Int, Int) -> Unit = { index, season ->
             NikTvSecondaryActionButton({ select(season) },
                 (if (horizontal) Modifier.width(156.dp) else Modifier.fillMaxWidth())
+                    .onSizeChanged { rowHeight = maxOf(rowHeight, it.height) }
                     .then(if (season == selected || selected == null && index == 0) Modifier.focusRequester(requester) else Modifier)
                     .semantics { this.selected = season == selected }
                     .onPreviewKeyEvent { event ->
@@ -186,10 +201,42 @@ internal fun SeriesSeasonSidebar(seasons: List<Int>, selected: Int?, counts: Map
                 }
             }
     }
-    if (horizontal) LazyRow(modifier, state = list, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    if (horizontal) {
+        LaunchedEffect(selected, ordered) {
+            val index = ordered.indexOf(selected)
+            if (index >= 0) list.scrollToItem(index)
+        }
+        LazyRow(modifier, state = list, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         itemsIndexed(ordered, key = { _, season -> season }) { index, season -> tile(index, season) }
-    } else LazyColumn(modifier, state = list, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        itemsIndexed(ordered, key = { _, season -> season }) { index, season -> tile(index, season) }
+        }
+    } else {
+        var visibleHeight by remember { mutableIntStateOf(0) }
+        var sidebarFocused by remember { mutableStateOf(false) }
+        var alignedSelection by remember { mutableStateOf<Int?>(null) }
+        val gap = with(density) { 8.dp.roundToPx() }
+        val visibleSlots by remember(gap) { derivedStateOf {
+            if (rowHeight <= 0) 1 else ((visibleHeight + gap) / (rowHeight + gap)).coerceAtLeast(1)
+        } }
+        val ready by remember { derivedStateOf { visibleHeight > 0 && rowHeight > 0 } }
+        BoxWithConstraints(modifier.onFocusChanged { sidebarFocused = it.hasFocus }.focusGroup()
+            .onGloballyPositioned { visibleHeight = it.boundsInWindow().height.roundToInt() }) {
+        // Show the selected season with preceding seasons, rather than putting
+        // the last season alone at the top. Account for clipping by the outer page.
+        LaunchedEffect(selected, ordered, rowHeight, visibleSlots, ready) {
+            if (!ready || (sidebarFocused && alignedSelection == selected) || list.isScrollInProgress) return@LaunchedEffect
+            val index = ordered.indexOf(selected)
+            if (index >= 0) {
+                list.scrollToItem((index - visibleSlots + 1).coerceAtLeast(0))
+                alignedSelection = selected
+            }
+        }
+        val rowsHeight = rowHeight * visibleSlots + gap * (visibleSlots - 1)
+        val tail = (maxHeight - with(density) { rowsHeight.toDp() }).coerceAtLeast(0.dp)
+        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = tail),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(ordered, key = { _, season -> season }) { index, season -> tile(index, season) }
+        }
+        }
     }
 }
 
@@ -199,7 +246,7 @@ internal fun SeriesEpisodeSearchField(value: String, change: (String) -> Unit, c
     modifier: Modifier = Modifier, readOnly: Boolean = false,
     options: KeyboardOptions = KeyboardOptions.Default, actions: KeyboardActions = KeyboardActions.Default) {
     var focused by remember { mutableStateOf(false) }
-    Surface(Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp), color = Color(0xFF171B23),
+    Surface(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(12.dp), color = Color(0xFF171B23),
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58))) {
         BasicTextField(value, change, modifier.fillMaxSize().onFocusChanged { focused = it.hasFocus },
             readOnly = readOnly, singleLine = true, textStyle = MaterialTheme.typography.bodySmall.copy(color = Color.White),

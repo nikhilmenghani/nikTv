@@ -1,6 +1,7 @@
 package com.nikhil.niktv
 
 import android.app.Application
+import android.app.SearchManager
 import android.content.Intent
 import android.os.Looper
 import android.view.KeyEvent
@@ -17,6 +18,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
+import com.liskovsoft.smartyoutubetv2.common.utils.IntentExtractor
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], manifest = Config.NONE, application = Application::class)
@@ -70,5 +72,54 @@ class TrailerPlayerActivityTest {
         assertEquals("CC On", button.text.toString())
         button.performClick()
         assertEquals("CC Off", button.text.toString())
+    }
+
+    private fun externalTarget(): Intent {
+        (field("external") as Button).performClick()
+        val chooser = shadowOf(activity).nextStartedActivity
+        assertEquals(Intent.ACTION_CHOOSER, chooser.action)
+        @Suppress("DEPRECATION")
+        return chooser.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+    }
+
+    @Test fun restrictedOrPrivateTrailerSearchesByTitleAndSmartTubeReadsTheQuery() {
+        activity.intent.putExtra("title", "Chashme Baddoor")
+        listOf(100, 101, 150).forEach { code ->
+            bridge("error", code)
+            val target = externalTarget()
+            assertEquals(Intent.ACTION_VIEW, target.action)
+            assertEquals("/results", target.data?.path)
+            assertNull(target.data?.getQueryParameter("v"))
+            assertEquals("Chashme Baddoor official trailer", target.getStringExtra(SearchManager.QUERY))
+            assertEquals("Chashme Baddoor official trailer", IntentExtractor.extractSearchText(target))
+            assertNull(IntentExtractor.extractVideoId(target))
+        }
+    }
+
+    @Test fun workingTrailerOpenWithStillTargetsTheExactVideo() {
+        bridge("ready"); bridge("state", 1)
+        val target = externalTarget()
+        assertEquals("/watch", target.data?.path)
+        assertEquals("abcdefghijk", target.data?.getQueryParameter("v"))
+        assertEquals("abcdefghijk", IntentExtractor.extractVideoId(target))
+    }
+
+    @Test fun networkOrPlayerIdentityFailureKeepsDirectVideoFallback() {
+        bridge("error", 153)
+        assertEquals("abcdefghijk", externalTarget().data?.getQueryParameter("v"))
+    }
+
+    @Test fun fallbackSearchPreservesTitleCharactersAndRemovesProviderLabels() {
+        val title = "English | Léon & Amélie (FHD)"
+        val target = externalTrailerIntent(title, null)
+        assertEquals("Léon & Amélie official trailer", target.data?.getQueryParameter("search_query"))
+        assertEquals("Léon & Amélie official trailer", IntentExtractor.extractSearchText(target))
+        assertEquals(title, target.getStringExtra(Intent.EXTRA_TITLE))
+    }
+
+    @Test fun errorMessagesDistinguishMissingVideoFromEmbeddingRestriction() {
+        assertTrue(trailerFailureMessage(100).contains("private"))
+        assertTrue(trailerFailureMessage(150).contains("embedded players"))
+        assertTrue(trailerFailureMessage(153).contains("verify"))
     }
 }

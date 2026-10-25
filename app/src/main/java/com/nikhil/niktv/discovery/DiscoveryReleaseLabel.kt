@@ -11,3 +11,11 @@ internal fun discoveryReleaseLabel(card: DiscoveryCard, locale: Locale = Locale.
         else if (date > today) "Releases" else "Released"
     return "$label ${date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale))}"
 }
+
+/** Separate broadcast facts from genres so long metadata can wrap without truncation. */
+internal fun discoveryDetailMetadata(card: DiscoveryCard, locale: Locale = Locale.getDefault()): List<String> = listOf(
+    listOfNotNull(discoveryReleaseLabel(card, locale), card.runtime?.takeIf { it > 0 }?.let { "$it min" }).joinToString(" · "),
+    (card.genres.filter(String::isNotBlank).distinct() + listOfNotNull(
+        card.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(locale, it) }, card.certification?.takeIf(String::isNotBlank)
+    )).joinToString(" · ")
+).filter(String::isNotBlank)

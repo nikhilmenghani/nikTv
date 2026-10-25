@@ -23,6 +23,8 @@ data class AlternateSourceRequest(
     val episode: Int? = null
 )
 
+internal val LocalChooseIptvMovieVersion = staticCompositionLocalOf<((com.nikhil.niktv.data.TmdbMovie) -> Unit)?> { null }
+
 internal val LocalPlayAlternateSource = staticCompositionLocalOf<((AlternateSourceRequest) -> Unit)?> { null }
 
 /** Explicit live context wins over a surrounding movie/series screen's inferred type. */

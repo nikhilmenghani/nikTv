@@ -6,7 +6,6 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -58,6 +57,7 @@ class TrailerPlayerActivity : ComponentActivity() {
     private lateinit var external: Button
     private var ready = false
     private var failed = false
+    private var failureCode: Int? = null
     private var foreground = false
     private var destroyed = false
     private var controlsVisible = false
@@ -197,8 +197,10 @@ class TrailerPlayerActivity : ComponentActivity() {
         }
         val close = action("Close", "Close trailer") { finish() }
         external = action("Open with", "Choose an external trailer player") {
-            val video = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$key"))
-            runCatching { startActivity(Intent.createChooser(video, "Play trailer externally")) }
+            val search = trailerRequiresAlternativeSearch(failureCode)
+            val video = externalTrailerIntent(intent.getStringExtra("title").orEmpty(), key, search)
+            runCatching { startActivity(Intent.createChooser(video,
+                if (search) "Search for another trailer" else "Play trailer externally")) }
                 .onFailure {
                     status.text = "No app is available to open this trailer."
                     status.visibility = View.VISIBLE
@@ -353,7 +355,7 @@ class TrailerPlayerActivity : ComponentActivity() {
     private inner class PlayerBridge {
         private fun update(block: () -> Unit) = runOnUiThread { if (!destroyed) block() }
         @JavascriptInterface fun ready() = update {
-            ready = true; failed = false
+            ready = true; failed = false; failureCode = null
             status.visibility = View.GONE; updateControls()
             command("captions", if (captionsEnabled) 1.0 else 0.0)
             command(if (foreground) "play" else "pause")
@@ -375,7 +377,8 @@ class TrailerPlayerActivity : ComponentActivity() {
             seekTarget.acknowledge(positionMs); updateControls()
         }
         @JavascriptInterface fun error(code: Int) = update {
-            fail("YouTube could not play this trailer (error $code). Open it in another app.")
+            failureCode = code
+            fail(trailerFailureMessage(code))
         }
     }
     override fun onPause() {

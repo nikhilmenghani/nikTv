@@ -54,7 +54,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
         DiscoveryAction("Options", Icons.Default.MoreHoriz, iconOnly = true) { change(true) }
         DropdownMenu(expanded, { change(false) }, containerColor = Color(0xEE171B24), shape = RoundedCornerShape(10.dp)) {
             if (options?.live == true) NikDropdownMenuItem(text = { Text("IPTV categories") },
-                onClick = { change(false); options.open?.invoke() ?: configure(CatalogType.LIVE_TV) })
+                onClick = { change(false); configure(CatalogType.LIVE_TV) })
             if (phone && customize != null && options?.live != true) NikDropdownMenuItem(text = { Text("IPTV categories") },
                 onClick = { change(false); categoryTrigger++ })
             customize?.let { action -> NikDropdownMenuItem(text = { Text("TMDB categories") },

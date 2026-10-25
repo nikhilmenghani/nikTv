@@ -518,9 +518,11 @@ internal tailrec fun android.content.Context.findHostActivity(): android.app.Act
 fun NikTvApp(vm: NikTvViewModel = viewModel()) {
     androidx.compose.runtime.CompositionLocalProvider(
         LocalPlayAlternateSource provides vm::openAlternateSources,
+        LocalRefreshProviderCategories provides { type -> vm.refreshProviderCategories(type) },
         com.nikhil.niktv.discovery.LocalOpenDiscovery provides vm::openDiscovery,
         com.nikhil.niktv.discovery.LocalPlayDiscoveryEpisode provides vm::openDiscoveryEpisode,
         com.nikhil.niktv.discovery.LocalDownloadDiscoveryEpisode provides vm::downloadDiscoveryEpisode,
+        LocalChooseIptvMovieVersion provides { movie -> vm.chooseTmdbMovieVersion(com.nikhil.niktv.data.TrendingMovie(movie)) },
         com.nikhil.niktv.discovery.LocalRefreshDiscoveryMatches provides vm::refreshDiscoveryMatches,
         com.nikhil.niktv.discovery.LocalOpenDiscoverySeries provides { vm.openSeriesFromHome(it) },
         com.nikhil.niktv.discovery.LocalOpenProviderDiscovery provides vm::openDiscoveryProviderDetails,

@@ -83,7 +83,8 @@ internal fun DiscoveryPreviewScreen(
     dismissEpisode: (WatchedSeries, MediaItem) -> Unit,
     vm: DiscoveryViewModel = viewModel(key = "discovery2:${app.savedProfile?.cacheKey()}"),
     detailVisibilityChanged: (Boolean) -> Unit = {},
-    dismissRecommendation: ((com.nikhil.niktv.data.HistoryRecommendationRow) -> Unit)? = null
+    dismissRecommendation: ((com.nikhil.niktv.data.HistoryRecommendationRow) -> Unit)? = null,
+    parentModalOpen: Boolean = false
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
@@ -205,7 +206,15 @@ internal fun DiscoveryPreviewScreen(
             navigationTrace?.invoke("focus-park surface=$surface route=${state.detail?.key ?: "landing"} parked=$parked")
         }
     }
-    fun closeRoute() { parkRouteFocus(); if (state.detail != null) vm.closeDetails() else exit() }
+    fun closeRoute() {
+        if (state.detail != null) { parkRouteFocus(); vm.closeDetails() }
+        else {
+            // Home stays mounted behind the exit dialog. Keep its real focus
+            // target so Cancel returns there instead of an invisible parking node.
+            if (surface != DashboardSurface.HOME) parkRouteFocus()
+            exit()
+        }
+    }
     fun selectRoute(destination: DashboardSurface) { parkRouteFocus(); selectSurface(destination) }
     fun classicRoute(destination: String) { parkRouteFocus(); classic(destination) }
     val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
@@ -215,7 +224,7 @@ internal fun DiscoveryPreviewScreen(
         lifecycle.addObserver(observer); onDispose { lifecycle.removeObserver(observer) }
     }
     // The IPTV movie dialog covers this composition without stopping its lifecycle.
-    val presentationActive = foreground && app.providerMovieDetails == null
+    val presentationActive = foreground && app.providerMovieDetails == null && !parentModalOpen
     LaunchedEffect(profile, surface) { vm.bind(profile, surface, app.tmdbSectionsBySurface[surface]) }
     DisposableEffect(vm, profile, surface) {
         vm.resume(profile, surface)
@@ -287,6 +296,7 @@ internal fun DiscoveryPreviewScreen(
             ModernTileActionsMenu(expanded = expanded, isFavorite = favoriteKey in currentFavorites.keys,
                 dismiss = dismiss, toggleFavorite = { currentToggleFavorite(favorite(card)) }, clear = null,
                 trailerItem = media, trailerSeries = card.series, onTrailerReturned = restore,
+                movieForVersionChoice = card.takeUnless { it.series }?.movie(),
                 recommendationItem = media, recommendationType = if (card.series) CatalogType.SERIES else CatalogType.MOVIES,
                 refreshMatches = currentRefreshMatches?.let { refresh -> { refresh(card) } },
                 viewDescription = card.overview?.takeIf(String::isNotBlank)?.let { { descriptionOpen = true } },
@@ -903,21 +913,21 @@ private fun DiscoverySupplementStatus(section: String, state: DiscoveryState, vm
 }
 
 @Composable
-internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean) {
+internal fun DiscoveryBackdrop(card: DiscoveryCard?, reduceMotion: Boolean, alignment: Alignment = Alignment.Center, shaded: Boolean = true) {
     val context = LocalContext.current
     val requested = card?.backdrop?.let { thumbnailArtworkUrl(it, 1280) }
     var ready by remember { mutableStateOf(requested) }
     val currentRequest by rememberUpdatedState(requested)
     Box(Modifier.fillMaxSize()) {
         Crossfade(ready, animationSpec = tween(if (reduceMotion) 0 else 300), label = "discoveryBackdrop") { url ->
-            val request = remember(context, url) { ImageRequest.Builder(context).data(url).size(1280, 720)
-                .transformations(DiscoveryBackdropTransformation()).crossfade(false).build() }
-            AsyncImage(request, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            val request = remember(context, url, shaded) { ImageRequest.Builder(context).data(url).size(1280, 720)
+                .apply { if (shaded) transformations(DiscoveryBackdropTransformation()) }.crossfade(false).build() }
+            AsyncImage(request, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = alignment)
         }
         // Hidden decode layer promotes only the latest successfully prepared backdrop.
         if (requested != null && requested != ready) {
-            val request = remember(context, requested) { ImageRequest.Builder(context).data(requested).size(1280, 720)
-                .transformations(DiscoveryBackdropTransformation()).crossfade(false).build() }
+            val request = remember(context, requested, shaded) { ImageRequest.Builder(context).data(requested).size(1280, 720)
+                .apply { if (shaded) transformations(DiscoveryBackdropTransformation()) }.crossfade(false).build() }
             AsyncImage(request, null,
                 Modifier.size(1.dp).graphicsLayer { alpha = 0f }, onSuccess = { if (currentRequest == requested) ready = requested }, onError = { if (currentRequest == requested) ready = null })
         }
@@ -937,9 +947,10 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
     if (portraitPhone) {
         val context = LocalContext.current
         val reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-        DiscoveryPhoneHero(card, rank, height.coerceAtLeast(if (compactDetail) 320.dp else 480.dp), detail, loading, inList,
+        DiscoveryPhoneHero(card, rank, height.coerceAtLeast(if (compactDetail) 280.dp else 480.dp), detail, loading, inList,
             playRequester, infoRequester, play, add, info, previous, next, carousel, index, count,
-            playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail, categoryActions)
+            playLabel, playEnabled, reduceMotion, onFocus, onDown, phoneHeader, showSynopsis, compactDetail, categoryActions,
+            shadeArtworkBounds = compactDetail)
         return
     }
     var drag by remember { mutableFloatStateOf(0f) }
@@ -968,7 +979,9 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         }
         val metadata = card?.let { listOfNotNull(if (detail) discoveryReleaseLabel(it) else it.date?.take(4), it.runtime?.let { n -> "${n} min" }, it.genres.take(3).joinToString(" · ").takeIf(String::isNotBlank),
             it.rating?.takeIf { n -> n > 0 }?.let { n -> "★ %.1f".format(n) }, it.certification).joinToString(" · ") }.orEmpty()
-        Box(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp)
+        if (detail && card != null) Column(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp).padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            discoveryDetailMetadata(card).forEach { line -> Text(line, color = Color.LightGray, fontSize = 12.sp, lineHeight = 16.sp) }
+        } else Box(Modifier.widthIn(max = if (landscape) 600.dp else 500.dp)
             .then(if (!detail) Modifier.height(36.dp * fontScale) else Modifier), contentAlignment = Alignment.TopStart) {
             if (metadata.isNotBlank()) Text(metadata, Modifier.padding(top = if (compact) 4.dp else 6.dp),
                 color = Color.LightGray, fontSize = 12.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -995,11 +1008,11 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
                     else -> false
                 }
             }) {
-            DiscoveryAction(playLabel, Icons.Default.PlayArrow, selected = true,
-                modifier = Modifier.focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
+            DiscoveryAction(if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true,
+                modifier = Modifier.then(if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
-                iconOnly = !detail, enabled = card != null, onFocus = onFocus, onClick = add)
-            DiscoveryTrailerAction(card, onFocus = onFocus)
+                iconOnly = !detail, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier, enabled = card != null, onFocus = onFocus, onClick = add)
+            DiscoveryTrailerAction(card, onFocus = onFocus, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier)
             if (!detail) DiscoveryAction("Info", Icons.Default.Info, iconOnly = true,
                 modifier = Modifier.focusRequester(infoRequester), enabled = card != null, onFocus = onFocus, onClick = info)
             if (landscape) categoryActions?.invoke()

@@ -7,6 +7,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SeriesDetailPolicyTest {
+    @Test fun descriptionAndExtrasAreOneHeaderRowForVerticalRemoteNavigation() {
+        for (hasSynopsis in listOf(true, false)) {
+            val row = if (hasSynopsis) SeriesDetailFocus.INFO else SeriesDetailFocus.TOOLS
+            assertEquals(row, adjacentSeriesDetailFocus(SeriesDetailFocus.PLAY, 1, false, hasSynopsis))
+            assertEquals(SeriesDetailFocus.SORT, adjacentSeriesDetailFocus(row, 1, false, hasSynopsis))
+            assertEquals(row, adjacentSeriesDetailFocus(SeriesDetailFocus.SORT, -1, false, hasSynopsis))
+            assertEquals(SeriesDetailFocus.PLAY, adjacentSeriesDetailFocus(SeriesDetailFocus.TOOLS, -1, false, hasSynopsis))
+            assertEquals(SeriesDetailFocus.SORT, adjacentSeriesDetailFocus(SeriesDetailFocus.INFO, 1, false, hasSynopsis))
+        }
+        assertEquals(0, seriesDetailFocusSlot(SeriesDetailFocus.TOOLS))
+    }
     @Test fun seasonCountsPreferActualProviderTotalsAndLabelPublicFallbacks() {
         val counts = seasonEpisodeCountLabels(mapOf(9 to 23), mapOf(8 to 24, 9 to 24, 10 to 17), 10, 17, false, false)
         assertEquals("23 episodes", counts[9])

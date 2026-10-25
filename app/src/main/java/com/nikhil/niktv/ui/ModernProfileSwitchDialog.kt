@@ -18,8 +18,8 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
     close: () -> Unit, select: (PortalProfile) -> Unit) {
     val entry = remember { FocusRequester() }
     val selected = profiles.indexOfFirst { it.cacheKey() == current?.cacheKey() }.coerceAtLeast(0)
-    LaunchedEffect(Unit) { withFrameNanos { }; runCatching { entry.requestFocus() } }
-    AlertDialog(onDismissRequest = close, containerColor = Color(0xFF181B22),
+    val closeFocus = remember { FocusRequester() }
+    AlertDialog(modifier = Modifier.initialFocusEntry(if (profiles.isEmpty()) closeFocus else entry), onDismissRequest = close, containerColor = Color(0xFF181B22),
         title = { Text("Switch profile") }, text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -35,5 +35,5 @@ internal fun ModernProfileSwitchDialog(profiles: List<PortalProfile>, current: P
                     }
                 }
             }
-        }, confirmButton = { NikTvSecondaryActionButton(close, Modifier.fillMaxWidth()) { Text("Close") } })
+        }, confirmButton = { NikTvSecondaryActionButton(close, Modifier.fillMaxWidth().focusRequester(closeFocus)) { Text("Close") } })
 }

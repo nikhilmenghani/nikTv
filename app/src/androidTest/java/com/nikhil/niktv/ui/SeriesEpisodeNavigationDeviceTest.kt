@@ -8,11 +8,16 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nikhil.niktv.discovery.DiscoveryCard
 import com.nikhil.niktv.discovery.DiscoveryDetails
@@ -34,6 +39,54 @@ import java.util.concurrent.CopyOnWriteArrayList
 class SeriesEpisodeNavigationDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
+
+    @Test fun selectedLastSeasonIsVisibleWhenTheOuterPageClipsTheSidebar() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val activity = startHost()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                val entry = remember { FocusRequester() }
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    Spacer(Modifier.height((context.resources.configuration.screenHeightDp - 150).dp))
+                    Row(Modifier.height(620.dp)) {
+                        SeriesSeasonSidebar((1..49).toList(), 49, mapOf(49 to "42 episodes"), entry,
+                            {}, {}, {}, Modifier.width(156.dp).fillMaxHeight())
+                        Text("Loaded season 49 episodes", Modifier.padding(start = 16.dp, top = 10.dp))
+                    }
+                }
+            } } }
+            await("Selected season 49 is visible above the clipped sidebar bottom") { label("Season 49")?.isVisibleToUser == true }
+            assertTrue("Previous season remains visible alongside the selected season", label("Season 48")?.isVisibleToUser == true)
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun lastSeasonShowsNeighboursInsteadOfAnEmptySidebar() {
+        val activity = startHost()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                val entry = remember { FocusRequester() }
+                SeriesSeasonSidebar((1..10).toList(), 10, (1..10).associateWith { "24 episodes" }, entry,
+                    {}, {}, {}, Modifier.width(156.dp).height(340.dp))
+            } } }
+            await("Last season and its neighbours are visible") {
+                label("Season 10")?.isVisibleToUser == true && label("Season 9")?.isVisibleToUser == true &&
+                    label("Season 8")?.isVisibleToUser == true
+            }
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun shortSeasonListStartsAtTheFirstSeasonWhenAllFit() {
+        val activity = startHost()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                val entry = remember { FocusRequester() }
+                SeriesSeasonSidebar((1..3).toList(), 3, emptyMap(), entry,
+                    {}, {}, {}, Modifier.width(156.dp).height(340.dp))
+            } } }
+            await("Every season remains visible") { (1..3).all { label("Season $it")?.isVisibleToUser == true } }
+        } finally { finishHost(activity) }
+    }
 
     @Test fun seasonRightEntersEpisodesAndRestoresAnOffscreenSelection() = fixture { seasons, plays ->
         // Down from the toolbar enters episodes. Left returns to the selected season.
@@ -191,9 +244,9 @@ class SeriesEpisodeNavigationDeviceTest {
             } } }
             await("Provider sort fixture begins on Play latest") { activity.hasWindowFocus() && focused("Play latest") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider hero Down reaches Sort") { focused("Sort episodes") }
+            await("Provider hero Down reaches header Related action") { focused("Related") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider toolbar Down reaches Related") { focused("Related") }
+            await("Header Related Down reaches Sort") { focused("Sort episodes") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Initial provider episode 500 receives focus") { focused("Provider sort episode 500") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
@@ -247,7 +300,8 @@ class SeriesEpisodeNavigationDeviceTest {
         check(context.packageName.endsWith(".regression")) { "Run only against the isolated regression package" }
         val config = context.resources.configuration
         check(config.smallestScreenWidthDp >= 600 || context.isTvLikeDevice(config)) { "Use a tablet or TV for wide season navigation" }
-        val series = MediaItem("fixture-provider-series", "Fixture provider series", null, null)
+        val series = MediaItem("fixture-provider-series", "Fixture provider series", null, null,
+            description = "A fixture synopsis with full series information.")
         val episodes = (1..12).map { number -> MediaItem("fixture-provider-$number", "Provider episode $number", null, null,
             description = "Fixture synopsis for episode $number", seasonNumber = 2, episodeNumber = number) }
         val progress = episodes.map { episode ->
@@ -279,14 +333,18 @@ class SeriesEpisodeNavigationDeviceTest {
                 }
             } } }
             await("Provider fixture owns input and starts on Resume") {
-                activity.hasWindowFocus() && focused("Resume ${episodes.last().actionEpisodeLabel()}")
+                activity.hasWindowFocus() && focused("Resume") && label("More info") != null
             }
             // Await every destination before sending another key. A timed burst
             // can queue an extra Down behind a stale accessibility snapshot.
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider hero Down reaches Sort") { focused("Sort episodes") }
+            await("Provider hero Down reaches description actions") { focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Related beside More info") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Left returns to More info") { focused("More info") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Provider toolbar Down reaches Related") { focused("Related") }
+            await("Description actions Down reaches Sort") { focused("Sort episodes") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Provider Down reaches first episode") { focused("Provider episode 12") }
             key(KeyEvent.KEYCODE_DPAD_LEFT)
@@ -315,6 +373,20 @@ class SeriesEpisodeNavigationDeviceTest {
             await("Remembered provider episode leaves the visible list") { label("Provider episode 3")?.isVisibleToUser != true }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Right restores the remembered offscreen provider episode") { focused("Provider episode 3") }
+            for (number in 4..12) {
+                key(KeyEvent.KEYCODE_DPAD_UP)
+                await("Up reaches provider episode $number") { focused("Provider episode $number") }
+            }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("First episode Up reaches Sort") { focused("Sort episodes") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Sort Up reaches the description row") { focused("More info") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Related remains reachable in the description row") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Related Up reaches Resume without a same-row loop") { focused("Resume") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Repeated Up reaches the top Back button") { focused("Back") }
             assertTrue("Changing focus never selects a different provider season", seasons.isEmpty())
             assertTrue("Changing focus never starts playback", plays.isEmpty())
         } finally { finishHost(activity) }

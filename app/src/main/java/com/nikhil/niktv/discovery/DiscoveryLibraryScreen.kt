@@ -20,9 +20,7 @@ import com.nikhil.niktv.ui.*
 
 internal enum class DiscoveryLibraryDestination { LIVE_TV, MY_LIST }
 
-internal class DiscoveryLibraryOptions(val live: Boolean) {
-    var open by mutableStateOf<(() -> Unit)?>(null)
-}
+internal class DiscoveryLibraryOptions(val live: Boolean)
 internal val LocalDiscoveryLibraryOptions = staticCompositionLocalOf<DiscoveryLibraryOptions?> { null }
 
 /** Reuse the catalogue/queue owners; only navigation chrome belongs to discovery. */

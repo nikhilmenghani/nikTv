@@ -157,13 +157,13 @@ class StalkerPortalClient(private val context: Context) {
         session
     } }
 
-    suspend fun categories(session: PortalSession, type: CatalogType): List<Category> = withContext(Dispatchers.IO) {
+    suspend fun categories(session: PortalSession, type: CatalogType, background: Boolean = false): List<Category> = withContext(Dispatchers.IO) {
         if (session.profile.portalType == PortalType.XTREAM) return@withContext xtreamCategories(session, type)
         val action = when (type) {
             CatalogType.LIVE_TV -> "get_genres"; CatalogType.MOVIES, CatalogType.SERIES -> "get_categories"; CatalogType.RADIO -> "get_genres"
         }
         val requestType = if (type == CatalogType.MOVIES || type == CatalogType.SERIES) "vod" else type.apiType
-        val categoryNodes = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action)))
+        val categoryNodes = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf("type" to requestType, "action" to action)), background = background)
             .payload().array()
         val portalCategories = categoryNodes.mapNotNull { node ->
                 val o = node as? JsonObject ?: return@mapNotNull null

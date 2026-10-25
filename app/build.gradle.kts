@@ -1,3 +1,7 @@
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipEntry
+
 fun String.withoutPropertyQuotes(): String {
     val value = trim()
     return when {
@@ -64,6 +68,47 @@ val prepareMpvNativeRuntime = tasks.register<PrepareMpvNativeRuntime>("prepareMp
     archive.set(layout.file(mpvNativeRuntime.elements.map { it.single().asFile }))
     outputDirectory.set(layout.buildDirectory.dir("generated/mpv-jni"))
 }
+
+// dnsjava's Java-SE name-service plugin depends on sun.net APIs absent on Android.
+// Keep its Android DNS implementation, without shipping the unsupported SPI or
+// suppressing R8's missing-class checks for the rest of the application.
+val dnsJavaAndroidSource = configurations.create("dnsJavaAndroidSource") {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+dependencies { add(dnsJavaAndroidSource.name, "dnsjava:dnsjava:2.1.9") }
+abstract class PrepareAndroidDnsJava : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val archive: org.gradle.api.file.RegularFileProperty
+    @get:OutputFile
+    abstract val output: org.gradle.api.file.RegularFileProperty
+
+    @TaskAction fun prepare() {
+        val target = output.get().asFile
+        target.parentFile.mkdirs()
+        ZipFile(archive.get().asFile).use { source ->
+            ZipOutputStream(target.outputStream().buffered()).use { result ->
+                source.entries().asSequence().filterNot {
+                    it.name.startsWith("org/xbill/DNS/spi/") ||
+                        it.name == "META-INF/services/sun.net.spi.nameservice.NameServiceDescriptor"
+                }.forEach { entry ->
+                    result.putNextEntry(ZipEntry(entry.name))
+                    if (!entry.isDirectory) source.getInputStream(entry).use { it.copyTo(result) }
+                    result.closeEntry()
+                }
+            }
+        }
+    }
+}
+val prepareAndroidDnsJava = tasks.register<PrepareAndroidDnsJava>("prepareAndroidDnsJava") {
+    archive.set(layout.file(dnsJavaAndroidSource.elements.map { it.single().asFile }))
+    output.set(layout.buildDirectory.file("generated/android-dnsjava/dnsjava-android.jar"))
+}
+configurations.configureEach {
+    if (name != dnsJavaAndroidSource.name) exclude(group = "dnsjava", module = "dnsjava")
+}
+dependencies { add("implementation", files(prepareAndroidDnsJava.flatMap { it.output })) }
 androidComponents.onVariants { variant ->
     variant.resValues.put(variant.makeResValueKey("string", "search_authority"),
         variant.applicationId.map { com.android.build.api.variant.ResValue("$it.smarttube", "Embedded SmartTube search") })
@@ -135,6 +180,10 @@ android {
             if (providers.environmentVariable("DEV_KEYSTORE_PATH").isPresent) signingConfig = signingConfigs.getByName("automation")
         }
         getByName("release") {
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             manifestPlaceholders["appLabel"] = "NikTV"
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
             manifestPlaceholders["appBanner"] = "@drawable/tv_banner"
@@ -209,6 +258,7 @@ dependencies {
     androidTestImplementation(project(":st-sharedutils"))
     androidTestImplementation("org.chromium.net:cronet-api:143.7445.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation(project(":st-common"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }

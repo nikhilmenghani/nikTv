@@ -1,7 +1,6 @@
 package com.nikhil.niktv.ui
 
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +17,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.nikhil.niktv.data.TmdbClient
 import com.nikhil.niktv.model.MediaItem
+import com.nikhil.niktv.externalTrailerIntent
 import kotlinx.coroutines.CancellationException
 
 @Composable
@@ -52,8 +52,7 @@ internal fun TrailerDialog(item: MediaItem, series: Boolean, launch: (String) ->
         }
         return
     }
-    val uri = key?.let { Uri.parse("https://www.youtube.com/watch?v=$it") }
-        ?: Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(item.title + " official trailer"))
+    val uri = externalTrailerIntent(item.title, key).data!!
     val apps = remember(uri) {
         context.packageManager.queryIntentActivities(Intent(Intent.ACTION_VIEW, uri), 0)
             .filter { info ->
@@ -63,7 +62,7 @@ internal fun TrailerDialog(item: MediaItem, series: Boolean, launch: (String) ->
     }
     fun open(packageName: String? = null) {
         try {
-            val video = Intent(Intent.ACTION_VIEW, uri).apply {
+            val video = externalTrailerIntent(item.title, key).apply {
                 if (packageName != null) setPackage(packageName)
             }
             context.startActivity(if (packageName == null) Intent.createChooser(video, "Play trailer externally") else video)

@@ -45,6 +45,8 @@ import com.nikhil.niktv.model.Category
 import com.nikhil.niktv.model.CategoryBrowseMode
 import com.nikhil.niktv.model.CategoryOrganization
 
+internal val LocalRefreshProviderCategories = staticCompositionLocalOf<(com.nikhil.niktv.model.CatalogType) -> Unit> { {} }
+
 @Composable
 internal fun collectionFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = Color(0xFF1B1E24), unfocusedContainerColor = SettingsSurface,
@@ -73,29 +75,41 @@ private fun CollectionField(value: String, change: (String) -> Unit, label: Stri
 internal fun CategoryBrowseControls(
     mode: CategoryBrowseMode, query: String,
     onMode: (CategoryBrowseMode) -> Unit, onQuery: (String) -> Unit,
-    create: () -> Unit
+    create: () -> Unit,
+    refresh: () -> Unit = {}, refreshing: Boolean = false, organized: Boolean = true,
+    visibleCount: Int? = null, totalCount: Int? = null
 ) {
     var menu by remember { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(query.isNotEmpty()) }
     val searchFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     Column {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(mode.label, color = Color.White, style = MaterialTheme.typography.titleMedium,
+                Text(if (organized) mode.label else "Categories", color = Color.White, style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
                     fontWeight = FontWeight.SemiBold)
-                Text("IPTV categories", color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
+                Text(when {
+                    visibleCount != null && totalCount != null && visibleCount < totalCount -> "$visibleCount of $totalCount categories"
+                    visibleCount != null -> "$visibleCount categories"
+                    else -> "IPTV categories"
+                }, color = SettingsMuted, style = MaterialTheme.typography.bodySmall)
             }
             ModernHeaderOptionsIcon("Find a category", Icons.AutoMirrored.Filled.ManageSearch) {
                 searchOpen = !searchOpen
                 if (!searchOpen) { onQuery(""); keyboard?.hide() }
             }
-            ModernHeaderOptionsIcon("Browse by", Icons.Default.AccountTree) { menu = true }
-            ModernHeaderOptionsIcon("Create collection", Icons.Default.Add) { create() }
+            ModernHeaderOptionsIcon("Refresh categories", Icons.Default.Refresh, refresh)
+            if (organized) {
+                ModernHeaderOptionsIcon("Browse by", Icons.Default.AccountTree) { menu = true }
+                ModernHeaderOptionsIcon("Create collection", Icons.Default.Add) { create() }
+            }
         }
         // Match the existing header's reserved space for captions below focused icons.
-        Spacer(Modifier.height(38.dp))
+        Box(Modifier.fillMaxWidth().height(38.dp), contentAlignment = Alignment.Center) {
+            if (refreshing) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+        }
         AnimatedVisibility(searchOpen, enter = fadeIn(), exit = fadeOut()) {
             CollectionField(query, onQuery, "Find a category or collection", Modifier.focusRequester(searchFocus),
                 icon = Icons.AutoMirrored.Filled.ManageSearch)

@@ -181,9 +181,9 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                 })
             Column(Modifier.fillMaxWidth()) {
                 header?.invoke()
-                Spacer(Modifier.height(if (compactDetail) 64.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .25f).coerceAtLeast(100.dp)))
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
-                    horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Spacer(Modifier.height(if (compactDetail) 52.dp else if (detail) (height * .4f).coerceAtLeast(180.dp) else (height * .25f).coerceAtLeast(100.dp)))
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = if (compactDetail) 10.dp else 20.dp),
+                    horizontalAlignment = if (leftAligned) Alignment.Start else Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(if (compactDetail) 8.dp else 12.dp)) {
                     // Keep rank/loading in one fixed slot: content arrival must not move actions.
                     if (!detail || rank != null) Box(Modifier.fillMaxWidth().height(24.dp * fontScale),
                         contentAlignment = Alignment.Center) {
@@ -192,29 +192,32 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                             letterSpacing = 1.sp, fontWeight = FontWeight.Bold) }
                     }
                     var logoReady by remember(card?.key, card?.titleLogo) { mutableStateOf(false) }
-                    Box(Modifier.fillMaxWidth().height(82.dp * fontScale), contentAlignment = if (supportingTitle) Alignment.BottomCenter else if (leftAligned) Alignment.CenterStart else Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().then(if (compactDetail) Modifier.heightIn(min = 56.dp * fontScale) else Modifier.height(82.dp * fontScale)), contentAlignment = if (supportingTitle) Alignment.BottomCenter else if (leftAligned) Alignment.CenterStart else Alignment.Center) {
                         if (loading && card == null) Column(horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Box(Modifier.width(220.dp).height(18.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF252B35)))
                             Box(Modifier.width(150.dp).height(12.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF252B35)))
                         }
                         else if (supportingTitle || !logoReady) Text(card?.title ?: "Discover something to watch", color = Color.White,
-                            fontSize = if (supportingTitle) 17.sp else 28.sp, lineHeight = if (supportingTitle) 22.sp else 32.sp, fontWeight = if (supportingTitle) FontWeight.Medium else FontWeight.Bold,
+                            fontSize = if (supportingTitle) 17.sp else if (compactDetail) 24.sp else 28.sp, lineHeight = if (supportingTitle) 22.sp else if (compactDetail) 28.sp else 32.sp, fontWeight = if (supportingTitle) FontWeight.Medium else FontWeight.Bold,
                             textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = if (supportingTitle) 2 else 3, overflow = TextOverflow.Ellipsis)
                         if (!supportingTitle && !card?.titleLogo.isNullOrBlank()) AsyncImage(card?.titleLogo, card?.title,
-                            Modifier.fillMaxSize().graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
+                            Modifier.fillMaxWidth().height((if (compactDetail) 56.dp else 82.dp) * fontScale).graphicsLayer { alpha = if (logoReady) 1f else 0f }, contentScale = ContentScale.Fit,
                             onSuccess = { logoReady = true }, onError = { logoReady = false })
                     }
                     val metadata = card?.let { listOfNotNull(if (detail) discoveryReleaseLabel(it) else it.date?.take(4),
                         it.runtime?.takeIf { detail }?.let { minutes -> "${minutes} min" },
                         it.genres.take(if (detail) 3 else 2).joinToString(" · ").takeIf(String::isNotBlank),
                         it.certification?.takeIf { detail }).joinToString(" · ") }.orEmpty()
-                    if (!leftAligned || metadata.isNotBlank()) Box(Modifier.fillMaxWidth().height(36.dp * fontScale), contentAlignment = if (leftAligned) Alignment.CenterStart else Alignment.Center) {
+                    if (compactDetail && card != null) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        discoveryDetailMetadata(card).forEach { line -> Text(line, Modifier.fillMaxWidth(), color = Color(0xFFCDCDD3), fontSize = 12.sp, lineHeight = 16.sp,
+                            textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center) }
+                    } else if (!leftAligned || metadata.isNotBlank()) Box(Modifier.fillMaxWidth().height(36.dp * fontScale), contentAlignment = if (leftAligned) Alignment.CenterStart else Alignment.Center) {
                         if (loading && card == null) Box(Modifier.width(160.dp).height(10.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF252B35)))
                         else if (metadata.isNotBlank()) Text(metadata, color = Color(0xFFCDCDD3), fontSize = 13.sp, lineHeight = 18.sp,
                             textAlign = if (leftAligned) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    Row(Modifier.fillMaxWidth().onPreviewKeyEvent {
+                    Row(Modifier.fillMaxWidth().then(if (detail) Modifier.height(IntrinsicSize.Min) else Modifier).onPreviewKeyEvent {
                         if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) { onDown(); true } else false
                     }, horizontalArrangement = Arrangement.spacedBy(8.dp, if (leftAligned) Alignment.Start else Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically) {
@@ -224,24 +227,33 @@ internal fun DiscoveryPhoneHero(card: DiscoveryCard?, rank: Int?, height: Dp, de
                         // Keep the primary action centred exactly as Home's Add / Play / Info row.
                         // Saved heroes omit Add, but retain its non-interactive layout slot.
                         if (!detail && !showListAction && supportingTitle) Spacer(Modifier.size(48.dp))
-                        DiscoveryMobileGlassContainer(if (detail) Modifier.weight(1f) else Modifier) {
+                        DiscoveryMobileGlassContainer(if (detail) Modifier.weight(1f).fillMaxHeight() else Modifier) {
                         Surface(onClick = play, enabled = card != null && playEnabled, shape = RoundedCornerShape(10.dp),
                             color = Color.Transparent, contentColor = Color.White,
-                            modifier = Modifier.then(if (detail) Modifier.fillMaxWidth() else Modifier.widthIn(min = 120.dp))
+                            modifier = Modifier.then(if (detail) Modifier.fillMaxSize() else Modifier.widthIn(min = 120.dp))
                                 .heightIn(min = 48.dp).focusRequester(playRequester).onFocusChanged { if (it.isFocused) onFocus() }) {
-                            Row(Modifier.padding(horizontal = if (compactDetail) 8.dp else 18.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.PlayArrow, null, Modifier.size(24.dp))
-                                Text(if (compactDetail) playLabel.replace("Episode ", "E") else playLabel,
+                            Row(Modifier.padding(horizontal = if (compactDetail) 6.dp else 18.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(if (compactDetail) 4.dp else 6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PlayArrow, null, Modifier.size(if (compactDetail) 18.dp else 24.dp))
+                                Text(if (compactDetail && playLabel.startsWith("Resume ")) "Resume" else if (compactDetail) playLabel.replace("Episode ", "E") else playLabel,
                                     fontWeight = FontWeight.Bold, fontSize = if (compactDetail) 13.sp else 15.sp,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    modifier = Modifier.weight(1f, fill = false),
+                                    maxLines = if (compactDetail) 1 else 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
                         }
-                        if (detail) DiscoveryAction(if (inList) "In My List" else "My List",
-                            if (inList) Icons.Default.Check else Icons.Default.Add, enabled = card != null,
-                            horizontalPadding = 8.dp, onFocus = onFocus, onClick = add)
-                        DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus)
+                        if (detail) Box(Modifier.size(48.dp)) {
+                            DiscoveryAction(if (inList) "In My List" else "My List",
+                                if (inList) Icons.Default.Check else Icons.Default.Add, enabled = card != null,
+                                iconOnly = true,
+                                modifier = Modifier.fillMaxSize().heightIn(min = 48.dp),
+                                horizontalPadding = 6.dp, onFocus = onFocus, onClick = add)
+                        }
+                        if (detail) Box(Modifier.size(48.dp)) {
+                            DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus, compactLabel = compactDetail,
+                                modifier = Modifier.fillMaxSize().heightIn(min = 48.dp))
+                        } else DiscoveryTrailerAction(card, iconOnly = true, onFocus = onFocus)
+                        if (detail && compactDetail) LocalProviderSynopsisActions.current?.invoke()
                         if (!detail) PhoneHeroIcon("Info", Icons.Default.Info, card != null, info,
                             Modifier.focusRequester(infoRequester).onFocusChanged { if (it.isFocused) onFocus() })
                     }

@@ -15,7 +15,8 @@ import androidx.compose.ui.platform.LocalContext
 import com.nikhil.niktv.ui.TrailerDialog
 
 @Composable
-internal fun DiscoveryTrailerAction(card: DiscoveryCard?, iconOnly: Boolean = false, onFocus: () -> Unit = {}) {
+internal fun DiscoveryTrailerAction(card: DiscoveryCard?, iconOnly: Boolean = false, onFocus: () -> Unit = {}, compactLabel: Boolean = false,
+    modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val focus = remember { FocusRequester() }
     val view = LocalView.current
@@ -30,8 +31,8 @@ internal fun DiscoveryTrailerAction(card: DiscoveryCard?, iconOnly: Boolean = fa
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         restore()
     }
-    DiscoveryAction("Watch trailer", Icons.Default.SmartDisplay, iconOnly = iconOnly,
-        modifier = Modifier.focusRequester(focus), enabled = card != null && !card.adult,
+    DiscoveryAction("Watch trailer", Icons.Default.SmartDisplay, iconOnly = iconOnly, visualLabel = if (compactLabel) "Trailer" else "Watch trailer",
+        modifier = modifier.focusRequester(focus), enabled = card != null && !card.adult,
         onFocus = onFocus) { opened = card }
     opened?.let { selected ->
         TrailerDialog(selected.media, selected.series, launch = { key ->

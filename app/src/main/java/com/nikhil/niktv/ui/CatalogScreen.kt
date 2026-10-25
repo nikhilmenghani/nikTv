@@ -238,6 +238,9 @@ internal fun CatalogScreen(
         state.movieMatchSelection == null && state.seriesMatchSelection == null && !modernSectionOpen
     val previewProviderCategory = state.discoverySurface != null && state.modernIptvCategory?.type in setOf(CatalogType.MOVIES, CatalogType.SERIES) &&
         state.selectedSeries == null && !state.settingsOpen && !state.searchOpen && !state.favoritesOpen && !state.offlineDownloadsOpen
+    val discoveryMatches = state.discoveryExperienceEnabled && !state.settingsOpen && !state.offlineDownloadsOpen &&
+        (state.movieMatchSelection != null || state.seriesMatchSelection != null)
+    fun closeMatches() { if (state.movieMatchSelection != null) closeTmdbMovieMatches() else closeTmdbSeriesMatches() }
     val discoverySearch = com.nikhil.niktv.discovery.usesDiscoverySearchShell(
         state.discoveryExperienceEnabled, state.searchOpen, state.settingsOpen, state.offlineDownloadsOpen,
         state.movieMatchSelection != null || state.seriesMatchSelection != null)
@@ -318,12 +321,6 @@ internal fun CatalogScreen(
         }
     }
 
-    LaunchedEffect(exitConfirmationOpen) {
-        if (exitConfirmationOpen) {
-            withFrameNanos { }
-            runCatching { exitFocusRequester.requestFocus() }
-        }
-    }
 
     // Keep browse state when details/settings replace MainContent. Modern
     // destinations have their own nested keys; category selection must not
@@ -443,7 +440,10 @@ internal fun CatalogScreen(
                 previewVisible -> browseStateHolder.SaveableStateProvider("discovery2:${state.savedProfile?.cacheKey()}:${state.discoverySurface}") {
                     com.nikhil.niktv.discovery.DiscoveryPreviewScreen(
                     app = state, surface = requireNotNull(state.discoverySurface), selectSurface = openTrial,
-                    exit = openHome, classic = { label -> when (label) {
+                    exit = {
+                        if (state.discoverySurface == DashboardSurface.HOME) exitConfirmationOpen = true
+                        else landingHome()
+                    }, classic = { label -> when (label) {
                         "Home" -> openHome(); "Live TV" -> selectType(CatalogType.LIVE_TV)
                         "Movies" -> openTrial(DashboardSurface.MOVIES); "Series" -> openTrial(DashboardSurface.SERIES)
                         "My List" -> openFavorites(); "Offline" -> openOfflineDownloads()
@@ -453,7 +453,8 @@ internal fun CatalogScreen(
                     playEpisode = playTrialEpisode, openRecent = openRecent, openWatched = openWatchedEpisode,
                     toggleFavorite = toggleFavoriteEntry, openCategory = openModernIptvCategory, openSection = openModernTmdbSection,
                     removeRecent = removeRecent, markWatched = markEpisodeWatched, dismissEpisode = dismissWatchedEpisode,
-                    detailVisibilityChanged = { phoneDetailOpen = it }, dismissRecommendation = dismissRecommendation
+                    detailVisibilityChanged = { phoneDetailOpen = it }, dismissRecommendation = dismissRecommendation,
+                    parentModalOpen = exitConfirmationOpen
                     )
                 }
                 previewProviderCategory -> browseStateHolder.SaveableStateProvider("provider-trial:${state.savedProfile?.cacheKey()}:${state.modernIptvCategory?.id}:${state.modernIptvCategoryOpenId}") {
@@ -516,7 +517,15 @@ internal fun CatalogScreen(
 
     @Composable fun LibraryContent(modifier: Modifier = Modifier) {
         Box(modifier) {
-            if (discoverySearch) com.nikhil.niktv.discovery.DiscoverySearchScreen(
+            if (discoveryMatches) com.nikhil.niktv.discovery.DiscoveryMatchScreen(
+                state, close = ::closeMatches,
+                selectSurface = { closeMatches(); openTrial(it) },
+                navigate = { label ->
+                    closeMatches()
+                    if (label != "Search" || !state.searchOpen) navigateDiscovery(label)
+                },
+                chooseMovie = selectTmdbMovieMatch, chooseSeries = selectTmdbSeriesMatch)
+            else if (discoverySearch) com.nikhil.niktv.discovery.DiscoverySearchScreen(
                 state, back = closeSearch, select = openTrial, navigate = navigateDiscovery
             ) { MainContent(Modifier.fillMaxSize()) }
             else if (discoveryLibrary != null) com.nikhil.niktv.discovery.DiscoveryLibraryScreen(
@@ -583,7 +592,7 @@ internal fun CatalogScreen(
         }
         Box(Modifier.fillMaxSize().background(Color(0xFF090B10))) {
             Column(Modifier.fillMaxSize()
-                .then(if (previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
+                .then(if (previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
                 LibraryContent(Modifier.weight(1f).fillMaxWidth())
                 if (!state.searchOpen && (state.favoritesOpen || state.offlineDownloadsOpen)) MobileLibrarySwitcher(
                     downloadsSelected = state.offlineDownloadsOpen, storageSelected = libraryPane == LibraryPane.STORAGE,
@@ -592,7 +601,7 @@ internal fun CatalogScreen(
             }
             if (showPhoneBar && previewVisible) Box(Modifier.align(Alignment.BottomCenter)) { PhoneBottomBar() }
         }
-    } else if (previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch) {
+    } else if (previewVisible || previewProviderCategory || state.selectedSeries != null || discoveryLibrary != null || discoverySearch || discoveryMatches) {
         LibraryContent(Modifier.fillMaxSize())
     } else if (wide || isTv) {
         Row(
@@ -681,6 +690,7 @@ internal fun CatalogScreen(
     }
     if (exitConfirmationOpen) {
         AlertDialog(
+            modifier = Modifier.initialFocusEntry(exitFocusRequester),
             onDismissRequest = { exitConfirmationOpen = false },
             icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, null, tint = Color(0xFFE50914)) },
             title = { Text("Exit NikTV?") },

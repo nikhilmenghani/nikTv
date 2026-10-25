@@ -39,6 +39,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -66,6 +67,7 @@ data class NikTvState(
     val selectedType: CatalogType = CatalogType.LIVE_TV,
     val categories: List<Category> = emptyList(),
     val rawCategoriesByType: Map<CatalogType, List<Category>> = emptyMap(),
+    val categoryRefreshes: Set<Pair<String, CatalogType>> = emptySet(),
     val selectedCategory: Category? = null,
     val items: List<MediaItem> = emptyList(),
     internal val historyRecommendations: List<com.nikhil.niktv.data.HistoryRecommendationRow> = emptyList(),
@@ -213,6 +215,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private val tmdbAvailabilityCatalogs = mutableMapOf<Pair<String, CatalogType>, SearchCatalogCache>()
     private val tmdbAvailability = com.nikhil.niktv.data.TmdbAvailabilityRepository(application)
     private var tmdbAvailabilityJob: Job? = null
+    private var movieMatchLookupJob: Job? = null
+    private val categoryMetadataRefreshJobs = mutableMapOf<Pair<String, CatalogType>, Job>()
+    private val categoryRefreshAttempts = mutableMapOf<Pair<String, CatalogType>, Long>()
+    private val categoryRefreshSlots = kotlinx.coroutines.sync.Semaphore(1)
+    internal var categoryMetadataLookup: suspend (PortalSession, CatalogType, Boolean) -> List<Category> = { session, type, background -> portal.categories(session, type, background) }
     private val _state = MutableStateFlow(NikTvState(discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(application), parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(application), parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(application)))
     val state: StateFlow<NikTvState> = _state.asStateFlow()
     private var allFavorites: List<FavoriteItem> = emptyList()
@@ -1084,12 +1091,13 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         type = metadata.type,
                         cachedAtMillis = metadata.cachedAtMillis,
                         categories = metadata.categories,
-                        itemsByCategory = emptyMap()
+                        itemsByCategory = emptyMap(),
+                        categoriesCachedAtMillis = metadata.categoriesCachedAtMillis
                     )
                 }
         }
 
-        val fetchedCategories = cachedBrowse == null
+        val fetchedCategories = cachedBrowse?.categories.isNullOrEmpty()
         val allCategories = cachedBrowse?.categories?.takeIf { it.isNotEmpty() }
             ?: portal.categories(session, type)
 
@@ -1104,7 +1112,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             type != CatalogType.SERIES || it.id != "*"
         } ?: filteredCategories.firstOrNull()
 
-        val cache = cachedBrowse?.copy(categories = allCategories)
+        val cache = cachedBrowse?.let { existing -> existing.copy(categories = allCategories,
+            categoriesCachedAtMillis = if (fetchedCategories) System.currentTimeMillis() else existing.categoriesCachedAtMillis) }
             ?: BrowseCatalogCache(
                 profileKey = profileKey,
                 type = type,
@@ -1138,7 +1147,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                             profileKey = profileKey,
                             type = type,
                             cachedAtMillis = cache.cachedAtMillis,
-                            categories = allCategories
+                            categories = allCategories,
+                            categoriesCachedAtMillis = cache.categoriesCachedAtMillis
                         )
                     )
                 }.onFailure {
@@ -1146,6 +1156,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        if (!fetchedCategories && _state.value.selectedType == type && _state.value.nowPlaying == null &&
+            categoryMetadataExpired(cache.categoriesCachedAtMillis, System.currentTimeMillis(), _state.value.cacheIntervalMinutes)) {
+            refreshProviderCategories(type, userRequested = false)
+        }
+
     }
 
     private suspend fun hydrateTypeCacheFromDisk(session: PortalSession, type: CatalogType) {
@@ -2254,6 +2269,58 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 ?.takeIf { it.profileKey == profileKey }
                 ?.let { store.saveBrowseCatalog(it, scheduleMetadataSync = false) }
         }
+    }
+
+    /** Refresh category names/IDs only; retain media pages, history, filters and current selection. */
+    fun refreshProviderCategories(type: CatalogType = _state.value.selectedType, userRequested: Boolean = true) {
+        val session = _state.value.session ?: return
+        if (!userRequested && _state.value.nowPlaying != null) return
+        val profile = session.profile.cacheKey()
+        val key = profile to type
+        if (categoryMetadataRefreshJobs[key]?.isActive == true) return
+        val now = SystemClock.elapsedRealtime()
+        if (!userRequested && categoryRefreshAttempts[key]?.let { now - it < 5 * 60_000L } == true) return
+        categoryRefreshAttempts[key] = now
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            _state.update { it.copy(categoryRefreshes = it.categoryRefreshes + key) }
+            try {
+                val fresh = categoryRefreshSlots.withPermit {
+                    withAutomaticSessionRetry(session) { active -> categoryMetadataLookup(active, type, !userRequested) }
+                }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                require(fresh.isNotEmpty()) { "The provider returned no categories. Your existing list has been kept." }
+                val refreshedAt = System.currentTimeMillis()
+                _state.update { current ->
+                    if (current.session?.profile != session.profile) current else {
+                        val old = current.browseCachesByType[type]?.takeIf { it.profileKey == profile }
+                            ?: BrowseCatalogCache(profile, type, refreshedAt, emptyList(), emptyMap())
+                        val cache = old.copy(categories = fresh, categoriesCachedAtMillis = refreshedAt)
+                        val active = current.selectedType == type
+                        current.copy(rawCategoriesByType = current.rawCategoriesByType + (type to fresh),
+                            categories = if (active) filterCategories(fresh, profile, type, current.categoryFilters) else current.categories,
+                            selectedCategory = if (active) current.selectedCategory?.let { selected -> fresh.firstOrNull { it.id == selected.id } ?: selected } else current.selectedCategory,
+                            browseCachesByType = current.browseCachesByType + (type to cache),
+                            browseCache = if (current.browseCache?.type == type) cache else current.browseCache)
+                    }
+                }
+                if (_state.value.session?.profile == session.profile) {
+                    // Persist only small category metadata, never rewrite the potentially large media cache here.
+                    store.saveBrowseCatalogMetadata(BrowseCatalogMetadataCache(profile, type, refreshedAt, fresh, refreshedAt))
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (userRequested) _state.update { current -> if (current.session?.profile != session.profile) current
+                    else current.copy(error = error.message ?: "Could not refresh IPTV categories") }
+            } finally {
+                val owner = kotlinx.coroutines.currentCoroutineContext()[Job]
+                if (categoryMetadataRefreshJobs[key] == null || categoryMetadataRefreshJobs[key] == owner) {
+                    _state.update { it.copy(categoryRefreshes = it.categoryRefreshes - key) }
+                    if (categoryMetadataRefreshJobs[key] == owner) categoryMetadataRefreshJobs.remove(key)
+                }
+            }
+        }
+        categoryMetadataRefreshJobs[key] = job
+        job.start()
     }
 
     fun refreshCatalog() {
@@ -4228,7 +4295,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openTrendingMovie(entry: TrendingMovie) {
+    fun openTrendingMovie(entry: TrendingMovie) = openTrendingMovie(entry, chooseVersion = false)
+
+    internal fun chooseTmdbMovieVersion(entry: TrendingMovie) = openTrendingMovie(entry, chooseVersion = true)
+
+    private fun openTrendingMovie(entry: TrendingMovie, chooseVersion: Boolean) {
         discoveryMetadataRequests.cancel()
         val requestId = beginPlaybackRequest()
         playbackTask(requestId) {
@@ -4238,15 +4309,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 it.profileKey == session.profile.cacheKey() &&
                     it.type == CatalogType.MOVIES &&
                     it.tmdbId == entry.tmdb.id &&
-                    it.media.externalTmdbId == entry.tmdb.id &&
-                    it.playbackVerified
+                    it.playbackVerified &&
+                    (it.confirmedByUser || (session.profile.portalType != PortalType.XTREAM &&
+                        it.media.externalTmdbId == entry.tmdb.id))
             }
-            if (saved != null) {
+            if (saved != null && !chooseVersion) {
                 commitTmdbMovieSelection(session, entry.tmdb, saved.media, saved.confirmedByUser, requestId)
                 return@playbackTask
             }
 
-            val prefetched = _state.value.modernTmdbMovieMatches[entry.tmdb.id]?.takeIf { it.isNotEmpty() }
+            val prefetched = _state.value.modernTmdbMovieMatches[entry.tmdb.id]?.takeIf { !chooseVersion && it.isNotEmpty() }
             val lookup = if (prefetched != null) MovieMatchLookup(prefetched, prefetched,
                 if (session.profile.portalType == PortalType.XTREAM) emptyList()
                 else listOf(entry.tmdb.title to 1))
@@ -4256,16 +4328,16 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 showTmdbIptvLookupMiss(AlternateSourceRequest(entry.tmdb.asMediaItem(), CatalogType.MOVIES), session.profile.cacheKey(), requestId)
                 return@playbackTask
             }
-            if (candidates.size > 1) {
+            if (candidates.size > 1 || chooseVersion) {
                 _state.update {
                     it.copy(
                         movieMatchSelection = entry.tmdb,
-                        movieMatchCandidates = candidates.take(INITIAL_MOVIE_MATCH_LIMIT),
+                        movieMatchCandidates = candidates,
                         movieMatchLoadingMore = lookup.pendingRequests.isNotEmpty()
                     )
                 }
                 if (lookup.pendingRequests.isNotEmpty()) {
-                    loadMoreTmdbMovieCandidates(session, entry, lookup)
+                    movieMatchLookupJob = loadMoreTmdbMovieCandidates(session, entry, lookup, requestId)
                 }
                 return@playbackTask
             }
@@ -4286,8 +4358,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
-    fun closeTmdbMovieMatches() = _state.update {
-        it.copy(movieMatchSelection = null, movieMatchCandidates = emptyList(), movieMatchLoadingMore = false)
+    fun closeTmdbMovieMatches() {
+        movieMatchLookupJob?.cancel(); movieMatchLookupJob = null
+        _state.update { it.copy(movieMatchSelection = null, movieMatchCandidates = emptyList(), movieMatchLoadingMore = false) }
     }
 
     private suspend fun commitTmdbMovieSelection(
@@ -4689,12 +4762,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         entry: TrendingMovie
     ): MovieMatchLookup {
         if (session.profile.portalType == PortalType.XTREAM) {
-            val resolved = resolveTmdbFromXtreamCatalog(
-                session,
-                CatalogType.MOVIES,
-                entry.tmdb.id
-            ) { candidates -> matchTmdbMovie(entry.tmdb, candidates) }
-            return MovieMatchLookup(listOfNotNull(resolved), listOfNotNull(resolved), emptyList())
+            val matches = resolveTmdbFromXtreamCatalog(session, CatalogType.MOVIES) { candidates ->
+                rankTmdbMovieMatches(entry.tmdb, candidates)
+            }
+            return MovieMatchLookup(matches, matches, emptyList())
         }
 
         val queries = listOf(entry.tmdb.title, entry.tmdb.originalTitle)
@@ -4714,7 +4785,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
             candidates += page.items
             if (page.hasMore) pending += query to 2
-            if (rankTmdbMovieMatches(entry.tmdb, candidates).size >= INITIAL_MOVIE_MATCH_LIMIT) {
+            if (rankTmdbMovieMatches(entry.tmdb, candidates).size >= MOVIE_MATCH_PREVIEW_THRESHOLD) {
                 pending += queries.drop(index + 1).map { it to 1 }
                 return MovieMatchLookup(
                     rankTmdbMovieMatches(entry.tmdb, candidates),
@@ -4733,31 +4804,36 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadMoreTmdbMovieCandidates(
         session: PortalSession,
         entry: TrendingMovie,
-        initial: MovieMatchLookup
+        initial: MovieMatchLookup,
+        requestId: Long
     ) = viewModelScope.launch {
         val candidates = initial.rawCandidates.toMutableList()
-        val requests = ArrayDeque(initial.pendingRequests)
-        var requestsMade = 0
-        while (requests.isNotEmpty() && requestsMade < MAX_BACKGROUND_MATCH_REQUESTS) {
-            if (_state.value.movieMatchSelection?.id != entry.tmdb.id) return@launch
-            val (query, pageNumber) = requests.removeFirst()
-            val page = runCatching {
-                withAutomaticSessionRetry(session) { activeSession ->
+        val pages = TmdbMovieMatchPaging(initial.pendingRequests)
+        val profile = session.profile.cacheKey()
+        fun accepts(current: NikTvState) = latestPlaybackRequest.isCurrent(requestId) &&
+            current.movieMatchSelection?.id == entry.tmdb.id && current.session?.profile?.cacheKey() == profile
+        try {
+            while (accepts(_state.value)) {
+                val (query, pageNumber) = pages.next() ?: break
+                val page = withAutomaticSessionRetry(session) { activeSession ->
                     portal.search(activeSession, SearchContentType.MOVIES, query, pageNumber, "*")
                 }
-            }.getOrNull() ?: continue
-            requestsMade++
-            candidates += page.items
-            if (page.hasMore) requests.addLast(query to (pageNumber + 1))
-            val ranked = rankTmdbMovieMatches(entry.tmdb, candidates.distinctBy { it.id })
-            _state.update { current ->
-                if (current.movieMatchSelection?.id != entry.tmdb.id) current
-                else current.copy(movieMatchCandidates = ranked)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (!accepts(_state.value)) return@launch
+                candidates += page.items
+                pages.completed(query, pageNumber, page.items.map { it.id }, page.hasMore)
+                val ranked = withContext(Dispatchers.Default) {
+                    rankTmdbMovieMatches(entry.tmdb, candidates.distinctBy { it.id })
+                }
+                _state.update { current -> if (!accepts(current)) current else current.copy(movieMatchCandidates = ranked) }
             }
-        }
-        _state.update { current ->
-            if (current.movieMatchSelection?.id != entry.tmdb.id) current
-            else current.copy(movieMatchLoadingMore = false)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _state.update { current -> if (!accepts(current)) current
+                else current.copy(error = error.message ?: "Could not load more IPTV matches") }
+        } finally {
+            _state.update { current -> if (!accepts(current)) current else current.copy(movieMatchLoadingMore = false) }
         }
     }
 
@@ -4921,9 +4997,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun resolveTmdbFromXtreamCatalog(
         session: PortalSession,
         type: CatalogType,
-        tmdbId: Int,
-        titleMatcher: (List<MediaItem>) -> MediaItem?
-    ): MediaItem? {
+        titleMatcher: (List<MediaItem>) -> List<MediaItem>
+    ): List<MediaItem> {
         val profileKey = session.profile.cacheKey()
         val cached = store.searchCatalog(type, profileKey).first()?.items
         val candidates = if (!cached.isNullOrEmpty()) {
@@ -4938,8 +5013,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        return candidates.firstOrNull { it.externalTmdbId == tmdbId }
-            ?: titleMatcher(candidates)
+        // Provider identity can identify the movie, but cannot choose its language
+        // or quality variant. Keep every ranked occurrence for the existing picker.
+        return withContext(Dispatchers.Default) { titleMatcher(candidates) }
     }
 
     private fun localMovieCandidates(snapshot: NikTvState): List<MediaItem> {
@@ -6613,6 +6689,9 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private fun beginPlaybackRequest(): Long {
+        categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
+        categoryMetadataRefreshJobs.clear()
+        movieMatchLookupJob?.cancel(); movieMatchLookupJob = null
         cinejoyHandoffJob?.cancel(); cinejoyHandoffJob = null
         closeAlternateSources()
         discoveryMetadataRequests.cancel()
@@ -7639,7 +7718,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun loadRawCategoriesFor(type: CatalogType) {
         val snapshot = _state.value
-        if (snapshot.rawCategoriesByType[type]?.isNotEmpty() == true) return
+        if (snapshot.rawCategoriesByType[type]?.isNotEmpty() == true) {
+            if (categoryMetadataExpired(snapshot.browseCachesByType[type]?.categoriesCachedAtMillis ?: 0L,
+                    System.currentTimeMillis(), snapshot.cacheIntervalMinutes)) refreshProviderCategories(type, userRequested = false)
+            return
+        }
         val session = snapshot.session ?: return
         viewModelScope.launch {
             val cached = store.browseCatalog(type, session.profile.cacheKey()).first()?.categories.orEmpty()
@@ -7789,6 +7872,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return authenticateProfileForOpening(profile).also { store.save(it) }
     }
     fun switchProfile(profile: PortalProfile) = task {
+        categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
+        categoryMetadataRefreshJobs.clear()
         searchSeriesReturn = null
         closeAlternateSources()
         closeProfileSwitcher()
@@ -8528,8 +8613,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         private const val STALKER_SECTION_PAGE_SIZE = 14
         private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)
         private const val INITIAL_EPISODE_BATCH_LIMIT = 30
-        private const val INITIAL_MOVIE_MATCH_LIMIT = 5
-        private const val MAX_BACKGROUND_MATCH_REQUESTS = 8
+        private const val MOVIE_MATCH_PREVIEW_THRESHOLD = 5
         private const val SEARCH_PREVIEW_DEBOUNCE_MS = 220L
         private const val SEARCH_PROVIDER_FALLBACK_DELAY_MS = 900L
         private const val SEARCH_CATEGORY_CONCURRENCY = 3

@@ -1,6 +1,9 @@
 package com.nikhil.niktv.discovery
 
 import android.provider.Settings
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -17,6 +20,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.*
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.dp
@@ -38,11 +43,16 @@ internal data class ProviderDetailNavigation(
     val dismissEpisode: (WatchedSeries, MediaItem) -> Unit,
     val playProvider: (MediaItem, List<MediaItem>, PlaybackQueueFilter) -> Unit)
 internal val LocalProviderDetailNavigation = staticCompositionLocalOf<ProviderDetailNavigation?> { null }
+internal val LocalProviderSynopsisActions = staticCompositionLocalOf<(@Composable () -> Unit)?> { null }
+internal val LocalProviderSynopsisPanel = staticCompositionLocalOf<(@Composable () -> Unit)?> { null }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProviderDetailSynopsis(overview: String?, title: String, remoteInfo: Boolean = false,
-    requester: FocusRequester = remember { FocusRequester() }, up: (() -> Unit)? = null, down: (() -> Unit)? = null) {
-    if (overview.isNullOrBlank()) return
+    requester: FocusRequester = remember { FocusRequester() }, up: (() -> Unit)? = null, down: (() -> Unit)? = null,
+    reduceMotion: Boolean = false, actionsInHero: Boolean = false) {
+    val actions = if (actionsInHero) null else LocalProviderSynopsisActions.current
+    if (overview.isNullOrBlank() && actions == null) return
     var expanded by rememberSaveable(overview) { mutableStateOf(false) }
     var showInfo by remember(overview) { mutableStateOf(false) }
     var overflowing by remember(overview) { mutableStateOf(false) }
@@ -55,21 +65,29 @@ private fun ProviderDetailSynopsis(overview: String?, title: String, remoteInfo:
             repeat(30) { withFrameNanos { }; if (host.hasWindowFocus() && runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect }
         }
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
-        if (!overview.isNullOrBlank()) Text(overview, color = Color(0xFFD6D6DC), style = MaterialTheme.typography.bodyMedium,
-            maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis,
-            onTextLayout = { if (!expanded) overflowing = it.hasVisualOverflow })
-        if (remoteInfo) DiscoveryAction("More info", Icons.Default.Info,
-            modifier = Modifier.padding(top = 6.dp).focusRequester(requester).onPreviewKeyEvent { event ->
+    Column(Modifier.fillMaxWidth().padding(horizontal = if (remoteInfo) 24.dp else 20.dp, vertical = 6.dp)) {
+        if (!overview.isNullOrBlank()) Box(Modifier.widthIn(max = if (remoteInfo) 880.dp else androidx.compose.ui.unit.Dp.Infinity).fillMaxWidth()
+            .animateContentSize(tween(if (reduceMotion) 0 else 240, easing = FastOutSlowInEasing)).clipToBounds()) {
+            if (actionsInHero) InlineEpisodeDescription(overview, expanded = expanded,
+                style = MaterialTheme.typography.bodyMedium) { expanded = !expanded }
+            else Text(overview, color = Color(0xFFD6D6DC), style = MaterialTheme.typography.bodyMedium,
+                maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
+                onTextLayout = { if (!expanded) overflowing = it.hasVisualOverflow })
+        }
+        if (remoteInfo || actions != null || (!actionsInHero && (expanded || overflowing))) FlowRow(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (remoteInfo && !overview.isNullOrBlank()) DiscoveryAction("More info", Icons.Default.Info,
+            modifier = Modifier.heightIn(min = 48.dp).focusRequester(requester).onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) false else when (event.key) {
                     Key.DirectionUp -> { up?.invoke(); up != null }
                     Key.DirectionDown -> { down?.invoke(); down != null }
                     else -> false
                 }
             }) { showInfo = true }
-        else if (expanded || overflowing) DiscoveryAction(if (expanded) "Read less" else "Read more",
+        else if (!actionsInHero && (expanded || overflowing)) DiscoveryAction(if (expanded) "Read less" else "Read more",
             if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-            modifier = Modifier.padding(top = 6.dp)) { expanded = !expanded }
+            modifier = Modifier.heightIn(min = 48.dp)) { expanded = !expanded }
+        actions?.invoke()
+        }
     }
     if (showInfo) FullDescriptionDialog(title, overview.orEmpty().ifBlank { "No description is available for this series." }) { showInfo = false }
 }
@@ -82,7 +100,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     playRequester: FocusRequester = remember { FocusRequester() },
     backRequester: FocusRequester = remember { FocusRequester() },
     down: () -> Unit = {}, playLabel: String = "Play", playEnabled: Boolean = true,
-    progressLabel: String? = null, castUp: (() -> Unit)? = null, relatedUp: (() -> Unit)? = null,
+    progressLabel: String? = null, progressFraction: Float? = null, castUp: (() -> Unit)? = null, relatedUp: (() -> Unit)? = null,
     episodeDown: (() -> Unit)? = null,
     heroUp: (() -> Unit)? = null, topDown: (() -> Unit)? = null,
     synopsisRequester: FocusRequester = remember { FocusRequester() },
@@ -180,10 +198,20 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
     val hero: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth().background(Color(0xFF090B10))) {
             Box(Modifier.fillMaxWidth()) {
-            if (!phone) Box(Modifier.matchParentSize()) { DiscoveryBackdrop(metadata.card, reduceMotion) }
+            if (!phone) Box(Modifier.matchParentSize()) {
+                // This screen owns the readability gradients. Applying the feed's
+                // pre-shaded bitmap as well would hide the artwork under actions.
+                DiscoveryBackdrop(metadata.card, reduceMotion, Alignment.TopCenter, shaded = false)
+                Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
+                    0f to Color(0x99090B10), .16f to Color(0x33090B10), .36f to Color.Transparent,
+                    .64f to Color.Transparent, .84f to Color(0x33090B10), 1f to Color(0x99090B10))))
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                    0f to Color(0xD9090B10), .3f to Color.Transparent,
+                    .6f to Color(0x33090B10), .84f to Color(0x99090B10), 1f to Color(0xFF090B10))))
+            }
             Column {
             if (!phone) toolbar()
-            DiscoveryHero(metadata.card, null, if (landscape) 280.dp else 255.dp, landscape,
+            DiscoveryHero(metadata.card, null, if (wideSeries) 200.dp else if (landscape) 280.dp else 255.dp, landscape,
                 compact = configuration.screenHeightDp < 480, detail = true, loading = false,
                 inList = isFavorite, playRequester = playRequester, infoRequester = remember { FocusRequester() },
                 play = play, add = favorite, info = {}, onFocus = {},
@@ -191,10 +219,21 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                 onUp = { if (wideSeries) { if (heroUp != null) { heroUp(); true } else runCatching { backRequester.requestFocus() }.getOrDefault(false) } else false },
                 previous = {}, next = {}, carousel = false, index = 0, count = 0, playLabel = playLabel, playEnabled = playEnabled,
                 portraitPhone = phone, phoneHeader = if (phone) toolbar else null, showSynopsis = false, compactDetail = true)
+            progressLabel?.let {
+                Column(Modifier.fillMaxWidth().padding(horizontal = if (phone) 20.dp else 32.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(it, color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                    progressFraction?.let { fraction -> LinearProgressIndicator(progress = { fraction },
+                        modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth().height(3.dp),
+                        color = Color(0xFFE50925), trackColor = Color(0xFF343842), drawStopIndicator = {}) }
+                }
+            }
+            ProviderDetailSynopsis(metadata.card.overview, metadata.card.title, wideSeries, synopsisRequester, synopsisUp, synopsisDown, reduceMotion, actionsInHero = phone)
             }
             }
-            progressLabel?.let { Text(it, Modifier.padding(horizontal = 24.dp, vertical = 4.dp), color = Color.LightGray, style = MaterialTheme.typography.labelMedium) }
-            ProviderDetailSynopsis(metadata.card.overview, metadata.card.title, wideSeries, synopsisRequester, synopsisUp, synopsisDown)
+            // Expanded panels must not change the artwork bounds or its fade positions.
+            LocalProviderSynopsisPanel.current?.let { panel ->
+                Column(Modifier.fillMaxWidth().padding(horizontal = if (wideSeries) 24.dp else 20.dp)) { panel() }
+            }
             Box(Modifier.fillMaxWidth().height(4.dp).padding(horizontal = 24.dp)) {
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             }

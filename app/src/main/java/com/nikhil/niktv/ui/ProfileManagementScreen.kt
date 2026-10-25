@@ -50,6 +50,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
@@ -150,19 +156,13 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                 FocusRequester()
             }
 
-        LaunchedEffect(isTv, preferredProfileKey) {
-            if (isTv && preferredProfileKey != null) {
-                withFrameNanos { }
-                delay(80L)
-                runCatching {
-                    preferredRequester.requestFocus()
-                }
-            }
-        }
+        val remoteChooser = chooserContext.usesRemoteNavigation(configuration) ||
+            androidx.compose.ui.platform.LocalInputModeManager.current.inputMode == androidx.compose.ui.input.InputMode.Keyboard
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .initialFocusEntry(preferredRequester, remoteChooser)
                 .background(
                     Brush.verticalGradient(
                         listOf(
@@ -186,7 +186,10 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             Image(
                 painter = painterResource(R.drawable.niktv_logo_foreground),
                 contentDescription = "NikTV",
-                modifier = Modifier.size(if (isTv) 64.dp else if (compactChooser && configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 56.dp else if (compactChooser) 80.dp else 140.dp),
+                modifier = Modifier
+                    .size(if (isTv) 80.dp else if (compactChooser && configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 56.dp else if (compactChooser) 80.dp else 140.dp)
+                    // The launcher foreground has generous transparent safe-area padding.
+                    .graphicsLayer { scaleX = if (isTv) 2.1f else 1.8f; scaleY = scaleX },
                 contentScale = ContentScale.Fit
             )
 
@@ -253,7 +256,6 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                         selected = lastUsed,
                         modifier =
                             if (
-                                isTv &&
                                 profileKey == preferredProfileKey
                             ) {
                                 Modifier.focusRequester(
@@ -480,12 +482,14 @@ internal fun ProfileChooserTile(
     val remoteNavigationActive =
         profileContext.usesRemoteNavigation(profileConfiguration)
 
-    val focusProgress by animateFloatAsState(
+    val reducedMotion = android.provider.Settings.Global.getFloat(profileContext.contentResolver,
+        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    // Read animated values in draw/layer callbacks: focus must not remeasure the grid.
+    val focusProgress = animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
-        // Finish before the next repeat event from a TV remote. Longer focus
-        // tweens overlap during quick D-pad navigation and make Fire TV feel
-        // as though focus is trailing the user's input.
-        animationSpec = tween(durationMillis = if (remoteNavigationActive) 90 else 170),
+        animationSpec = if (reducedMotion) snap() else tween(
+            durationMillis = if (remoteNavigationActive) 80 else if (focused) 160 else 130,
+            easing = FastOutSlowInEasing),
         label = "profileChooserTileFocus"
     )
 
@@ -500,84 +504,31 @@ internal fun ProfileChooserTile(
             if (compact) 14.dp else 18.dp
         )
 
-    val scale =
-        1f + (0.045f * focusProgress)
-
-    val iconScale =
-        1f + ((if (remoteNavigationActive) 0.035f else 0.08f) * focusProgress)
-
-    val backgroundColor =
-        lerp(
-            Color(0xFF15171B),
-            Color(0xFF22252B),
-            focusProgress
-        )
-
-    val borderColor =
-        lerp(
-            Color(0xFF30343B),
-            Color(0xFFF2F3F5),
-            focusProgress
-        )
-
-    val iconBackground =
-        lerp(
-            Color(0xFF24272D),
-            Color(0xFF35191D),
-            focusProgress
-        )
-
-    val iconColor =
-        lerp(
-            Color(0xFFB8BCC4),
-            Color.White,
-            focusProgress
-        )
-
-    val titleColor =
-        lerp(
-            Color(0xFFD4D7DC),
-            Color.White,
-            focusProgress
-        )
-
-    val subtitleColor =
-        lerp(
-            Color(0xFF858B94),
-            Color(0xFFBFC3CA),
-            focusProgress
-        )
-
     Column(
         modifier
             .width(tileWidth)
             .heightIn(min = tileHeight)
-            .zIndex(focusProgress)
-            .then(
-                if (remoteNavigationActive) {
-                    Modifier
-                } else {
-                    Modifier.graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                    }
-                }
-            )
-            .touchTileShadow(
-                isTv = remoteNavigationActive,
-                elevation = (14f * focusProgress).dp,
-                shape = shape,
-                clip = false,
-                ambientColor = Color(0x66000000),
-                spotColor = Color(0x55E50914)
-            )
+            .zIndex(if (focused) 1f else 0f)
+            // Fire TV's compositor drops more frames when scaling these large
+            // cards. Remote focus uses draw-only fill/border motion instead.
+            .then(if (remoteNavigationActive) Modifier else Modifier.graphicsLayer {
+                val scale = if (reducedMotion) 1f else 1f + .025f * focusProgress.value
+                scaleX = scale
+                scaleY = scale
+            })
             .clip(shape)
-            .background(backgroundColor)
-            .border(
-                width = (1f + focusProgress).dp,
-                color = borderColor,
-                shape = shape
-            )
+            .drawWithContent {
+                val progress = if (remoteNavigationActive) { if (focused) 1f else 0f } else focusProgress.value
+                drawRoundRect(lerp(Color(0xFF15171B), Color(0xFF22252B), progress),
+                    cornerRadius = CornerRadius((if (compact) 14.dp else 18.dp).toPx()))
+                drawContent()
+                val stroke = (1f + progress).dp.toPx()
+                val inset = stroke / 2f
+                drawRoundRect(lerp(Color(0xFF30343B), Color(0xFFF2F3F5), progress),
+                    topLeft = Offset(inset, inset), size = Size(size.width - stroke, size.height - stroke),
+                    cornerRadius = CornerRadius((if (compact) 14.dp else 18.dp).toPx() - inset),
+                    style = Stroke(stroke))
+            }
             .semantics {
                 this.selected = selected
                 role = Role.Button
@@ -585,10 +536,15 @@ internal fun ProfileChooserTile(
             .onFocusChanged {
                 focused = it.isFocused
             }
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                // This tile already supplies its own remote focus treatment.
+                indication = if (remoteNavigationActive) null else LocalIndication.current,
+                onClick = onClick
+            )
             .padding(outerPadding),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = if (portraitCardHeight != null) Arrangement.Center else Arrangement.Top
+        verticalArrangement = Arrangement.Center
     ) {
         Box(
             Modifier.fillMaxWidth(),
@@ -597,23 +553,22 @@ internal fun ProfileChooserTile(
             Box(
                 Modifier
                     .size(iconPlateSize)
-                    .graphicsLayer {
-                        scaleX = iconScale
-                        scaleY = iconScale
-                    }
                     .clip(
                         RoundedCornerShape(
                             if (compact) 14.dp else 18.dp
                         )
                     )
-                    .background(iconBackground),
+                    .drawBehind {
+                        val progress = if (remoteNavigationActive) { if (focused) 1f else 0f } else focusProgress.value
+                        drawRect(lerp(Color(0xFF24272D), Color(0xFF35191D), progress))
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     icon,
-                    title,
+                    null,
                     Modifier.size(iconSize),
-                    tint = iconColor
+                    tint = Color(0xFFE2E4E8)
                 )
             }
 
@@ -652,7 +607,7 @@ internal fun ProfileChooserTile(
 
         Text(
             title,
-            color = titleColor,
+            color = Color(0xFFF0F1F4),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             style = if (portraitCardHeight != null) {
                 MaterialTheme.typography.titleSmall.copy(
@@ -664,12 +619,8 @@ internal fun ProfileChooserTile(
             } else {
                 MaterialTheme.typography.titleMedium
             },
-            fontWeight =
-                if (focused || selected) {
-                    FontWeight.SemiBold
-                } else {
-                    FontWeight.Medium
-                }
+            // Keep identical glyph metrics while focus moves between tiles.
+            fontWeight = FontWeight.SemiBold
         )
 
         Spacer(
@@ -680,7 +631,7 @@ internal fun ProfileChooserTile(
 
         Text(
             subtitle,
-            color = subtitleColor,
+            color = Color(0xFF9DA4AE),
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = MaterialTheme.typography.labelSmall.fontSize * portraitScale,
                 lineHeight = MaterialTheme.typography.labelSmall.lineHeight * portraitScale
@@ -698,7 +649,7 @@ internal fun ProfileChooserTile(
                 )
                 .height(3.dp)
                 .graphicsLayer {
-                    alpha = focusProgress
+                    alpha = focusProgress.value
                 }
                 .clip(CircleShape)
                 .background(Color(0xFFE50914))

@@ -54,15 +54,20 @@ internal fun episodeMatchesSearch(title: String, overview: String?, number: Int?
 internal const val SERIES_INLINE_DETAILS_INDEX = 2
 internal const val SERIES_EPISODE_START_INDEX = 3
 
-internal enum class SeriesDetailFocus { TOP, PLAY, INFO, SEASONS, SORT, TOOLS, EPISODES }
-internal fun adjacentSeriesDetailFocus(current: SeriesDetailFocus, delta: Int, hasSeasons: Boolean): SeriesDetailFocus? {
+internal enum class SeriesDetailFocus { TOP, PLAY, INFO, TOOLS, SEASONS, SORT, EPISODES }
+internal fun adjacentSeriesDetailFocus(current: SeriesDetailFocus, delta: Int, hasSeasons: Boolean, hasSynopsis: Boolean = true): SeriesDetailFocus? {
+    // Description and extras are one horizontal action row. Up/Down crosses it
+    // once; Left/Right reaches the other controls in that row.
     val path = SeriesDetailFocus.entries.filter { it != SeriesDetailFocus.SEASONS || hasSeasons }
-    val index = path.indexOf(current)
+        .filter { if (hasSynopsis) it != SeriesDetailFocus.TOOLS else it != SeriesDetailFocus.INFO }
+    val row = if (hasSynopsis && current == SeriesDetailFocus.TOOLS) SeriesDetailFocus.INFO
+        else if (!hasSynopsis && current == SeriesDetailFocus.INFO) SeriesDetailFocus.TOOLS else current
+    val index = path.indexOf(row)
     return if (index < 0) null else path.getOrNull(index + delta)
 }
 internal fun seriesDetailFocusSlot(target: SeriesDetailFocus): Int = when (target) {
-    SeriesDetailFocus.TOP, SeriesDetailFocus.PLAY, SeriesDetailFocus.INFO -> 0
-    SeriesDetailFocus.SEASONS, SeriesDetailFocus.SORT, SeriesDetailFocus.TOOLS -> 1
+    SeriesDetailFocus.TOP, SeriesDetailFocus.PLAY, SeriesDetailFocus.INFO, SeriesDetailFocus.TOOLS -> 0
+    SeriesDetailFocus.SEASONS, SeriesDetailFocus.SORT -> 1
     SeriesDetailFocus.EPISODES -> SERIES_EPISODE_START_INDEX
 }
 

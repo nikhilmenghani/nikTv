@@ -475,6 +475,11 @@ internal fun ModernSettingsScreen(
     val oneClickUpdateRequester = remember { FocusRequester() }
     val settingsEntryRequester = remember { FocusRequester() }
     val settingsContentEntryRequester = remember { FocusRequester() }
+    val profileAvailabilityEntryRequester = remember { FocusRequester() }
+    var profileSetupExplanation by remember { mutableStateOf<String?>(null) }
+    profileSetupExplanation?.let { explanation ->
+        FullDescriptionDialog("Profile setup", explanation, dismiss = { profileSetupExplanation = null })
+    }
     var updateDialogNavigationEnabled by remember { mutableStateOf(false) }
     var restoreVersionFocus by remember { mutableStateOf(false) }
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
@@ -1215,35 +1220,19 @@ SettingsSwitch(
                 val available = builtIn.portalUrl.isNotBlank() &&
                     (builtIn.portalType == PortalType.STALKER ||
                         (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
-                ResponsiveSettingsOptionRow(
-                    icon =
-                        if (builtIn.portalType == PortalType.STALKER) {
-                            Icons.Default.Tv
-                        } else {
-                            Icons.Default.Key
-                        },
-                    title = builtIn.name,
-                    subtitle =
-                        if (!available) {
-                            "Sync private configuration to enable"
-                        } else if (enabled) {
-                            "Available on the profile screen"
-                        } else {
-                            "Hidden from the profile screen"
-                        },
-                    trailingContent = {
-SettingsSwitch(
-                            checked = enabled,
-                            onCheckedChange = {
-                                setPreconfiguredProfileEnabled(
-                                    builtIn,
-                                    it
-                                )
-                            },
-                            enabled = available,
-                            modifier = Modifier
-                        )
-                    }
+                ProfileAvailabilitySetting(
+                    name = builtIn.name,
+                    stalker = builtIn.portalType == PortalType.STALKER,
+                    checked = enabled, available = available,
+                    onCheckedChange = { setPreconfiguredProfileEnabled(builtIn, it) },
+                    onSetupNeeded = {
+                        profileSetupExplanation = "Sync private configuration in Settings → Profiles before enabling ${builtIn.name}. Each NikTV installation keeps its own configuration."
+                    },
+                    modifier = Modifier
+                        .then(if (index == 0) Modifier.focusRequester(profileAvailabilityEntryRequester) else Modifier)
+                        .then(if (!compactSettingsHeader) Modifier.focusProperties {
+                            left = settingsRailRequesters.getValue(SettingsDestination.PROFILES)
+                        } else Modifier)
                 )
                 if (
                     index != preconfiguredProfiles.lastIndex ||
@@ -2620,7 +2609,8 @@ SettingsSwitch(
                     selected = selectedSettingsDestination,
                     onSelected = { selectedSettingsDestination = it },
                     requesters = settingsRailRequesters,
-                    detailRequester = settingsContentEntryRequester,
+                    detailRequester = if (selectedSettingsDestination == SettingsDestination.PROFILES && preconfiguredProfiles.isNotEmpty())
+                        profileAvailabilityEntryRequester else settingsContentEntryRequester,
                     modifier = Modifier
                         .width(
                             when {
@@ -3842,7 +3832,7 @@ private fun SettingsDestinationHeader(destination: SettingsDestination) {
 }
 
 @Composable
-private fun SettingsDestinationRail(
+internal fun SettingsDestinationRail(
     selected: SettingsDestination,
     onSelected: (SettingsDestination) -> Unit,
     requesters: Map<SettingsDestination, FocusRequester>,

@@ -302,7 +302,8 @@ class ProfileStore @JvmOverloads constructor(
                 profileKey = cache.profileKey,
                 type = cache.type,
                 cachedAtMillis = cache.cachedAtMillis,
-                categories = cache.categories
+                categories = cache.categories,
+                categoriesCachedAtMillis = cache.categoriesCachedAtMillis
             )
         )
         if (scheduleMetadataSync) SearchMetadataSyncScheduler.request(context)

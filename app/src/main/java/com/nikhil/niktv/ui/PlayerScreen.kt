@@ -859,7 +859,7 @@ fun PlayerScreen(
     val localPlayer = localLease?.player
     DisposableEffect(localPlayer, media.playbackAttemptId) {
         val exoPlayer = localPlayer as? ExoPlayer
-        if (exoPlayer == null || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) {
+        if (!com.nikhil.niktv.BuildConfig.DEBUG || exoPlayer == null || media.catalogType != CatalogType.LIVE_TV || media.offlinePlayback) {
             return@DisposableEffect onDispose { }
         }
         val diagnostics = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
@@ -1431,7 +1431,7 @@ fun PlayerScreen(
                     }
                 }
             }
-            if (media.catalogType == CatalogType.LIVE_TV && playbackRequested &&
+            if (com.nikhil.niktv.BuildConfig.DEBUG && media.catalogType == CatalogType.LIVE_TV && playbackRequested &&
                 android.os.SystemClock.elapsedRealtime() - lastHealthSample >= 15_000L) {
                 val exo = player as? ExoPlayer
                 val counters = exo?.videoDecoderCounters
