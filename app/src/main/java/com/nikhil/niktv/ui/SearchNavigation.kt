@@ -20,23 +20,24 @@ internal class SearchSeriesReturn private constructor(
 ) {
     fun restore(current: NikTvState): NikTvState? =
         if (current.searchProfileKey() == profileKey && current.selectedSeries?.id == seriesId) {
-            restoreBrowse(current).copy(searchOpen = true, searchLocalLoading = false, searchServerLoading = false)
+            restoreBrowse(current).copy(searchLocalLoading = false, searchServerLoading = false)
         } else null
 
     fun resolved(profile: String, requested: String, resolved: String): SearchSeriesReturn =
         if (profile == profileKey && requested == seriesId) SearchSeriesReturn(profileKey, resolved, restoreBrowse) else this
 
     companion object {
-        fun capture(origin: NikTvState, selected: MediaItem): SearchSeriesReturn? {
-            if (!origin.discoveryExperienceEnabled || !origin.searchOpen) return null
+        fun capture(origin: NikTvState, selected: MediaItem, movieContainer: Boolean = false): SearchSeriesReturn? {
+            if (!movieContainer && (!origin.discoveryExperienceEnabled || !origin.searchOpen)) return null
             val profile = origin.searchProfileKey() ?: return null
             // Capture only the fields owned by the replaced browse/detail page.
             val home = origin.homeOpen
+            val search = origin.searchOpen
             val favorites = origin.favoritesOpen
             val type = origin.selectedType
             val previousSeries = origin.selectedSeries
             val items = origin.items
-            val focus = origin.playbackReturnFocusId
+            val focus = if (movieContainer) selected.id else origin.playbackReturnFocusId
             val fromHome = origin.seriesOpenedFromHome
             val fromFavorites = origin.seriesOpenedFromFavorites
             val fromSection = origin.seriesOpenedFromModernSection
@@ -47,14 +48,17 @@ internal class SearchSeriesReturn private constructor(
             val seasonCountsKey = origin.seriesSeasonEpisodeCountsKey
             val page = origin.episodePage
             val hasMore = origin.episodeHasMore
+            val movieMatches = origin.movieMatchSelection
+            val movieCandidates = origin.movieMatchCandidates
             return SearchSeriesReturn(profile, selected.id) { current -> current.copy(
-                homeOpen = home, favoritesOpen = favorites, selectedType = type,
+                homeOpen = home, searchOpen = search, favoritesOpen = favorites, selectedType = type,
                 selectedSeries = previousSeries, items = items, playbackReturnFocusId = focus,
                 seriesOpenedFromHome = fromHome, seriesOpenedFromFavorites = fromFavorites,
                 seriesOpenedFromModernSection = fromSection, useTmdbEpisodeMetadata = tmdbMetadata,
                 availableSeriesSeasons = seasons, selectedSeriesSeason = season,
                 seriesSeasonEpisodeCounts = seasonCounts, seriesSeasonEpisodeCountsKey = seasonCountsKey,
-                episodePage = page, episodeHasMore = hasMore, episodeLoadingMore = false
+                episodePage = page, episodeHasMore = hasMore, episodeLoadingMore = false,
+                movieMatchSelection = movieMatches, movieMatchCandidates = movieCandidates, movieMatchLoadingMore = false
             ) }
         }
     }

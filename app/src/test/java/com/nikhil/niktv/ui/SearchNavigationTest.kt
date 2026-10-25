@@ -5,6 +5,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SearchNavigationTest {
+    @Test fun movieContainerBackRestoresMovieCategoryAndFreshProgressWithoutOpeningSearch() {
+        val movie = MediaItem("event", "Event", null, "container")
+        val category = Category("sports", "Sports", CatalogType.MOVIES)
+        val origin = NikTvState(savedProfile = profile, selectedType = CatalogType.MOVIES,
+            selectedCategory = category, items = listOf(movie), homeOpen = false, searchOpen = false)
+        val route = requireNotNull(SearchSeriesReturn.capture(origin, movie, movieContainer = true))
+        val progress = PlaybackProgress("SERIES:event:1:1", 30000, 120000)
+        val current = origin.copy(selectedType = CatalogType.SERIES, selectedSeries = movie.copy(vodSeriesContainer = true),
+            items = emptyList(), playbackProgress = listOf(progress))
+        val restored = requireNotNull(route.restore(current))
+        assertEquals(CatalogType.MOVIES, restored.selectedType)
+        assertEquals(category, restored.selectedCategory)
+        assertEquals(origin.items, restored.items)
+        assertEquals(movie.id, restored.playbackReturnFocusId)
+        assertFalse(restored.searchOpen)
+        assertNull(restored.selectedSeries)
+        assertEquals(listOf(progress), restored.playbackProgress)
+        assertNull(route.restore(current.copy(savedProfile = profile.copy(name = "Other", portalUrl = "https://other.invalid"))))
+    }
     private val profile = PortalProfile("Fixture", "https://provider.invalid", "00:00:00:00:00:00")
     private val selected = MediaItem("series:1", "Selected series", null, null, searchResultType = SearchContentType.SERIES)
     private val saved = MediaItem("saved:1", "Saved movie", null, null)

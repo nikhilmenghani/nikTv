@@ -226,6 +226,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var allRecentlyPlayed: List<RecentItem> = emptyList()
     private var categoryFilterApplyInProgress = false
     private var searchSeriesReturn: SearchSeriesReturn? = null
+    private var movieStructureJob: Job? = null
+    internal var movieStructureLookup: suspend (PortalSession, MediaItem) -> Boolean = portal::movieHasEpisodes
     private var allWatchedSeries: List<WatchedSeries> = emptyList()
     private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
@@ -4381,6 +4383,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             directFullscreen = true,
             requestId = requestId
         )
+        // A Movies record may have opened its season browser instead of starting a movie.
+        if (!latestPlaybackRequest.isCurrent(requestId) || _state.value.nowPlaying?.let {
+                it.catalogType == CatalogType.MOVIES && it.media.id == resolved.id
+            } != true) return
         // Persist only authoritative provider IDs or an explicit user selection;
         // automatically selected fuzzy candidates do not establish identity.
         if (resolved.externalTmdbId == movie.id || confirmedByUser) {
@@ -5119,9 +5125,46 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         if (gateAdultAction(item, CatalogType.MOVIES) {
                 if (_state.value.session?.profile?.cacheKey() == profile) openProviderMovieDetails(item, queue, filter)
             }) return
-        _state.update { it.copy(providerMovieDetails = com.nikhil.niktv.discovery.ProviderMovieDetails(profile, item, queue, filter)) }
+        movieStructureJob?.cancel()
+        val selected = com.nikhil.niktv.discovery.ProviderMovieDetails(profile, item, queue, filter)
+        _state.update { it.copy(providerMovieDetails = selected) }
+        val session = _state.value.session ?: return
+        if (session.profile.portalType != PortalType.STALKER || item.id.startsWith("tmdb-")) return
+        movieStructureJob = viewModelScope.launch {
+            try {
+                val episodic = item.vodSeriesContainer || withAutomaticSessionRetry(session) { movieStructureLookup(it, item) }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (episodic && _state.value.providerMovieDetails === selected &&
+                    _state.value.session?.profile?.cacheKey() == profile && _state.value.nowPlaying == null) {
+                    openVodSeriesContainer(item)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                // Probe failures leave ordinary Play available; episode-loading errors remain actionable.
+                if (_state.value.selectedSeries?.id == item.id && _state.value.session?.profile?.cacheKey() == profile)
+                    _state.update { it.copy(error = failure.message ?: "Could not load episodes") }
+            }
+        }
     }
-    fun closeProviderMovieDetails() = _state.update { it.copy(providerMovieDetails = null) }
+    fun closeProviderMovieDetails() {
+        movieStructureJob?.cancel()
+        _state.update { it.copy(providerMovieDetails = null) }
+    }
+
+    private suspend fun openVodSeriesContainer(item: MediaItem) {
+        val series = item.copy(vodSeriesContainer = true)
+        searchSeriesReturn = SearchSeriesReturn.capture(_state.value, series, movieContainer = true)
+        _state.update { it.copy(providerMovieDetails = null, selectedType = CatalogType.SERIES, error = null,
+            movieMatchSelection = null, movieMatchCandidates = emptyList(), movieMatchLoadingMore = false,
+            nowPlaying = null, playbackQueueScope = null, playbackQueueHasMore = false, playbackQueueLoadingMore = false,
+            selectedSeries = series, searchOpen = false, homeOpen = false, favoritesOpen = false,
+            playbackReturnFocusId = null, items = emptyList(), availableSeriesSeasons = emptyList(),
+            selectedSeriesSeason = null, seriesOpenedFromHome = false, seriesOpenedFromFavorites = false,
+            seriesOpenedFromModernSection = false) }
+        _state.update { it.copy(loading = true) }
+        try { loadSeriesEpisodes(series) }
+        finally { if (_state.value.selectedSeries?.id == series.id) _state.update { it.copy(loading = false) } }
+    }
     fun playProviderMovieDetails() {
         val selected = _state.value.providerMovieDetails ?: return
         if (_state.value.session?.profile?.cacheKey() != selected.profile) return
@@ -6689,6 +6732,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var autoAdvanceAfterQueueLoadJob: Job? = null
 
     private fun beginPlaybackRequest(): Long {
+        movieStructureJob?.cancel()
         categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
         categoryMetadataRefreshJobs.clear()
         movieMatchLookupJob?.cancel(); movieMatchLookupJob = null
@@ -6746,6 +6790,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                         authorizationRetryCount, resumePositionOverride, directFullscreen, activeSession, requestId, queueFilter)
                 }
             }
+        } catch (container: com.nikhil.niktv.data.PortalVodSeriesContainerException) {
+            if (latestPlaybackRequest.isCurrent(requestId) && type == CatalogType.MOVIES) {
+                movieStructureJob?.cancel()
+                openVodSeriesContainer(item)
+            }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -6791,6 +6840,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         val url = offlineUrl ?: try {
             portal.playableUrl(session, item, type)
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (container: com.nikhil.niktv.data.PortalVodSeriesContainerException) { throw container }
         catch (failure: Exception) {
             if (forceFreshUrl) throw failure
             item = portal.refreshPlaybackItem(session, item, type, series)
@@ -7872,6 +7922,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         return authenticateProfileForOpening(profile).also { store.save(it) }
     }
     fun switchProfile(profile: PortalProfile) = task {
+        movieStructureJob?.cancel()
         categoryMetadataRefreshJobs.values.toList().forEach { it.cancel() }
         categoryMetadataRefreshJobs.clear()
         searchSeriesReturn = null

@@ -960,17 +960,9 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     onDismissRequest = { if (!state.reauthenticating) vm.dismissError() },
                     properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
                 ) {
-                    LaunchedEffect(error, authorizationExpired, state.reauthenticating) {
-                        if (state.reauthenticating) return@LaunchedEffect
-                        val initial = if (authorizationExpired) reauthenticateRequester else diagnosticsCloseRequester
-                        repeat(8) {
-                            withFrameNanos { }
-                            if (runCatching { initial.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
-                            kotlinx.coroutines.delay(40L)
-                        }
-                    }
                     Surface(
-                        modifier = Modifier.padding(horizontal = 20.dp).widthIn(max = 620.dp).fillMaxWidth(),
+                        modifier = Modifier.padding(horizontal = 20.dp).widthIn(max = 620.dp).fillMaxWidth()
+                            .initialFocusEntry(if (authorizationExpired) reauthenticateRequester else diagnosticsCloseRequester),
                         shape = RoundedCornerShape(18.dp),
                         color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
                         tonalElevation = 2.dp,
@@ -992,7 +984,10 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                             }
                             if (authorizationExpired) {
                                 Text("The portal rejected the saved authorization token even though the HTTP request completed. Your profile credentials are still saved; request a fresh session to continue.")
-                                if (!showDiagnostics) NikTvTextActionButton(onClick = { showDiagnostics = true }) { Icon(Icons.Default.Info, null); Spacer(Modifier.width(8.dp)); Text("Show diagnostics") }
+                                if (!showDiagnostics) NikTvTextActionButton(onClick = {
+                                    reauthenticateRequester.requestFocus()
+                                    showDiagnostics = true
+                                }) { Icon(Icons.Default.Info, null); Spacer(Modifier.width(8.dp)); Text("Show diagnostics") }
                             }
                             if (showDiagnostics) SelectionContainer {
                                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
@@ -1000,46 +995,10 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                                 }
                             }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            Column(
-                                Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (authorizationExpired) NikTvPrimaryActionButton(
-                                    onClick = vm::reauthenticate,
-                                    enabled = !state.reauthenticating,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(44.dp)
-                                        .focusRequester(reauthenticateRequester)
-                                ) {
-                                    if (state.reauthenticating) {
-                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Authenticating…")
-                                    } else Text("Re-authenticate")
-                                }
-                                Row(
-                                    Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    NikTvSecondaryActionButton(
-                                        onClick = vm::dismissError,
-                                        enabled = !state.reauthenticating,
-                                        modifier = Modifier.size(48.dp).focusRequester(diagnosticsCloseRequester),
-                                        contentPadding = PaddingValues(0.dp)
-                                    ) { Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(24.dp)) }
-                                    if (showDiagnostics) NikTvPrimaryActionButton(
-                                        onClick = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) },
-                                        modifier = Modifier.weight(1f).height(48.dp)
-                                    ) {
-                                        Icon(Icons.Default.ContentCopy, null, Modifier.size(18.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Copy diagnostics", maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.labelLarge)
-                                    }
-                                }
-                            }
+                            PortalDiagnosticsActions(authorizationExpired, state.reauthenticating, showDiagnostics,
+                                reauthenticateRequester, diagnosticsCloseRequester,
+                                close = vm::dismissError, reauthenticate = vm::reauthenticate,
+                                copy = { clipboard.setPrimaryClip(ClipData.newPlainText("NikTV diagnostics", error)) })
                         }
                     }
                 }

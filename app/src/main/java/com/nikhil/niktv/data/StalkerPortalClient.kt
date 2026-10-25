@@ -41,6 +41,32 @@ class StalkerPortalClient(private val context: Context) {
         .build()
     @Volatile private var authenticationTrace: String = ""
     private val authMutex = Mutex()
+    private val vodRoots = LinkedHashMap<String, Pair<Long, JsonElement>>()
+    private fun vodRootKey(session: PortalSession, item: MediaItem) =
+        sha1("${session.profile}|${session.endpointUrl}|${session.token}|${item.id}|${item.portalCategoryId}")
+
+    private suspend fun vodRoot(session: PortalSession, item: MediaItem): JsonElement {
+        val key = vodRootKey(session, item)
+        val now = System.currentTimeMillis()
+        synchronized(vodRoots) { vodRoots[key]?.takeIf { now - it.first in 0 until 300_000L }?.let { return it.second } }
+        val result = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
+            "type" to "vod", "action" to "get_ordered_list", "movie_id" to item.id,
+            "season_id" to "", "episode_id" to "", "category" to item.portalCategoryId.orEmpty(),
+            "fav" to "0", "sortby" to "added", "hd" to "0", "ended" to "0", "p" to "1"
+        ))).payload()
+        // Metadata only, never resolved streams/decoders. At most eight small root responses.
+        if (result.arrayFromData().isNotEmpty() && result.toString().length <= 256 * 1024) synchronized(vodRoots) {
+            vodRoots.entries.removeAll { now - it.value.first !in 0 until 300_000L }
+            vodRoots.remove(key)
+            while (vodRoots.size >= 8) vodRoots.remove(vodRoots.keys.first())
+            vodRoots[key] = System.currentTimeMillis() to result
+        }
+        return result
+    }
+
+    suspend fun movieHasEpisodes(session: PortalSession, item: MediaItem): Boolean = withContext(Dispatchers.IO) {
+        session.profile.portalType == PortalType.STALKER && portalVodHasEpisodes(vodRoot(session, item))
+    }
     private val requestGate = PortalRequestGate()
     // Xtream search downloads a complete media type in one response. Retain it
     // for the session so subsequent searches filter memory instead of
@@ -51,10 +77,12 @@ class StalkerPortalClient(private val context: Context) {
     )
 
     fun invalidateFullCatalog(profile: PortalProfile, type: CatalogType) {
+        synchronized(vodRoots) { vodRoots.clear() }
         xtreamCatalogCache.invalidate(Triple(profile, type, null))
     }
 
     fun invalidateCatalog(profile: PortalProfile, category: Category) {
+        synchronized(vodRoots) { vodRoots.clear() }
         xtreamCatalogCache.invalidate(Triple(profile, category.type, category.id))
     }
     private val trafficPrefs = context.getSharedPreferences("portal_traffic_guard", Context.MODE_PRIVATE)
@@ -362,6 +390,7 @@ class StalkerPortalClient(private val context: Context) {
     }
 
     suspend fun refreshPlaybackItem(session: PortalSession, item: MediaItem, type: CatalogType, series: MediaItem? = null): MediaItem {
+        if (type == CatalogType.MOVIES) synchronized(vodRoots) { vodRoots.remove(vodRootKey(session, item)) }
         if (type == CatalogType.SERIES && series != null) {
             return episodes(session, series).firstOrNull { it.id == item.id ||
                 (it.portalEpisodeId != null && it.portalEpisodeId == item.portalEpisodeId && it.episodeNumber == item.episodeNumber) }
@@ -396,13 +425,9 @@ class StalkerPortalClient(private val context: Context) {
             ))).payload().arrayFromData().mapNotNull { it as? JsonObject }
             listOf(details.firstOrNull()?.string("id")?.let { "/media/file_$it.mpg" } ?: cmd)
         } else if (type == CatalogType.MOVIES) {
-            val details = request(session.profile, session.endpointUrl, session, authorizedParams(session, mapOf(
-                "type" to "vod", "action" to "get_ordered_list", "movie_id" to item.id,
-                "season_id" to "", "episode_id" to "",
-                "category" to item.portalCategoryId.orEmpty(),
-                "fav" to "0", "sortby" to "added", "hd" to "0", "ended" to "0",
-                "p" to "1"
-            ))).payload().arrayFromData().mapNotNull { node ->
+            val root = vodRoot(session, item)
+            if (portalVodHasEpisodes(root)) throw PortalVodSeriesContainerException()
+            val details = root.arrayFromData().mapNotNull { node ->
                 val detail = node as? JsonObject ?: return@mapNotNull null
                 val id = detail.string("id") ?: return@mapNotNull null
                 VodDetailCandidate(
@@ -468,7 +493,8 @@ class StalkerPortalClient(private val context: Context) {
                 episodePayloadHasMore(pagePayload, requestedPage)
             )
         }
-        val initialPayload = request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams)).payload()
+        val initialPayload = if (series.vodSeriesContainer && requestedPage == 1) vodRoot(session, series)
+            else request(session.profile, session.endpointUrl, session, authorizedParams(session, baseParams)).payload()
         val initial = initialPayload.arrayFromData()
         val direct = stalkerEpisodeItems(initial, series)
         if (direct.isNotEmpty()) {
@@ -520,8 +546,10 @@ class StalkerPortalClient(private val context: Context) {
             val item = node as? JsonObject ?: return@flatMap emptyList()
             if (item.boolish("is_season")) return@flatMap emptyList()
             val season = item.string("season_number")?.toIntOrNull() ?: item.string("season")?.toIntOrNull() ?: fallbackSeason
-            val command = item.string("cmd") ?: series.command
             val numbered = (item["series"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }.orEmpty()
+            val command = item.string("cmd") ?: series.command ?: if (item.boolish("is_episode") || numbered.isNotEmpty()) {
+                (item.string("id") ?: item.string("episode_id"))?.let { "/media/file_$it.mpg" }
+            } else null
             // episode_id identifies the provider's playable media record on many
             // Stalker portals; it is not the episode's ordinal number. Mixing the
             // two caused unrelated TMDB titles/artwork to be attached by number.

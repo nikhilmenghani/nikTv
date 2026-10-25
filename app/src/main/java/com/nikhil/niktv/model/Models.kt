@@ -157,7 +157,9 @@ data class MediaItem(
     @kotlinx.serialization.Transient val searchResultType: SearchContentType? = null,
     val isAdult: Boolean = false,
     /** Provider upload/add timestamp, independent of the episode's original air date. */
-    val episodeAddedAtMillis: Long? = null
+    val episodeAddedAtMillis: Long? = null,
+    /** Confirmed Stalker VOD hierarchy, even when its catalogue category is Movies. */
+    val vodSeriesContainer: Boolean = false
 )
 
 @Serializable

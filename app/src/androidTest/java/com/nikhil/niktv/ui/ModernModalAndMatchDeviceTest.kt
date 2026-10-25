@@ -25,6 +25,28 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Synthetic UI only; never connects a profile or plays media. */
 class ModernModalAndMatchDeviceTest {
+    @Test fun heldSeekOnlyPreviewsAndCommitsOnceAfterRelease() {
+        val calls = CopyOnWriteArrayList<Long>()
+        fixture({
+            val bar = remember { FocusRequester() }
+            Box(Modifier.width(600.dp).initialFocusEntry(bar)) {
+                PlaybackProgressBar(0L, 7_200_000L, { calls.add(it) }, "fixture-seek", modifier = Modifier.focusRequester(bar))
+            }
+        }) {
+            Thread.sleep(250)
+            val down = SystemClock.uptimeMillis()
+            instrumentation.sendKeySync(KeyEvent(down, down, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0))
+            Thread.sleep(850)
+            instrumentation.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 1))
+            Thread.sleep(550)
+            assertTrue("Holding never seeks the actual player", calls.isEmpty())
+            instrumentation.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT, 0))
+            await("One accelerated seek after release") { calls.size == 1 }
+            assertEquals(40_000L, calls.single())
+            Thread.sleep(650)
+            assertEquals(1, calls.size)
+        }
+    }
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private fun await(message: String, condition: () -> Boolean) {
         val end = SystemClock.uptimeMillis() + 6000
@@ -86,6 +108,72 @@ class ModernModalAndMatchDeviceTest {
             await("User can move to Cancel") { focused("Cancel fixture") }
             Thread.sleep(200)
             assertTrue("Fallback must not steal Cancel focus", focused("Cancel fixture"))
+        }
+    }
+
+    @Test fun sessionActionsStayAlignedAndReauthenticationKeepsFocusWhileBusy() {
+        val busy = mutableStateOf(false)
+        val diagnostics = mutableStateOf(false)
+        val calls = AtomicInteger()
+        fixture({
+            val reauth = remember { FocusRequester() }
+            val close = remember { FocusRequester() }
+            androidx.compose.ui.window.Dialog(onDismissRequest = {}) {
+                Surface(Modifier.width(360.dp).initialFocusEntry(reauth)) {
+                    Column(Modifier.padding(16.dp)) {
+                        NikTvTextActionButton({ diagnostics.value = true }) { Text("Show diagnostics fixture") }
+                        PortalDiagnosticsActions(true, busy.value, diagnostics.value, reauth, close,
+                            close = {}, reauthenticate = { calls.incrementAndGet(); busy.value = true }, copy = {})
+                    }
+                }
+            }
+        }) {
+            await("Re-authenticate receives initial focus") { focused("Re-authenticate") }
+            val close = bounds(requireNotNull(button("Close")))
+            val primary = bounds(requireNotNull(button("Re-authenticate")))
+            assertEquals(close.top, primary.top); assertEquals(close.bottom, primary.bottom)
+            assertTrue(close.right < primary.left)
+            instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                java.io.File(instrumentation.targetContext.cacheDir, "session-actions-aligned.png").outputStream().use {
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+                bitmap.recycle()
+            }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Busy action keeps focus") { focused("Authenticating…") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            assertEquals(1, calls.get())
+            instrumentation.runOnMainSync { busy.value = false; diagnostics.value = true }
+            await("Expanded diagnostics retain Re-authenticate focus") { focused("Re-authenticate") && button("Copy diagnostics") != null }
+            val copy = bounds(requireNotNull(button("Copy diagnostics")))
+            val after = bounds(requireNotNull(button("Re-authenticate")))
+            assertEquals(close.top, copy.top); assertEquals(copy.top, after.top)
+            assertEquals(close.bottom, copy.bottom); assertEquals(copy.bottom, after.bottom)
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Copy is reachable") { focused("Copy diagnostics") }
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Close is reachable") { focused("Close") }
+        }
+    }
+
+    @Test fun ordinaryDiagnosticsKeepCloseFocusedAndCopyInTheSameRow() {
+        fixture({
+            val close = remember { FocusRequester() }
+            val reauth = remember { FocusRequester() }
+            androidx.compose.ui.window.Dialog(onDismissRequest = {}) {
+                Surface(Modifier.width(360.dp).initialFocusEntry(close)) {
+                    Box(Modifier.padding(16.dp)) {
+                        PortalDiagnosticsActions(false, false, true, reauth, close, {}, {}, {})
+                    }
+                }
+            }
+        }) {
+            await("Close remains default for ordinary diagnostics") { focused("Close") }
+            val close = bounds(requireNotNull(button("Close")))
+            val copy = bounds(requireNotNull(button("Copy diagnostics")))
+            assertEquals(close.top, copy.top); assertEquals(close.bottom, copy.bottom)
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Copy is reachable from Close") { focused("Copy diagnostics") }
         }
     }
     @Test fun profilePopupStartsOnCurrentSecondProfileAndKeepsUserMovement() {

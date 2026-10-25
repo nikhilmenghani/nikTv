@@ -3825,10 +3825,11 @@ internal fun PlaybackProgressBar(
     var preview by remember(mediaKey) { mutableStateOf<Long?>(null) }
     var revision by remember(mediaKey) { mutableIntStateOf(0) }
     var directionHeld by remember(mediaKey) { mutableStateOf(false) }
+    val holdAcceleration = remember(mediaKey) { SeekHoldAcceleration() }
     var dragging by remember(mediaKey) { mutableStateOf(false) }
     val seek by rememberUpdatedState(onSeek)
     LaunchedEffect(mediaKey, revision, directionHeld, dragging, active) {
-        if (!active) { preview = null; directionHeld = false; dragging = false; return@LaunchedEffect }
+        if (!active) { preview = null; directionHeld = false; dragging = false; holdAcceleration.reset(); return@LaunchedEffect }
         val target = preview ?: return@LaunchedEffect
         if (directionHeld || dragging) return@LaunchedEffect
         delay(450L)
@@ -3853,16 +3854,19 @@ internal fun PlaybackProgressBar(
                     else -> return@onPreviewKeyEvent false
                 }
                 if (event.type == ComposeKeyEventType.KeyDown) {
+                    val step = holdAcceleration.step(direction, event.nativeKeyEvent.eventTime,
+                        event.nativeKeyEvent.repeatCount > 0, safeDuration)
                     directionHeld = true
-                    preview = seekPreviewPosition(preview ?: position, direction, safeDuration)
+                    preview = seekPreviewPosition(preview ?: position, direction, safeDuration, step)
                     revision++
                 } else if (event.type == ComposeKeyEventType.KeyUp) {
-                    directionHeld = false
+                    holdAcceleration.release(direction)
+                    directionHeld = holdAcceleration.isHeld
                     revision++
                 }
                 true
             }
-            .onFocusChanged { if (!it.hasFocus) directionHeld = false }
+            .onFocusChanged { if (!it.hasFocus) { directionHeld = false; holdAcceleration.reset() } }
             .focusProperties { canFocus = active }
             .focusable(),
         verticalArrangement = Arrangement.Center
@@ -3883,6 +3887,8 @@ internal fun PlaybackProgressBar(
             // Millisecond values were being clamped at the range endpoint on device.
             value = fraction,
             onValueChange = {
+                holdAcceleration.reset()
+                directionHeld = false
                 dragging = true
                 preview = (it.toDouble() * safeDuration).toLong().coerceIn(0L, safeDuration)
                 revision++
