@@ -329,10 +329,12 @@ internal fun LibrarySavedPoster(entry: LibraryEntry, state: NikTvState, width: D
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
     if (phone && !entry.live) DiscoveryPhoneMediaCard(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type),
         if (sensitive) null else entry.media.logo, entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
-        wide = false, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus)
+        wide = false, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus,
+        source = entry.recent?.discoveryPlaybackSource() ?: entry.media.discoveryCatalogSource())
     else DiscoveryPosterTile(if (sensitive) "Sensitive content" else com.nikhil.niktv.data.providerDisplayTitle(entry.media.title, entry.type), if (sensitive) null else entry.media.logo,
         entry.favorite?.categoryTitle ?: entry.kind.name.lowercase().replaceFirstChar(Char::uppercase), width,
-        reduceMotion = reduceMotion, aspect = if (entry.live) 16f / 9f else 2f / 3f, focusVerticalInset = focusInset, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus)
+        reduceMotion = reduceMotion, aspect = if (entry.live) 16f / 9f else 2f / 3f, focusVerticalInset = focusInset, progress = progress, onClick = open, onLongClick = { menu = true }, onFocus = focus,
+        source = entry.recent?.discoveryPlaybackSource() ?: entry.media.discoveryCatalogSource())
     ModernTileActionsMenu(menu, true, dismiss = { menu = false }, toggleFavorite = remove, clear = null,
         trailerItem = entry.media.takeUnless { sensitive }, trailerSeries = entry.type == CatalogType.SERIES,
         playAction = open, viewDescription = null)

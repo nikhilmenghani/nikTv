@@ -388,7 +388,9 @@ data class PlayingMedia(
     val decoderSessionId: String = java.util.UUID.randomUUID().toString(),
     val decoderRecoveryCount: Int = 0,
     /** Explicit alternate playback is ephemeral and never replaces an IPTV mapping. */
-    val alternateSource: AlternatePlaybackSource? = null
+    val alternateSource: AlternatePlaybackSource? = null,
+    /** Explicit owner for local playback preferences; never infer it from a truncated progress key. */
+    val profileKey: String = ""
 )
 
 data class AlternatePlaybackSource(

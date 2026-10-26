@@ -213,7 +213,9 @@ internal fun CatalogScreen(
     playInContext: ((MediaItem, List<MediaItem>, com.nikhil.niktv.model.PlaybackQueueFilter) -> Unit)? = null,
     playProviderMovie: () -> Unit,
     closeProviderMovie: () -> Unit,
-    openGlobalSearch: (() -> Unit)? = null
+    openGlobalSearch: (() -> Unit)? = null,
+    goToSeriesEpisode: ((Int?) -> Unit)? = null,
+    cancelEpisodeDestination: () -> Unit = {},
 ) {
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
@@ -435,6 +437,8 @@ internal fun CatalogScreen(
                     openSettings = openSettings,
                     refreshCatalog = refreshCatalog,
                     loadMoreEpisodes = loadMoreEpisodes,
+                    goToEpisode = goToSeriesEpisode,
+                    cancelEpisodeDestination = cancelEpisodeDestination,
                     openTmdbMovie = openTrendingMovie, openTmdbSeries = openTrendingSeries
                 ) }
                 previewVisible -> browseStateHolder.SaveableStateProvider("discovery2:${state.savedProfile?.cacheKey()}:${state.discoverySurface}") {

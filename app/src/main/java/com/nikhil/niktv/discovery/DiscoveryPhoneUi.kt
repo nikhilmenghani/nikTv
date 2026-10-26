@@ -296,7 +296,7 @@ private fun PhoneHeroIcon(label: String, icon: androidx.compose.ui.graphics.vect
 @Composable
 internal fun DiscoveryPhoneMediaCard(title: String, artwork: String?, subtitle: String, width: Dp,
     wide: Boolean, modifier: Modifier = Modifier, progress: Float? = null, matchCount: Int? = null,
-    onClick: () -> Unit, onLongClick: (() -> Unit)?, onFocus: () -> Unit) {
+    onClick: () -> Unit, onLongClick: (() -> Unit)?, onFocus: () -> Unit, source: DiscoveryTileSource? = null) {
     val context = LocalContext.current
     val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     var focused by remember { mutableStateOf(false) }
@@ -306,7 +306,10 @@ internal fun DiscoveryPhoneMediaCard(title: String, artwork: String?, subtitle: 
     Column(modifier.width(width).onFocusChanged {
         focused = it.isFocused; focusBorder.floatValue = if (focused) 1f else 0f
         if (focused) onFocus()
-    }.semantics(mergeDescendants = true) { contentDescription = title }
+    }.semantics(mergeDescendants = true) {
+        contentDescription = title
+        if (source != null || matchCount != null) stateDescription = discoveryTileStateDescription(source, matchCount)
+    }
         .remoteCombinedClickable(onClick = onClick, onLongClick = onLongClick,
             interactionSource = remember { MutableInteractionSource() }, showIndication = true)) {
         // Keep the existing card footprint; place readable metadata inside it like My List.
@@ -332,8 +335,7 @@ internal fun DiscoveryPhoneMediaCard(title: String, artwork: String?, subtitle: 
             progress?.let { value -> Canvas(Modifier.fillMaxWidth().height(3.dp).align(Alignment.BottomCenter)) {
                 drawRect(Color.DarkGray); drawRect(Color(0xFFE50925), size = size.copy(width = size.width * value.coerceIn(0f, 1f)))
             } }
-            matchCount?.let { Text(it.toString(), color = Color.White, fontSize = 11.sp,
-                modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).background(Color(0xFFE50925), RoundedCornerShape(6.dp)).padding(5.dp)) }
+            DiscoveryTileIndicators(source, matchCount, Modifier.align(Alignment.TopCenter))
         }
     }
 }

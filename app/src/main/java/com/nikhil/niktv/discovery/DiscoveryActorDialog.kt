@@ -94,6 +94,7 @@ internal fun DiscoveryActorDialog(person: DiscoveryPerson,
                             BoxWithConstraints {
                                 DiscoveryPosterTile(card.title, card.poster,
                                     listOfNotNull(if (card.series) "Series" else "Movie", card.date?.take(4)).joinToString(" · "),
+                                    source = DiscoveryTileSource.TMDB,
                                     width = maxWidth, reduceMotion = reduceMotion, focusVerticalInset = discoveryPosterFocusInset(maxWidth.value).dp, modifier = Modifier.focusRequester(requester),
                                     onFocus = { selected = card.key }, onClick = { open(card) }, onLongClick = { alternateOpen = true })
                                 AlternateSourceOnlyMenu(alternateOpen, card.media,

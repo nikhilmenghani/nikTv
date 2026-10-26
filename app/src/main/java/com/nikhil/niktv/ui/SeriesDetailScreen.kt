@@ -145,7 +145,9 @@ internal fun ModernSeriesDetailScreen(
     refreshCatalog: () -> Unit,
     loadMoreEpisodes: () -> Unit,
     openTmdbMovie: (TrendingMovie) -> Unit,
-    openTmdbSeries: (TrendingSeries) -> Unit
+    openTmdbSeries: (TrendingSeries) -> Unit,
+    goToEpisode: ((Int?) -> Unit)? = null,
+    cancelEpisodeDestination: () -> Unit = {},
 ) {
     val series = state.selectedSeries ?: return
     var episodeSortDescending by rememberSaveable(series.id) { mutableStateOf(true) }
@@ -344,11 +346,13 @@ internal fun ModernSeriesDetailScreen(
     val primaryEpisodeToPlay = recentEpisode ?: if (episodeSortDescending) latestEpisode ?: state.items.firstOrNull()
         else state.items.firstOrNull()
 
-    fun requestEpisodeFocus(revealParent: Boolean, fromStart: Boolean = false) {
+    fun requestEpisodeFocus(revealParent: Boolean, fromStart: Boolean = false, exactId: String? = null) {
         if (filteredEpisodes.isEmpty()) return
-        val index = if (fromStart) 0 else filteredEpisodes.indexOfFirst { it.id == focusedEpisodeId }.coerceAtLeast(0)
+        val index = if (exactId != null) filteredEpisodes.indexOfFirst { it.id == exactId }.takeIf { it >= 0 } ?: return
+            else if (fromStart) 0 else filteredEpisodes.indexOfFirst { it.id == focusedEpisodeId }.coerceAtLeast(0)
         val targetId = filteredEpisodes[index].id
-        if (fromStart) focusedEpisodeId = targetId
+        val forceReveal = fromStart || exactId != null
+        if (forceReveal) focusedEpisodeId = targetId
         episodeMove?.cancel()
         wideFocusCoordinator.cancel()
         val verticalIndex = seriesEpisodeVerticalIndex(index, !verticalEpisodeLayout)
@@ -359,7 +363,7 @@ internal fun ModernSeriesDetailScreen(
         val innerVisible = verticalEpisodeLayout || (innerItem != null && innerItem.offset >= innerViewport.viewportStartOffset &&
             innerItem.offset + innerItem.size <= innerViewport.viewportEndOffset)
         navigationTrace?.invoke("provider-episode-enter remembered=$focusedEpisodeId target=$targetId innerVisible=$innerVisible parent=$revealParent")
-        if (!fromStart && (!revealParent || parentVisible) && innerVisible) {
+        if (!forceReveal && (!revealParent || parentVisible) && innerVisible) {
             val accepted = runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)
             navigationTrace?.invoke("provider-episode-focus target=$targetId accepted=$accepted")
             if (accepted) return
@@ -368,16 +372,40 @@ internal fun ModernSeriesDetailScreen(
             val visible = viewport.visibleItemsInfo.firstOrNull { it.index == verticalIndex }
             // Seasons and their episode list share this outer row. Scrolling it
             // during Right fights the sidebar's own focus reveal on short lists.
-            if (fromStart && verticalEpisodeLayout) episodeListState.scrollToItem(verticalIndex, -toolbarHeightPx)
+            if (forceReveal && verticalEpisodeLayout) episodeListState.scrollToItem(verticalIndex, -toolbarHeightPx)
             else if (revealParent && (visible == null || visible.offset < viewport.viewportStartOffset ||
                 visible.offset + visible.size > viewport.viewportEndOffset))
                 episodeListState.scrollToItem(verticalIndex)
-            if (!verticalEpisodeLayout && (fromStart || !innerVisible)) episodeRowState.scrollToItem(index)
+            if (!verticalEpisodeLayout && (forceReveal || !innerVisible)) episodeRowState.scrollToItem(index)
             repeat(20) { withFrameNanos { }
                 if (runCatching { landscapeRequesters[targetId]?.requestFocus() == true }.getOrDefault(false)) return@launch
             }
         }
     }
+    val destination = state.episodeDestination?.takeIf { it.series == series.id &&
+        it.profile == state.session?.profile?.cacheKey() && it.season == state.selectedSeriesSeason }
+    var handledDestination by remember(profile, series.id) { mutableStateOf<Long?>(null) }
+    val episodeWindow = androidx.compose.ui.platform.LocalView.current
+    var destinationHadPopup by remember { mutableStateOf(false) }
+    LaunchedEffect(destination) {
+        if (destination != null && (destination.running || destination.message != null)) destinationHadPopup = true
+        else if (destinationHadPopup) {
+            destinationHadPopup = false
+            if (destination?.focusId == null) repeat(30) {
+                withFrameNanos { }
+                if (episodeWindow.hasWindowFocus() && runCatching { sortRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            }
+        }
+    }
+    LaunchedEffect(destination, filteredEpisodes, expandedPanel) {
+        val completed = destination?.takeIf { !it.running && it.focusId != null && it.request != handledDestination } ?: return@LaunchedEffect
+        if (expandedPanel == SeriesDetailPanel.SEARCH) { expandedPanel = null; searchQuery = ""; return@LaunchedEffect }
+        for (attempt in 0 until 30) { withFrameNanos { }; if (episodeWindow.hasWindowFocus()) break }
+        requestEpisodeFocus(revealParent = true, exactId = completed.focusId)
+        handledDestination = completed.request
+    }
+    if (destination != null && (destination.running || destination.message != null)) EpisodeDestinationDialog(destination,
+        cancel = cancelEpisodeDestination, retry = { goToEpisode?.invoke(destination.number) })
     fun focusLandscapeEpisode() = requestEpisodeFocus(revealParent = true)
     fun requestWideFocus(target: SeriesDetailFocus, preferred: FocusRequester? = null) {
         if (target == SeriesDetailFocus.INFO && !hasSynopsis) {
@@ -477,8 +505,8 @@ internal fun ModernSeriesDetailScreen(
     }
 
     val currentLoadMore by rememberUpdatedState(loadMoreEpisodes)
-    LaunchedEffect(series.id, selectedSeason, filteredEpisodes.size, state.episodeHasMore, state.episodeLoadingMore, state.loading, activeSearchQuery, verticalEpisodeLayout) {
-        if (state.episodeLoadingMore || state.loading || !state.episodeHasMore || activeSearchQuery.isNotBlank()) return@LaunchedEffect
+    LaunchedEffect(series.id, selectedSeason, filteredEpisodes.size, state.episodeHasMore, state.episodeLoadingMore, destination, state.loading, activeSearchQuery, verticalEpisodeLayout) {
+        if (state.episodeLoadingMore || destination?.running == true || state.loading || !state.episodeHasMore || activeSearchQuery.isNotBlank()) return@LaunchedEffect
         snapshotFlow {
             if (verticalEpisodeLayout) shouldLoadMoreSeriesEpisodes(filteredEpisodes.size,
                 episodeListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1, state.episodeHasMore,
@@ -691,7 +719,11 @@ internal fun ModernSeriesDetailScreen(
                         searchOpen = expandedPanel == SeriesDetailPanel.SEARCH,
                         onSearch = { if (expandedPanel == SeriesDetailPanel.SEARCH) closeEpisodeSearch() else expandedPanel = SeriesDetailPanel.SEARCH },
                         searchRequester = toolbarRequester, sortRequester = sortRequester, layoutRequester = layoutRequester,
-                        onSortApplied = { requestEpisodeFocus(revealParent = true, fromStart = true) },
+                        onSortApplied = {
+                            if (!episodeSortDescending && state.episodeHasMore && goToEpisode != null) goToEpisode(null)
+                            else requestEpisodeFocus(revealParent = true, fromStart = true)
+                        },
+                        onGoToEpisode = goToEpisode?.let { callback -> { number -> callback(number) } },
                         beforeAction = { searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide() },
                         searchField = { SeriesEpisodeSearchField(
                                     value = searchQuery, change = {

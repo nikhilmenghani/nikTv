@@ -350,6 +350,7 @@ fun PlayerScreen(
     onVideoFramesRendered: ((Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val introSettings = rememberIntroSkipSettings(media)
     val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
         context.isTvLikeDevice(LocalConfiguration.current)
@@ -441,6 +442,7 @@ fun PlayerScreen(
     if (effectiveEngine == PlaybackEngine.VLC) {
         VlcPlayerScreen(
             media = media,
+            introSettings = introSettings,
             initialResumePosition = engineSwitchResumePosition,
             onBack = onBack,
             onPlayPrevious = onPlayPrevious,
@@ -558,7 +560,7 @@ fun PlayerScreen(
     // The parent owns this picker, while the player retains its originating
     // control. A replacement playback attempt cannot inherit a pending return.
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen
+    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     val playerQueueItems = remember(media.media.id, media.episodeQueue) {
         val unique = media.episodeQueue.distinctBy { it.id }
@@ -657,6 +659,8 @@ fun PlayerScreen(
     val downloadFocusRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseFocusRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val introFocusRequester = remember(media.progressKey) { FocusRequester() }
+    val skipIntroFocusRequester = remember(media.progressKey) { FocusRequester() }
     val audioFocusRequester = remember(media.progressKey) { FocusRequester() }
     val pipFocusRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchFocusRequester = remember(media.progressKey) { FocusRequester() }
@@ -1016,6 +1020,9 @@ fun PlayerScreen(
             castPlayer = castPlayer,
             localPlayer = localPlayer
         )
+    val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
+        ?.takeIf { player.isCurrentMediaItemSeekable }
+    val introAvailable = introSecondsRemaining != null
     val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
     val liveEdgeRecovery = remember(media.progressKey) { LiveStreamRecovery() }
     var liveRefreshPending by remember(player) { mutableStateOf(false) }
@@ -1388,7 +1395,7 @@ fun PlayerScreen(
         }
     }
     val showAutoPlayPrompt =
-        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled
+        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable
     LaunchedEffect(showAutoPlayPrompt) {
         if (showAutoPlayPrompt) {
             delay(120L)
@@ -1609,6 +1616,7 @@ fun PlayerScreen(
         playerOptionsOpen,
         embeddedMode,
         inPictureInPicture,
+        introAvailable,
         media.progressKey
     ) {
         if (
@@ -1620,12 +1628,21 @@ fun PlayerScreen(
             !inPictureInPicture
         ) {
             delay(40L)
-            runCatching { videoSurfaceFocusRequester.requestFocus() }
+            runCatching { (if (introAvailable && directionalInput) skipIntroFocusRequester else videoSurfaceFocusRequester).requestFocus() }
         }
     }
 
     LaunchedEffect(controlsVisible) {
         if (!controlsVisible) extraControlsOpen = false
+    }
+    fun skipIntro() {
+        val actualDuration = player.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: return
+        val range = introSettings.timings.effective ?: return
+        if (!player.isCurrentMediaItemSeekable || !range.contains(player.currentPosition, actualDuration)) return
+        player.seekTo(range.endMillis)
+        position = range.endMillis
+        // A seek preserves playWhenReady, including a user's explicit pause.
+        runCatching { if (controlsVisible) playPauseFocusRequester.requestFocus() else videoSurfaceFocusRequester.requestFocus() }
     }
     BackHandler {
         when {
@@ -2098,12 +2115,16 @@ fun PlayerScreen(
                             false
                         } else {
                             when (event.key) {
+                                ComposeKey.DirectionDown -> {
+                                    val entered = introAvailable && runCatching { skipIntroFocusRequester.requestFocus() }.getOrDefault(false)
+                                    if (!entered) { dpadInteraction++; showControlsAndFocusPlayPause() }
+                                    true
+                                }
                                 ComposeKey.DirectionCenter,
                                 ComposeKey.Enter,
                                 ComposeKey.DirectionLeft,
                                 ComposeKey.DirectionRight,
-                                ComposeKey.DirectionUp,
-                                ComposeKey.DirectionDown -> {
+                                ComposeKey.DirectionUp -> {
                                     dpadInteraction++
                                     showControlsAndFocusPlayPause()
                                     true
@@ -2147,6 +2168,8 @@ fun PlayerScreen(
 
             val secondaryActionRequesters = buildList {
                 if (media.catalogType != CatalogType.LIVE_TV) {
+                    if (introAvailable) add(skipIntroFocusRequester)
+                    if (introSettings.target != null) add(introFocusRequester)
                     add(subtitleFocusRequester)
                     if (audioTracks.size > 1) add(audioFocusRequester)
                     if (media.nativeSabr == null && onChooseAlternateSource == null) add(downloadFocusRequester)
@@ -2254,6 +2277,20 @@ fun PlayerScreen(
                 }
 
                 val quickActions: @Composable RowScope.() -> Unit = {
+                        if (introAvailable) PlayerChromeIconButton(
+                            icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
+                            modifier = Modifier.playerSecondaryFocus(skipIntroFocusRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
+                            onFocused = { controlsFocused = it })
+                        if (introSettings.target != null) PlayerChromeIconButton(
+                            icon = Icons.Default.Flag, contentDescription = "Intro timing",
+                            onClick = {
+                                if (seekable && player.isCurrentMediaItemSeekable) introSettings.open(player.currentPosition)
+                                else modeFeedback = "Intro timing needs a seekable video"
+                            },
+                            modifier = Modifier.playerSecondaryFocus(introFocusRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressFocusRequester else backFocusRequester),
+                            onFocused = { controlsFocused = it })
                         if (media.catalogType == CatalogType.LIVE_TV && !castSessionActive) {
                             PlayerChromeIconButton(
                                 icon = Icons.Default.Refresh,
@@ -2738,6 +2775,18 @@ PlayerChromeIconButton(
             }
         }
         PlayerOverlayLayer {
+        if (introAvailable && !controlsVisible && (focusMode || embeddedMode) && !queueVisible &&
+            !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen && !inPictureInPicture &&
+            playbackError == null && !startupTimedOut) IntroSkipButton(skipIntroFocusRequester,
+            onSkip = ::skipIntro, onControls = ::showControlsAndFocusPlayPause,
+            onReturnToVideo = { runCatching { videoSurfaceFocusRequester.requestFocus() }; Unit },
+            remainingSeconds = introSecondsRemaining ?: 0L,
+            modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(24.dp))
+        if (introSettings.editorOpen) IntroTimingDialog(introSettings, duration,
+            currentPosition = { player.currentPosition.coerceAtLeast(0L) }, onDismiss = {
+                introSettings.close()
+                returnControlFocus = introFocusRequester
+            })
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
             alternateSeries = media.series,

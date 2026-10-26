@@ -286,6 +286,7 @@ internal fun ProviderDetailHeader(item: MediaItem, type: CatalogType, app: NikTv
                         var alternateOpen by remember(card.key) { mutableStateOf(false) }
                         Box {
                         DiscoveryPhoneMediaCard(card.title, card.poster, card.date?.take(4).orEmpty(), if (phone) phoneDiscoveryPosterWidth(configuration.screenWidthDp).dp else 112.dp,
+                            source = DiscoveryTileSource.TMDB,
                             wide = false, modifier = if (index == 0) Modifier.focusRequester(relatedEntry) else Modifier,
                             onClick = { relatedDetail = card }, onLongClick = { alternateOpen = true }, onFocus = {})
                         AlternateSourceOnlyMenu(alternateOpen, card.media,

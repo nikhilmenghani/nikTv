@@ -130,6 +130,7 @@ private fun VlcRetainedStill(bitmap: Bitmap, resizeMode: VideoResizeMode) {
 @Composable
 internal fun VlcPlayerScreen(
     media: PlayingMedia,
+    introSettings: IntroSkipSettings,
     initialResumePosition: Long,
     onBack: () -> Unit,
     onPlayPrevious: () -> Unit,
@@ -268,7 +269,7 @@ internal fun VlcPlayerScreen(
     var resizePickerVisible by remember(media.progressKey) { mutableStateOf(false) }
     var returnControlFocus by remember(media.progressKey) { mutableStateOf<FocusRequester?>(null) }
     var sourceChooserWasOpen by remember(media.progressKey, media.url, media.playbackAttemptId) { mutableStateOf(false) }
-    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen
+    val playerOptionsOpen = playerPickerVisible || pictureModePickerVisible || resizePickerVisible || pictureEditorVisible || alternateSourceChooserOpen || introSettings.editorOpen
     val currentPlayerOptionsOpen by rememberUpdatedState(playerOptionsOpen)
     var subtitleDialogOpen by remember(media.media.id) { mutableStateOf(false) }
     var subtitleTracks by remember(media.media.id) { mutableStateOf<List<Pair<Int, String>>>(emptyList()) }
@@ -334,6 +335,8 @@ internal fun VlcPlayerScreen(
     val downloadRequester = remember(media.progressKey) { FocusRequester() }
     val recordingPauseRequester = remember(media.progressKey) { FocusRequester() }
     val subtitleRequester = remember(media.progressKey) { FocusRequester() }
+    val introRequester = remember(media.progressKey) { FocusRequester() }
+    val skipIntroRequester = remember(media.progressKey) { FocusRequester() }
     val audioRequester = remember(media.progressKey) { FocusRequester() }
     val pipRequester = remember(media.progressKey) { FocusRequester() }
     val playerSwitchRequester = remember(media.progressKey) { FocusRequester() }
@@ -566,6 +569,15 @@ internal fun VlcPlayerScreen(
     // VLC length/isSeekable alone can describe one short live segment, not a DVR window.
     // Live TV uses the elapsed clock and direct playback without seeking.
     val seekable = duration > 0L && media.catalogType != CatalogType.LIVE_TV
+    val introSecondsRemaining = introSettings.timings.effective?.skipSecondsRemaining(position, duration)
+        ?.takeIf { player.isSeekable }
+    val introAvailable = introSecondsRemaining != null
+    fun skipIntro() {
+        val range = introSettings.timings.effective ?: return
+        if (!player.isSeekable || !range.contains(player.time, player.length)) return
+        seekMovieTo(range.endMillis)
+        runCatching { if (controlsVisible) playRequester.requestFocus() else videoSurfaceFocusRequester.requestFocus() }
+    }
     val tvBackgroundPolicy = rememberPlayerTvDevice()
     val playbackLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val activity = remember(context) { context.findActivity() }
@@ -708,6 +720,7 @@ internal fun VlcPlayerScreen(
         playerOptionsOpen,
         embeddedMode,
         inPictureInPicture,
+        introAvailable,
         media.progressKey
     ) {
         if (
@@ -719,7 +732,7 @@ internal fun VlcPlayerScreen(
             !inPictureInPicture
         ) {
             delay(40L)
-            runCatching { videoSurfaceFocusRequester.requestFocus() }
+            runCatching { (if (introAvailable && directionalInput) skipIntroRequester else videoSurfaceFocusRequester).requestFocus() }
         }
     }
 
@@ -1081,7 +1094,7 @@ internal fun VlcPlayerScreen(
         }
     }
     val showAutoPlayPrompt =
-        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled
+        remainingSeconds != null && media.nextEpisode != null && !autoPlayCancelled && !introAvailable
     LaunchedEffect(showAutoPlayPrompt) {
         if (showAutoPlayPrompt) {
             delay(120L)
@@ -1458,12 +1471,16 @@ internal fun VlcPlayerScreen(
                             false
                         } else {
                             when (event.key) {
+                                ComposeKey.DirectionDown -> {
+                                    val entered = introAvailable && runCatching { skipIntroRequester.requestFocus() }.getOrDefault(false)
+                                    if (!entered) { dpadInteraction++; showControls() }
+                                    true
+                                }
                                 ComposeKey.DirectionCenter,
                                 ComposeKey.Enter,
                                 ComposeKey.DirectionLeft,
                                 ComposeKey.DirectionRight,
-                                ComposeKey.DirectionUp,
-                                ComposeKey.DirectionDown -> {
+                                ComposeKey.DirectionUp -> {
                                     dpadInteraction++
                                     showControls()
                                     true
@@ -1507,6 +1524,8 @@ internal fun VlcPlayerScreen(
 
             val secondaryActionRequesters = buildList {
                 if (media.catalogType != CatalogType.LIVE_TV) {
+                    if (introAvailable) add(skipIntroRequester)
+                    if (introSettings.target != null) add(introRequester)
                     add(subtitleRequester)
                     if (audioTracks.size > 1) add(audioRequester)
                     if (onChooseAlternateSource == null) add(downloadRequester)
@@ -1614,6 +1633,20 @@ internal fun VlcPlayerScreen(
                 }
 
                 val quickActions: @Composable RowScope.() -> Unit = {
+                        if (introAvailable) PlayerChromeIconButton(
+                            icon = Icons.Default.SkipNext, contentDescription = "Skip intro", onClick = ::skipIntro,
+                            modifier = Modifier.playerSecondaryFocus(skipIntroRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
+                            onFocused = { controlsFocused = it })
+                        if (introSettings.target != null) PlayerChromeIconButton(
+                            icon = Icons.Default.Flag, contentDescription = "Intro timing",
+                            onClick = {
+                                if (seekable && player.isSeekable) introSettings.open(player.time)
+                                else modeFeedback = "Intro timing needs a seekable video"
+                            },
+                            modifier = Modifier.playerSecondaryFocus(introRequester, secondaryActionRequesters,
+                                extraControlsRequester, lastPlaybackActionRequester, if (seekable) progressRequester else backRequester),
+                            onFocused = { controlsFocused = it })
                         if (media.catalogType == CatalogType.LIVE_TV) {
                             PlayerChromeIconButton(
                                 icon = Icons.Default.Refresh,
@@ -2088,6 +2121,17 @@ PlayerChromeIconButton(
             }
         }
         PlayerOverlayLayer {
+        if (introAvailable && !controlsVisible && (focusMode || embeddedMode) && !queueVisible &&
+            !playerOptionsOpen && !programmeGuideOpen && !moreOptionsOpen && !inPictureInPicture && error == null)
+            IntroSkipButton(skipIntroRequester, onSkip = ::skipIntro, onControls = ::showControls,
+                onReturnToVideo = { runCatching { videoSurfaceFocusRequester.requestFocus() }; Unit },
+                remainingSeconds = introSecondsRemaining ?: 0L,
+                modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(24.dp))
+        if (introSettings.editorOpen) IntroTimingDialog(introSettings, duration,
+            currentPosition = { player.time.coerceAtLeast(0L) }, onDismiss = {
+                introSettings.close()
+                returnControlFocus = introRequester
+            })
         if (queueVisible && focusMode && !pictureEditorVisible) PlayerQueueOverlay(
             items = playerQueueItems,
             alternateSeries = media.series,

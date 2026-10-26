@@ -196,7 +196,7 @@ internal fun DiscoveryCategoryAccess(surface: DashboardSurface, managerOpen: Boo
         if (type == null) chooseType = true else { openedHere = true; configure(type) }
     }
     LaunchedEffect(openTrigger) { if (openTrigger > 0) openCategories() }
-    if (showButton) DiscoveryAction("IPTV categories", if (compact) Icons.Default.Tune else null, iconOnly = compact,
+    if (showButton) DiscoveryAction("IPTV categories", if (compact || LocalCollapsingDiscoveryActions.current) Icons.Default.Tune else null, iconOnly = compact,
         modifier = modifier.focusRequester(requester), onFocus = onFocus) {
         openCategories()
     }

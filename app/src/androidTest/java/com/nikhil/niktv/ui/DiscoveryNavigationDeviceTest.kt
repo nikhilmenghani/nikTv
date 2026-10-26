@@ -10,6 +10,8 @@ import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.lazy.LazyRow
@@ -30,6 +32,191 @@ import org.junit.runners.MethodSorters
 // Run full screen entry before the warm visible-tile microbenchmark.
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class DiscoveryNavigationDeviceTest {
+    @Test fun heroActionsExpandOnlyTheFocusedLabelWithoutMovingTheRowVertically() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        fixtureHost = host
+        val play = FocusRequester()
+        val info = FocusRequester()
+        val categories = FocusRequester()
+        val actions = java.util.concurrent.CopyOnWriteArrayList<String>()
+        try {
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync { host.setContent { MaterialTheme {
+                Column {
+                    DiscoveryHero(DiscoveryCard(123, false, "Fixture hero", date = "2020-01-01"), null,
+                        height = 280.dp, landscape = true, compact = false, detail = false, loading = false,
+                        inList = false, playRequester = play, infoRequester = info, play = { actions.add("Play") }, add = {}, info = {},
+                        onFocus = {}, onDown = {}, previous = {}, next = {}, carousel = true, index = 0, count = 10,
+                        categoryActions = {
+                            DiscoveryAction("IPTV categories", androidx.compose.material.icons.Icons.Default.Tune) {}
+                            DiscoveryAction("TMDB categories", androidx.compose.material.icons.Icons.Default.AutoAwesome,
+                                modifier = Modifier.focusRequester(categories)) { actions.add("TMDB categories") }
+                        })
+                    androidx.compose.material3.Text("Media rows begin here")
+                }
+            } } }
+            await("Hero actions are attached") { host.hasWindowFocus() && text("TMDB categories") != null }
+            fun rect(label: String) = Rect().also { text(label)!!.getBoundsInScreen(it) }
+            fun settledWidth(label: String): Int {
+                var previous = -1; var stable = 0
+                await("$label expansion settles") {
+                    val now = rect(label).width()
+                    stable = if (now == previous) stable + 1 else 0
+                    previous = now
+                    stable >= 5
+                }
+                return previous
+            }
+            val collapsed = settledWidth("TMDB categories")
+            val rowTop = rect("Media rows begin here").top
+            instrumentation.runOnMainSync { categories.requestFocus() }
+            await("Focused categories retain their D-pad identity") { focused("TMDB categories") }
+            assertTrue("Focused label expands", settledWidth("TMDB categories") > collapsed + 30)
+            assertEquals("Label expansion must not shift media rows", rowTop, rect("Media rows begin here").top)
+            instrumentation.runOnMainSync { play.requestFocus() }
+            await("Play can receive focus directly") { focused("Play") }
+            assertEquals("Unfocused categories collapse again", collapsed, settledWidth("TMDB categories"))
+            assertEquals(rowTop, rect("Media rows begin here").top)
+            repeat(2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT) }
+            await("Right traverses collapsed controls to the trailer") { focused("Watch trailer") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
+            await("Left returns to My List without focus jumps") { focused("My List") }
+            assertEquals(rowTop, rect("Media rows begin here").top)
+            assertTrue("Focus and expansion alone must not play or open categories", actions.isEmpty())
+        } finally { instrumentation.runOnMainSync { host.finish() }; fixtureHost = null }
+    }
+    @Test fun televisionLandingSkipsFocusedMetadataAndKeepsExplicitActionIdentity() {
+        wakeDisplay()
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val host = instrumentation.startActivitySync(Intent(context, PlaybackFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as PlaybackFixtureHostActivity
+        fixtureHost = host
+        val profile = PortalProfile("TV landing fixture", "https://tv-landing.invalid", "")
+        val category = Category("tv-landing-category", "Fixture IPTV collection", CatalogType.MOVIES)
+        val provider = MediaItem("tv-landing-provider", "Fixture IPTV title", null, "fixture-command", portalCategoryId = category.id)
+        val providerLookups = java.util.concurrent.atomic.AtomicInteger()
+        val detailIds = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val playedIds = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val favoriteIds = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val providerOpens = java.util.concurrent.CopyOnWriteArrayList<Triple<CatalogType, String, List<String>>>()
+        val source = object : DiscoveryDataSource {
+            override suspend fun feed(section: TmdbHomeSection, stale: (List<DiscoveryCard>) -> Unit) =
+                if (section.series) listOf(DiscoveryCard(101, true, "Fixture television row", date = "2020-01-01"))
+                else listOf(DiscoveryCard(1, false, "Fixture hero one", date = "2020-01-01"),
+                    DiscoveryCard(2, false, "Fixture movie two", date = "2020-01-01"))
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails {
+                detailIds += card.id
+                return DiscoveryDetails(card.copy(overview = "Explicit detail ${card.id}"))
+            }
+            override suspend fun providerDetails(item: MediaItem, type: CatalogType, stale: (DiscoveryDetails) -> Unit): DiscoveryDetails {
+                providerLookups.incrementAndGet()
+                return DiscoveryDetails(DiscoveryCard(999, false, "Focused provider metadata", date = "2020-01-01"))
+            }
+            override suspend fun related(card: DiscoveryCard) = emptyList<DiscoveryCard>()
+            override suspend fun collection(id: Int) = emptyList<DiscoveryCard>()
+            override suspend fun reviews(card: DiscoveryCard) = emptyList<DiscoveryReview>()
+            override suspend fun episodes(card: DiscoveryCard, season: Int) = emptyList<DiscoveryEpisode>()
+        }
+        lateinit var vm: DiscoveryViewModel
+        var vmReady = false
+        fun key(code: Int) = instrumentation.sendKeyDownUpSync(code)
+        fun upToHero() {
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("IPTV poster Up reaches its Search / All header") { focused("Search / All") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Provider row returns to series row") { focused("Fixture television row") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Series row returns to movie row") { focused("Fixture hero one") }
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            await("Movie row returns to hero Play") { focused("Play") }
+        }
+        try {
+            await("TV landing fixture window") { host.hasWindowFocus() }
+            instrumentation.setInTouchMode(false)
+            instrumentation.runOnMainSync {
+                vm = DiscoveryViewModel(context.applicationContext as Application, source)
+                vmReady = true
+                vm.bind(profile.cacheKey(), DashboardSurface.HOME, emptyList())
+                // A retained rich-mode presentation must not leak into TV hero actions.
+                vm.presentFocusedCard("provider:MOVIES:${category.id}:${provider.id}",
+                    DiscoveryCard(999, false, "Obsolete focused presentation", date = "2020-01-01"))
+                host.setContent {
+                    val config = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).apply {
+                        uiMode = (uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK.inv()) or
+                            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+                    }
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        androidx.compose.ui.platform.LocalConfiguration provides config,
+                        LocalProviderDiscoveryPageLoader provides { _, _, page, _ ->
+                            PortalCatalogPage(if (page == 1) listOf(provider) else emptyList(), page, false)
+                        },
+                        LocalOpenProviderDiscovery provides { type, item, queue ->
+                            providerOpens += Triple(type, item.id, queue.map { it.id })
+                        }
+                    ) { MaterialTheme {
+                        DiscoveryPreviewScreen(NikTvState(savedProfile = profile,
+                            session = PortalSession(profile, "fixture", "https://tv-landing.invalid", "", "", ""),
+                            categoryFilters = mapOf("${profile.cacheKey()}|MOVIES" to listOf(category.id)),
+                            rawCategoriesByType = mapOf(CatalogType.MOVIES to listOf(category)),
+                            tmdbSectionsBySurface = mapOf(DashboardSurface.HOME to emptyList())),
+                            DashboardSurface.HOME, {}, {}, {}, { playedIds += it.id }, { _, _, _ -> }, {}, { _, _ -> },
+                            { favoriteIds += it.media.id }, {}, {}, {}, { _, _ -> }, { _, _ -> }, vm)
+                    } }
+                }
+            }
+            await("TV entry stays in active header") { focused("Home") }
+            await("TV hero feed is ready") { text("Fixture hero one") != null }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("TV hero Play") { focused("Play") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("TV movie rail") { focused("Fixture hero one") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("TV series rail") { focused("Fixture television row") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("TV IPTV rail") { focused(provider.title) }
+            Thread.sleep(500) // Rich mode previously started a public provider lookup after 150 ms.
+            assertEquals("TV focus performs no provider presentation lookups", 0, providerLookups.get())
+            assertTrue("TV focus also leaves explicit detail loading idle", detailIds.isEmpty())
+            assertNull(vm.state.value.focusedEntryKey)
+            assertNull(vm.state.value.focusedPresentation)
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Provider tile retains its explicit open callback") { providerOpens.singleOrNull()?.second == provider.id }
+            assertEquals(CatalogType.MOVIES, providerOpens.single().first)
+            assertEquals(listOf(provider.id), providerOpens.single().third)
+            upToHero()
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Hero Play keeps hero identity after provider focus") { playedIds.singleOrNull() == 1 }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Hero My List") { focused("My List") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Hero favorite keeps its own TMDB identity") { favoriteIds.singleOrNull() == "tmdb-movie:1" }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Hero Watch trailer is reachable after My List") { focused("Watch trailer") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Hero Info is reachable") { focused("Info") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Explicit hero Info loads real details for the hero") { vm.state.value.details?.card?.id == 1 && vm.state.value.detail?.id == 1 }
+            assertEquals(listOf(1), detailIds.toList())
+            key(KeyEvent.KEYCODE_BACK)
+            await("Detail Back restores originating hero Info") { focused("Info") && vm.state.value.detail == null }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Returning to movie rail retains its item") { focused("Fixture hero one") }
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Second movie item") { focused("Fixture movie two") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Explicit tile open also loads its own detail identity") { vm.state.value.details?.card?.id == 2 && vm.state.value.detail?.id == 2 }
+            key(KeyEvent.KEYCODE_BACK)
+            await("Detail Back restores originating tile") { focused("Fixture movie two") && vm.state.value.detail == null }
+            assertEquals(listOf(1, 2), detailIds.toList())
+            assertEquals(0, providerLookups.get())
+        } finally {
+            instrumentation.runOnMainSync { if (vmReady) vm.pause(); host.finish() }
+        }
+    }
     @Test fun partiallyVisibleRowFocusIsImmediateAndRevealDoesNotRebound() {
         wakeDisplay()
         val context = instrumentation.targetContext
@@ -123,6 +310,19 @@ class DiscoveryNavigationDeviceTest {
         }
         collect(active)
         diagnostic("Discovery failure focus: ${labels.take(15)}; window=${instrumentation.uiAutomation.rootInActiveWindow?.packageName}")
+        listOf("Home", "Movies", "Series", "Search", "Info", "Play").forEach { title ->
+            text(title)?.let { node ->
+                val bounds = Rect(); node.getBoundsInScreen(bounds)
+                diagnostic("Discovery failure bounds: label=$title bounds=$bounds visible=${node.isVisibleToUser} focused=${focused(title)}")
+            }
+        }
+        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+            java.io.File(instrumentation.targetContext.cacheDir, "discovery-navigation-failure.png").outputStream().use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
+            diagnostic("Discovery fixture failure screenshot: cache/discovery-navigation-failure.png")
+        }
         labels.clear(); collect(instrumentation.uiAutomation.rootInActiveWindow)
         diagnostic("Discovery failure content: ${labels.take(35)}")
         fail(label)
@@ -149,8 +349,12 @@ class DiscoveryNavigationDeviceTest {
         text("Search")?.getBoundsInScreen(searchBounds) ?: return false
         val sharesSearchRow = bounds.top < searchBounds.bottom && bounds.bottom > searchBounds.top
         val actualLabel = node.text?.toString() ?: label
+        // Phone Search can be right of the tabs; tablet/TV Search is left.
+        // Both are valid provided the rendered controls do not overlap.
+        val separateFromSearch = bounds.right <= searchBounds.left || bounds.left >= searchBounds.right
         return node.isVisibleToUser && bounds.left >= 0 && bounds.right <= metrics.widthPixels &&
-            (!sharesSearchRow || bounds.right <= searchBounds.left) && bounds.width() >= paint.measureText(actualLabel) * .9f
+            bounds.top >= 0 && bounds.bottom <= metrics.heightPixels &&
+            (!sharesSearchRow || separateFromSearch) && bounds.width() >= paint.measureText(actualLabel) * .9f
     }
     private fun focused(label: String): Boolean = find { node ->
         if (node.text?.toString() != label && node.contentDescription?.toString() != label) false
@@ -201,26 +405,69 @@ class DiscoveryNavigationDeviceTest {
         instrumentation.sendKeySync(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
     }
     private fun chooseMenuOption(label: String) {
+        fun focusedMenuLabel(): String? {
+            fun labelOf(node: AccessibilityNodeInfo?): String? {
+                if (node == null) return null
+                (node.text?.toString()?.takeIf(String::isNotBlank)
+                    ?: node.contentDescription?.toString()?.takeIf(String::isNotBlank))?.let { return it }
+                for (index in 0 until node.childCount) labelOf(node.getChild(index))?.let { return it }
+                return null
+            }
+            return labelOf(find { it.isFocused })
+        }
+        fun settledFocus(): String {
+            var previous: String? = null
+            var settled: String? = null
+            var stable = 0
+            await("Popup focus settles before the next input") {
+                instrumentation.waitForIdleSync()
+                val current = focusedMenuLabel()
+                stable = if (current != null && current == previous) stable + 1 else 0
+                previous = current
+                if (stable >= 3) settled = current
+                settled != null
+            }
+            return checkNotNull(settled)
+        }
+        // Dropdown focus/accessibility updates lag behind synchronous input injection.
+        // Observe a settled result after every arrow, otherwise a queued Down can
+        // move past the requested action between its cached focus check and Center.
+        await("Popup window owns menu input") { fixtureHost?.hasWindowFocus() == false }
         for (key in listOf(KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_UP)) {
-            repeat(20) {
-                if (focused(label)) {
+            for (step in 0 until 20) {
+                val before = settledFocus()
+                if (before == label && focused(label)) {
+                    diagnostic("Discovery deliberate menu selection: requested=$label focused=$before")
+                    instrumentation.waitForIdleSync()
+                    assertTrue("Requested menu action remains focused before Center: $label", focused(label))
                     instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+                    instrumentation.waitForIdleSync()
                     return
                 }
                 instrumentation.sendKeyDownUpSync(key)
+                instrumentation.waitForIdleSync()
+                if (settledFocus() == before) break
             }
         }
         fail("Popup option can receive focus: $label")
     }
     private fun swipeHero() {
         val metrics = instrumentation.targetContext.resources.displayMetrics
-        // Derive the gesture from the rendered hero, not a fixed display percentage:
-        // the phone has a separate navigation row, especially tall at larger fonts.
-        val header = Rect(); val action = Rect()
-        checkNotNull(text("Live TV")).getBoundsInScreen(header)
-        checkNotNull(text("Info")).getBoundsInScreen(action)
-        check(action.top > header.bottom) { "Hero is visible between navigation and actions" }
-        val y = (header.bottom + action.top) / 2
+        // Tablet/TV navigation scrolls above the hero; it is not a reliable
+        // gesture anchor after D-pad entry. Use two visible hero-owned elements.
+        val heading = Rect(); val action = Rect()
+        var previousHeading = Rect(); var previousAction = Rect(); var stable = 0
+        await("Hero heading and actions settle before the swipe") {
+            val rank = find { it.isVisibleToUser && it.text?.toString()?.contains("TRENDING TODAY") == true }
+            val info = text("Info")
+            rank?.getBoundsInScreen(heading); info?.getBoundsInScreen(action)
+            val visible = rank != null && info?.isVisibleToUser == true && action.top > heading.bottom && heading.top >= 0
+            stable = if (visible && heading == previousHeading && action == previousAction) stable + 1 else 0
+            previousHeading = Rect(heading); previousAction = Rect(action)
+            stable >= 3
+        }
+        val y = (heading.bottom + action.top) / 2
+        diagnostic("Discovery hero swipe: heading=$heading actions=$action y=$y")
         shellInput("swipe ${(metrics.widthPixels * .75f).toInt()} $y ${(metrics.widthPixels * .25f).toInt()} $y 300")
     }
     private fun tap(label: String) {
@@ -288,16 +535,19 @@ class DiscoveryNavigationDeviceTest {
                 }
             }
             await("Hero ready") { text("Fixture title 1") != null }
-            await("Entry focuses active trial tab") { focused("Home 2") }
+            await("Entry focuses active trial tab") { focused("Home") }
             if (usesDiscoveryPhoneLayout(context.resources.configuration.smallestScreenWidthDp,
                     context.isTvLikeDevice(context.resources.configuration))) {
-                listOf("Home 2", "Movies 2", "Series 2", "Live TV").forEach { label ->
+                listOf("Home", "Movies", "Series", "Live TV").forEach { label ->
                     await("Phone destination fully visible: $label") { fullTabLabelVisible(label) }
                 }
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Down reaches Play") { focused("Play") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches My List") { focused("My List") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right reaches Watch trailer") { focused("Watch trailer") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Right reaches Info") { focused("Info") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -322,13 +572,13 @@ class DiscoveryNavigationDeviceTest {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
                 await("Return to hero") { focused("Play") }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
-                await("Return to active menu") { focused("Home 2") }
+                await("Return to active menu") { focused("Home") }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("Movies menu entry keeps focus in the header") { selectedSurface.value == DashboardSurface.MOVIES && focused("Movies 2") }
+                await("Movies menu entry keeps focus in the header") { selectedSurface.value == DashboardSurface.MOVIES && focused("Movies") }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_LEFT)
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
-                await("Reopening Home does not restore its previous tile") { selectedSurface.value == DashboardSurface.HOME && focused("Home 2") }
+                await("Reopening Home does not restore its previous tile") { selectedSurface.value == DashboardSurface.HOME && focused("Home") }
                 return
             }
             holdCenter()
@@ -378,8 +628,17 @@ class DiscoveryNavigationDeviceTest {
             await("Touch Info also opens detail") { text("Info") == null && text("My List") != null }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             await("Touch detail returns to landing") { text("Info") != null }
-            listOf("Movies 2" to DashboardSurface.MOVIES, "Series 2" to DashboardSurface.SERIES,
-                "Home 2" to DashboardSurface.HOME).forEach { (label, destination) ->
+            // Touch does not promise keyboard focus, and the tablet header
+            // scrolls above the hero. Deliberately re-enter remote input and
+            // navigate to the header before testing its touch destinations.
+            instrumentation.setInTouchMode(false)
+            await("Remote input restores the hero Info origin after touch") { focused("Info") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
+            await("Up from hero reaches the visible Home navigation") {
+                focused("Home") && fullTabLabelVisible("Home") && fullTabLabelVisible("Movies")
+            }
+            listOf("Movies" to DashboardSurface.MOVIES, "Series" to DashboardSurface.SERIES,
+                "Home" to DashboardSurface.HOME).forEach { (label, destination) ->
                 tap(label)
                 await("Destination changes to $label") { selectedSurface.value == destination && fullTabLabelVisible(label) }
             }
@@ -433,7 +692,7 @@ class DiscoveryNavigationDeviceTest {
                     } }
                 }
             }
-            await("Actions fixture entry") { focused("Home 2") && text("Feed title") != null }
+            await("Actions fixture entry") { focused("Home") && text("Feed title") != null }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Actions hero") { focused("Play") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -555,11 +814,14 @@ class DiscoveryNavigationDeviceTest {
                     }
                 }
             }
-            await("Series hero ready") { focused("Series 2") && text("Fixture series") != null }
-            await("Selected series tab label is fully visible") { fullTabLabelVisible("Series 2") }
+            await("Series hero ready") { focused("Series") && text("Fixture series") != null }
+            await("Selected series tab label is fully visible") { fullTabLabelVisible("Series") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Series hero action") { focused("Play") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Series My List action") { focused("My List") }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Series trailer action") { focused("Watch trailer") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
             await("Series info focused") { focused("Info") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -569,7 +831,12 @@ class DiscoveryNavigationDeviceTest {
                 seriesModel.state.value.details?.seasons == listOf(1, 2) && focused("Play")
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
-            await("Down enters the selected latest season") { focused("Season 2") }
+            val wideEpisodes = context.resources.configuration.smallestScreenWidthDp >= 600 ||
+                context.isTvLikeDevice(context.resources.configuration)
+            await("Down enters the episode toolbar") { focused(if (wideEpisodes) "Search episodes" else "Season 2") }
+            await("The selected latest season is ready") {
+                seriesModel.state.value.season == 2 && seriesModel.state.value.episodes.size == 3
+            }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_DOWN)
             await("Newest episode gets focus") { focused("Fixture episode 3") }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -580,6 +847,10 @@ class DiscoveryNavigationDeviceTest {
             assertEquals("Release must not trigger another Play", 1, episodePlays)
             chooseMenuOption("Download")
             await("A separate press downloads the selected episode") { download == (2 to 3) }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            await("Series detail returns to its originating Info action") {
+                seriesModel.state.value.detail == null && focused("Info")
+            }
         } finally { instrumentation.runOnMainSync { host.finish() } }
     }
 }

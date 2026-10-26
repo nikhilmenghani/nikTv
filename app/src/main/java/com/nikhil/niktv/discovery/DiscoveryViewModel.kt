@@ -90,6 +90,16 @@ internal class DiscoveryViewModel @JvmOverloads constructor(app: Application,
         _state.update { if (it.heroes.isEmpty()) it else it.copy(heroIndex = Math.floorMod(it.heroIndex + delta, it.heroes.size)) }
     }
     fun pauseHeroMetadata() { heroGeneration.next(); jobs.remove("hero-metadata")?.cancel(); heroRequestKey = null }
+    /** Leave the feed/hero intact when a TV renderer does not use focused-tile presentation. */
+    fun clearFocusedPresentation() {
+        focusGeneration.next()
+        jobs.remove("focused-provider")?.cancel()
+        completedFocusKey = null
+        _state.update { current ->
+            if (current.focusedEntryKey == null && current.focusedPresentation == null) current
+            else current.copy(focusedEntryKey = null, focusedPresentation = null)
+        }
+    }
     fun presentFocusedCard(key: String, card: DiscoveryCard) {
         focusGeneration.next(); jobs.remove("focused-provider")?.cancel()
         completedFocusKey = key

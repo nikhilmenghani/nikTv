@@ -59,8 +59,12 @@ internal fun SeriesEpisodeToolbar(
     onSortApplied: (() -> Unit)? = null,
     beforeAction: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onGoToEpisode: ((Int) -> Unit)? = null,
 ) {
     var sortOpen by remember { mutableStateOf(false) }
+    var jumpOpen by remember { mutableStateOf(false) }
+    var pendingJump by remember { mutableStateOf<Int?>(null) }
+    var hadJump by remember { mutableStateOf(false) }
     var restoreLayoutFocus by remember { mutableStateOf(false) }
     val selectedSort = remember { FocusRequester() }
     val host = LocalView.current
@@ -81,6 +85,7 @@ internal fun SeriesEpisodeToolbar(
             repeat(30) {
                 withFrameNanos { }
                 if (host.hasWindowFocus()) {
+                    if (jumpOpen) return@LaunchedEffect
                     if (sortSelected && currentSortApplied != null) {
                         sortSelected = false
                         currentSortApplied?.invoke()
@@ -128,6 +133,9 @@ internal fun SeriesEpisodeToolbar(
                             leadingIcon = if (newestFirst == descending) {{ Icon(Icons.Default.Check, null) }} else null,
                             onClick = { sortSelected = true; onNewestFirst(descending); dismissSort() })
                     }
+                    if (onGoToEpisode != null) NikDropdownMenuItem(text = { Text("Go to episode…") },
+                        leadingIcon = { Icon(Icons.Default.FormatListNumbered, null) },
+                        onClick = { jumpOpen = true; dismissSort() })
                     if (compact) {
                         HorizontalDivider()
                         listOf(true to "List view", false to "Grid view").forEach { (list, label) ->
@@ -150,6 +158,22 @@ internal fun SeriesEpisodeToolbar(
             enter = expandVertically(tween(220)) + fadeIn(tween(150)),
             exit = shrinkVertically(tween(220)) + fadeOut(tween(120))) {
             Box(Modifier.fillMaxWidth().height(48.dp)) { searchField() }
+        }
+    }
+    if (jumpOpen) EpisodeNumberDialog(onGo = { pendingJump = it; jumpOpen = false },
+        dismiss = { jumpOpen = false })
+    LaunchedEffect(jumpOpen, pendingJump) {
+        if (jumpOpen) hadJump = true
+        else if (hadJump) repeat(30) {
+            withFrameNanos { }
+            if (host.hasWindowFocus()) {
+                val number = pendingJump
+                pendingJump = null
+                hadJump = false
+                if (number != null) onGoToEpisode?.invoke(number)
+                else runCatching { sortRequester.requestFocus() }
+                return@LaunchedEffect
+            }
         }
     }
 }

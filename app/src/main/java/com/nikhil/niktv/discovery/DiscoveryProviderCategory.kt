@@ -106,6 +106,7 @@ internal fun DiscoveryProviderCategory(app: NikTvState, category: Category,
                         val recent = app.recentlyPlayed.firstOrNull { it.profileKey == profile && it.media.id == item.id }
                         val progress = recent?.let { discoveryRecentProgress(it, app.playbackProgress) }
                         DiscoveryPosterTile(providerDisplayTitle(item.title, category.type), item.logo, "", maxWidth,
+                            source = DiscoveryTileSource.IPTV,
                             progress = progress?.takeIf { it.durationMillis > 0 }?.let { (it.positionMillis.toFloat() / it.durationMillis).coerceIn(0f, 1f) },
                             modifier = Modifier.focusRequester(requester), onClick = { choose(index) },
                             onLongClick = { popup = true },

@@ -449,7 +449,9 @@ internal fun Modifier.remoteCombinedClickable(
     showIndication: Boolean = true
 ): Modifier {
     val scope = rememberCoroutineScope()
-    val remoteNavigationActive =
+    // Cards with their own focus border never use the platform indication.
+    // Avoid device-feature/preference lookups on every focus recomposition.
+    val remoteNavigationActive = showIndication &&
         LocalContext.current.usesRemoteNavigation(LocalConfiguration.current)
     val resolvedInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
     var keyIsDown by remember { mutableStateOf(false) }
@@ -844,6 +846,8 @@ private fun NikTvAppContent(vm: NikTvViewModel) {
                     ,loadMoreSearch = vm::loadMoreSearch
                     ,loadMoreCatalog = vm::loadMoreCatalog
                     ,loadMoreEpisodes = vm::loadMoreEpisodes
+                    ,goToSeriesEpisode = vm::goToSeriesEpisode
+                    ,cancelEpisodeDestination = vm::cancelEpisodeDestination
                     ,setSearchCategory = vm::setSearchCategory
                     ,addProfile = vm::addProfile
                     ,exportBackup = vm::exportBackup

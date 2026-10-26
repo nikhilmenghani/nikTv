@@ -15,6 +15,41 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 class DiscoveryViewModelTest {
+    @Test fun clearingFocusedPresentationRejectsLateProviderMetadataAndPreservesFeedAndHero() {
+        val old = CompletableDeferred<DiscoveryDetails>()
+        val heroResult = CompletableDeferred<DiscoveryDetails>()
+        val vm = DiscoveryViewModel(app, object : Source() {
+            override suspend fun providerDetails(item: MediaItem, type: CatalogType, stale: (DiscoveryDetails) -> Unit) =
+                if (item.id == "old") withContext(NonCancellable) { old.await() }
+                else DiscoveryDetails(card(202))
+            override suspend fun details(card: DiscoveryCard, stale: (DiscoveryDetails) -> Unit) =
+                heroResult.await()
+        })
+        vm.bind("clear-focus", DashboardSurface.MOVIES, emptyList()); pump()
+        vm.prepareHero(); pump()
+        val feed = vm.state.value.feeds
+        val hero = vm.state.value.hero
+        assertNotNull(hero)
+        vm.presentProvider("row:old", MediaItem("old", "Old", null, null), CatalogType.MOVIES); pump()
+        assertNotNull(vm.state.value.focusedPresentation)
+
+        vm.clearFocusedPresentation(); pump()
+        assertNull(vm.state.value.focusedEntryKey)
+        assertNull(vm.state.value.focusedPresentation)
+        assertEquals(feed, vm.state.value.feeds)
+        assertEquals(hero, vm.state.value.hero)
+        heroResult.complete(DiscoveryDetails(card(1).copy(genres = listOf("Hero metadata")))); pump()
+        assertEquals(listOf("Hero metadata"), vm.state.value.heroPresentation?.genres)
+        old.complete(DiscoveryDetails(card(101))); pump()
+        assertNull(vm.state.value.focusedPresentation)
+        assertNull(vm.state.value.focusedEntryKey)
+        assertTrue(vm.state.value.errors.isEmpty())
+
+        // Re-enabling presentation on the same route is a normal new request.
+        vm.presentProvider("row:new", MediaItem("new", "New", null, null), CatalogType.MOVIES); pump()
+        assertEquals("row:new", vm.state.value.focusedEntryKey)
+        assertEquals(202, vm.state.value.focusedPresentation?.id)
+    }
     @Test fun providerFocusRejectsLateMetadataWithoutOpeningAProviderOrDetailRoute() {
         val old = CompletableDeferred<DiscoveryDetails>()
         val vm = DiscoveryViewModel(app, object : Source() {

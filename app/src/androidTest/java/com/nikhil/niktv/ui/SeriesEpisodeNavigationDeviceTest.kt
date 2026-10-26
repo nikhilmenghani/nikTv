@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -39,6 +40,116 @@ import java.util.concurrent.CopyOnWriteArrayList
 class SeriesEpisodeNavigationDeviceTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private var currentHost: PlaybackFixtureHostActivity? = null
+
+    @Test fun loadingPopupFocusesCancelAfterTouchAndKeepsItAcrossProgressUpdates() {
+        for (touch in listOf(false, true)) {
+            val activity = startHost()
+            val progress = mutableStateOf(EpisodeDestinationState("fixture", "series", 1, 1, null, 20, 1))
+            val visible = mutableStateOf(true)
+            var canceled = false
+            try {
+                instrumentation.setInTouchMode(touch)
+                instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        Text("Underlying episode screen")
+                        if (visible.value) EpisodeDestinationDialog(progress.value,
+                            cancel = { canceled = true; visible.value = false }, retry = { fail("Cancel must be the default action") })
+                    }
+                } } }
+                await("Cancel takes initial focus, touch=$touch") { focused("Cancel") }
+                instrumentation.runOnMainSync { progress.value = progress.value.copy(loaded = 500, page = 25) }
+                await("Progress updates retain Cancel focus, touch=$touch") {
+                    label("500 episodes loaded · page 25") != null && focused("Cancel")
+                }
+                key(KeyEvent.KEYCODE_DPAD_CENTER)
+                await("OK immediately cancels the operation, touch=$touch") { canceled && label("Cancel") == null }
+            } finally { finishHost(activity) }
+        }
+    }
+
+    @Test fun earliestSortLoadsMissingProviderPagesBeforeFocusingTheTrueFirstEpisode() {
+        val context = instrumentation.targetContext
+        check(context.packageName.endsWith(".regression"))
+        val series = MediaItem("fixture-paged-sort", "Fixture paged sort", null, null)
+        val profile = com.nikhil.niktv.model.PortalProfile("Fixture", "https://fixture.invalid", "00:00:00:00:00:01")
+        val session = com.nikhil.niktv.model.PortalSession(profile, "fixture", "https://fixture.invalid/portal.php", "", "", "")
+        fun episode(n: Int) = MediaItem("paged-$n", "Paged episode $n", null, null, seasonNumber = 1, episodeNumber = n)
+        runBlocking { DiscoveryCache(java.io.File(context.cacheDir, "discovery_preview")).write(
+            "provider-presentation-v1:SERIES:null:${providerSeriesTmdbTitle(series.title)}", "[]") }
+        val model = mutableStateOf(NikTvState(selectedSeries = series, savedProfile = profile, session = session,
+            selectedType = CatalogType.SERIES, selectedSeriesSeason = 1, availableSeriesSeasons = listOf(1),
+            items = (481..520).map(::episode), episodeHasMore = true, useTmdbEpisodeMetadata = false,
+            restoring = false, homeOpen = false))
+        val requests = CopyOnWriteArrayList<Int?>()
+        val activity = startHost()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                ModernSeriesDetailScreen(model.value, play = { fail("Sort must not play") }, closeSeries = {},
+                    toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = {}, setUseTmdbEpisodeMetadata = {},
+                    refreshTmdbEpisodeCache = {}, downloadForOffline = { _, _, _ -> }, removeOfflineDownload = { _, _ -> },
+                    openSearch = {}, openSettings = {}, refreshCatalog = {}, loadMoreEpisodes = {}, openTmdbMovie = {}, openTmdbSeries = {},
+                    goToEpisode = { number -> requests.add(number); model.value = model.value.copy(
+                        episodeDestination = EpisodeDestinationState(profile.cacheKey(), series.id, 1, 1, number, 40, 1)) },
+                    cancelEpisodeDestination = { model.value = model.value.copy(episodeDestination = null) })
+            } } }
+            await("Fixture starts on Play latest") { activity.hasWindowFocus() && focused("Play latest") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Header action is focused") { focused("Related") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Sort is focused") { focused("Sort episodes") }
+            chooseSort("Latest first", "Earliest first")
+            await("Earliest sort shows progress and a focused cancel action") { requests.size == 1 &&
+                label("Finding the earliest episode") != null && label("40 episodes loaded · page 1") != null && focused("Cancel") }
+            assertNull(requests.single())
+            assertFalse("A loaded-only minimum must not take focus during the fetch", focused("Paged episode 481"))
+            instrumentation.runOnMainSync { model.value = model.value.copy(items = (1..520).map(::episode),
+                episodeHasMore = false, episodeDestination = model.value.episodeDestination!!.copy(
+                    running = false, loaded = 520, page = 26, focusId = "paged-1")) }
+            await("Completed load and sort focuses real episode 1") { focused("Paged episode 1") }
+            assertTrue("Complete first episode stays visible", label("Paged episode 1")?.isVisibleToUser == true)
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun goToEpisodeMenuOpensNumberEntryWithoutAutomaticallyOpeningTheKeyboard() {
+        val activity = startHost()
+        val sort = FocusRequester()
+        val choices = CopyOnWriteArrayList<Int>()
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                Box(Modifier.fillMaxSize().padding(24.dp)) {
+                    val search = remember { FocusRequester() }
+                    val layout = remember { FocusRequester() }
+                    SeriesEpisodeToolbar(season = { Text("Episodes") }, count = "520 episodes", compact = false,
+                        newestFirst = true, onNewestFirst = {}, listView = true, onListView = {}, searchOpen = false,
+                        onSearch = {}, searchField = {}, searchRequester = search, sortRequester = sort,
+                        layoutRequester = layout, onGoToEpisode = { choices.add(it) })
+                }
+            } } }
+            instrumentation.waitForIdleSync()
+            await("Standalone toolbar is attached") { activity.hasWindowFocus() && label("520 episodes") != null }
+            instrumentation.runOnMainSync { sort.requestFocus() }
+            await("Sort has remote focus") { focused("Sort episodes") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Latest first initially has popup focus") { focused("Latest first") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Earliest first is accessible") { focused("Earliest first") }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            await("Go to episode is accessible") { focused("Go to episode…") }
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Number entry opens with Cancel visible") { label("Episode number") != null && label("Cancel")?.isVisibleToUser == true }
+            assertFalse("Entry focus alone must not open a keyboard", instrumentation.uiAutomation.windows.any {
+                it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD })
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            key(KeyEvent.KEYCODE_3)
+            key(KeyEvent.KEYCODE_7)
+            await("Remote number input reaches the field") { find { it.isEditable && it.text?.toString() == "37" } != null }
+            key(KeyEvent.KEYCODE_BACK)
+            var go = label("Go")
+            await("Go is ready after hiding the keyboard") { go = label("Go"); go != null }
+            while (go != null && !go!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)) go = go!!.parent
+            await("Go dispatches the requested exact episode") { choices.toList() == listOf(37) }
+        } finally { finishHost(activity) }
+    }
 
     @Test fun selectedLastSeasonIsVisibleWhenTheOuterPageClipsTheSidebar() {
         val context = instrumentation.targetContext
@@ -492,6 +603,10 @@ class SeriesEpisodeNavigationDeviceTest {
             labels(root, visibleLabels)
             diagnostic("Focused fixture labels: $focusedLabels; bounds=${focused?.let(::bounds)}")
             diagnostic("Visible fixture labels: $visibleLabels")
+            val bitmap = instrumentation.uiAutomation.takeScreenshot()
+            try { java.io.File(instrumentation.targetContext.externalCacheDir, "episode-navigation-failure.png").outputStream().use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            } } finally { bitmap.recycle() }
         }
         fail(message)
     }

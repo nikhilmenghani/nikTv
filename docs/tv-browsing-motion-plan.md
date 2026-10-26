@@ -666,3 +666,149 @@ These are Android whole-window frame/pipeline counters, not measured FPS, semant
 5. If the same rich/dense Compose surface still misses the target after these focused changes, prototype a TV-specific fixed-size recycled row presenter using the already-integrated Leanback/RecyclerView approach. Share NikTV's feed, profiles, actions, matching and player callbacks. Compare it with the same content/density before migration. This costs engineering and an additional TV presentation implementation; it need not remove app functionality. The source framework alone does not guarantee smoothness with unchanged expensive effects.
 
 Optional concessions only if measured necessary: slower/less-frequent backdrop replacement, shorter/no full-screen fades while moving, reduced decorative shadow/scale, or fewer simultaneously visible cards/rows on low-end TV hardware. Reduced density means more scrolling, so preserve the user's compact design until an A/B measurement justifies it. No current evidence requires removing Continue Watching, recommendations, IPTV rows, programme data, search, favourites, parental controls, long-press options, or any playback engine. No evidence supports disabling accessibility/custom Home handling or dropping players merely because their libraries are bundled. Exact SmartTube parity remains an acceptance target, not a guaranteed result from these measurements. The next implementation must repeat these same physical, recording-disabled cases and include direction reversals and focus correctness checks.
+
+User now watches Fire TV: no Fire TV ADB, screenshots, installs or inputs during the optimization turn. Prior helper is already removed and no Fire TV worker is active. Host comparison STOP created. Use local tablet fixtures only; do not authenticate Wio/shared-provider sessions or claim tablet results establish Fire TV performance.
+
+### 2026-10-24 — first optimization candidate after baseline commit
+
+Committed all prior pending features/tests/comparison notes as `8bfd672f`; no push. Candidate work is separate/uncommitted. User permits disabling dynamic artwork/features to prioritize SmartTube-like smoothness, then restricts all further device work to tablet while watching Fire TV. Fire TV helper was already removed; no Fire TV worker is active and host comparison STOP is present. Do not send any Fire TV command until reauthorized.
+
+First TV-only landing policy (Home/Movies/Series, no explicit detail open): plain background, no prepared/crossfaded backdrop or navigation-glass image, no focus-driven public detail warming, no speculative artwork prefetch and no automatic hero rotation. Manual hero paging/actions remain and use the hero's own identity, never stale focused provider context. Focused-provider work is narrowly cancelled/invalidated on entry. TV posters use an immediate contained 3 dp border, no scale/shadow layer and device-pixel-sized decoding. Phones/tablets keep the rich landing presentation in normal device mode; explicit TV details retain metadata/artwork. Tablet fixtures force TV mode to exercise the candidate.
+
+Vertical scrolling uses a bounded 180 ms monotone trajectory, retaining same-direction velocity on retarget and resetting opposing momentum immediately. Existing offscreen focus transfer, cancellation, automatic-reveal suppression, reduced motion and detail/header restoration protections remain. Unit tests for motion, focus, VM stale responses, favorites and progress passed 59 cases in the initial build. The first tablet baseline benchmark failed before measurement because its new fixture expected the obsolete label Home 2; current and frozen baseline use Home. The label was corrected; no performance result is claimed from that failed run.
+
+Frozen pre-candidate target: D:/workspace/niktv-playback-tests/tablet-smarttube-optimization-20261024/baseline-regression-arm64.apk. New benchmark uses the same unchanged screen/model APIs against old and new target APKs, generated local artwork/fake feeds, no provider/network/audio and a physical-window FrameMetrics listener. Three bounded rounds separate first navigation from warm repeats; semantic-focus observation is outside frame measurement. Results belong in this directory. Tablet hardware/debug fixtures cannot establish release performance on the slower Fire TV.
+
+#### Tablet comparison checkpoint
+
+Xiaomi Pad 5 (`6889f3db`), physical 2560×1600 window reporting 120 Hz, isolated `.regression` package with forced TV configuration. Identical local feeds/artwork, unchanged caches, no recording during timing. Each run contains three rounds of 16 inputs at 300 ms cadence: four Right, four Left, then four Down/Up pairs between adjacent rows. Run order was baseline → candidate → candidate2 → baseline2; the candidate target was restored afterward. All four runs passed final focus identity checks; frame-listener callback drops were zero. The separate six-input semantic observation pass is outside timed rounds.
+
+The second counterbalanced pair adds phase sums so fewer intentionally animated frames do not masquerade as a per-frame speedup:
+
+| Build / round | Frames | UI-phase p95 | UI-phase sum / input | Total-frame p95 | UI samples >50 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline2 first | 430 | 18.64 ms | 164.26 ms | 44.15 ms | 8 |
+| Baseline2 warm 1 | 438 | 16.79 ms | 153.33 ms | 37.82 ms | 7 |
+| Baseline2 warm 2 | 450 | 14.39 ms | 148.35 ms | 33.94 ms | 7 |
+| Candidate2 first | 129 | 7.79 ms | 46.40 ms | 38.18 ms | 0 |
+| Candidate2 warm 1 | 132 | 8.11 ms | 46.78 ms | 36.19 ms | 0 |
+| Candidate2 warm 2 | 127 | 7.65 ms | 43.45 ms | 33.45 ms | 0 |
+
+Mean measured UI-phase work per identical input fell from 155.32 to 45.54 ms (70.68%). This measures aggregate work across the frames caused by an input, **not input-to-focus delay**. The original A/B pair also had zero candidate UI samples above 50 ms, versus 7–8 per baseline round. Whole-frame tails improved less and remain above a display-frame budget. Candidate2 UNKNOWN_DELAY p95 is 21.1–25.6 ms; sync/issue/swap spans alone do not explain it. Do not infer a GPU, provider, network or accessibility cause without a trace.
+
+Separate semantic probes reported roughly 70–74 ms p95 and do not demonstrate an improvement. They include input injection, the helper's 24 ms key-hold, observer installation after key-up and semantic-tree inspection. They are not a direct pixel/input latency measurement. These fixture results establish reduced UI work, not SmartTube parity or release Fire TV performance.
+
+Correctness validation includes immediate partially visible row focus, offscreen entry, retargeting/reversals, no post-completion correction, reduced motion, saved row selection, explicit detail/action identity, cancellation of obsolete focused metadata, manual carousel actions, and long-press menu routing. Older fixture routes omitted the existing Trailer and provider Search / All stops; those were corrected. The broad popup/touch test first selected the wrong menu item because its helper injected another arrow before focus settled; each menu step now waits and reasserts the exact requested label before Center. Its next failure expected a scrolling navigation header to remain visible during a hero swipe; derive the gesture from stable visible hero-owned bounds instead. These failed runs are retained and are not counted as passed checks.
+
+An optional `sampleMethods=true` benchmark argument records a bounded 1 ms sampled-method trace around only the navigation rounds; default timing runs do not trace. Traced reports are explicitly diagnostic-only. `silence()` changes only sound/haptic flags before measurement; accessibility and app behavior are not suppressed. No private provider lookup, player/audio action or Fire TV command is authorized during these tablet runs.
+
+Verification commands (repository working directory, JDK 17):
+
+```text
+gradlew.bat :app:testDebugUnitTest --tests com.nikhil.niktv.discovery.DiscoveryMotionTest --tests com.nikhil.niktv.discovery.DiscoveryRowFocusTest --tests com.nikhil.niktv.discovery.DiscoveryNavigationLayoutTest --tests com.nikhil.niktv.discovery.DiscoveryViewModelTest --tests com.nikhil.niktv.discovery.DiscoveryFocusOriginsTest --tests com.nikhil.niktv.discovery.DiscoveryFavoriteLookupTest --tests com.nikhil.niktv.discovery.DiscoveryProgressLookupTest :app:assembleDebug :app:assembleDebugAndroidTest -PregressionBuild=true -PskipLocalGithubToken=true -Dorg.gradle.jvmargs="-Xmx6g -Dfile.encoding=UTF-8" --offline --no-daemon --max-workers=1
+adb -s 6889f3db shell am instrument -w -r -e runLabel candidate2 -e class com.nikhil.niktv.ui.DiscoveryTvFrameBenchmarkTest#localTvNavigationPhysicalWindowComparison com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The focused JVM selection passed 59 tests. The signed, nondebuggable regular release build also passed `assembleRelease` and `lintVitalRelease`; the ARMv7 APK was verified with `apksigner`, package `com.nikhil.niktv` version 0.5.1 / 5001. It is retained outside Git for later authorized TV acceptance; **no Fire TV installation** occurred. Final full debug lint, diagnostic trace and the corrected broad popup/touch check are still being completed at this checkpoint.
+
+#### Remaining frame-tail investigation
+
+Full regression-variant `:app:lintDebug` completed and **failed** with 25 errors, 364 warnings and three hints. All errors are in files unchanged by this candidate (first error: `NikTubeDownloads.kt:203`, `WrongConstant`; remaining groups include `NonObservableLocale`, `RememberInComposition`, `RestrictedApi` and `UnsafeOptInUsageError`). No error location is in the changed discovery implementation. This is not a lint pass; no issue was suppressed. The report/log is retained with the tablet artifacts. A second final-source release build passed in 3m44s including `lintVitalRelease`, before the following accessibility experiment.
+
+The first sampled-run attempt stopped before recording because the entry helper pressed Down before verifying both fake feeds and the first row's registered focus target. Entry now explicitly waits for both feeds, a non-null hero and the composed focusable movie item, with committed frames before its single Down. No retry presses or weakened final destination assertions. The readiness-guarded diagnostic then passed all three rounds. Its 2,676,454-byte trace did not overflow; traced timing is excluded from comparisons.
+
+Sampled Main CPU over the roughly 18-second diagnostic includes approximately 1,858 ms in `AndroidComposeViewAccessibilityDelegateCompat.getCurrentSemanticsNodes`, 1,061 ms in `checkForSemanticsChanges` and 876 ms in traversal ordering (overlapping inclusive spans; **do not add them**). Total sampled Main accounting is about 5,475 ms. This identifies repeated framework semantics geometry/order processing as a substantial contributor in this UiAutomation-attached local fixture, consistent with earlier actual-TV sampling. It does not prove that every remaining frame delay has this cause, and ordinary accessibility remains enabled. Direct fixture focus inspection accounts for only about 26 ms in the same diagnostic.
+
+A TV-only poster experiment exposes one complete accessible item at the existing clickable/focusable root, with the title plus subtitle/match/progress state; only the noninteractive visual subtree clears redundant semantics. The purpose is to reduce child geometry/traversal work while retaining readable content and click/long-click/focus actions. Keep or revert based on dedicated accessibility regression and matched timing results. No claim of complete screen-reader equivalence follows from an automated semantics test; child text-layout behavior is a specific compatibility point to review. Phone/tablet normal presentation is unchanged.
+
+**Experiment outcome: reverted.** The dedicated test ultimately passed real Android accessibility exposure, focus, click/hold separation and metadata refresh. Its initial failure counted Compose's unmerged debug nodes, which intentionally include replaced/cleared children; Android's actual exposed tree was the correct assertion. The broad tablet touch/menu/detail/header test also passed after correcting its old assumption that every tab must be left of Search (the tablet header places Search before the tabs). These fixture fixes retain destination, viewport and action assertions.
+
+The input injector's default `getUiAutomation(0)` itself enables accessibility processing. Added an explicit control using one cached `getUiAutomation(FLAG_DONT_USE_ACCESSIBILITY)` instance; no later default getter, device setting changes or accessibility-service disabling. After entry settles, reports record both the requested flags and actual AccessibilityManager/touch-exploration booleans. Internal semantic checks remain outside timed intervals.
+
+| TV-poster experiment | Automation accessibility | Actual manager enabled | Mean UI-phase ms / input | Total-frame p95 across three rounds |
+| --- | --- | --- | ---: | --- |
+| Consolidated | On | Yes | 40.50 | 35.72 / 32.49 / 30.59 ms |
+| Consolidated | Off | No | 38.09 | 33.79 / 25.94 / 31.59 ms |
+| Original semantics | Off | No | 41.00 | 32.62 / 29.08 / 31.03 ms |
+| Original semantics | On | Yes | 41.60 | 30.96 / 29.27 / 29.38 ms |
+
+All four runs passed focus checks and had zero metric-callback drops. Consolidation reduced aggregate UI work by only about 2.6% with automation accessibility and 7.1% without it; total-frame tails did not reliably improve. That does not justify changing subtitle/badge/text-layout accessibility behavior. Production keeps its original semantics; prototype APK, test APK/source and all logs are retained only outside Git for reproducibility. Do not claim the 1,858 ms sampled accessibility span is ordinary accessibility-off production overhead.
+
+A separate 18-second sampled control with actual AccessibilityManager disabled passed and did not overflow its 2,758,926-byte trace. Sampled Main accounting was about 4,219 ms; recomposition and view traversal remained substantial overlapping framework spans. App-code spans included about 296 ms in the scroll callback, 217 ms in poster composition, 196 ms in focus-outline drawing and 65 ms in `usesRemoteNavigation`. These are diagnostic CPU samples, not comparative latency measurements. They support two narrowly scoped follow-ups: skip device/preference queries when a caller already disables platform indication, and cache unchanged border geometry/stroke/color between redraws. Preserve all focus, input and border behavior; verify cache invalidation on focus/geometry changes.
+
+#### 2026-10-25 — retained candidate and final tablet verification
+
+Retained both small hot-path changes. `remoteCombinedClickable` skips its device/preference lookup only when platform indication is already disabled, leaving key/hold/focus handling unchanged. `tileFocusOutline` caches its inset outline, color and stroke until focus progress, size, density, direction or modifier inputs change. Two synthetic drawing tests verify that six actual content redraws reuse geometry, then focus and size changes invalidate it and update the visible border correctly using in-memory PixelCopy.
+
+The initial 3 dp TV focus stroke could hide the 3 dp red progress strip. Restore the original 2 dp stroke. A focused TV-poster PixelCopy test checks the red strip at quarter width, unchanged dimensions and the 2:3 aspect ratio. No screenshot/capture files or personal media are used for these drawing checks. Original accessibility semantics remain intact. Normal phone/tablet artwork and focus presentation remain; they share the cheaper border drawing and the bounded D-pad scroll coordinator.
+
+Final timing uses the same physical tablet/local-data workload with method tracing, navigation tracing, recording and injected accessibility **off**. Order: final candidate A1 → frozen baseline → final candidate A2. Actual AccessibilityManager is disabled in all three; a fourth candidate run separately enables the automation accessibility service and records that state. Each row below is one three-round run of 48 identical directional inputs, with entry/readiness excluded:
+
+| Run | Mean UI-phase work / input | Total-frame p95 by round | UI samples >50 ms | Total-frame samples >50 ms |
+| --- | ---: | --- | ---: | ---: |
+| Final A1, automation accessibility off | 39.58 ms | 28.79 / 31.41 / 30.50 ms | 0 | 0 |
+| Frozen baseline, automation accessibility off | 164.77 ms | 38.25 / 32.12 / 29.48 ms | 24 | 49 |
+| Final A2, automation accessibility off | 38.42 ms | 31.63 / 27.00 / 30.76 ms | 0 | 0 |
+| Final, automation accessibility on | 40.15 ms | 33.39 / 27.05 / 30.54 ms | 0 | 0 |
+
+The two bracketing final runs average 39.00 ms of measured UI-phase work per input versus 164.77 ms for the baseline: **76.33% less work in this fixture**. This is not a 76% input-latency or universal app-speed improvement. Fewer animated frames are intentional; per-input sums account for their work. All runs passed destination checks with zero metric-callback drops. Final total-frame maximum was 41.43 ms without automation accessibility and 47.66 ms with it, versus 97.55 ms in the baseline. Full-frame p95 still reaches roughly 27–33 ms and is not uniformly lower than every warm baseline round. The two-display-frame focus target, actual pixel input latency and SmartTube parity remain unproven. Separate observer-inclusive semantic p95 was 60.38 ms baseline versus 67.75 / 71.33 ms candidate (62.57 ms with automation accessibility); its key-hold/observer overhead remains unsuitable for claiming true focus latency.
+
+Final focused JVM selection passed **65 tests**: the seven discovery test classes above plus `com.nikhil.niktv.ui.TileNavigationMotionTest`. Regression target and Android-test APKs built in the same successful 1m01s invocation. Tablet device batch passed **8 tests** in 58.698s: two border-cache tests, focused red-progress preservation, bounded nested-row scrolling, immediate partially visible row focus, explicit TV action identity/no focused metadata warming, remote row reversals, and menu/touch/detail/header return. A separate **series test passed** in 4.763s: modern toolbar entry, latest season/episode identity, separate long-press Download and Back restoring Info. Its fixture now includes the existing Trailer focus stop and the wide episode toolbar rather than expecting the older season-dropdown layout.
+
+Commands in addition to the focused JVM/build command above:
+
+```text
+gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --tests com.nikhil.niktv.discovery.DiscoveryMotionTest --tests com.nikhil.niktv.discovery.DiscoveryRowFocusTest --tests com.nikhil.niktv.discovery.DiscoveryNavigationLayoutTest --tests com.nikhil.niktv.discovery.DiscoveryViewModelTest --tests com.nikhil.niktv.discovery.DiscoveryFocusOriginsTest --tests com.nikhil.niktv.discovery.DiscoveryFavoriteLookupTest --tests com.nikhil.niktv.discovery.DiscoveryProgressLookupTest --tests com.nikhil.niktv.ui.TileNavigationMotionTest -PregressionBuild=true -PskipLocalGithubToken=true -Dorg.gradle.jvmargs="-Xmx6g -Dfile.encoding=UTF-8" --offline --no-daemon --max-workers=1
+adb -s 6889f3db shell am instrument -w -r -e class com.nikhil.niktv.ui.DiscoveryNavigationDeviceTest#seriesSeasonEntryAndEpisodePlaybackUseSelectedIdentity com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner
+adb -s 6889f3db shell am instrument -w -r -e runLabel final-no-a11y-2 -e automationAccessibility false -e class com.nikhil.niktv.ui.DiscoveryTvFrameBenchmarkTest#localTvNavigationPhysicalWindowComparison com.nikhil.niktv.regression.test/androidx.test.runner.AndroidJUnitRunner
+gradlew.bat :app:assembleDebugAndroidTest :app:lintDebug -PregressionBuild=true -PskipLocalGithubToken=true -Dorg.gradle.jvmargs="-Xmx6g -Dfile.encoding=UTF-8" --offline --no-daemon --max-workers=1
+```
+
+Exact expanded commands (`verification-commands.txt`), all successful/failed run logs, JSON results and the final eight-method selection are retained in `D:/workspace/niktv-playback-tests/tablet-smarttube-optimization-20261024/`. `final-frame-summary.csv` and `final-frame-summary.json` contain the final comparison. No result from a failed or traced run is included in those timing summaries.
+
+Final full `lintDebug` **failed** with 25 errors, 364 warnings and three hints; Android-test APK assembly completed before lint in the same invocation. All 25 error source lines already exist in baseline commit `8bfd672f`, verified without printing source contents by `audit-final-lint.py` and recorded in `final-lint-baseline-audit.json`. The two-line input-helper change shifts the existing `NikTvApp.kt` error location; no error is introduced by the changed lines. Keep this failure visible; no suppression or broad unrelated lint repair was added.
+
+Final signed regular release built successfully in 3m45s, including `lintVitalRelease`; both ABI APKs passed `apksigner verify`, have package `com.nikhil.niktv`, version 0.5.1 / 5001 and no debuggable flag. Saved artifacts:
+
+- `NikTV-0.5.1-smoothness-armeabi-v7a-release.apk`, SHA-256 `3064E3DC01D9F80CAE7EA1CA57E0517DA0E157F1ED59291862AAFF879EB16D4C`.
+- `NikTV-0.5.1-smoothness-arm64-v8a-release.apk`, SHA-256 `5A8CD4A1C513DE8D4A9479513E2C381C9002A6290E9A16C06C18A45BC84E8CFD`.
+
+Both are in the same external artifact directory. The ARMv7 convenience filename `NikTV-0.5.1-tv-smoothness-candidate.apk` now points to the final bytes. Tablet tests use the isolated `.regression` package; no private profile/provider authentication, actual player/audio action, Fire TV command or regular-app install occurred. Fire TV remains entirely untouched while the user watches. No push or new implementation commit; baseline commit remains `8bfd672f`.
+
+Remaining acceptance: matched physical Fire TV release runs on actual Home/Movies/Series, real catalogue/artwork/callback load, visible focus/input latency, held input and repeated movie/series/player returns. Longer memory/thermal/resource-pressure coverage is also outstanding. No further functionality removal is justified by the tablet counters. If the retained candidate still misses the user's target on Fire TV, the next controlled experiment should compare a TV-specific recycled native row presenter using the same feeds/actions/density, rather than suppress accessibility or discard playback/navigation features.
+
+### 2026-10-25 — authorized physical Fire TV installation and navigation checks
+
+The user made Fire TV available again and authorized installation and testing. The installed pre-optimization regular APK independently matched the frozen baseline SHA-256 `6e2c880abd4d5f796ba34e01477a02681319d32a8035b1b81b47c3243a684e5a`. Updated both regular and Dev in place, retaining profiles/settings/caches. No new commit or push. Final installed regular SHA-256 is `730142b281411241e6810cf1961aeb770d7555feeecd61103117ea97ff88fe2d`; Dev is `73ccc45311b2bb2d046ecefc0dd5d8b946e7403f0f3fb054cb74a2e039d52852`. Version labels alone do not distinguish these candidates.
+
+Physical testing exposed an additional avoidable movement: the vertical coordinator aligned already fully visible rows to the top. Added an opt-in `revealOnly` policy to `DiscoveryScrollCoordinator`, using the existing inset-aware `tileRowRevealDistance`. Modern TV Home/Movies/Series landing rails keep the viewport still when the destination is fully visible and reveal only the missing edge otherwise. Offscreen estimates adapt as rows compose. Focus transfers before scrolling, existing cancellation/retargeting remains, and header/hero/details/default callers keep their alignment policy. This follow-up removes no additional artwork, content, playback, menu or accessibility features; the earlier TV static-background concession remains.
+
+Recording and sampling were disabled during timing on AFTKRT / API 30, 1920×1080 override. Wio Home's same two loaded Trending rows were verified before/after the repeated Down/Up case. The behavior intentionally changes from moving each row to retaining both visible rows:
+
+| Release case | Inputs / cadence | Global frame p95 | Frames / deadline misses | Raw UI-work p95 | UI intervals >50 ms |
+| --- | --- | ---: | --- | ---: | ---: |
+| Prior candidate loaded rows, warm | 8 / 500 ms | 46 / 42 ms | 91/13; 86/14 | 14.67 / 13.42 ms | 0 |
+| Prior candidate loaded rows, warm | 8 / 200 ms | 34 ms | 89/7 | 12.52 ms | 0 |
+| Minimal reveal, both rows visible | 8 / 500 ms | 17 ms | 8/1 | 1.93 ms | 0 |
+| Minimal reveal, both rows visible | 8 / 200 ms | 13 ms | 8/0 | 1.78 ms | 0 |
+| Minimal reveal, initial clipped-row entry plus visible pairs | 8 / 500 ms | 36 ms | 24/4 | 7.69 ms | 0 |
+| Series, first to ninth poster | 8 / 200 ms | 16 ms | 45/1 | 7.98 ms | 0 |
+| Series, ninth to first poster | 8 / 200 ms | 17 ms | 45/2 | 8.01 ms | 0 |
+
+Minimal-reveal Home horizontal four-Right/four-Left measured 23/24 ms global p95 at 500/200 ms cadence. Every table run retained all global frame rows within reset/driver coverage. Percentiles measure rendering pipeline intervals, not actual pixel input-to-focus latency, FPS or a universal speedup. Fewer stationary-case frames are intentional. These are small samples and are not fresh identical-content SmartTube A/B runs.
+
+**The remaining cold-row problem is real.** A Home multi-row pass measured 121 ms global p95 and ten UI intervals above 50 ms, mostly while entering lower rows. Equal Down/Up counts did not form a closed loop because recommendation Dismiss controls add focus stops. Later Home repeats and Movies attempts also ended on different header/hero destinations. Their genuine counters are retained, but all are excluded from matched A/B and same-origin warm-improvement claims in `acceptance-route-audit.json`. No source-level image/network/Compose cause is proven by those phase spans. SmartTube-level performance across all rows remains unmet.
+
+Manual Dev/release checks covered selected-tab entry, row focus, rapid horizontal reversals, first/ninth poster borders, long-press menus and movie/series detail returns. A real 900 ms Center Down/Up opened the menu without release activating Play; the command-line `input --longpress` shortcut did not emulate this timer-based path and was not treated as a bug. Final release series Back returned to a byte-identical originating poster screenshot. The poster border stays fully visible after horizontal return, but the ranked numeral 1 can remain partly offscreen; exact initial horizontal offset is not restored. One mistaken untimed header assumption briefly resumed Friends, muted; two Back presses closed it and restored its tile. Normal Continue Watching order/progress consequently changed. No favorites/category/profile settings were edited.
+
+New reveal-policy verification: **30 focused JVM tests passed**, regression target/test APKs built in 2m30s, and **two Fire TV synthetic tests passed** in 17.594s (minimal reveal including padded edges/offscreen/reversal/reduced motion/default behavior; existing bounded nested-row behavior). Normal Dev built in 2m11s; signed regular release built in 3m50s including `lintVitalRelease`. Full `lintDebug` **failed** with the same 25 errors, 364 warnings and three hints. Fresh audit confirms all 25 error source lines already exist at `8bfd672f`; no suppression. `git diff --check` passed apart from line-ending notices.
+
+Exact commands, raw frame/input/memory files, APK identity proof, successful/failed test logs, route exclusions and final notes are in `D:/workspace/niktv-playback-tests/firetv-smoothness-acceptance-20261025/acceptance-notes.md`. The isolated `.regression` target created only for this run was removed afterward; the pre-existing test package remains. Test input harness STOP files are set. Regular Home is left ready with no playback. HDMI audio is unmuted at its original fixed index 15; the initially active fallback speaker route had index 1 and remains 0 after test muting (not a claim of exact all-device volume restoration). Accessibility/Home services and system animation settings were untouched.
+
+Next performance work should target first exposure of dense lower rows with a controlled, identity-verified fixture and a trace, then compare a TV-specific recycled native presenter if composition still dominates. Longer thermal/memory runs and actual pixel focus-latency measurements remain outstanding. The current change is a tested improvement for visible-row navigation, not a zero-stutter or SmartTube-parity claim.
+
+### Source identification — 2026-10-26
+
+Modern poster cards now distinguish IPTV (blue), Alternate playback (purple), and TMDB catalogue entries (green) using compact top-left badges. Provider tiles retain the IPTV label when artwork/metadata are enriched from TMDB; Continue Watching labels the most recent actual playback source. TMDB does not imply an available stream. Numeric IPTV match counts remain separate at top-right.
+
+The overlays preserve card dimensions, focus outline, caption and progress-bar geometry. Badges add no focus stops, network requests, image requests or persistence. Full source and match count are available through the containing card’s accessible state. Tested tablet poster and phone-style card layouts, same-size comparison, and D-pad traversal; 13 focused unit tests and 2 targeted tablet checks passed (5.172s). Retained evidence: `D:/workspace/niktv-playback-tests/source-badges-verification.json`. Fire TV was left untouched for this change, as requested.

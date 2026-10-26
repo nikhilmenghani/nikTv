@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -25,14 +26,20 @@ internal fun Modifier.tileFocusOutline(
     restingColor: Color,
     focusedWidth: Dp
 ): Modifier = if (!enabled) this else drawWithCache {
+    val fraction = progress.value.coerceIn(0f, 1f)
+    val width = 1f * density + (focusedWidth.toPx() - density) * fraction
+    // Scrolling redraws the same tile many times. Cache geometry until size,
+    // density, layout direction or focus progress changes, rather than rebuilding
+    // an outline and stroke for every unfocused poster in every frame.
+    val outline = shape.createOutline(Size((size.width - width).coerceAtLeast(0f),
+        (size.height - width).coerceAtLeast(0f)), layoutDirection, this)
+    val color = lerp(restingColor, Color(0xFFF2F3F5), fraction)
+    val stroke = Stroke(width)
     onDrawWithContent {
         drawContent()
-        val fraction = progress.value.coerceIn(0f, 1f)
-        val width = 1f * density + (focusedWidth.toPx() - density) * fraction
         // Keep the entire stroke inside the tile, including first/last columns.
         inset(width / 2f) {
-            drawOutline(shape.createOutline(size, layoutDirection, this),
-                lerp(restingColor, Color(0xFFF2F3F5), fraction), style = Stroke(width))
+            drawOutline(outline, color, style = stroke)
         }
     }
 }

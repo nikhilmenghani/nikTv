@@ -154,8 +154,10 @@ internal fun ProviderDiscoveryCollection(type: CatalogType, state: ProviderDisco
                         val subtitle = categoryTitles[item.portalCategoryId].orEmpty()
                         val progress = progressLookup?.provider(type, item.id)
                         if (phone) DiscoveryPhoneMediaCard(providerDisplayTitle(item.title, type), item.logo, subtitle, maxWidth, false,
+                            source = DiscoveryTileSource.IPTV,
                             modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
                         else DiscoveryPosterTile(providerDisplayTitle(item.title, type), item.logo, subtitle, maxWidth, reduceMotion = reduceMotion,
+                            source = DiscoveryTileSource.IPTV,
                             focusVerticalInset = discoveryPosterFocusInset(maxWidth.value).dp,
                             modifier = Modifier.focusRequester(requester), progress = progress, onClick = click, onLongClick = { popup = true }, onFocus = { selected = item.id })
                         ModernTileActionsMenu(popup, app.favorites.any { it.key == saved.key },

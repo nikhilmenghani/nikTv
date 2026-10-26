@@ -190,6 +190,7 @@ data class NikTvState(
     ,val episodePage: Int = 1
     ,val episodeHasMore: Boolean = false
     ,val episodeLoadingMore: Boolean = false
+    ,val episodeDestination: EpisodeDestinationState? = null
     ,val playbackQueueScope: String? = null
     ,val playbackQueuePage: Int = 1
     ,val playbackQueueHasMore: Boolean = false
@@ -231,6 +232,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var allWatchedSeries: List<WatchedSeries> = emptyList()
     private var rememberedSeriesSeasons: Map<String, Int> = emptyMap()
     private var episodeSeasonCaches: List<EpisodeSeasonCache> = emptyList()
+    private var episodeDestinationJob: Job? = null
+    private var episodePageJob: Job? = null
+    private var episodeDestinationRequest = 0L
+    private val episodePageMutex = Mutex()
+    internal var episodePageLookup: suspend (PortalSession, MediaItem, Int?, Int, String?) -> EpisodeSeasonResult =
+        { session, series, season, page, seasonId ->
+            portal.episodeSeason(session, series, _state.value.seriesStartSeason, season, page, seasonId)
+        }
+    internal var episodePageEnrichment: suspend (MediaItem, EpisodeSeasonCache) -> Unit =
+        { series, cache -> enrichEpisodeCacheFromTmdb(series, cache, force = false) }
+
+    private fun NikTvState.episodeBrowseKey(): EpisodeBrowseKey? {
+        val activeSession = session ?: return null
+        return selectedSeries?.let { EpisodeBrowseKey(activeSession.profile.cacheKey(), it.id, selectedSeriesSeason) }
+    }
     private var browseLayouts: Map<String, BrowseLayout> = emptyMap()
     private var tmdbDashboardConfigs: Map<String, List<TmdbHomeSection>> = emptyMap()
     private val watchRefreshMutex = com.nikhil.niktv.data.NewEpisodeNotifications.refreshMutex
@@ -268,6 +284,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private var searchServerJob: kotlinx.coroutines.Job? = null
 
     init {
+        viewModelScope.launch {
+            state.map { it.episodeBrowseKey() }.distinctUntilChanged().collect { key ->
+                val request = _state.value.episodeDestination
+                if (request != null && key != EpisodeBrowseKey(request.profile, request.series, request.season)) {
+                    cancelEpisodeDestination()
+                }
+            }
+        }
         viewModelScope.launch {
             _state.collect { com.nikhil.niktv.data.CatalogPlaybackActivity.playing = it.nowPlaying != null }
         }
@@ -3117,6 +3141,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadSeriesSeason(season: Int) = task {
+        cancelEpisodeDestination()
+        episodePageJob?.cancel()
         val series = requireNotNull(_state.value.selectedSeries)
         _state.update { it.copy(items = emptyList(), selectedSeriesSeason = season) }
         loadSeriesEpisodes(series, season)
@@ -3151,7 +3177,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun publishEpisodeCache(cache: EpisodeSeasonCache) {
         val current = _state.value
-        if (current.selectedSeries?.id != cache.seriesId) return
+        if (current.selectedSeries?.id != cache.seriesId || current.session?.profile?.cacheKey() != cache.profileKey ||
+            (current.selectedSeriesSeason != null && current.selectedSeriesSeason != cache.season)) return
         _state.update {
             it.copy(
                 items = cache.episodesForDisplay(it.useTmdbEpisodeMetadata),
@@ -3171,7 +3198,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun cacheSeason(cache: EpisodeSeasonCache) {
         episodeSeasonCaches = listOf(cache) + episodeSeasonCaches.filterNot { it.key == cache.key }
         store.saveEpisodeSeasonCache(cache)
-        publishEpisodeCache(cache)
+        publishEpisodeCache(episodeSeasonCaches.firstOrNull { it.key == cache.key } ?: cache)
     }
 
     private suspend fun enrichEpisodeCacheFromTmdb(
@@ -3247,6 +3274,10 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             source.tmdbEpisodeKeys + targets.map { it.tmdbEpisodeCacheKey() }
         }
+        // Metadata enrichment started before pagination must not replace newer provider pages.
+        val latest = episodeSeasonCaches.firstOrNull { it.key == source.key }
+        if (latest != null && (latest.page != source.page || latest.hasMore != source.hasMore ||
+                latest.rawIptvEpisodes().map { it.id } != raw.map { it.id })) return
         cacheSeason(
             source.copy(
                 episodes = enriched,
@@ -3267,9 +3298,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         backgroundTmdb: Boolean = false
     ) {
         val session = _state.value.session ?: return
+        val destinationRevision = episodeDestinationRequest
         val loaded = withAutomaticSessionRetry(session) { activeSession ->
             loadInitialEpisodeBatch(activeSession, series, requestedSeason)
         }
+        if (destinationRevision != episodeDestinationRequest || _state.value.episodeDestination?.running == true) return
         val raw = loaded.episodes.distinctBy { it.id }
         if (raw.isEmpty() && previous?.rawIptvEpisodes().orEmpty().isNotEmpty()) {
             // A transient or incomplete provider response must not erase a
@@ -3529,53 +3562,119 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
         .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
         .trim()
 
+    fun cancelEpisodeDestination() {
+        episodeDestinationRequest++
+        episodeDestinationJob?.cancel()
+        episodeDestinationJob = null
+        _state.update { it.copy(episodeDestination = null) }
+    }
+
+    /** null requests the true first episode of this season; a number requests that exact episode. */
+    fun goToSeriesEpisode(number: Int? = null) {
+        if (number != null && number < 1) return
+        val snapshot = _state.value
+        val key = snapshot.episodeBrowseKey() ?: return
+        if (snapshot.items.isEmpty() || snapshot.loading) return
+        cancelEpisodeDestination()
+        episodePageJob?.cancel()
+        val request = episodeDestinationRequest
+        _state.update { it.copy(episodeDestination = EpisodeDestinationState(key.profile, key.series, key.season,
+            request, number, snapshot.items.size, snapshot.episodePage)) }
+        val cachedTarget = if (number != null) snapshot.items.firstOrNull { it.destinationEpisodeNumber() == number }
+            else if (!snapshot.episodeHasMore) snapshot.items.minWithOrNull(episodeComparator(false)) else null
+        if (cachedTarget != null || !snapshot.episodeHasMore) {
+            _state.update { state -> state.copy(episodeDestination = state.episodeDestination?.copy(running = false,
+                focusId = cachedTarget?.id, message = if (cachedTarget == null) "Episode $number was not found in this season." else null)) }
+            return
+        }
+        fun valid() = _state.value.episodeBrowseKey() == key && episodeDestinationRequest == request
+        episodeDestinationJob = viewModelScope.launch {
+            try {
+                episodePageMutex.withLock {
+                    if (!valid()) return@withLock
+                    val current = _state.value
+                    val initial = EpisodeSeasonResult(current.items, current.availableSeriesSeasons, key.season,
+                        current.episodePage, current.episodeHasMore)
+                    val (_, target) = loadEpisodeDestination(initial, number,
+                        nextPage = { loaded ->
+                            check(valid()) { "Episode selection changed" }
+                            val activeSession = requireNotNull(_state.value.session)
+                            withAutomaticSessionRetry(activeSession) { active ->
+                                episodePageLookup(active, requireNotNull(snapshot.selectedSeries), key.season,
+                                    loaded.page + 1, loaded.episodes.firstNotNullOfOrNull { it.portalSeasonId })
+                            }.also {
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                check(valid()) { "Episode selection changed" }
+                            }
+                        },
+                        onPage = { loaded ->
+                            persistEpisodePage(key, loaded)
+                            if (valid()) _state.update { state -> state.copy(episodeDestination = state.episodeDestination?.copy(
+                                loaded = loaded.episodes.size, page = loaded.page)) }
+                        })
+                    if (valid()) _state.update { state -> state.copy(episodeLoadingMore = false,
+                        episodeDestination = state.episodeDestination?.copy(running = false, focusId = target?.id,
+                            message = if (target == null) "Episode $number was not found in this season." else null)) }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (valid()) _state.update { state -> state.copy(episodeLoadingMore = false,
+                    episodeDestination = state.episodeDestination?.copy(running = false,
+                        message = error.message ?: "Could not load episodes. Please retry.")) }
+            }
+        }
+    }
+
+    private suspend fun persistEpisodePage(key: EpisodeBrowseKey, loaded: EpisodeSeasonResult): EpisodeSeasonCache {
+        val previous = episodeSeasonCaches.firstOrNull { it.profileKey == key.profile && it.seriesId == key.series && it.season == key.season }
+        val enriched = previous?.episodes.orEmpty().associateBy { it.id }
+        val rawById = previous?.rawIptvEpisodes().orEmpty().associateBy { it.id }
+        val raw = loaded.episodes.map { rawById[it.id] ?: it }
+        val cache = EpisodeSeasonCache(profileKey = key.profile, seriesId = key.series, season = key.season,
+            availableSeasons = mergeSeriesSeasons(previous?.availableSeasons.orEmpty(), loaded.availableSeasons, key.season),
+            episodes = loaded.episodes.map { enriched[it.id] ?: it }, page = loaded.page, hasMore = loaded.hasMore,
+            metadataVersion = EPISODE_METADATA_VERSION, iptvEpisodes = raw,
+            tmdbEpisodeKeys = previous?.tmdbEpisodeKeys.orEmpty(), tmdbSeriesId = previous?.tmdbSeriesId,
+            tmdbCachedAtMillis = previous?.tmdbCachedAtMillis ?: 0L, seasonIndexValidated = previous?.seasonIndexValidated == true)
+        cacheSeason(cache)
+        _state.update { state ->
+            val active = state.nowPlaying
+            if (state.episodeBrowseKey() != key) state else state.copy(
+                nowPlaying = if (active != null && active.profileKey == key.profile && active.catalogType == CatalogType.SERIES &&
+                    active.series?.id == key.series) active.withAppendedPlaybackQueue(raw) else active)
+        }
+        return cache
+    }
+
     fun loadMoreEpisodes() {
         val snapshot = _state.value
+        val key = snapshot.episodeBrowseKey() ?: return
         val series = snapshot.selectedSeries ?: return
-        val session = snapshot.session ?: return
-        if (!snapshot.episodeHasMore || snapshot.episodeLoadingMore) return
-        viewModelScope.launch {
-            _state.update { it.copy(episodeLoadingMore = true) }
-            runCatching {
-                portal.episodeSeason(session, series, snapshot.seriesStartSeason, snapshot.selectedSeriesSeason,
-                    snapshot.episodePage + 1, snapshot.items.firstOrNull()?.portalSeasonId)
-            }.onSuccess { next ->
-                val previous = episodeSeasonCaches.firstOrNull {
-                    it.profileKey == session.profile.cacheKey() && it.seriesId == series.id &&
-                        (snapshot.selectedSeriesSeason == null || it.season == snapshot.selectedSeriesSeason)
+        if (!snapshot.episodeHasMore || snapshot.episodeLoadingMore || snapshot.episodeDestination?.running == true) return
+        _state.update { it.copy(episodeLoadingMore = true) }
+        episodePageJob = viewModelScope.launch {
+            try {
+                val cache = episodePageMutex.withLock {
+                    if (_state.value.episodeBrowseKey() != key || _state.value.episodePage != snapshot.episodePage) return@withLock null
+                    val next = withAutomaticSessionRetry(requireNotNull(_state.value.session)) { active ->
+                        episodePageLookup(active, series, key.season, snapshot.episodePage + 1,
+                            snapshot.items.firstNotNullOfOrNull { it.portalSeasonId })
+                    }
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (_state.value.episodeBrowseKey() != key) return@withLock null
+                    check(next.selectedSeason == key.season && next.page > snapshot.episodePage) { "Unexpected episode page. Please retry." }
+                    val combined = (snapshot.items + next.episodes).distinctBy { it.id }
+                    check(combined.size > snapshot.items.size || !next.hasMore) { "The provider repeated an episode page. Please retry." }
+                    persistEpisodePage(key, next.copy(episodes = combined))
                 }
-                val oldRaw = previous?.rawIptvEpisodes().orEmpty().ifEmpty { snapshot.items }
-                val combinedRaw = (oldRaw + next.episodes).distinctBy { it.id }
-                val actuallyAdded = combinedRaw.size > oldRaw.size
-                val enrichedById = previous?.episodes.orEmpty().associateBy { it.id }
-                val cache = EpisodeSeasonCache(
-                    profileKey = session.profile.cacheKey(),
-                    seriesId = series.id,
-                    season = next.selectedSeason ?: snapshot.selectedSeriesSeason,
-                    availableSeasons = mergeSeriesSeasons(previous?.availableSeasons.orEmpty() + snapshot.availableSeriesSeasons,
-                        next.availableSeasons, next.selectedSeason ?: snapshot.selectedSeriesSeason),
-                    episodes = combinedRaw.map { enrichedById[it.id] ?: it },
-                    page = next.page,
-                    hasMore = next.hasMore && actuallyAdded,
-                    metadataVersion = EPISODE_METADATA_VERSION,
-                    iptvEpisodes = combinedRaw,
-                    tmdbEpisodeKeys = previous?.tmdbEpisodeKeys.orEmpty(),
-                    tmdbSeriesId = previous?.tmdbSeriesId,
-                    tmdbCachedAtMillis = previous?.tmdbCachedAtMillis ?: 0L,
-                    seasonIndexValidated = previous?.seasonIndexValidated == true
-                )
-                cacheSeason(cache)
-                _state.update { current ->
-                    val active = current.nowPlaying
-                    current.copy(
-                        nowPlaying = if (active != null && active.catalogType == CatalogType.SERIES && active.series?.id == series.id) {
-                            active.withAppendedPlaybackQueue(next.episodes)
-                        } else active
-                    )
-                }
-                enrichEpisodeCacheFromTmdb(series, cache, force = false)
-            }.onFailure { error ->
-                _state.update { it.copy(episodeLoadingMore = false, error = error.message ?: "Could not load more episodes") }
+                if (cache != null) episodePageEnrichment(series, cache)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (_state.value.episodeBrowseKey() == key) _state.update { it.copy(error = error.message ?: "Could not load more episodes") }
+            } finally {
+                if (_state.value.episodeBrowseKey() == key) _state.update { it.copy(episodeLoadingMore = false) }
             }
         }
     }
@@ -6525,7 +6624,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             nextEpisode = target.episode?.takeIf { target.series }?.let { number -> alternateEpisodeMedia(picker.request, target.copy(episode = number + 1)) },
             resumePositionMillis = position, progressKey = key, directFullscreen = true,
             streamRequestHeaders = stream.headers, playbackFormat = stream.format,
-            playWhenReady = picker.playWhenReady, alternateSource = source),
+            playWhenReady = picker.playWhenReady, alternateSource = source, profileKey = picker.profileKey),
             error = null, playbackReturnFocusId = if (it.nowPlaying != null)
                 it.playbackReturnFocusId ?: picker.request.item.id else picker.request.item.id,
             playbackQueueScope = null, playbackQueueHasMore = false, playbackQueueLoadingMore = false) }
@@ -7023,6 +7122,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     }?.queueFilter,
                     resumePositionMillis = resumePosition,
                     progressKey = progressKey,
+                    profileKey = session.profile.cacheKey(),
                     authorizationRetryCount = authorizationRetryCount,
                     playWhenReady = if (forceFreshUrl) paginationSnapshot.nowPlaying?.playWhenReady ?: true else true,
                     decoderSessionId = paginationSnapshot.nowPlaying?.takeIf {
@@ -8023,7 +8123,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     resumePositionMillis = savedProgress?.positionMillis ?: 0L,
                     progressKey = progressKey,
                     directFullscreen = true,
-                    offlinePlayback = true
+                    offlinePlayback = true,
+                    profileKey = entry.profileKey
                     ,playbackFormat = entry.fileType.ifBlank { mediaFormatLabel(entry.sourceUrl) }
                 )
             )
@@ -8360,7 +8461,8 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun removeRecent(recent: RecentItem) = viewModelScope.launch {
         val profileKey = _state.value.session?.profile?.cacheKey() ?: return@launch
-        val updated = _state.value.recentlyPlayed.filterNot { it.key == recent.key }
+        if (recent.profileKey != profileKey) return@launch
+        val updated = _state.value.recentlyPlayed.filterNot { it.contentIdentity() == recent.contentIdentity() }
         _state.update { it.copy(recentlyPlayed = updated) }
         allRecentlyPlayed = allRecentlyPlayed.filterNot { it.profileKey == profileKey } + updated
         store.saveRecentlyPlayed(allRecentlyPlayed)
