@@ -1,11 +1,23 @@
 package com.nikhil.niktv.ui
 
 import com.nikhil.niktv.model.EpisodeSeasonResult
+import com.nikhil.niktv.model.EpisodeSeasonCache
 import com.nikhil.niktv.model.MediaItem
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 internal data class EpisodeBrowseKey(val profile: String, val series: String, val season: Int?)
+
+/** A partial head refresh is not an authoritative replacement of cached later pages. */
+internal fun EpisodeSeasonResult.retainLoadedEpisodes(
+    previous: EpisodeSeasonCache?, profile: String, series: String, previousEpisodes: List<MediaItem>
+): EpisodeSeasonResult {
+    if (!hasMore || previous == null || previous.profileKey != profile || previous.seriesId != series ||
+        previous.season != selectedSeason || previousEpisodes.isEmpty()) return this
+    return copy(episodes = (episodes + previousEpisodes).distinctBy { it.id },
+        availableSeasons = (availableSeasons + previous.availableSeasons).distinct().sorted(),
+        page = maxOf(page, previous.page), hasMore = previous.hasMore)
+}
 
 data class EpisodeDestinationState(
     val profile: String,

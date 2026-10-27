@@ -85,6 +85,12 @@ class EpisodeDestinationViewModelTest {
         scheduler.runCurrent()
         assertEquals("e37", vm.state.value.episodeDestination?.focusId)
         assertEquals(listOf(2), requests)
+        // Reopening the same season must use the complete cache, not the initial batch.
+        mutable.value = mutable.value.copy(items = emptyList(), nowPlaying = null, episodeDestination = null)
+        vm.loadSeriesSeason(1)
+        await { vm.state.value.items.size == 500 && !vm.state.value.loading }
+        assertFalse(vm.state.value.episodeHasMore)
+        assertEquals(listOf(2), requests)
     }
 
     @Test fun oldProfileCannotReceiveLateEpisodesOrFocus() {

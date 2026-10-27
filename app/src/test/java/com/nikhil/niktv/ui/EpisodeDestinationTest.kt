@@ -7,6 +7,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EpisodeDestinationTest {
+    @Test fun partialRefreshRetainsCompleteSeasonAndNewEpisodes() {
+        val old = (1..500).map { episode(it) }
+        val cache = EpisodeSeasonCache("profile", "series", 1, listOf(1), old, page = 25,
+            hasMore = false, iptvEpisodes = old)
+        val result = page(481..501, 1, true).retainLoadedEpisodes(cache, "profile", "series", old)
+        assertEquals(501, result.episodes.size)
+        assertEquals(25, result.page)
+        assertFalse(result.hasMore)
+        assertTrue(result.episodes.any { it.episodeNumber == 250 })
+        assertEquals(21, page(481..501, 1, true).retainLoadedEpisodes(cache, "other", "series", old).episodes.size)
+        assertEquals(21, page(481..501, 1, true).copy(selectedSeason = 2)
+            .retainLoadedEpisodes(cache, "profile", "series", old).episodes.size)
+        // A complete provider response remains authoritative, including removals.
+        assertEquals(20, page(1..20, 1, false).retainLoadedEpisodes(cache, "profile", "series", old).episodes.size)
+    }
     private fun episode(n: Int, season: Int = 1) = MediaItem("$season:$n", "Episode $n", null, null,
         seasonNumber = season, episodeNumber = n)
     private fun page(numbers: IntRange, page: Int, more: Boolean) =

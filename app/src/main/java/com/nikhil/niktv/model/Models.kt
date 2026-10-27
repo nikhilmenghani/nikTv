@@ -390,8 +390,20 @@ data class PlayingMedia(
     /** Explicit alternate playback is ephemeral and never replaces an IPTV mapping. */
     val alternateSource: AlternatePlaybackSource? = null,
     /** Explicit owner for local playback preferences; never infer it from a truncated progress key. */
-    val profileKey: String = ""
+    val profileKey: String = "",
+    /** Ephemeral stream licensing; never persisted in history or progress. */
+    val streamDrm: PlaybackStreamDrm? = null,
+    /** Opt-in provider DVR controls; no local proxy, recording or extra stream. */
+    val allowLiveWindowSeeking: Boolean = false
 )
+
+class PlaybackStreamDrm(
+    val scheme: java.util.UUID,
+    val licenseUri: String? = null,
+    val localResponse: ByteArray? = null
+) {
+    override fun toString(): String = "PlaybackStreamDrm($scheme)"
+}
 
 data class AlternatePlaybackSource(
     val target: com.nikhil.niktv.data.AlternateSourceTarget,

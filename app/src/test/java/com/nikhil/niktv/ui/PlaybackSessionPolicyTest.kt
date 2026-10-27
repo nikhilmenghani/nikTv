@@ -133,6 +133,20 @@ class PlaybackSessionPolicyTest {
         assertEquals(0, cursor.index(listOf("A", "B"), "A"))
     }
 
+    @Test fun historicMtkFailurePrefersSoftwareButDoesNotPermanentlyRemoveHardware() {
+        val hardware = "OMX.MTK.VIDEO.DECODER.AVC"
+        val software = "c2.android.avc.decoder"
+        assertEquals(listOf(software, hardware), decoderCandidateOrder(listOf(hardware, software), emptySet(), true))
+        assertEquals(listOf(hardware), decoderCandidateOrder(listOf(hardware, software), setOf(software), true))
+        assertTrue(decoderCandidateOrder(listOf(hardware, software), setOf(hardware.lowercase(), software), true).isEmpty())
+        assertEquals(listOf(hardware, software), decoderCandidateOrder(listOf(hardware, software), emptySet(), false))
+    }
+
+    @Test fun exhaustionCodeIsNotARecoverableDecoderName() {
+        assertNull(decoderFailureName("Decoder init failed: [-49999], Format(video/avc)"))
+        assertEquals("c2.android.avc.decoder", decoderFailureName("Decoder init failed: [-49999], Format\nDecoder failed: c2.android.avc.decoder"))
+    }
+
     @Test fun exhaustedDecoderBudgetCannotResetWithPlayerRecreation() {
         assertTrue(allowDecoderRecovery(0))
         assertTrue(allowDecoderRecovery(2))

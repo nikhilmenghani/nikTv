@@ -50,6 +50,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     val options = LocalDiscoveryLibraryOptions.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val phone = usesDiscoveryPhoneLayout(configuration.smallestScreenWidthDp, LocalContext.current.isTvLikeDevice(configuration))
+    val suggestedArtwork by rememberSuggestedArtwork()
     var categoryTrigger by remember { mutableIntStateOf(0) }
     if (phone && customize != null) DiscoveryCategoryAccess(surface, categoryManagerOpen, popupChanged = categoryPopupChanged, showButton = false, openTrigger = categoryTrigger)
     Box {
@@ -61,6 +62,10 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
                 onClick = { change(false); categoryTrigger++ })
             customize?.let { action -> NikDropdownMenuItem(text = { Text("TMDB categories") },
                 onClick = { change(false); action() }) }
+            if (customize != null) NikDropdownMenuItem(
+                text = { Text("Suggested artwork: ${if (suggestedArtwork) "On" else "Off"}") },
+                leadingIcon = { Icon(if (suggestedArtwork) Icons.Default.Image else Icons.Default.HideImage, null) },
+                onClick = { DiscoveryArtworkPreference.setEnabled(context, !suggestedArtwork); change(false) })
             NikDropdownMenuItem(text = { Text("Sports") }, onClick = { change(false); context.openSports() })
             listOf("Offline", "Settings").forEach { label ->
                 NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); classic(label) })

@@ -11,6 +11,47 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SportsIntegrationTest {
+    @Test fun streamQueuePreservesDuplicatesWithoutExposingUrlsAndWraps() {
+        val source = SportsStream("https://media.example.test/live?token=private-fixture", "English")
+        val queue = sportsStreamQueue(listOf(source, source, source.copy(title = "")))
+        assertEquals(3, queue.map { it.id }.distinct().size)
+        assertTrue(queue.none { it.id.contains("private-fixture") })
+        assertEquals("Source 3", queue[2].title)
+        assertEquals(1, sportsAdjacentStream(0, 1, 3))
+        assertEquals(2, sportsAdjacentStream(0, -1, 3))
+        assertEquals(0, sportsAdjacentStream(2, 1, 3))
+        assertNull(sportsAdjacentStream(0, 1, 1))
+        assertNull(sportsAdjacentStream(-1, 1, 3))
+    }
+    @Test fun sharedPlayerRetainsHeadersAndLiveIdentityWithoutHistoryOrResume() {
+        val stream = SportsStream("https://media.example.test/live.m3u8?token=fixture", "English",
+            headers = mapOf("Referer" to "https://sports.example.test/", "Cookie" to "fixture=1"))
+        val media = stream.asPlayingMedia("India vs New Zealand")
+        assertEquals(com.nikhil.niktv.model.CatalogType.LIVE_TV, media.catalogType)
+        assertEquals(stream.link, media.url)
+        assertEquals("fixture=1", media.streamRequestHeaders["Cookie"])
+        assertEquals(SPORTS_USER_AGENT, media.streamRequestHeaders["User-Agent"])
+        assertEquals("HLS", media.playbackFormat)
+        assertTrue(media.allowLiveWindowSeeking)
+        assertEquals(0L, media.resumePositionMillis)
+        assertFalse(media.progressKey.contains("token="))
+        assertEquals(media.progressKey, stream.asPlayingMedia("Renamed event").progressKey)
+        assertNull(media.streamDrm)
+    }
+
+    @Test fun sharedPlayerPreservesRemoteAndLocalDrmWithoutLoggingLicenses() {
+        val widevine = SportsStream("https://media.example.test/live.mpd", "English", drmType = "widevine",
+            drmLicense = "https://license.example.test/issue?token=fixture")
+        val media = widevine.asPlayingMedia("Match")
+        assertEquals("DASH", media.playbackFormat)
+        assertEquals(androidx.media3.common.C.WIDEVINE_UUID, media.streamDrm!!.scheme)
+        assertEquals(widevine.drmLicense, media.streamDrm!!.licenseUri)
+        assertFalse(media.streamDrm.toString().contains("fixture"))
+        val local = widevine.copy(drmType = "clearkey", drmLicense = "00".repeat(16) + ":" + "11".repeat(16))
+            .asPlayingMedia("Match").streamDrm!!
+        assertNull(local.licenseUri)
+        assertNotNull(local.localResponse)
+    }
     private val events = """[{"id":"1","title":"Team A vs Team B","slug":"team-a-v-team-b","publish":"1","eventInfo":{"teamA":"Team A","teamB":"Team B","eventCat":"Cricket","eventType":"Test","startTime":"2026/10/27 08:30:00 +0000","endTime":"2026/10/27 17:30:00 +0000"},"formats":[{"title":"Source one"}]}]"""
     private val config = """{"parameters":{"cric_api2":{"defaultValue":{"value":"https://sports.example.test/"}}}}"""
 

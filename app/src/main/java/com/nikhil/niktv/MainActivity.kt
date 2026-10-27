@@ -17,10 +17,10 @@ import com.nikhil.niktv.data.PairingInvites
 import com.nikhil.niktv.data.SearchMetadataSyncScheduler
 import com.nikhil.niktv.ui.NikTvApp
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), com.nikhil.niktv.ui.PlayerPictureInPictureHost {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private var playerActive = false
-    var pipModeListener: ((Boolean) -> Unit)? = null
+    override var pipModeListener: ((Boolean) -> Unit)? = null
     var playerTransportKeyHandler: ((KeyEvent) -> Boolean)? = null
 
     private val pipSupported: Boolean
@@ -40,12 +40,12 @@ class MainActivity : ComponentActivity() {
             .build()
     } else null
 
-    fun setPlayerActiveForPip(active: Boolean) {
+    override fun setPlayerActiveForPip(active: Boolean) {
         playerActive = active
         if (pipSupported) playerPipParams()?.let(::setPictureInPictureParams)
     }
 
-    fun enterPlayerPictureInPicture(): Boolean {
+    override fun enterPlayerPictureInPicture(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !pipSupported || !playerActive) return false
         return playerPipParams()?.let { enterPictureInPictureMode(it) } ?: false
     }

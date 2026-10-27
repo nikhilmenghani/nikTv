@@ -3,6 +3,23 @@ package com.nikhil.niktv.ui
 internal const val MAX_DECODER_RECOVERIES = 3
 internal fun allowDecoderRecovery(attempts: Int): Boolean = attempts < MAX_DECODER_RECOVERIES
 
+/** Historical failures influence order; only failures in this session exclude candidates. */
+internal fun decoderCandidateOrder(names: List<String>, failed: Set<String>, preferSoftware: Boolean): List<String> {
+    val remaining = names.filterNot { it.lowercase() in failed }
+    return if (!preferSoftware) remaining else remaining.sortedBy {
+        val name = it.lowercase()
+        if (name.startsWith("omx.google.") || name.startsWith("c2.android.")) 0 else 1
+    }
+}
+
+/** IPTV retains its committed historical MTK exclusion and session failure rules. */
+internal fun iptvDecoderCandidateOrder(names: List<String>, historicalFailures: Set<String>, sessionFailures: Set<String>, preferSoftware: Boolean) =
+    decoderCandidateOrder(names, historicalFailures + sessionFailures, preferSoftware)
+
+private val decoderFailurePattern = Regex("(?:decoder failed|decoder init failed):\\s*([^,\\s]+)", RegexOption.IGNORE_CASE)
+internal fun decoderFailureName(message: String): String? = decoderFailurePattern.findAll(message)
+    .map { it.groupValues[1] }.firstOrNull { !it.startsWith("[") }
+
 /** Only a completion event can advance; timeline estimates while paused/seeking cannot. */
 internal class EpisodeCompletionGate {
     private var completed = false

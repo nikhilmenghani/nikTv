@@ -185,8 +185,6 @@ internal fun ModernSeriesDetailScreen(
     val episodeListState = key(series.id) { rememberLazyListState() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    val imeVisible = WindowInsets.isImeVisible
-    var searchImeWasVisible by remember { mutableStateOf(false) }
     val episodeContext = LocalContext.current
     val episodeConfiguration = LocalConfiguration.current
     val episodeIsTv = episodeContext.isTvLikeDevice(episodeConfiguration)
@@ -205,7 +203,8 @@ internal fun ModernSeriesDetailScreen(
     val episodeRowState = key(profile, series.id, state.selectedSeriesSeason) { rememberLazyListState() }
     LaunchedEffect(episodeListView, state.selectedSeriesSeason) {
         withFrameNanos { }
-        if (!verticalEpisodeLayout) episodeRowState.scrollToItem(episodeRowState.firstVisibleItemIndex, 0)
+        if (!verticalEpisodeLayout && entryPlaybackReturnFocusId == null)
+            episodeRowState.scrollToItem(episodeRowState.firstVisibleItemIndex, 0)
     }
     var episodeScrollReset by remember(series.id) { mutableIntStateOf(0) }
     LaunchedEffect(episodeScrollReset) {
@@ -225,7 +224,6 @@ internal fun ModernSeriesDetailScreen(
     var episodeMove by remember { mutableStateOf<Job?>(null) }
 
     fun closeEpisodeSearch() {
-        searchImeWasVisible = false
         episodeTextEditing = false
         expandedPanel = null
         keyboardController?.hide()
@@ -237,13 +235,6 @@ internal fun ModernSeriesDetailScreen(
 
     BackHandler(enabled = expandedPanel == SeriesDetailPanel.SEARCH) { closeEpisodeSearch() }
 
-    LaunchedEffect(imeVisible, expandedPanel) {
-        if (expandedPanel == SeriesDetailPanel.SEARCH) {
-            if (imeVisible) searchImeWasVisible = true
-            // The IME consumes the first system Back. Collapse its panel when it closes too.
-            else if (searchImeWasVisible) closeEpisodeSearch()
-        } else searchImeWasVisible = false
-    }
     LaunchedEffect(expandedPanel) {
         if (expandedPanel != SeriesDetailPanel.SEARCH) {
             episodeTextEditing = false
@@ -258,9 +249,16 @@ internal fun ModernSeriesDetailScreen(
             }
             runCatching { origin.requestFocus() }
         }
-        if (expandedPanel == SeriesDetailPanel.SEARCH) repeat(12) {
-            withFrameNanos { }
-            if (runCatching { episodeSearchRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        // Keep expansion owned by the user's toggle/Back, not transient IME
+        // visibility while lazy content is revealed or the viewport resizes.
+        if (expandedPanel == SeriesDetailPanel.SEARCH) {
+            episodeMove?.cancel()
+            wideFocusCoordinator.cancel()
+            episodeListState.scrollToItem(seriesDetailFocusSlot(SeriesDetailFocus.SORT))
+            repeat(12) {
+                withFrameNanos { }
+                if (runCatching { episodeSearchRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            }
         }
     }
     // Retain typed text for reopening, but a hidden search must not silently filter episodes.
@@ -384,7 +382,7 @@ internal fun ModernSeriesDetailScreen(
     }
     val destination = state.episodeDestination?.takeIf { it.series == series.id &&
         it.profile == state.session?.profile?.cacheKey() && it.season == state.selectedSeriesSeason }
-    var handledDestination by remember(profile, series.id) { mutableStateOf<Long?>(null) }
+    var handledDestination by rememberSaveable(profile, series.id) { mutableStateOf<Long?>(null) }
     val episodeWindow = androidx.compose.ui.platform.LocalView.current
     var destinationHadPopup by remember { mutableStateOf(false) }
     LaunchedEffect(destination) {
@@ -399,6 +397,12 @@ internal fun ModernSeriesDetailScreen(
     }
     LaunchedEffect(destination, filteredEpisodes, expandedPanel) {
         val completed = destination?.takeIf { !it.running && it.focusId != null && it.request != handledDestination } ?: return@LaunchedEffect
+        // A completed load/sort is a one-shot jump, not a playback-return target.
+        // The screen may have been disposed while the player was open.
+        if (entryPlaybackReturnFocusId != null && entryPlaybackReturnFocusId != handledPlaybackReturnFocusId) {
+            handledDestination = completed.request
+            return@LaunchedEffect
+        }
         if (expandedPanel == SeriesDetailPanel.SEARCH) { expandedPanel = null; searchQuery = ""; return@LaunchedEffect }
         for (attempt in 0 until 30) { withFrameNanos { }; if (episodeWindow.hasWindowFocus()) break }
         requestEpisodeFocus(revealParent = true, exactId = completed.focusId)
@@ -724,7 +728,7 @@ internal fun ModernSeriesDetailScreen(
                             else requestEpisodeFocus(revealParent = true, fromStart = true)
                         },
                         onGoToEpisode = goToEpisode?.let { callback -> { number -> callback(number) } },
-                        beforeAction = { searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide() },
+                        beforeAction = { episodeTextEditing = false; keyboardController?.hide() },
                         searchField = { SeriesEpisodeSearchField(
                                     value = searchQuery, change = {
                                         searchQuery = it
@@ -736,13 +740,11 @@ internal fun ModernSeriesDetailScreen(
                                         .onPreviewKeyEvent { event ->
                                             when {
                                                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
-                                                    searchImeWasVisible = false
                                                     episodeTextEditing = false
                                                     keyboardController?.hide()
                                                     if (!mobileEpisodeLayout) moveWideFocus(SeriesDetailFocus.SORT, -1) else runCatching { sortRequester.requestFocus() }; true
                                                 }
                                                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
-                                                    searchImeWasVisible = false
                                                     episodeTextEditing = false
                                                     keyboardController?.hide()
                                                     detailScope.launch {
@@ -761,7 +763,6 @@ internal fun ModernSeriesDetailScreen(
                                         },
                                     options = KeyboardOptions(imeAction = ImeAction.Search),
                                     actions = KeyboardActions(onSearch = {
-                                        searchImeWasVisible = false
                                         episodeTextEditing = false
                                         keyboardController?.hide()
                                         focusManager.clearFocus()
@@ -769,11 +770,11 @@ internal fun ModernSeriesDetailScreen(
                         modifier = Modifier.onPreviewKeyEvent { event ->
                             if (!mobileEpisodeLayout && event.type == KeyEventType.KeyDown) when (event.key) {
                                 Key.DirectionUp -> {
-                                    searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide()
+                                    episodeTextEditing = false; keyboardController?.hide()
                                     moveWideFocus(SeriesDetailFocus.SORT, -1); true
                                 }
                                 Key.DirectionDown -> {
-                                    searchImeWasVisible = false; episodeTextEditing = false; keyboardController?.hide()
+                                    episodeTextEditing = false; keyboardController?.hide()
                                     if (!episodeListView && availableSeasons.isNotEmpty()) requestWideFocus(SeriesDetailFocus.SEASONS)
                                     else focusLandscapeEpisode()
                                     true
@@ -1053,7 +1054,7 @@ internal fun ModernEpisodeCard(
     Box(modifier = modifier) {
     if (landscapePoster || wideList) com.nikhil.niktv.discovery.DiscoveryEpisodeTile(
         title = episode.displayTitle(series), artwork = imageUrl,
-        label = listOfNotNull((episode.seasonNumber ?: episode.title.seasonNumberFromTitle())?.let { "S$it" },
+        label = listOfNotNull("Last watched".takeIf { isCurrentResume }, (episode.seasonNumber ?: episode.title.seasonNumberFromTitle())?.let { "S$it" },
             (episode.episodeNumber ?: episode.title.episodeNumberFromTitle())?.let { "E$it" }).joinToString(" · "),
         metadata = episode.displayAirDate().orEmpty(), progress = progressFraction,
         remaining = episodeRemainingLabel(progress), resume = isCurrentResume,
@@ -1157,6 +1158,7 @@ internal fun ModernEpisodeCard(
                 )
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    if (isCurrentResume) EpisodeMetadataBadge("Last watched", highlighted = true)
                     badge?.let { Text(it, color = Color(0xFFB9BDC7), style = MaterialTheme.typography.labelSmall) }
                     episode.displayAirDate()?.let { Text(it, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.labelSmall) }
                     episodeRemainingLabel(progress)?.let { EpisodeMetadataBadge(it, highlighted = isCurrentResume) }

@@ -3300,10 +3300,14 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val session = _state.value.session ?: return
         val destinationRevision = episodeDestinationRequest
-        val loaded = withAutomaticSessionRetry(session) { activeSession ->
+        val refreshed = withAutomaticSessionRetry(session) { activeSession ->
             loadInitialEpisodeBatch(activeSession, series, requestedSeason)
         }
         if (destinationRevision != episodeDestinationRequest || _state.value.episodeDestination?.running == true) return
+        val latestCache = episodeSeasonCaches.firstOrNull { it.profileKey == session.profile.cacheKey() &&
+            it.seriesId == series.id && it.season == refreshed.selectedSeason } ?: previous
+        val loaded = refreshed.retainLoadedEpisodes(latestCache, session.profile.cacheKey(), series.id,
+            latestCache?.rawIptvEpisodes().orEmpty())
         val raw = loaded.episodes.distinctBy { it.id }
         if (raw.isEmpty() && previous?.rawIptvEpisodes().orEmpty().isNotEmpty()) {
             // A transient or incomplete provider response must not erase a
@@ -3311,7 +3315,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             publishEpisodeCache(previous!!)
             return
         }
-        val retained = previous?.episodes.orEmpty().associateBy { it.id }
+        val retained = latestCache?.episodes.orEmpty().associateBy { it.id }
         val base = EpisodeSeasonCache(
             profileKey = session.profile.cacheKey(),
             seriesId = series.id,
@@ -7114,6 +7118,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                     media = item,
                     url = url,
                     catalogType = type,
+                    allowLiveWindowSeeking = providerLiveWindowSeekingEnabled(type, offlineUrl != null),
                     previousEpisode = previousItem,
                     nextEpisode = nextItem,
                     series = series,

@@ -42,7 +42,7 @@
             </intent-filter>
             <property android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" android:value="true" />
         </activity>
-        <activity android:name=".sports.SportsActivity" android:exported="false" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
+        <activity android:name=".sports.SportsActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
         <activity android:name=".TrailerPlayerActivity" android:exported="false" android:screenOrientation="userLandscape" />
         <activity android:name=".MainActivity" android:banner="${appBanner}" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:exported="true" android:supportsPictureInPicture="true">
             <intent-filter>

@@ -166,6 +166,8 @@ internal fun DiscoveryPreviewScreen(
     // TV browsing prioritizes one decisive focus change over full-screen presentation work.
     // Explicit detail routes keep their artwork, metadata and actions.
     val fastTvLanding = television && state.detail == null
+    val suggestedArtwork by rememberSuggestedArtwork()
+    val showBackdrop = state.detail != null || suggestedArtwork
     LaunchedEffect(vm, profile, surface, fastTvLanding) {
         if (fastTvLanding) { vm.clearFocusedPresentation(); vm.pauseHeroMetadata() }
     }
@@ -440,8 +442,8 @@ internal fun DiscoveryPreviewScreen(
     val candidate = state.heroPresentation?.takeIf { state.detail == null && it.key == rawCandidate?.key } ?: rawCandidate
     // Selection and actions change immediately. Retain only the previous background
     // while artwork prepares; a slow image must never leave another title's Play active.
-    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait || fastTvLanding }, vm.preparedPresentation, presentationActive && !fastTvLanding)
-    SideEffect { if (!fastTvLanding) prepared?.let(vm::retainPreparedPresentation) }
+    val prepared by preparedDiscoveryCard(candidate.takeUnless { phonePortrait || !showBackdrop }, vm.preparedPresentation, presentationActive && showBackdrop)
+    SideEffect { if (showBackdrop) prepared?.let(vm::retainPreparedPresentation) }
     val displayed = candidate
     var glassBounds by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     providerCollection?.let { name -> CatalogType.entries.firstOrNull { it.name == name } }?.let { type ->
@@ -463,7 +465,7 @@ internal fun DiscoveryPreviewScreen(
         // target has no lazy parent, is invisible to accessibility and is never a
         // normal D-pad destination; the next route's existing entry restores focus.
         Box(parkingModifier)
-        if (!phonePortrait && !fastTvLanding) DiscoveryBackdrop(prepared, reduceMotion)
+        if (!phonePortrait && showBackdrop) DiscoveryBackdrop(prepared, reduceMotion)
         Column(Modifier.fillMaxSize()) {
             if (phone && !phonePortrait) {
                 DiscoveryPhoneNavigation(surface, tabRequester, playRequester,
@@ -625,7 +627,7 @@ internal fun DiscoveryPreviewScreen(
                                 select = { tab -> if (tab != surface) selectRoute(tab) else if (state.detail != null) closeRoute() },
                                 classic = ::classicRoute, headerFocus = { if (ownsFocusRoute()) { contentFocused = false; alignFocusedRow("navigation", 0) } },
                                 menu = menu, changeMenu = { menu = it }, customize = { configure = true },
-                                backdrop = prepared?.backdrop.takeUnless { fastTvLanding }, backdropBounds = glassBounds,
+                                backdrop = prepared?.backdrop.takeIf { showBackdrop }, backdropBounds = glassBounds,
                                 categoryManagerOpen = app.categoryManagerOpen, categoriesEnabled = state.detail == null,
                                 categoryPopupChanged = { categoryPopup = it })
                         }
@@ -636,7 +638,7 @@ internal fun DiscoveryPreviewScreen(
                         val heroHeight = if (phonePortrait) phoneDiscoveryHeroHeight()
                             else if (compactLandscape) (screenHeight * .52f).coerceIn(165.dp, 230.dp)
                             else if (landscape) (screenHeight * .55f).coerceIn(235.dp, 355.dp) else (screenHeight * .45f).coerceIn(255.dp, 355.dp)
-                        DiscoveryHero(displayed, if (state.detail == null) state.feeds[if (displayed?.series == true) TmdbHomeSection.TRENDING_SERIES else TmdbHomeSection.TRENDING_MOVIES]
+                        DiscoveryHero(displayed?.let { if (showBackdrop) it else it.copy(backdrop = null, poster = null, titleLogo = null) }, if (state.detail == null) state.feeds[if (displayed?.series == true) TmdbHomeSection.TRENDING_SERIES else TmdbHomeSection.TRENDING_MOVIES]
                             .orEmpty().take(10).indexOfFirst { it.key == displayed?.key }.takeIf { it >= 0 }?.plus(1) else null,
                             height = heroHeight, landscape = landscape, compact = compactLandscape, detail = state.detail != null,
                             loading = displayed == null && (state.loading.isNotEmpty() || candidate != null || (state.feeds.isEmpty() && state.errors.isEmpty())),
@@ -660,10 +662,12 @@ internal fun DiscoveryPreviewScreen(
                             previous = { vm.rotate(-1) }, next = { vm.rotate(1) }, carousel = state.detail == null && state.heroes.size > 1,
                             index = state.heroIndex, count = state.heroes.size,
                             categoryActions = if (state.detail == null && !phone) ({
+                                key(profile, surface) {
                                 DiscoveryCategoryAccess(surface, app.categoryManagerOpen, modifier = if (phone) Modifier.widthIn(min = 144.dp) else Modifier, popupChanged = { categoryPopup = it },
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } })
                                 DiscoveryAction("TMDB categories", Icons.Default.AutoAwesome, modifier = Modifier.then(if (phone) Modifier.widthIn(min = 144.dp) else Modifier).focusRequester(tmdbCategoriesRequester),
                                     onFocus = { if (ownsFocusRoute()) { contentFocused = true; focusedRow = "hero" } }) { restoreTmdbCategories = true; configure = true }
+                                }
                             }) else null,
                             portraitPhone = phonePortrait,
                             phoneHeader = if (phonePortrait && state.detail == null) ({

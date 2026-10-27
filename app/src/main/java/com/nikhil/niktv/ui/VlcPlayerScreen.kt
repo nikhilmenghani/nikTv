@@ -177,7 +177,8 @@ internal fun VlcPlayerScreen(
     onSelectPlayer: (PlaybackEngine, Long) -> Unit,
     configuredEngine: PlaybackEngine,
     focusPlayerSwitchOnEnter: Boolean = false,
-    onPlayerSwitchFocusRestored: () -> Unit = {}
+    onPlayerSwitchFocusRestored: () -> Unit = {},
+    playbackDomain: PlaybackDomain = PlaybackDomain.IPTV
 ) {
     val context = LocalContext.current
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
@@ -357,8 +358,8 @@ internal fun VlcPlayerScreen(
     val playNextNowRequester = remember(media.progressKey) { FocusRequester() }
     val errorRetryRequester = remember(media.progressKey) { FocusRequester() }
     val errorPlayerRequester = remember(media.progressKey) { FocusRequester() }
-    LaunchedEffect(error, media.progressKey) {
-        if (error != null && !currentPlayerOptionsOpen) {
+    LaunchedEffect(error, media.progressKey, controlsVisible, queueVisible) {
+        if (error != null && controlsVisible && !queueVisible && !currentPlayerOptionsOpen) {
             delay(120L)
             if (!currentPlayerOptionsOpen) runCatching { errorRetryRequester.requestFocus() }
         }
@@ -401,19 +402,20 @@ internal fun VlcPlayerScreen(
     }
 
     // Keep startup caching independent of HLS's sustained download buffer.
-    val networkCacheMillis = 1500
-    val playbackOptions = remember(media.catalogType, media.offlinePlayback, media.playbackFormat, media.url) {
-        vlcPlaybackOptions(media.catalogType == CatalogType.LIVE_TV, media.offlinePlayback,
+    val networkCacheMillis = if (playbackDomain == PlaybackDomain.SPORTS) com.nikhil.niktv.sports.SportsPlaybackPolicy.vlcNetworkCacheMillis else 1500
+    val playbackOptions = remember(playbackDomain, media.catalogType, media.offlinePlayback, media.playbackFormat, media.url) {
+        if (playbackDomain == PlaybackDomain.SPORTS) com.nikhil.niktv.sports.SportsPlaybackPolicy.vlcOptions(isHlsPlayback(media.playbackFormat, media.url))
+        else vlcPlaybackOptions(media.catalogType == CatalogType.LIVE_TV, media.offlinePlayback,
             isHlsPlayback(media.playbackFormat, media.url))
     }
     // Construct JNI state asynchronously; the session still owns decoder cleanup
     // before replacement media may acquire the native playback slot.
     var playbackRequested by remember(media.progressKey, media.playbackAttemptId) { mutableStateOf(media.playWhenReady) }
     val liveRecovery = remember(media.progressKey) { LiveStreamRecovery() }
-    var session by remember(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+    var session by remember(playbackDomain, media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
         mutableStateOf<VlcPlaybackSession?>(null)
     }
-    LaunchedEffect(media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
+    LaunchedEffect(playbackDomain, media.progressKey, media.url, media.playbackAttemptId, playbackOptions) {
         var created: VlcPlaybackSession? = null
         try {
             // JNI construction and module discovery must not block Compose or input dispatch.
@@ -451,7 +453,7 @@ internal fun VlcPlayerScreen(
             onSelect = { selected ->
                 playerPickerVisible = false
                 onSelectPlayer(selected, position)
-                if (selected.resolvePlayerEngine(context, media.series?.id ?: media.progressKey.ifBlank { media.media.id }) == PlaybackEngine.VLC)
+                if (selected.resolvePlayerEngine(context, media.series?.id ?: media.progressKey.ifBlank { media.media.id }, playbackDomain) == PlaybackEngine.VLC)
                     onRetry(position)
             }
         )
@@ -592,9 +594,9 @@ internal fun VlcPlayerScreen(
         }
     }
 
-    val pipActivity = activity as? MainActivity
+    val pipActivity = activity as? PlayerPictureInPictureHost
     val pipAvailable = remember(context) {
-        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+        pipActivity != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
             context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
@@ -603,7 +605,7 @@ internal fun VlcPlayerScreen(
         controlsVisible = true
         scope.launch {
             delay(80)
-            runCatching { playRequester.requestFocus() }
+            runCatching { (if (error != null) errorRetryRequester else playRequester).requestFocus() }
         }
     }
     fun refreshAudioTracks() {
@@ -1515,7 +1517,8 @@ internal fun VlcPlayerScreen(
 
         }
         PlayerControlsLayer(visible = (controlsVisible || (!focusMode && !embeddedMode)) && !inPictureInPicture) {
-            val topDownRequester = if (seekable) progressRequester else playRequester
+            val primaryActionRequester = if (error != null) errorRetryRequester else playRequester
+            val topDownRequester = if (seekable) progressRequester else primaryActionRequester
             val firstMediaActionRequester = if (media.catalogType == CatalogType.LIVE_TV && recordingThisChannel) {
                 recordingPauseRequester
             } else {
@@ -1865,7 +1868,7 @@ PlayerChromeIconButton(
                                     .focusRequester(progressRequester)
                                     .focusProperties {
                                         up = backRequester
-                                        down = playRequester
+                                        down = primaryActionRequester
                                     }
                                     .playerControlFocus(
                                         shape = RoundedCornerShape(14.dp),
@@ -2194,7 +2197,7 @@ PlayerChromeIconButton(
                 playerPickerVisible = false
                 controlsVisible = true
                 if (fromError && selectedEngine.resolvePlayerEngine(context,
-                        media.series?.id ?: media.progressKey.ifBlank { media.media.id }) == PlaybackEngine.VLC) {
+                        media.series?.id ?: media.progressKey.ifBlank { media.media.id }, playbackDomain) == PlaybackEngine.VLC) {
                     onSelectPlayer(selectedEngine, (if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
                     onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition else player.time).coerceAtLeast(0L))
                 } else if (selectedEngine != configuredEngine.pickerChoice()) {
@@ -2250,7 +2253,7 @@ PlayerChromeIconButton(
             CircularProgressIndicator(color = Color(0xFFE50914))
             Text(if (restoringInitialPosition) "Restoring playback position…" else "Connecting to stream…", color = Color.White)
         }
-        error?.let {
+        error?.takeIf { controlsVisible || (!focusMode && !embeddedMode) }?.let {
             Surface(
                 Modifier.align(Alignment.Center).padding(24.dp).widthIn(max = 560.dp),
                 shape = RoundedCornerShape(20.dp),
@@ -2289,38 +2292,9 @@ PlayerChromeIconButton(
             }
         }
         gestureFeedback?.let { (isBrightness, level) ->
-            Surface(
-                modifier = Modifier
-                    .align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
-                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp),
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f)
-            ) {
-                Column(
-                    Modifier.padding(horizontal = 18.dp, vertical = 14.dp).width(112.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        if (isBrightness) Icons.Default.Brightness6 else Icons.Default.VolumeUp,
-                        contentDescription = null
-                    )
-                    Text(if (isBrightness) "Brightness" else "Volume")
-                    Box(
-                        Modifier.height(120.dp).width(14.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.BottomCenter
-                    ) {
-                        Box(
-                            Modifier.fillMaxWidth()
-                                .fillMaxHeight(level.coerceIn(0f, 1f))
-                                .background(MaterialTheme.colorScheme.primary)
-                        )
-                    }
-                    Text("${(level * 100).toInt()}%")
-                }
-            }
+            PlayerLevelFeedback(isBrightness, level, compactMobileControls,
+                Modifier.align(if (isBrightness) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = if (compactMobileControls) 12.dp else 20.dp))
         }
         modeFeedback?.let { PlayerModeFeedback(it) }
         val countdown = remainingSeconds

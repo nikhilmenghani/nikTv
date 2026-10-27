@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Debug
 import android.os.SystemClock
 import android.view.SurfaceView
+import androidx.activity.compose.setContent
 import androidx.media3.common.*
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -25,7 +26,10 @@ import java.net.Socket
 import java.util.Collections
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipInputStream
+import androidx.compose.runtime.*
+import kotlinx.coroutines.flow.first
 
 /** Local HTTP only, separate app package, silent generated fixtures. No provider or profile access. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -33,6 +37,32 @@ class PlaybackEngineFixtureTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private fun main(block: () -> Unit) = instrumentation.runOnMainSync(block)
+    private fun control(text: String, prefix: Boolean = false): android.view.accessibility.AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+        fun walk(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+            if (node == null) return null
+            val description = node.contentDescription?.toString().orEmpty()
+            if ((if (prefix) description.startsWith(text) else description == text) ||
+                node.text?.toString()?.lineSequence()?.any { it == text } == true) return node
+            for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
+            return null
+        }
+        return walk(instrumentation.uiAutomation.rootInActiveWindow)
+    }
+    private fun clickControl(text: String, prefix: Boolean = false) {
+        await("Player control becomes visible: $text") { control(text, prefix) != null }
+        // A replaced controls layer can still expose its outgoing accessibility node
+        // during the 200 ms fade. Reacquire only when Android rejected the action;
+        // an accepted click is never repeated (which could navigate twice).
+        await("Reachable player control: $text", 2_000L) {
+            var node = control(text, prefix)
+            repeat(8) { if (node?.isClickable != true) node = node?.parent }
+            node?.let { it.isClickable && it.isEnabled && it.isVisibleToUser &&
+                it.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) } == true
+        }
+    }
+    private fun shownPosition(): Long? = control("Current playback time ", true)?.contentDescription?.toString()
+        ?.removePrefix("Current playback time ")?.split(':')?.mapNotNull { it.toLongOrNull() }?.fold(0L) { total, v -> total * 60 + v }
     private fun await(label: String, limit: Long = 20_000L, condition: () -> Boolean) {
         val until = SystemClock.elapsedRealtime() + limit
         while (SystemClock.elapsedRealtime() < until) {
@@ -61,6 +91,7 @@ class PlaybackEngineFixtureTest {
         var missingOnce: String? = null
         val missing = AtomicInteger()
         private val files = mutableMapOf<String, ByteArray>()
+        private val startedAt = SystemClock.elapsedRealtime()
         val base = "http://127.0.0.1:${socket.localPort}"
         init {
             ZipInputStream(instrumentation.context.assets.open("playback-fixtures.zip")).use { zip ->
@@ -100,9 +131,14 @@ class PlaybackEngineFixtureTest {
                 }
                 if (path == missingOnce && missing.getAndIncrement() == 0) { reply("404 Not Found", byteArrayOf()); return }
                 if (path == "redirect") { reply("302 Found", byteArrayOf(), extra = "Location: /live\r\n"); return }
-                val name = when (path) { "live", "vod-hls" -> "full.m3u8"; "opaque-dash" -> "manifest.mpd"; else -> path }
+                val name = when (path) { "live", "live-dvr", "vod-hls" -> "full.m3u8"; "opaque-dash" -> "manifest.mpd"; else -> path }
                 var body = files[name] ?: run { reply("404 Not Found", byteArrayOf()); return }
                 if (path == "live") body = body.toString(Charsets.UTF_8).replace("#EXT-X-ENDLIST", "").toByteArray()
+                if (path == "live-dvr") {
+                    val lines = body.toString(Charsets.UTF_8).lineSequence().filter { it.isNotBlank() && it != "#EXT-X-ENDLIST" }.toList()
+                    val segments = (30 + (SystemClock.elapsedRealtime() - startedAt) / 2_000).toInt().coerceAtMost(60)
+                    body = (lines.take(4) + lines.drop(4).chunked(2).take(segments).flatten()).joinToString("\n", postfix = "\n").toByteArray()
+                }
                 val type = when { name.endsWith("m3u8") -> "application/vnd.apple.mpegurl"; name.endsWith("mpd") -> "application/dash+xml"; name.endsWith("mp4") -> "video/mp4"; name.endsWith("ts") -> "video/mp2t"; else -> "application/octet-stream" }
                 val range = headers["range"]?.removePrefix("bytes=")?.substringBefore('-')?.toIntOrNull()
                 if (range != null && range in body.indices) {
@@ -115,6 +151,559 @@ class PlaybackEngineFixtureTest {
         override fun close() {
             socket.close(); synchronized(clients) { clients.toList().forEach { runCatching { it.close() } } }
             workers.shutdownNow()
+        }
+    }
+
+    private val stabilityEngines: List<com.nikhil.niktv.model.PlaybackEngine> get() {
+        val engines = listOf(
+            com.nikhil.niktv.model.PlaybackEngine.MEDIA3,
+            com.nikhil.niktv.model.PlaybackEngine.FLOW,
+            com.nikhil.niktv.model.PlaybackEngine.VLC,
+            com.nikhil.niktv.model.PlaybackEngine.MPV
+        )
+        val requested = InstrumentationRegistry.getArguments().getString("stabilityEngines")
+            ?.split(',')?.map { it.trim().uppercase(java.util.Locale.ROOT) }?.filter { it.isNotEmpty() }.orEmpty()
+        require(requested.all { name -> engines.any { it.name == name } }) { "Unknown stabilityEngines argument" }
+        return engines.filter { (requested.isEmpty() || it.name in requested) &&
+            (it != com.nikhil.niktv.model.PlaybackEngine.MPV || mpvSupportedSdk(android.os.Build.VERSION.SDK_INT)) }
+            .also { require(it.isNotEmpty()) { "No supported stability engines selected" } }
+    }
+
+    /** Samples only the synthetic video's centre, excluding title, clock and controls. */
+    private fun stabilityVideoFingerprint(): Long {
+        val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot()) { "Synthetic video screenshot unavailable" }
+        return try {
+            var value = 1125899906842597L
+            for (y in 0 until 20) for (x in 0 until 32) {
+                val px = (bitmap.width * (.34f + x * .01f)).toInt().coerceIn(0, bitmap.width - 1)
+                val py = (bitmap.height * (.30f + y * .015f)).toInt().coerceIn(0, bitmap.height - 1)
+                value = value * 31 + bitmap.getPixel(px, py)
+            }
+            value
+        } finally { bitmap.recycle() }
+    }
+
+    private fun assertStabilityNoError(label: String, retries: AtomicInteger?) {
+        retries?.let { assertEquals("$label must not silently reconnect/recreate the player", 0, it.get()) }
+        assertNull("$label must not show a playback error", control("This title can’t be played right now"))
+    }
+
+    private fun showStabilityControls(activity: androidx.activity.ComponentActivity, expectedTitle: String? = null,
+        afterReplacement: Boolean = false) {
+        await("Current fixture host owns the resumed window", 3_000L) {
+            var ready = false
+            main { ready = activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
+                activity.hasWindowFocus() && !activity.isFinishing && !activity.isDestroyed }
+            ready
+        }
+        // A new progressKey initially hides controls. Do not mistake the outgoing
+        // layer's Pause/Play semantics for the replacement's visible controls.
+        if (afterReplacement) Thread.sleep(300L)
+        val deadline = SystemClock.elapsedRealtime() + 3_000L
+        while (SystemClock.elapsedRealtime() < deadline) {
+            assertNull("Opening controls must not hide a playback failure", control("This title can’t be played right now"))
+            val visible = control("Pause") != null || control("Play") != null
+            if (visible && (expectedTitle == null || control(expectedTitle) != null)) return
+            if (!visible) {
+                // A single central video tap cannot activate a stale focused Next
+                // button. Separate taps exceed the gesture's double-tap timeout.
+                val point = FloatArray(2)
+                main {
+                    val view = activity.window.decorView
+                    val location = IntArray(2).also(view::getLocationOnScreen)
+                    point[0] = location[0] + view.width * .5f
+                    point[1] = location[1] + view.height * .4f
+                }
+                val now = SystemClock.uptimeMillis()
+                for (action in intArrayOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                    val event = android.view.MotionEvent.obtain(now, now, action, point[0], point[1], 0)
+                    event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                    try { assertTrue("Fixture video accepts touch", instrumentation.uiAutomation.injectInputEvent(event, true)) }
+                    finally { event.recycle() }
+                }
+                Thread.sleep(350L)
+            } else Thread.sleep(50L)
+        }
+        fail("Playback controls belong to the current selection: $expectedTitle")
+    }
+
+    private fun sampleAdvancingSyntheticVideo(label: String, seconds: Int, retries: AtomicInteger?): Pair<Int, Int> {
+        val fingerprints = linkedSetOf<Long>()
+        var peakPss = 0
+        var unchanged = 0
+        var previous: Long? = null
+        repeat(seconds) {
+            Thread.sleep(1_000)
+            assertStabilityNoError(label, retries)
+            val sample = stabilityVideoFingerprint()
+            if (sample == previous) unchanged++ else unchanged = 0
+            assertTrue("$label synthetic video must not freeze for four consecutive samples", unchanged < 4)
+            previous = sample
+            fingerprints += sample
+            val memory = Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }
+            peakPss = maxOf(peakPss, memory.totalPss)
+        }
+        assertTrue("$label must visibly render advancing video, rather than only report READY", fingerprints.size > 1)
+        return fingerprints.size to peakPss
+    }
+
+    private fun exerciseIptvProductionMatrix(type: CatalogType) {
+        check(context.packageName.endsWith(".regression"))
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val oldVolume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        try {
+            for (engine in stabilityEngines) FixtureServer().use { server ->
+                val label = "IPTV-$type-$engine"
+                val activity = host()
+                val index = mutableIntStateOf(0)
+                val frames = AtomicInteger()
+                val selectionFrames = Array(2) { AtomicInteger() }
+                val firstFrameAt = AtomicLong(-1L)
+                val retries = AtomicInteger()
+                val nextCalls = AtomicInteger()
+                val previousCalls = AtomicInteger()
+                val started = SystemClock.elapsedRealtime()
+                val queue = (0..1).map { number -> NikItem("matrix-$number", "$type fixture ${number + 1}", null, null,
+                    seasonNumber = if (type == CatalogType.SERIES) 1 else null,
+                    episodeNumber = if (type == CatalogType.SERIES) number + 1 else null) }
+                var nativeStart: Long? = null
+                var nativeEnd: Long? = null
+                var visualSamples = 0
+                var peakPss = 0
+                try {
+                    main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                        val selected = index.intValue
+                        val live = type == CatalogType.LIVE_TV
+                        val media = remember(selected) { PlayingMedia(queue[selected],
+                            "${server.base}/${if (live) "live-dvr" else "movie.mp4"}?selection=$selected",
+                            type, previousEpisode = queue.getOrNull(selected - 1) ?: queue.last().takeIf { live },
+                            nextEpisode = queue.getOrNull(selected + 1) ?: queue.first().takeIf { live },
+                            episodeQueue = queue,
+                            series = if (type == CatalogType.SERIES) NikItem("matrix-series", "Series fixture", null, null) else null,
+                            resumePositionMillis = if (live) 0 else 4_000,
+                            progressKey = "matrix:$engine:$type:$selected", profileKey = "isolated-matrix-profile",
+                            playbackFormat = if (live) "HLS" else "MP4", allowLiveWindowSeeking = live) }
+                        PlayerScreen(media, onBack = {}, onRetry = { retries.incrementAndGet() },
+                            onRetryAlternateDecoder = { retries.incrementAndGet() }, onPlaybackAuthorizationFailure = { retries.incrementAndGet() },
+                            onPlayPrevious = { previousCalls.incrementAndGet(); index.intValue = if (live) 1 - selected else (selected - 1).coerceAtLeast(0) },
+                            onPlayNext = { nextCalls.incrementAndGet(); index.intValue = if (live) 1 - selected else (selected + 1).coerceAtMost(1) },
+                            onProgress = { _, _, _ -> }, playbackEngine = engine, controlsTimeoutSeconds = 0,
+                            startFullscreen = true, showLiveRecordingAndGuide = false,
+                            onVideoFrameRendered = { frames.incrementAndGet(); selectionFrames[selected].incrementAndGet()
+                                firstFrameAt.compareAndSet(-1L, SystemClock.elapsedRealtime() - started) })
+                    } } }
+                    await("$label first frame", 25_000) { assertStabilityNoError(label, retries); frames.get() > 0 }
+                    showStabilityControls(activity, queue[0].title)
+                    if (type != CatalogType.LIVE_TV) await("$label restores its four-second resume") { (shownPosition() ?: -1) >= 4 }
+                    nativeStart = shownPosition()
+                    val samples = sampleAdvancingSyntheticVideo(label, if (type == CatalogType.LIVE_TV) 12 else 2, retries)
+                    visualSamples = samples.first; peakPss = samples.second
+                    nativeEnd = shownPosition()
+                    // Sliding live windows can renumber their positions. VOD has a fixed clock.
+                    if (type != CatalogType.LIVE_TV) assertTrue("$label native clock advances", requireNotNull(nativeEnd) > requireNotNull(nativeStart))
+                    clickControl("Pause")
+                    await("$label pause is applied") { control("Play") != null }
+                    Thread.sleep(700)
+                    val paused = shownPosition()
+                    val pausedPicture = stabilityVideoFingerprint()
+                    Thread.sleep(900)
+                    assertEquals("$label pause retains the displayed native time", paused, shownPosition())
+                    assertEquals("$label pause freezes video output", pausedPicture, stabilityVideoFingerprint())
+                    if (type != CatalogType.LIVE_TV) {
+                        clickControl("Back 10 seconds")
+                        await("$label rewinds while paused") { shownPosition()?.let { it <= 1 } == true }
+                        clickControl("Forward 10 seconds")
+                        await("$label seeks forward while paused") { shownPosition()?.let { it in 9..11 } == true }
+                        assertNotNull("$label seeking retains user pause", control("Play"))
+                    }
+                    clickControl("Play")
+                    await("$label resumes") { control("Pause") != null }
+                    sampleAdvancingSyntheticVideo("$label-resumed", 2, retries)
+                    val beforeNext = selectionFrames[1].get()
+                    clickControl("Next")
+                    await("$label Next commits a rendered replacement") { index.intValue == 1 && selectionFrames[1].get() > beforeNext }
+                    showStabilityControls(activity, queue[1].title, afterReplacement = true)
+                    sampleAdvancingSyntheticVideo("$label-next", 2, retries)
+                    assertEquals(1, nextCalls.get())
+                    val beforePrevious = selectionFrames[0].get()
+                    clickControl("Previous")
+                    await("$label Previous commits a rendered replacement") { index.intValue == 0 && selectionFrames[0].get() > beforePrevious }
+                    showStabilityControls(activity, queue[0].title, afterReplacement = true)
+                    sampleAdvancingSyntheticVideo("$label-previous", 2, retries)
+                    assertEquals(1, previousCalls.get())
+                    assertStabilityNoError(label, retries)
+                } finally {
+                    android.util.Log.i("NikTvStability", "domain=IPTV catalog=$type engine=$engine firstFrameMs=${firstFrameAt.get()} " +
+                        "nativeStartSec=$nativeStart nativeEndSec=$nativeEnd visualDistinctSamples=$visualSamples peakPssKb=$peakPss " +
+                        "next=${nextCalls.get()} previous=${previousCalls.get()} retries=${retries.get()} maxHttpConnections=${server.peak.get()} " +
+                        "limits=local-silent-fixture-short-observation-no-provider-or-dropped-frame-measurement")
+                    main { activity.finish() }
+                    Thread.sleep(350)
+                }
+            }
+        } finally { audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, oldVolume, 0) }
+    }
+
+    @Test fun productionIptvMoviesPlayResumeSeekAndNavigateAcrossAllEngines() = exerciseIptvProductionMatrix(CatalogType.MOVIES)
+    @Test fun productionIptvSeriesPlayResumeSeekAndNavigateAcrossAllEngines() = exerciseIptvProductionMatrix(CatalogType.SERIES)
+    @Test fun productionIptvLivePlaysPausesAndNavigatesAcrossAllEngines() = exerciseIptvProductionMatrix(CatalogType.LIVE_TV)
+
+    @Test fun productionClearSportsPlaysPausesAndSwitchesSourcesAcrossAllEngines() {
+        check(context.packageName.endsWith(".regression"))
+        val preferences = com.nikhil.niktv.sports.SportsPlaybackPreferences(context)
+        val oldSettings = runBlocking { preferences.settings.first() }
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val oldVolume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        try {
+            preferences.setPlayerControlsTimeoutSeconds(0)
+            for (engine in stabilityEngines) FixtureServer().use { server ->
+                preferences.setPlaybackEngine(engine)
+                val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
+                val index = mutableIntStateOf(0)
+                val frames = AtomicInteger()
+                val selectionFrames = Array(2) { AtomicInteger() }
+                val started = SystemClock.elapsedRealtime()
+                val firstFrameAt = AtomicLong(-1L)
+                val selections = AtomicInteger()
+                val sources = (0..1).map { com.nikhil.niktv.sports.SportsStream("${server.base}/live-dvr?source=$it", "Matrix stream ${it + 1}") }
+                var samples = 0 to 0
+                try {
+                    main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                        val selected = index.intValue
+                        com.nikhil.niktv.sports.SportsPlayer(sources[selected], "Sports matrix fixture", onBack = {},
+                            streams = sources, selectedIndex = selected,
+                            onSelectStream = { selections.incrementAndGet(); index.intValue = it },
+                            onVideoFrameRendered = { frames.incrementAndGet(); selectionFrames[selected].incrementAndGet()
+                                firstFrameAt.compareAndSet(-1L, SystemClock.elapsedRealtime() - started) })
+                    } } }
+                    await("Sports $engine first frame", 25_000) { assertNull(control("This title can’t be played right now")); frames.get() > 0 }
+                    showStabilityControls(activity, "Sports matrix fixture")
+                    // A fresh server per engine gives the advancing live window room to grow.
+                    samples = sampleAdvancingSyntheticVideo("Sports-$engine", 12, null)
+                    clickControl("Pause")
+                    await("Sports $engine pause") { control("Play") != null }
+                    Thread.sleep(700)
+                    val paused = stabilityVideoFingerprint()
+                    Thread.sleep(900)
+                    assertEquals("Sports $engine pause freezes actual video", paused, stabilityVideoFingerprint())
+                    clickControl("Play")
+                    await("Sports $engine resumes") { control("Pause") != null }
+                    sampleAdvancingSyntheticVideo("Sports-$engine-resumed", 2, null)
+                    val beforeNext = selectionFrames[1].get()
+                    clickControl("Next")
+                    await("Sports $engine switches to the next rendered source") { index.intValue == 1 && selectionFrames[1].get() > beforeNext }
+                    showStabilityControls(activity, "Sports matrix fixture", afterReplacement = true)
+                    sampleAdvancingSyntheticVideo("Sports-$engine-next", 2, null)
+                    val beforePrevious = selectionFrames[0].get()
+                    clickControl("Previous")
+                    await("Sports $engine returns to the previous rendered source") { index.intValue == 0 && selectionFrames[0].get() > beforePrevious }
+                    showStabilityControls(activity, "Sports matrix fixture", afterReplacement = true)
+                    sampleAdvancingSyntheticVideo("Sports-$engine-previous", 2, null)
+                    assertEquals("Only explicit source selections occur", 2, selections.get())
+                    assertNull(control("This title can’t be played right now"))
+                } finally {
+                    android.util.Log.i("NikTvStability", "domain=SPORTS protected=false engine=$engine firstFrameMs=${firstFrameAt.get()} " +
+                        "visualDistinctSamples=${samples.first} peakPssKb=${samples.second} sourceSelections=${selections.get()} " +
+                        "maxHttpConnections=${server.peak.get()} limits=local-silent-clear-HLS-short-observation-no-provider-dropped-frame-or-internal-retry-measurement")
+                    main { activity.finish() }
+                    Thread.sleep(350)
+                }
+            }
+        } finally {
+            preferences.setPlaybackEngine(oldSettings.engine)
+            preferences.setPlayerControlsTimeoutSeconds(oldSettings.timeout)
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, oldVolume, 0)
+        }
+    }
+
+    @Test fun sportsNativeWindowRewindsReturnsLiveAndContinuesInPip() {
+        check(context.packageName.endsWith(".regression"))
+        val server = FixtureServer()
+        val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
+        val firstFrames = AtomicInteger()
+        val renderedFrames = AtomicInteger()
+        val reconnects = AtomicInteger()
+        val audio = context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val previousVolume = audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+        fun find(description: String, prefix: Boolean = false): android.view.accessibility.AccessibilityNodeInfo? {
+            if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+            fun walk(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+                if (node == null) return null
+                val label = node.contentDescription?.toString().orEmpty()
+                if (if (prefix) label.startsWith(description) else label == description) return node
+                for (index in 0 until node.childCount) walk(node.getChild(index))?.let { return it }
+                return null
+            }
+            return walk(instrumentation.uiAutomation.rootInActiveWindow)
+        }
+        fun click(description: String) {
+            var node = find(description)
+            repeat(8) { if (node?.isClickable != true) node = node?.parent }
+            assertTrue("Reachable control: $description", node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) == true)
+        }
+        fun position(): Long? = find("Current playback time ", true)?.contentDescription?.toString()
+            ?.removePrefix("Current playback time ")?.split(':')?.mapNotNull { it.toLongOrNull() }
+            ?.fold(0L) { total, value -> total * 60 + value }
+        try {
+            val media = PlayingMedia(NikItem("sports-dvr-fixture", "Sports window fixture", null, null),
+                "${server.base}/live-dvr", CatalogType.LIVE_TV, playbackFormat = "HLS", progressKey = "sports-dvr-fixture",
+                allowLiveWindowSeeking = true)
+            main { activity.setContent {
+                androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                    PlayerScreen(media, onBack = {}, onRetry = { reconnects.incrementAndGet() },
+                        onRetryAlternateDecoder = { reconnects.incrementAndGet() },
+                        onPlaybackAuthorizationFailure = { reconnects.incrementAndGet() },
+                        onPlayPrevious = {}, onPlayNext = {}, onProgress = { _, _, _ -> },
+                        controlsTimeoutSeconds = 60, startFullscreen = true, showLiveRecordingAndGuide = false,
+                        onVideoFrameRendered = { firstFrames.incrementAndGet() },
+                        onVideoFramesRendered = { renderedFrames.set(it) })
+                }
+            } }
+            await("Sports live fixture renders") { firstFrames.get() > 0 }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Opening the overlay reveals the native-window seekbar") { (position() ?: 0) > 20 }
+            val before = requireNotNull(position())
+            click("Back 10 seconds")
+            await("Rewind seeks inside the native window") { position()?.let { it <= before - 6 } == true }
+            assertNotNull(find("Watch live"))
+            click("Watch live")
+            await("Watch live seeks to native default without restarting") { position()?.let { it >= before - 4 } == true }
+            click("More controls")
+            await("Sports exposes the PiP control") { find("Picture in Picture") != null }
+            val framesBeforePip = renderedFrames.get()
+            click("Picture in Picture")
+            await("Sports activity enters PiP") { activity.isInPictureInPictureMode }
+            await("Video keeps rendering in PiP") { renderedFrames.get() > framesBeforePip + 15 }
+            assertEquals("Seeking and PiP retain the same stream/player", 0, reconnects.get())
+        } finally {
+            main { activity.finish() }
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, previousVolume, 0)
+            server.close()
+        }
+    }
+
+    @Test fun playerErrorCanBeHiddenAndReenteredWithRemote() {
+        check(context.packageName.endsWith(".regression"))
+        val store = com.nikhil.niktv.sports.SportsPlaybackPreferences(context)
+        val oldEngine = runBlocking { store.playbackEngine.first() }
+        try {
+            for (engine in listOf(com.nikhil.niktv.model.PlaybackEngine.MEDIA3, com.nikhil.niktv.model.PlaybackEngine.VLC)) {
+                runBlocking { store.setPlaybackEngine(engine) }
+                FixtureServer().use { server ->
+                    val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
+                    try {
+                        main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                            com.nikhil.niktv.sports.SportsPlayer(com.nikhil.niktv.sports.SportsStream("${server.base}/missing.mp4", "Missing fixture"),
+                                "Error focus fixture", onBack = {})
+                        } } }
+                        fun retryFocused(): Boolean {
+                            var node = control("Retry with fresh link")
+                            repeat(8) { if (node?.isFocused == true) return true; node = node?.parent }
+                            return false
+                        }
+                        await("$engine error enters Retry", 35_000) { retryFocused() }
+                        clickControl("Choose player")
+                        await("$engine player picker opens") { control("Close") != null }
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                        fun chooserFocused(): Boolean {
+                            var node = control("Choose player")
+                            repeat(8) { if (node?.isFocused == true) return true; node = node?.parent }
+                            return false
+                        }
+                        await("$engine picker returns focus to its originating button") { control("Close") == null && chooserFocused() }
+                        Thread.sleep(300)
+                        assertTrue("$engine Retry must not steal picker return focus", chooserFocused())
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_UP)
+                        await("$engine Up returns from picker action to Retry") { retryFocused() }
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_UP)
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+                        await("$engine navigation outside the error can return to Retry") { retryFocused() }
+                        repeat(2) {
+                            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                            await("$engine Back hides the error overlay") { control("Choose player") == null && control("Retry with fresh link") == null }
+                            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                            await("$engine OK reenters Retry") { retryFocused() }
+                        }
+                    } finally { main { activity.finish() } }
+                }
+            }
+        } finally { runBlocking { store.setPlaybackEngine(oldEngine) } }
+    }
+
+    @Test fun sportsDoubleTapAndMiddleSwipeUseTheStreamQueue() {
+        check(context.packageName.endsWith(".regression"))
+        val server = FixtureServer()
+        val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
+        val selected = mutableIntStateOf(0)
+        val frames = AtomicInteger()
+        val streams = (0..2).map { com.nikhil.niktv.sports.SportsStream("${server.base}/live-dvr?source=$it", "Fixture source ${it + 1}") }
+        fun pointer(action: Int, x: Float, y: Float, down: Long) {
+            instrumentation.sendPointerSync(android.view.MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0))
+        }
+        fun doubleTap(fraction: Float) {
+            val metrics = activity.resources.displayMetrics
+            repeat(2) {
+                val down = SystemClock.uptimeMillis()
+                pointer(android.view.MotionEvent.ACTION_DOWN, metrics.widthPixels * fraction, metrics.heightPixels * .45f, down)
+                SystemClock.sleep(25)
+                pointer(android.view.MotionEvent.ACTION_UP, metrics.widthPixels * fraction, metrics.heightPixels * .45f, down)
+                SystemClock.sleep(65)
+            }
+        }
+        try {
+            main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                com.nikhil.niktv.sports.SportsPlayer(streams[selected.intValue], "Sports gesture fixture", onBack = {},
+                    onVideoFrameRendered = { frames.incrementAndGet() }, streams = streams, selectedIndex = selected.intValue,
+                    onSelectStream = { selected.intValue = it })
+            } } }
+            await("First Sports source renders") { frames.get() > 0 }
+            var before = frames.get()
+            doubleTap(.8f)
+            await("Right double tap selects and renders the next stream") { selected.intValue == 1 && frames.get() > before }
+            before = frames.get()
+            doubleTap(.2f)
+            await("Left double tap returns to the previous stream") { selected.intValue == 0 && frames.get() > before }
+            val metrics = activity.resources.displayMetrics
+            val down = SystemClock.uptimeMillis()
+            pointer(android.view.MotionEvent.ACTION_DOWN, metrics.widthPixels * .5f, metrics.heightPixels * .65f, down)
+            for (step in 1..8) {
+                SystemClock.sleep(20)
+                pointer(android.view.MotionEvent.ACTION_MOVE, metrics.widthPixels * .5f,
+                    metrics.heightPixels * (.65f - step * .045f), down)
+            }
+            pointer(android.view.MotionEvent.ACTION_UP, metrics.widthPixels * .5f, metrics.heightPixels * .29f, down)
+            await("Middle swipe reveals the stream list") { control("Choose what to play") != null }
+            await("The source list contains other streams") { control("Fixture source 3") != null }
+            before = frames.get()
+            clickControl("Fixture source 3")
+            await("Selecting a stream in the list renders it") { selected.intValue == 2 && frames.get() > before }
+        } finally { main { activity.finish() }; server.close() }
+    }
+
+    @Test fun sportsControlsApplyTimeoutPersistEngineAndPreservePlayback() {
+        check(context.packageName.endsWith(".regression"))
+        val iptv = com.nikhil.niktv.data.ProfileStore(context)
+        val iptvEngine = runBlocking { iptv.playbackEngine.first() }
+        val iptvTimeout = runBlocking { iptv.playerControlsTimeoutSeconds.first() }
+        val store = com.nikhil.niktv.sports.SportsPlaybackPreferences(context)
+        val oldTimeout = runBlocking { store.playerControlsTimeoutSeconds.first() }
+        val oldEngine = runBlocking { store.playbackEngine.first() }
+        runBlocking { store.setPlayerControlsTimeoutSeconds(3); store.setPlaybackEngine(com.nikhil.niktv.model.PlaybackEngine.MEDIA3) }
+        val server = FixtureServer()
+        val activity = instrumentation.startActivitySync(Intent(context, SportsFixtureHostActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as SportsFixtureHostActivity
+        val frames = AtomicInteger()
+        try {
+            main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                com.nikhil.niktv.sports.SportsPlayer(com.nikhil.niktv.sports.SportsStream("${server.base}/live-dvr", "Fixture stream"),
+                    "Sports controls fixture", onBack = {}, onVideoFrameRendered = { frames.incrementAndGet() })
+            } } }
+            await("Sports renders after loading its own preferences") { frames.get() > 0 }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Pause is available") { control("Pause") != null }
+            clickControl("Pause")
+            await("Pause changes the control to Play") { control("Play") != null }
+            Thread.sleep(1_200)
+            val paused = shownPosition()
+            Thread.sleep(1_200)
+            assertEquals("User pause freezes the native position", paused, shownPosition())
+            clickControl("Play")
+            await("Playback resumes") { shownPosition()?.let { it > (paused ?: 0L) } == true }
+            if (control("More controls") != null) clickControl("More controls")
+            await("Sports timeout value is visible") { control("Controls timeout: 3s") != null }
+            clickControl("Controls timeout: 3s")
+            val next = nextPlayerControlsTimeoutSeconds(3)
+            await("Sports applies the timeout callback") { control("Controls timeout: ${playerControlsTimeoutLabel(next)}") != null }
+            assertEquals(next, runBlocking { store.playerControlsTimeoutSeconds.first() })
+            assertEquals("Sports timeout leaves IPTV unchanged", iptvTimeout, runBlocking { iptv.playerControlsTimeoutSeconds.first() })
+            await("The new timeout actually hides the overlay", (next + 4) * 1_000L) {
+                control("Controls timeout: ${playerControlsTimeoutLabel(next)}") == null
+            }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            await("Main controls reopen after timeout") { control("More controls") != null }
+            clickControl("More controls")
+            await("Reopening retains the new timeout") { control("Controls timeout: ${playerControlsTimeoutLabel(next)}") != null }
+            clickControl("Video fit:", true)
+            await("Sports resize uses the real picker") { control("Video resize") != null }
+            clickControl("Skip")
+            await("Resize closes without interrupting playback") { control("Video resize") == null }
+            clickControl("Choose picture mode:", true)
+            await("Picture mode opens") { control("Picture mode") != null }
+            clickControl("Skip")
+            await("Picture mode closes") { control("Picture mode") == null }
+            clickControl("Playback information")
+            await("Playback information opens") { control("Details for the current stream") != null }
+            clickControl("Close")
+            await("Information popup closes") { control("Details for the current stream") == null }
+            clickControl("Player:", true)
+            await("Engine picker is available") { control("Choose player") != null }
+            val beforeSwitch = frames.get()
+            clickControl("Flow")
+            await("Engine selection is applied and video resumes") { frames.get() > beforeSwitch }
+            assertEquals(com.nikhil.niktv.model.PlaybackEngine.FLOW, runBlocking { store.playbackEngine.first() })
+            assertEquals("Choosing Flow for Sports leaves IPTV unchanged", iptvEngine, runBlocking { iptv.playbackEngine.first() })
+            // The fixture's extensionless HLS URL needs MIME recovery in every
+            // replacement player, including when returning to the original engine.
+            await("Player control returns after switching") { control("Player:", true) != null }
+            clickControl("Player:", true)
+            await("Engine picker reopens") { control("Choose player") != null }
+            val beforeReturn = frames.get()
+            clickControl("ExoPlayer")
+            await("Returning to ExoPlayer renders the opaque HLS source") { frames.get() > beforeReturn }
+            assertEquals(com.nikhil.niktv.model.PlaybackEngine.MEDIA3, runBlocking { store.playbackEngine.first() })
+            assertEquals(next, runBlocking { store.playerControlsTimeoutSeconds.first() })
+        } finally {
+            main { activity.finish() }
+            runBlocking { store.setPlayerControlsTimeoutSeconds(oldTimeout); store.setPlaybackEngine(oldEngine) }
+            server.close()
+        }
+    }
+
+    @Test fun iptvWindowSeekingKeepsNextPreviousAndStartsEachChannelLive() {
+        check(context.packageName.endsWith(".regression"))
+        for ((engine, profile) in listOf(com.nikhil.niktv.model.PlaybackEngine.MEDIA3 to "fixture-wio", com.nikhil.niktv.model.PlaybackEngine.FLOW to "fixture-xtream")) {
+            val server = FixtureServer()
+            val activity = host()
+            val selected = mutableIntStateOf(0)
+            val frames = AtomicInteger()
+            val retries = AtomicInteger()
+            val queue = listOf(NikItem("a", "Channel A", null, null), NikItem("b", "Channel B", null, null))
+            try {
+                main { activity.setContent { androidx.compose.material3.MaterialTheme(colorScheme = NikColors) {
+                    val index = selected.intValue
+                    val media = remember(index) { PlayingMedia(queue[index], "${server.base}/live-dvr?channel=$index", CatalogType.LIVE_TV,
+                        previousEpisode = queue[1 - index], nextEpisode = queue[1 - index], episodeQueue = queue,
+                        profileKey = profile, progressKey = "$profile:$index", playbackFormat = "HLS",
+                        allowLiveWindowSeeking = providerLiveWindowSeekingEnabled(CatalogType.LIVE_TV, false)) }
+                    PlayerScreen(media, onBack = {}, onRetry = { retries.incrementAndGet() }, onRetryAlternateDecoder = { retries.incrementAndGet() },
+                        onPlaybackAuthorizationFailure = { retries.incrementAndGet() }, onPlayPrevious = { selected.intValue = 1 - index },
+                        onPlayNext = { selected.intValue = 1 - index }, onProgress = { _, _, _ -> },
+                        controlsTimeoutSeconds = 30, playbackEngine = engine, startFullscreen = true,
+                        showLiveRecordingAndGuide = false, onVideoFrameRendered = { frames.incrementAndGet() })
+                } } }
+                await("IPTV fixture starts in $engine") { frames.get() > 0 }
+                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                await("Native IPTV seekbar appears") { (shownPosition() ?: 0L) > 20L }
+                val live = requireNotNull(shownPosition())
+                clickControl("Back 10 seconds")
+                await("IPTV rewinds inside the source window") { shownPosition()?.let { it <= live - 6 } == true }
+                val beforeNext = frames.get()
+                clickControl("Next")
+                await("Next channel starts playing") { selected.intValue == 1 && frames.get() > beforeNext }
+                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                await("New channel starts live, not at the previous rewind point") { shownPosition()?.let { it >= live - 3 } == true }
+                val beforePrevious = frames.get()
+                clickControl("Previous")
+                await("Previous channel still works") { selected.intValue == 0 && frames.get() > beforePrevious }
+                assertEquals("Seeking must not trigger reconnects or provider URL reloads", 0, retries.get())
+            } finally { main { activity.finish() }; server.close() }
         }
     }
 
@@ -307,14 +896,10 @@ class PlaybackEngineFixtureTest {
                 .putExtra("engine", "VLC").putExtra("url", "${server.base}/hang")
                 .putExtra("catalog", "LIVE_TV").putExtra("authorizationRetries", 0)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            fun text(node: android.view.accessibility.AccessibilityNodeInfo?): String {
-                if (node == null) return ""
-                return node.text.toString() + " " + (0 until node.childCount).joinToString(" ") { text(node.getChild(it)) }
-            }
             try {
                 await("Hanging VLC startup must expose an actionable error", 35_000L) {
-                    val content = text(instrumentation.uiAutomation.rootInActiveWindow)
-                    content.contains("25 seconds") || content.contains("VLC could not open")
+                    control("This title can’t be played right now") != null &&
+                        control("Retry with fresh link") != null && control("Choose player") != null
                 }
                 assertEquals("Unknown startup failure must not refresh credentials", 0, PlaybackRegressionActivity.automaticRetries)
             } finally { main { activity.finish() } }

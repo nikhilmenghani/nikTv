@@ -1,114 +1,114 @@
 package com.nikhil.niktv.sports
 
-import android.view.ViewGroup
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.material3.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
-import androidx.media3.exoplayer.drm.FrameworkMediaDrm
-import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.PlayerView
+import com.nikhil.niktv.model.CatalogType
+import com.nikhil.niktv.model.PlaybackStreamDrm
+import com.nikhil.niktv.model.PlayingMedia
+import com.nikhil.niktv.ui.PlayerScreen
+import com.nikhil.niktv.ui.findActivity
+import androidx.compose.ui.platform.LocalContext
 import java.util.Base64
 import kotlinx.serialization.json.*
 
+/** Use the same chrome, touch/remote input and playback lifecycle as IPTV live TV. */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var failure by remember(stream) { mutableStateOf<String?>(null) }
-    val player = remember(stream) { runCatching { sportsPlayer(context, stream) }.getOrElse {
-        failure = "This stream could not be initialized. Choose another stream."
-        null
-    } }
-    DisposableEffect(player, lifecycle) {
-        val listener = object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) { failure = "Playback failed (${error.errorCodeName}). Choose another stream." }
-        }
-        player?.addListener(listener)
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_STOP -> player?.pause()
-                else -> Unit
-            }
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); player?.removeListener(listener); player?.release() }
+internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Unit,
+    onVideoFrameRendered: () -> Unit = {},
+    streams: List<SportsStream> = emptyList(), selectedIndex: Int = -1,
+    navigationIndex: Int = selectedIndex, onSelectStream: ((Int) -> Unit)? = null,
+    onVideoFramesRendered: ((Int) -> Unit)? = null) {
+    val preferences: SportsPlaybackSettingsViewModel = viewModel()
+    val settings by preferences.settings.collectAsStateWithLifecycle()
+    val currentSettings = settings
+    if (currentSettings == null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        return
     }
-    Column(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)) {
-        Surface(color = MaterialTheme.colorScheme.surface) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = onBack) { Text("Streams") }
-                Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    Text(stream.title, style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        }
-        failure?.let {
-            Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
-            Button(onClick = onBack, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Choose another stream") }
-        }
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply {
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            this.player = player
-            keepScreenOn = true
-            setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-            setShowNextButton(false)
-            setShowPreviousButton(false)
-            requestFocus()
-        } }, update = { it.player = player }, onRelease = { it.player = null }, modifier = Modifier.weight(1f).fillMaxWidth())
+    var attempt by remember(stream) { mutableIntStateOf(0) }
+    var decoderRecoveries by remember(stream) { mutableIntStateOf(0) }
+    var authorizationRetries by remember(stream) { mutableIntStateOf(0) }
+    var decoderSession by remember(stream) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
+    val source = remember(stream, title) { runCatching { stream.asPlayingMedia(title) } }
+    val original = source.getOrNull()
+    if (original == null) {
+        AlertDialog(onDismissRequest = onBack, title = { Text("Unable to play this stream") },
+            text = { Text("This stream's playback configuration is unsupported. Please choose another stream.") },
+            confirmButton = { TextButton(onClick = onBack) { Text("Choose another stream") } })
+        return
     }
+    val queue = remember(streams) { sportsStreamQueue(streams) }
+    val media = remember(original, attempt, decoderRecoveries, authorizationRetries, decoderSession, queue, selectedIndex) {
+        original.copy(playbackAttemptId = java.util.UUID.randomUUID().toString(), decoderSessionId = decoderSession,
+            decoderRecoveryCount = decoderRecoveries, authorizationRetryCount = authorizationRetries).let { playing ->
+            if (onSelectStream == null || selectedIndex !in queue.indices) playing else playing.copy(
+                media = queue[selectedIndex].copy(title = title), episodeQueue = queue,
+                previousEpisode = queue.getOrNull(sportsAdjacentStream(selectedIndex, -1, queue.size) ?: -1),
+                nextEpisode = queue.getOrNull(sportsAdjacentStream(selectedIndex, 1, queue.size) ?: -1))
+        }
+    }
+    val activity = LocalContext.current.findActivity()
+    DisposableEffect(activity) {
+        val previousOrientation = activity?.requestedOrientation
+        activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        onDispose { if (previousOrientation != null) activity?.requestedOrientation = previousOrientation }
+    }
+    PlayerScreen(media, onBack = onBack, onRetry = { attempt++ }, onRetryAlternateDecoder = { decoderRecoveries++; attempt++ },
+        playbackDomain = com.nikhil.niktv.ui.PlaybackDomain.SPORTS,
+        onManualRetry = { decoderRecoveries = 0; decoderSession = java.util.UUID.randomUUID().toString(); attempt++ },
+        onPlaybackAuthorizationFailure = { authorizationRetries++; attempt++ },
+        onPlayPrevious = { sportsAdjacentStream(navigationIndex, -1, queue.size)?.let { onSelectStream?.invoke(it) } },
+        onPlayNext = { sportsAdjacentStream(navigationIndex, 1, queue.size)?.let { onSelectStream?.invoke(it) } },
+        onPlayQueueItem = { _, index -> if (index in queue.indices) onSelectStream?.invoke(index) },
+        liveQueueCategoryTitle = "Streams", onProgress = { _, _, _ -> },
+        controlsTimeoutSeconds = currentSettings.timeout, onControlsTimeoutChanged = preferences::setTimeout,
+        playbackEngine = currentSettings.engine, onPlaybackEngineChanged = preferences::setEngine,
+        startFullscreen = true, showLiveRecordingAndGuide = false, onVideoFrameRendered = onVideoFrameRendered,
+        onVideoFramesRendered = onVideoFramesRendered)
 }
 
-@androidx.annotation.OptIn(UnstableApi::class)
-internal fun sportsPlayer(context: android.content.Context, stream: SportsStream): ExoPlayer {
-    val http = DefaultHttpDataSource.Factory().setUserAgent(SPORTS_USER_AGENT)
-        .setDefaultRequestProperties(stream.headers).setConnectTimeoutMs(15_000).setReadTimeoutMs(20_000)
-    val sources = DefaultMediaSourceFactory(context).setDataSourceFactory(http)
-    val item = MediaItem.Builder().setUri(stream.link)
-    val path = stream.link.substringBefore('?').lowercase(java.util.Locale.ROOT)
-    if (path.endsWith(".mpd")) item.setMimeType(MimeTypes.APPLICATION_MPD)
-    if (path.endsWith(".m3u8")) item.setMimeType(MimeTypes.APPLICATION_M3U8)
-    if (stream.drmType.isNotBlank()) {
-        val uuid = when (stream.drmType.lowercase(java.util.Locale.ROOT)) {
-            "clearkey", "org.w3.clearkey" -> C.CLEARKEY_UUID
-            "widevine", "com.widevine.alpha" -> C.WIDEVINE_UUID
-            "playready", "com.microsoft.playready" -> C.PLAYREADY_UUID
-            else -> throw SportsException("This DRM format is unsupported.")
-        }
-        val license = stream.drmLicense.substringBefore('*')
-        val drm = MediaItem.DrmConfiguration.Builder(uuid)
-        if (license.startsWith("https://") || license.startsWith("http://")) drm.setLicenseUri(license).setLicenseRequestHeaders(stream.headers)
-        else {
-            if (uuid != C.CLEARKEY_UUID) throw SportsException("This source did not provide a license server.")
-            val manager = DefaultDrmSessionManager.Builder().setUuidAndExoMediaDrmProvider(uuid, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                .build(LocalMediaDrmCallback(sportsClearKeyResponse(license)))
-            sources.setDrmSessionManagerProvider { manager }
-        }
-        item.setDrmConfiguration(drm.build())
+internal fun sportsAdjacentStream(index: Int, direction: Int, count: Int): Int? =
+    if (count < 2 || index !in 0 until count) null else Math.floorMod(index + direction, count)
+
+/** Occurrences stay distinct even if two source entries share a URL or title. */
+internal fun sportsStreamQueue(streams: List<SportsStream>) = streams.mapIndexed { index, source ->
+    val identity = java.security.MessageDigest.getInstance("SHA-256").digest(source.link.toByteArray())
+        .take(12).joinToString("") { "%02x".format(it) }
+    com.nikhil.niktv.model.MediaItem("sports-source:$index:$identity",
+        source.title.ifBlank { "Source ${index + 1}" }, null, null)
+}
+
+internal fun SportsStream.playbackDrm(): PlaybackStreamDrm? {
+    if (drmType.isBlank()) return null
+    val uuid = when (drmType.lowercase(java.util.Locale.ROOT)) {
+        "clearkey", "org.w3.clearkey" -> C.CLEARKEY_UUID
+        "widevine", "com.widevine.alpha" -> C.WIDEVINE_UUID
+        "playready", "com.microsoft.playready" -> C.PLAYREADY_UUID
+        else -> throw SportsException("This DRM format is unsupported.")
     }
-    return ExoPlayer.Builder(context).setMediaSourceFactory(sources).build().apply {
-        setMediaItem(item.build()); playWhenReady = true; prepare()
-    }
+    val license = drmLicense.substringBefore('*')
+    if (license.startsWith("https://") || license.startsWith("http://")) return PlaybackStreamDrm(uuid, licenseUri = license)
+    if (uuid != C.CLEARKEY_UUID) throw SportsException("This source did not provide a license server.")
+    return PlaybackStreamDrm(uuid, localResponse = sportsClearKeyResponse(license))
+}
+
+internal fun SportsStream.asPlayingMedia(title: String): PlayingMedia {
+    val identity = java.security.MessageDigest.getInstance("SHA-256").digest(link.toByteArray())
+        .take(12).joinToString("") { "%02x".format(it) }
+    val headers = if (headers.keys.any { it.equals("User-Agent", true) }) headers else headers + ("User-Agent" to SPORTS_USER_AGENT)
+    val path = link.substringBefore('?').lowercase(java.util.Locale.ROOT)
+    return PlayingMedia(com.nikhil.niktv.model.MediaItem("sports:$identity", title.ifBlank { this.title }, null, null),
+        link, CatalogType.LIVE_TV, progressKey = "sports:$identity", directFullscreen = true, streamRequestHeaders = headers,
+        playbackFormat = when { path.endsWith(".mpd") -> "DASH"; path.endsWith(".m3u8") -> "HLS"; else -> "" },
+        streamDrm = playbackDrm(), allowLiveWindowSeeking = true)
 }
 
 internal fun sportsClearKeyResponse(value: String): ByteArray {

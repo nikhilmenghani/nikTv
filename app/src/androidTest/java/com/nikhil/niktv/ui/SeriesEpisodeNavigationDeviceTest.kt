@@ -81,9 +81,12 @@ class SeriesEpisodeNavigationDeviceTest {
             items = (481..520).map(::episode), episodeHasMore = true, useTmdbEpisodeMetadata = false,
             restoring = false, homeOpen = false))
         val requests = CopyOnWriteArrayList<Int?>()
+        val showingSeries = mutableStateOf(true)
         val activity = startHost()
         try {
             instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                val pages = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+                if (showingSeries.value) pages.SaveableStateProvider("series-details") {
                 ModernSeriesDetailScreen(model.value, play = { fail("Sort must not play") }, closeSeries = {},
                     toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = {}, setUseTmdbEpisodeMetadata = {},
                     refreshTmdbEpisodeCache = {}, downloadForOffline = { _, _, _ -> }, removeOfflineDownload = { _, _ -> },
@@ -91,6 +94,7 @@ class SeriesEpisodeNavigationDeviceTest {
                     goToEpisode = { number -> requests.add(number); model.value = model.value.copy(
                         episodeDestination = EpisodeDestinationState(profile.cacheKey(), series.id, 1, 1, number, 40, 1)) },
                     cancelEpisodeDestination = { model.value = model.value.copy(episodeDestination = null) })
+                }
             } } }
             await("Fixture starts on Play latest") { activity.hasWindowFocus() && focused("Play latest") }
             key(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -107,6 +111,89 @@ class SeriesEpisodeNavigationDeviceTest {
                     running = false, loaded = 520, page = 26, focusId = "paged-1")) }
             await("Completed load and sort focuses real episode 1") { focused("Paged episode 1") }
             assertTrue("Complete first episode stays visible", label("Paged episode 1")?.isVisibleToUser == true)
+            // Simulate leaving the composition for playback after a completed bulk load.
+            instrumentation.runOnMainSync { showingSeries.value = false }
+            await("Series composition is removed while playback is open") { label("Paged episode 1") == null }
+            instrumentation.runOnMainSync {
+                model.value = model.value.copy(playbackReturnFocusId = "paged-250", recentlyPlayed = listOf(
+                    com.nikhil.niktv.model.RecentItem(com.nikhil.niktv.model.FavoriteKind.SERIES, series,
+                        lastPlayed = episode(250), profileKey = profile.cacheKey())))
+                showingSeries.value = true
+            }
+            await("Playback return restores middle episode, not the old earliest jump") { focused("Paged episode 250") }
+            assertTrue("Played episode is visible", label("Paged episode 250")?.isVisibleToUser == true)
+            assertTrue("Played episode is marked as last watched", label("Last watched · S1 · E250")?.isVisibleToUser == true)
+            assertEquals("Returning must reuse all 520 cached episodes", 520, model.value.items.size)
+            assertEquals("Returning must not request another bulk load", 1, requests.size)
+            fun activate(text: String) {
+                var node = label(text)
+                repeat(8) { if (node?.isClickable != true) node = node?.parent }
+                assertTrue("Action is available: $text", node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+            }
+            fun keyboardVisible() = androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)
+                ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+            instrumentation.setInTouchMode(true)
+            activate("Search episodes")
+            await("Search opens from the middle episode") { find { it.isEditable } != null }
+            await("Search receives the keyboard") { keyboardVisible() }
+            instrumentation.runOnMainSync {
+                val input = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                input.hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
+            }
+            await("Keyboard is dismissed") { !keyboardVisible() }
+            assertNotNull("Keyboard visibility changes must not remove search", find { it.isEditable })
+            val field = requireNotNull(find { it.isEditable })
+            val args = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "250") }
+            assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
+            await("Local search still filters the loaded season") { label("Paged episode 250")?.isVisibleToUser == true && label("1 match in loaded episodes") != null }
+            activate("Close episode search")
+            await("Search explicitly closes") { find { it.isEditable } == null && label("Search episodes") != null }
+            activate("Search episodes")
+            await("Search can be reopened") { find { it.isEditable && it.text?.toString() == "250" } != null }
+        } finally { finishHost(activity) }
+    }
+
+    @Test fun phoneEpisodeSearchStaysOpenAfterKeyboardHidesAndCanReopen() {
+        val series = MediaItem("phone-search-series", "Phone search series", null, null)
+        val state = NikTvState(selectedSeries = series, selectedType = CatalogType.SERIES,
+            items = (1..520).map { MediaItem("phone-$it", "Phone episode $it", null, null, seasonNumber = 1, episodeNumber = it) },
+            selectedSeriesSeason = 1, availableSeriesSeasons = listOf(1), playbackReturnFocusId = "phone-250",
+            useTmdbEpisodeMetadata = false, restoring = false, homeOpen = false)
+        val activity = startHost()
+        fun activate(text: String) {
+            var node = label(text)
+            repeat(8) { if (node?.isClickable != true) node = node?.parent }
+            assertTrue("Action is available: $text", node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+        }
+        fun keyboardVisible() = androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)
+            ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+        try {
+            instrumentation.runOnMainSync { activity.setContent { MaterialTheme {
+                val phone = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).apply {
+                    screenWidthDp = 400; screenHeightDp = 800; smallestScreenWidthDp = 400
+                    orientation = android.content.res.Configuration.ORIENTATION_PORTRAIT
+                }
+                CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides phone) {
+                    ModernSeriesDetailScreen(state, play = { fail("Search must not play") }, closeSeries = {},
+                        toggleFavorite = {}, toggleSeriesWatch = {}, loadSeriesSeason = {}, setUseTmdbEpisodeMetadata = {},
+                        refreshTmdbEpisodeCache = {}, downloadForOffline = { _, _, _ -> }, removeOfflineDownload = { _, _ -> },
+                        openSearch = {}, openSettings = {}, refreshCatalog = {}, loadMoreEpisodes = {}, openTmdbMovie = {}, openTmdbSeries = {})
+                }
+            } } }
+            await("Phone restores middle episode") { focused("Phone episode 250") }
+            instrumentation.setInTouchMode(true)
+            activate("Search episodes")
+            await("Phone search opens with keyboard") { find { it.isEditable } != null && keyboardVisible() }
+            instrumentation.runOnMainSync {
+                (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
+            }
+            await("Phone keyboard hides") { !keyboardVisible() }
+            assertNotNull("Phone search remains expanded", find { it.isEditable })
+            activate("Close episode search")
+            await("Phone search closes explicitly") { find { it.isEditable } == null }
+            activate("Search episodes")
+            await("Phone search opens again") { find { it.isEditable } != null }
         } finally { finishHost(activity) }
     }
 

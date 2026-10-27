@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
  <application android:name="android.app.Application" tools:replace="android:name">
   <activity android:name="com.nikhil.niktv.ui.PlaybackFixtureHostActivity" android:exported="false" />
+  <activity android:name="com.nikhil.niktv.ui.SportsFixtureHostActivity" android:exported="false" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
   <activity android:name="com.nikhil.niktv.ui.PlaybackRegressionActivity" android:exported="false" />
   <activity android:name="com.nikhil.niktv.ui.ParentalRegressionActivity" android:exported="false" />
   <activity android:name="com.nikhil.niktv.ui.PlayerQueueRegressionActivity" android:exported="false" />

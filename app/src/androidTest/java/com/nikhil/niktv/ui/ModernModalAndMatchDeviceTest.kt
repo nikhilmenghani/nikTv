@@ -25,6 +25,63 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Synthetic UI only; never connects a profile or plays media. */
 class ModernModalAndMatchDeviceTest {
+    @Test fun liveSeekbarRightEntersLiveActionWithoutSeeking() {
+        val calls = CopyOnWriteArrayList<Long>()
+        fixture({
+            val bar = remember { FocusRequester() }
+            val live = remember { FocusRequester() }
+            Row(Modifier.width(650.dp).initialFocusEntry(bar)) {
+                PlaybackProgressBar(20_000, 120_000, { calls.add(it) }, "live-navigation",
+                    modifier = Modifier.weight(1f).focusRequester(bar),
+                    onNavigateRight = { live.requestFocus() })
+                NikTvActionButton("Watch live fixture", modifier = Modifier.focusRequester(live)
+                    .focusProperties { left = bar }, onClick = {})
+            }
+        }) {
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await("Right enters the LIVE action") { focused("Watch live fixture") }
+            Thread.sleep(600)
+            assertTrue("Navigation to LIVE must not seek", calls.isEmpty())
+            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            key(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)
+            await("Dedicated fast-forward remains available on the bar") { calls.size == 1 }
+            assertEquals(30_000L, calls.single())
+        }
+    }
+
+    @Test fun suggestedArtworkMenuUpdatesAndPersistsWithoutChangingFeeds() {
+        val context = instrumentation.targetContext
+        val prefs = context.getSharedPreferences("discovery_experience", android.content.Context.MODE_PRIVATE)
+        val hadPreference = prefs.contains("suggested_artwork")
+        val old = com.nikhil.niktv.discovery.DiscoveryArtworkPreference.enabled(context, true)
+        com.nikhil.niktv.discovery.DiscoveryArtworkPreference.setEnabled(context, false)
+        try {
+            fixture({
+                var menu by remember { mutableStateOf(false) }
+                val enabled by com.nikhil.niktv.discovery.rememberSuggestedArtwork()
+                Column {
+                    Text(if (enabled) "Artwork enabled fixture" else "Artwork disabled fixture")
+                    com.nikhil.niktv.discovery.DiscoveryBrowseMenu(menu, { menu = it }, DashboardSurface.HOME,
+                        classic = {}, customize = {})
+                }
+            }) {
+                await("Artwork starts disabled") { find("Artwork disabled fixture") != null }
+                button("Options")!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                await("Menu exposes artwork toggle") { button("Suggested artwork: Off") != null }
+                button("Suggested artwork: Off")!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                await("Preference updates the screen immediately") { find("Artwork enabled fixture") != null }
+                assertTrue(com.nikhil.niktv.discovery.DiscoveryArtworkPreference.enabled(context, true))
+                button("Options")!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                await("Menu exposes saved On state") { button("Suggested artwork: On") != null }
+                button("Suggested artwork: On")!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                await("Artwork can be disabled again") { find("Artwork disabled fixture") != null }
+            }
+        } finally {
+            if (hadPreference) com.nikhil.niktv.discovery.DiscoveryArtworkPreference.setEnabled(context, old)
+            else prefs.edit().remove("suggested_artwork").apply()
+        }
+    }
+
     @Test fun heldSeekOnlyPreviewsAndCommitsOnceAfterRelease() {
         val calls = CopyOnWriteArrayList<Long>()
         fixture({

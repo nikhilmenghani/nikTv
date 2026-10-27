@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Empty host for explicitly authorized provider smoke tests; never exported. -->
+        <activity android:name="com.nikhil.niktv.ui.PlaybackFixtureHostActivity"
+            android:exported="false" />
+    </application>
+</manifest>
