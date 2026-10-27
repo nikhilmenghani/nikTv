@@ -25,7 +25,9 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
     onVideoFrameRendered: () -> Unit = {},
     streams: List<SportsStream> = emptyList(), selectedIndex: Int = -1,
     navigationIndex: Int = selectedIndex, onSelectStream: ((Int) -> Unit)? = null,
-    onVideoFramesRendered: ((Int) -> Unit)? = null) {
+    onVideoFramesRendered: ((Int) -> Unit)? = null,
+    sourceAttemptId: Long = 0L, onRetryFresh: (() -> Unit)? = null,
+    onTerminalFailure: (() -> Unit)? = null, onCancelPendingFallback: (() -> Unit)? = null) {
     val preferences: SportsPlaybackSettingsViewModel = viewModel()
     val settings by preferences.settings.collectAsStateWithLifecycle()
     val currentSettings = settings
@@ -33,26 +35,45 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
-    var attempt by remember(stream) { mutableIntStateOf(0) }
-    var decoderRecoveries by remember(stream) { mutableIntStateOf(0) }
-    var authorizationRetries by remember(stream) { mutableIntStateOf(0) }
-    var decoderSession by remember(stream) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
+    var attempt by remember(stream, sourceAttemptId) { mutableIntStateOf(0) }
+    var decoderRecoveries by remember(stream, sourceAttemptId) { mutableIntStateOf(0) }
+    var authorizationRetries by remember(stream, sourceAttemptId) { mutableIntStateOf(0) }
+    var decoderSession by remember(stream, sourceAttemptId) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
     val source = remember(stream, title) { runCatching { stream.asPlayingMedia(title) } }
     val original = source.getOrNull()
     if (original == null) {
+        if (onTerminalFailure != null) {
+            val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            val lifecycleState by owner.lifecycle.currentStateFlow.collectAsState()
+            var reported by remember(stream, sourceAttemptId) { mutableStateOf(false) }
+            LaunchedEffect(stream, sourceAttemptId, lifecycleState) {
+                if (!reported && lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    reported = true
+                    onTerminalFailure()
+                }
+            }
+        }
         AlertDialog(onDismissRequest = onBack, title = { Text("Unable to play this stream") },
             text = { Text("This stream's playback configuration is unsupported. Please choose another stream.") },
             confirmButton = { TextButton(onClick = onBack) { Text("Choose another stream") } })
         return
     }
     val queue = remember(streams) { sportsStreamQueue(streams) }
-    val media = remember(original, attempt, decoderRecoveries, authorizationRetries, decoderSession, queue, selectedIndex) {
+    val committedMedia = remember(original, sourceAttemptId, attempt, decoderRecoveries, authorizationRetries, decoderSession) {
         original.copy(playbackAttemptId = java.util.UUID.randomUUID().toString(), decoderSessionId = decoderSession,
-            decoderRecoveryCount = decoderRecoveries, authorizationRetryCount = authorizationRetries).let { playing ->
-            if (onSelectStream == null || selectedIndex !in queue.indices) playing else playing.copy(
-                media = queue[selectedIndex].copy(title = title), episodeQueue = queue,
-                previousEpisode = queue.getOrNull(sportsAdjacentStream(selectedIndex, -1, queue.size) ?: -1),
-                nextEpisode = queue.getOrNull(sportsAdjacentStream(selectedIndex, 1, queue.size) ?: -1))
+            decoderRecoveryCount = decoderRecoveries, authorizationRetryCount = authorizationRetries)
+    }
+    val activeId = remember(original, sourceAttemptId) { "sports-active:$sourceAttemptId:${original.media.id}" }
+    val displayQueue = remember(queue, selectedIndex, activeId) {
+        queue.mapIndexed { index, item -> if (index == selectedIndex) item.copy(id = activeId) else item }
+    }
+    val media = remember(committedMedia, displayQueue, selectedIndex, activeId) {
+        committedMedia.let { playing ->
+            val stable = playing.copy(media = playing.media.copy(id = activeId))
+            if (onSelectStream == null) stable else stable.copy(
+                episodeQueue = displayQueue,
+                previousEpisode = displayQueue.getOrNull(sportsAdjacentStream(selectedIndex, -1, displayQueue.size) ?: -1),
+                nextEpisode = displayQueue.getOrNull(sportsAdjacentStream(selectedIndex, 1, displayQueue.size) ?: -1))
         }
     }
     val activity = LocalContext.current.findActivity()
@@ -61,9 +82,13 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose { if (previousOrientation != null) activity?.requestedOrientation = previousOrientation }
     }
-    PlayerScreen(media, onBack = onBack, onRetry = { attempt++ }, onRetryAlternateDecoder = { decoderRecoveries++; attempt++ },
+    key(sourceAttemptId) { PlayerScreen(media, onBack = onBack, onRetry = { attempt++ }, onRetryAlternateDecoder = { decoderRecoveries++; attempt++ },
         playbackDomain = com.nikhil.niktv.ui.PlaybackDomain.SPORTS,
-        onManualRetry = { decoderRecoveries = 0; decoderSession = java.util.UUID.randomUUID().toString(); attempt++ },
+        onManualRetry = {
+            if (onRetryFresh != null) onRetryFresh() else {
+                decoderRecoveries = 0; decoderSession = java.util.UUID.randomUUID().toString(); attempt++
+            }
+        },
         onPlaybackAuthorizationFailure = { authorizationRetries++; attempt++ },
         onPlayPrevious = { sportsAdjacentStream(navigationIndex, -1, queue.size)?.let { onSelectStream?.invoke(it) } },
         onPlayNext = { sportsAdjacentStream(navigationIndex, 1, queue.size)?.let { onSelectStream?.invoke(it) } },
@@ -71,8 +96,9 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
         liveQueueCategoryTitle = "Streams", onProgress = { _, _, _ -> },
         controlsTimeoutSeconds = currentSettings.timeout, onControlsTimeoutChanged = preferences::setTimeout,
         playbackEngine = currentSettings.engine, onPlaybackEngineChanged = preferences::setEngine,
+        onPlaybackIntentChanged = { if (!it) onCancelPendingFallback?.invoke() },
         startFullscreen = true, showLiveRecordingAndGuide = false, onVideoFrameRendered = onVideoFrameRendered,
-        onVideoFramesRendered = onVideoFramesRendered)
+        onVideoFramesRendered = onVideoFramesRendered, onTerminalPlaybackFailure = onTerminalFailure) }
 }
 
 internal fun sportsAdjacentStream(index: Int, direction: Int, count: Int): Int? =

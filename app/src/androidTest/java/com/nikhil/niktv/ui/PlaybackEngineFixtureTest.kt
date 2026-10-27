@@ -79,7 +79,7 @@ class PlaybackEngineFixtureTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as PlaybackFixtureHostActivity
     }
 
-    private inner class FixtureServer : AutoCloseable {
+    internal inner class FixtureServer : AutoCloseable {
         private val socket = ServerSocket(0)
         private val workers = Executors.newCachedThreadPool()
         private val clients = Collections.synchronizedList(mutableListOf<Socket>())

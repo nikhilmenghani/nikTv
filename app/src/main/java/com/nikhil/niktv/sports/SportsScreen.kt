@@ -29,15 +29,28 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
     val pages = rememberSaveableStateHolder()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var now by remember { mutableStateOf(Instant.now()) }
-    LaunchedEffect(lifecycle) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { now = Instant.now(); delay(30_000) } }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) vm.cancelPendingFallback()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(lifecycle, state.event?.slug, state.playing != null) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) { now = Instant.now(); vm.refreshIfStale(); delay(30_000) }
+        }
     }
     val playing = state.playing
     if (playing != null) {
+        val committedAttemptId = state.playback.attemptId
         SportsPlayer(playing, state.event?.title.orEmpty(), onBack = { vm.back() },
             streams = state.streams, selectedIndex = state.playingIndex ?: -1,
             navigationIndex = state.resolving ?: state.playingIndex ?: -1,
-            onSelectStream = { lastSource = it; vm.play(it) })
+            onSelectStream = { lastSource = it; vm.play(it) },
+            sourceAttemptId = committedAttemptId, onRetryFresh = vm::retryPlayback,
+            onTerminalFailure = { vm.playbackFailed(committedAttemptId) },
+            onCancelPendingFallback = vm::cancelPendingFallback)
         if (state.resolving != null) androidx.compose.foundation.layout.Box(
             androidx.compose.ui.Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.TopCenter
         ) { androidx.compose.material3.LinearProgressIndicator(androidx.compose.ui.Modifier.fillMaxWidth()) }

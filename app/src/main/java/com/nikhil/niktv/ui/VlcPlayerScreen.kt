@@ -158,6 +158,7 @@ internal fun VlcPlayerScreen(
     initialSubtitleDelayMs: Long = 0L,
     initialExternalSubtitleFile: File? = null,
     onRetry: (Long) -> Unit,
+    onManualRetry: ((Long) -> Unit)? = null,
     onPlaybackAuthorizationFailure: (Long) -> Unit,
     onReauthenticate: ((Long) -> Unit)? = null,
     reauthenticating: Boolean = false,
@@ -178,7 +179,8 @@ internal fun VlcPlayerScreen(
     configuredEngine: PlaybackEngine,
     focusPlayerSwitchOnEnter: Boolean = false,
     onPlayerSwitchFocusRestored: () -> Unit = {},
-    playbackDomain: PlaybackDomain = PlaybackDomain.IPTV
+    playbackDomain: PlaybackDomain = PlaybackDomain.IPTV,
+    onTerminalPlaybackFailure: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isFireTv = android.os.Build.MANUFACTURER.equals("Amazon", ignoreCase = true) &&
@@ -431,6 +433,18 @@ internal fun VlcPlayerScreen(
     }
     val preparedSession = session
     if (preparedSession == null) {
+        if (onTerminalPlaybackFailure != null) {
+            val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            val lifecycleState by owner.lifecycle.currentStateFlow.collectAsState()
+            var reported by remember(media.playbackAttemptId) { mutableStateOf(false) }
+            LaunchedEffect(error, playbackRequested, lifecycleState) {
+                if (!reported && error != null && playbackRequested &&
+                    lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    reported = true
+                    onTerminalPlaybackFailure()
+                }
+            }
+        }
         BackHandler(onBack = onBack)
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             if (!playbackRequested) sourceStill.bitmap?.let { VlcRetainedStill(it, resizeMode) }
@@ -438,7 +452,7 @@ internal fun VlcPlayerScreen(
                 if (playbackRequested || sourceStill.bitmap == null) CircularProgressIndicator()
             } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(error.orEmpty())
-                NikTvPrimaryActionButton(onClick = { onRetry(position) }) { Text("Retry") }
+                NikTvPrimaryActionButton(onClick = { (onManualRetry ?: onRetry)(position) }) { Text("Retry") }
                 NikTvTextActionButton(onClick = { playerPickerVisible = true }) { Text("Choose player") }
                 onReauthenticate?.let { authenticate ->
                     NikTvTextActionButton(enabled = !reauthenticating, onClick = { authenticate(position) }) {
@@ -490,7 +504,7 @@ internal fun VlcPlayerScreen(
         if (manual) liveRecovery.reset()
         refreshPending = true
         modeFeedback = "Refreshing stream..."
-        currentRetry(0L)
+        if (manual) (onManualRetry ?: currentRetry)(0L) else currentRetry(0L)
     }
     fun requestPlayback(requested: Boolean) {
         focus.request(requested, apply = false)
@@ -900,6 +914,17 @@ internal fun VlcPlayerScreen(
                 buffering = false
                 error = "VLC did not start this source. Retry, switch player or choose another source."
                 controlsVisible = true
+            }
+        }
+    }
+    if (onTerminalPlaybackFailure != null) {
+        val lifecycleState by playbackLifecycleOwner.lifecycle.currentStateFlow.collectAsState()
+        var reported by remember(player, media.playbackAttemptId) { mutableStateOf(false) }
+        LaunchedEffect(player, media.playbackAttemptId, error, playbackRequested, lifecycleState) {
+            if (!reported && error != null && playbackRequested &&
+                lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                reported = true
+                onTerminalPlaybackFailure()
             }
         }
     }
@@ -2272,7 +2297,7 @@ PlayerChromeIconButton(
                         onBack = onBack,
                         onRetry = {
                             if (media.catalogType == CatalogType.LIVE_TV) refreshLiveStream(manual = true)
-                            else onRetry((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
+                            else (onManualRetry ?: onRetry)((if (pendingInitialResumePosition > 0L) pendingInitialResumePosition
                                 else player.time).coerceAtLeast(0L))
                         },
                         onNext = onPlayNext,

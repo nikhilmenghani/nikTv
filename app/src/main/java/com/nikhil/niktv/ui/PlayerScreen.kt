@@ -351,7 +351,8 @@ fun PlayerScreen(
     onVideoFrameRendered: () -> Unit = {},
     onVideoFramesRendered: ((Int) -> Unit)? = null,
     onManualRetry: ((Long) -> Unit)? = null,
-    playbackDomain: PlaybackDomain = PlaybackDomain.IPTV
+    playbackDomain: PlaybackDomain = PlaybackDomain.IPTV,
+    onTerminalPlaybackFailure: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val introSettings = rememberIntroSkipSettings(media)
@@ -450,6 +451,7 @@ fun PlayerScreen(
         VlcPlayerScreen(
             media = media,
             playbackDomain = playbackDomain,
+            onTerminalPlaybackFailure = onTerminalPlaybackFailure,
             introSettings = introSettings,
             initialResumePosition = engineSwitchResumePosition,
             onBack = onBack,
@@ -478,6 +480,7 @@ fun PlayerScreen(
             initialSubtitleDelayMs = subtitleDelayMs,
             initialExternalSubtitleFile = externalSubtitleFile,
             onRetry = onRetry,
+            onManualRetry = onManualRetry.takeIf { playbackDomain == PlaybackDomain.SPORTS },
             onPlaybackAuthorizationFailure = onPlaybackAuthorizationFailure,
             onReauthenticate = onReauthenticate,
             reauthenticating = reauthenticating,
@@ -1518,10 +1521,33 @@ fun PlayerScreen(
                     playbackState == Player.STATE_READY)) {
                 startupTimedOut = true
                 controlsVisible = true
-                player.pause()
+                if (onTerminalPlaybackFailure != null &&
+                    playbackLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    // Let the Sports coordinator resolve a replacement while
+                    // retaining this session. A real user pause still cancels
+                    // the pending fallback through the existing intent callback.
+                    onTerminalPlaybackFailure()
+                } else player.pause()
                 break
             }
             delay(250L)
+        }
+    }
+    // Sports source fallback consumes the existing player's final error. It
+    // adds no timer/retry loop, and ordinary IPTV has no callback or effect.
+    if (onTerminalPlaybackFailure != null) {
+        val lifecycleState by playbackLifecycleOwner.lifecycle.currentStateFlow.collectAsState()
+        var reported by remember(player, media.playbackAttemptId) { mutableStateOf(false) }
+        LaunchedEffect(player, media.playbackAttemptId, playbackError, playbackRequested,
+            decoderRecoveryInProgress, lifecycleState) {
+            val authorizationPending = media.authorizationRetryCount == 0 &&
+                playbackError?.startsWith("Stream authorization expired.") == true
+            if (!reported && playbackError != null && playbackRequested &&
+                !authorizationPending && !decoderRecoveryInProgress &&
+                lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                reported = true
+                onTerminalPlaybackFailure()
+            }
         }
     }
     /*

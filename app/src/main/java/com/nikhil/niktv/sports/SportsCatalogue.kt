@@ -24,6 +24,7 @@ internal data class SportsEvent(
     val start: Instant?,
     val end: Instant?,
     val choices: List<String>,
+    val geo: String = "ALL",
 ) {
     fun status(now: Instant): SportsStatus = when {
         start == null || end == null || end < start -> SportsStatus.UNKNOWN
@@ -42,6 +43,7 @@ internal data class SportsStream(
     val headers: Map<String, String> = emptyMap(),
     val drmType: String = "",
     val drmLicense: String = "",
+    val geo: String = "ALL",
 )
 
 internal object SportsCatalogue {
@@ -80,7 +82,7 @@ internal object SportsCatalogue {
                 info.text("eventType").ifBlank { info.text("eventName") },
                 info.text("eventLogo").ifBlank { o.text("image") }, info.text("teamA"), info.text("teamB"),
                 time(info.text("startTime")), time(info.text("endTime")),
-                (o["formats"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.text("title")?.takeIf(String::isNotBlank) })
+                (o["formats"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.text("title")?.takeIf(String::isNotBlank) }, o.text("geo").ifBlank { "ALL" })
         }.distinctBy { it.slug }
     }
 
@@ -94,19 +96,12 @@ internal object SportsCatalogue {
             SportsStream(link, o.text("title").ifBlank { "Stream" }, o.text("type").toIntOrNull() ?: 0,
                 o.text("api"), (o["headers"] as? JsonObject).orEmpty().mapNotNull { (key, value) ->
                     (value as? JsonPrimitive)?.contentOrNull?.let { key to it }
-                }.toMap(), o.text("drmType"), o.text("drmLicense"))
+                }.toMap(), o.text("drmType"), o.text("drmLicense"), o.text("geo").ifBlank { "ALL" })
         }
     }
 
     fun baseUrl(body: String): String {
-        val root = document(body) as? JsonObject ?: throw SportsException("Sports configuration is unavailable.")
-        val parameters = root["parameters"] as? JsonObject
-        val entry = parameters?.get("cric_api2") as? JsonObject
-        val defaultValue = entry?.get("defaultValue") as? JsonObject
-        return defaultValue?.text("value")?.takeIf(String::isNotBlank)
-            ?: (root["configs_key"] as? JsonObject)?.text("cric_api2")?.takeIf(String::isNotBlank)
-            ?: root.text("cric_api2").takeIf(String::isNotBlank)
-            ?: throw SportsException("Sports configuration has no server address.")
+        return sportsConfiguration(body, "").primary
     }
 
     private fun time(value: String): Instant? = runCatching { OffsetDateTime.parse(value, dateFormat).toInstant() }.getOrNull()

@@ -78,6 +78,26 @@ class SportsIntegrationTest {
         assertTrue(SportsCatalogue.events(events.replace("team-a-v-team-b", "../private")).isEmpty())
     }
 
+    @Test fun catalogueCacheExpiresAndDownloadsNewProgrammes() = runBlocking {
+        var clock = Instant.parse("2026-10-27T09:00:00Z").toEpochMilli()
+        var feed = events
+        var downloads = 0
+        val repo = SportsRepository(SportsTransport { url, _ ->
+            SportsResponse(url, if (url.endsWith("config.txt")) config else feed.also { downloads++ })
+        }, now = { clock })
+        val old = repo.events().single()
+        assertEquals(SportsStatus.LIVE, old.status(Instant.ofEpochMilli(clock)))
+        feed = events.replace("team-a-v-team-b", "new-programme").replace("2026/10/27", "2026/10/30")
+        assertEquals(old, repo.events().single())
+        assertEquals(1, downloads)
+        clock += 3 * 86400000L
+        assertEquals(SportsStatus.FINISHED, old.status(Instant.ofEpochMilli(clock)))
+        val fresh = repo.events().single()
+        assertEquals("new-programme", fresh.slug)
+        assertEquals(SportsStatus.LIVE, fresh.status(Instant.ofEpochMilli(clock)))
+        assertEquals(2, downloads)
+    }
+
     @Test fun configurationRotationAndChannelChoiceAreEndToEnd() = runBlocking {
         val requests = mutableListOf<String>()
         var base = "https://sports.example.test/"
