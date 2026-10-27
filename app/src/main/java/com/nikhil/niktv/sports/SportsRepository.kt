@@ -60,45 +60,62 @@ internal class SportsHttpTransport : SportsTransport {
 internal class SportsRepository(
     val transport: SportsTransport = SportsHttpTransport(),
     private val now: () -> Long = System::currentTimeMillis,
+    private val country: () -> String = { java.util.Locale.getDefault().country },
 ) {
     private val configuration = Mutex()
-    private var base = "https://cftkhffmgf147.top/"
+    private var config = SportsConfiguration()
     private var configuredAt = 0L
-    private var cachedEvents: Pair<Long, List<SportsEvent>>? = null
+    private var configuredCountry = ""
+    private data class CachedEvents(val time: Long, val country: String, val events: List<SportsEvent>)
+    private var cachedEvents: CachedEvents? = null
 
     suspend fun events(refresh: Boolean = false): List<SportsEvent> {
-        cachedEvents?.takeIf { !refresh && now() - it.first < 120_000 }?.let { return it.second }
-        val result = SportsCatalogue.events(catalogue("categories/live-events.txt", refresh))
-        cachedEvents = now() to result
+        val region = sportsCountry(country())
+        cachedEvents?.takeIf { !refresh && it.country == region && now() - it.time < 120_000 }?.let { return it.events }
+        val result = SportsCatalogue.events(catalogue("categories/live-events.txt", refresh)).filter { sportsGeoAvailable(it.geo, region) }
+        cachedEvents = CachedEvents(now(), region, result)
         return result
     }
 
     suspend fun streams(slug: String): List<SportsStream> {
         require(slug.matches(Regex("[A-Za-z0-9_-]{1,200}")))
-        return SportsCatalogue.streams(catalogue("channels/${slug.lowercase(java.util.Locale.ROOT)}.txt"))
+        val streams = SportsCatalogue.streams(catalogue("channels/${slug.lowercase(java.util.Locale.ROOT)}.txt"))
+        val region = sportsCountry(country())
+        val available = streams.filter { sportsGeoAvailable(it.geo, region) }.map { stream ->
+            if (stream.headers.keys.any { it.equals("User-Agent", true) }) stream else stream.copy(headers = stream.headers + ("User-Agent" to config.userAgent))
+        }
+        if (streams.isNotEmpty() && available.isEmpty()) throw SportsException("No streams are available for your region${region.takeIf(String::isNotBlank)?.let { " ($it)" }.orEmpty()}.")
+        return available
     }
 
     private suspend fun catalogue(path: String, refresh: Boolean = false): String {
         configure(refresh)
-        try { return transport.get(base + path, emptyMap()).body }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: IOException) {
-            configure(true)
-            return transport.get(base + path, emptyMap()).body
+        var failure: IOException = SportsException("The sports service is unavailable.")
+        val tried = mutableSetOf<String>()
+        repeat(2) { attempt ->
+            val current = config
+            for (base in listOfNotNull(current.primary, current.secondary).distinct()) {
+                if (!tried.add(base)) continue
+                try { return transport.get(base + path, mapOf("User-Agent" to current.userAgent)).body }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: IOException) { failure = error }
+            }
+            if (attempt == 0) configure(true)
         }
+        throw failure
     }
 
     private suspend fun configure(force: Boolean) = configuration.withLock {
-        if (!force && configuredAt != 0L && now() - configuredAt < 15 * 60_000L) return@withLock
+        val region = sportsCountry(country())
+        if (!force && configuredCountry == region && configuredAt != 0L && now() - configuredAt < 15 * 60_000L) return@withLock
         try {
             val response = transport.get("https://pub-9610baca6bf84734bf9d40546dc754a6.r2.dev/config.txt", emptyMap())
-            val url = SportsCatalogue.baseUrl(response.body).toHttpUrlOrNull()
-                ?: throw SportsException("Sports configuration contains an invalid server address.")
-            if (!url.isHttps || url.username.isNotEmpty() || url.password.isNotEmpty() || url.query != null || url.fragment != null)
-                throw SportsException("Sports configuration contains an invalid server address.")
-            base = url.toString().trimEnd('/') + "/"
+            config = sportsConfiguration(response.body, region)
+            configuredCountry = region
             configuredAt = now()
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: IOException) { /* The last known HTTPS server remains usable during a configuration outage. */ }
+        catch (_: IOException) {
+            if (configuredCountry != region) { config = SportsConfiguration(); configuredAt = 0L }
+        }
     }
 }

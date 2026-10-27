@@ -23,7 +23,7 @@ internal data class SportsState(
 )
 
 internal class SportsViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = SportsRepository()
+    private val repository = SportsRepository(country = { sportsDeviceCountry(application) })
     private val resolver = SportsStreamResolver(repository.transport, SportsWebResolver(application)::resolve)
     private val mutable = MutableStateFlow(SportsState())
     val state = mutable.asStateFlow()

@@ -14,6 +14,8 @@ import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -47,8 +49,11 @@ class SportsDeviceTest {
             for (choice in choices) {
                 instrumentation.runOnMainSync { vm.play(choice.index) }
                 await(35_000) { vm.state.value.resolving == null }
-                val stream = vm.state.value.playing
-                if (stream == null) { outcomes += "type ${choice.value.type}: resolver failure"; continue }
+                val direct = vm.state.value.playing
+                if (direct == null) { outcomes += "type ${choice.value.type}: resolver failure"; continue }
+                val stream = LocalSportsPages(mapOf("/player" to "<script>window.jwplayer=function(){return {getPlaylist:function(){return [{file:${Json.encodeToString(direct.link)}}];}}};</script>")).use { page ->
+                    SportsWebResolver(context).resolve(direct.copy(link = page.base + "/player", type = 4))
+                }
                 val latch = CountDownLatch(1)
                 var error: String? = null
                 var firstFrame = false

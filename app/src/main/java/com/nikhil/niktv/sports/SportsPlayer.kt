@@ -81,7 +81,7 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
 
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun sportsPlayer(context: android.content.Context, stream: SportsStream): ExoPlayer {
-    val http = DefaultHttpDataSource.Factory().setUserAgent(SPORTS_USER_AGENT)
+    val http = DefaultHttpDataSource.Factory().setUserAgent(stream.headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: SPORTS_USER_AGENT)
         .setDefaultRequestProperties(stream.headers).setConnectTimeoutMs(15_000).setReadTimeoutMs(20_000)
     val sources = DefaultMediaSourceFactory(context).setDataSourceFactory(http)
     val item = MediaItem.Builder().setUri(stream.link)
