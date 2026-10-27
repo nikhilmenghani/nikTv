@@ -36,9 +36,8 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
     val back = { if (!vm.back()) onClose() }
     BackHandler(onBack = back)
-    val playing = state.playing
-    if (playing != null) {
-        SportsPlayer(playing, state.event?.title.orEmpty(), onBack = { vm.back() })
+    if (state.playback.active) {
+        SportsPlayer(state.playback, state.event?.title.orEmpty(), onBack = { vm.back() }, onFailure = vm::playbackFailed, onRetry = vm::retryPlayback)
         return
     }
     var sport by rememberSaveable { mutableStateOf("All sports") }
@@ -46,8 +45,8 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
     var search by rememberSaveable { mutableStateOf("") }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var now by remember { mutableStateOf(Instant.now()) }
-    LaunchedEffect(lifecycle) {
-        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { now = Instant.now(); delay(30_000) } }
+    LaunchedEffect(lifecycle, state.event?.slug) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { now = Instant.now(); vm.refreshIfStale(); delay(30_000) } }
     }
     Scaffold(modifier = Modifier.fillMaxSize(), topBar = {
         TopAppBar(title = { Text(state.event?.title ?: "Sports", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -79,7 +78,7 @@ internal fun SportsScreen(onClose: () -> Unit, vm: SportsViewModel = viewModel()
                     items(sports) { label -> FilterChip(sport == label, { sport = label }, label = { Text(label) }) }
                 }
                 if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                state.error?.let { SportsError(it, vm::refresh) }
+                state.error?.let { SportsError(it) { vm.refresh() } }
                 val visible = remember(state.events, sport, status, search, now) {
                     state.events.filter { event ->
                         (sport == "All sports" || event.sport == sport) &&

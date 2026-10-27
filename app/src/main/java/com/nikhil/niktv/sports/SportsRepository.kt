@@ -71,7 +71,7 @@ internal class SportsRepository(
 
     suspend fun events(refresh: Boolean = false): List<SportsEvent> {
         val region = sportsCountry(country())
-        cachedEvents?.takeIf { !refresh && it.country == region && now() - it.time < 120_000 }?.let { return it.events }
+        cachedEvents?.takeIf { !refresh && it.country == region && now() - it.time in 0 until 120_000 }?.let { return it.events }
         val result = SportsCatalogue.events(catalogue("categories/live-events.txt", refresh)).filter { sportsGeoAvailable(it.geo, region) }
         cachedEvents = CachedEvents(now(), region, result)
         return result

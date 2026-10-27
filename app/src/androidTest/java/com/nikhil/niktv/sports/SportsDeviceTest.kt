@@ -48,7 +48,7 @@ class SportsDeviceTest {
             var rendered = false
             for (choice in choices) {
                 instrumentation.runOnMainSync { vm.play(choice.index) }
-                await(35_000) { vm.state.value.resolving == null }
+                await(35_000) { vm.state.value.playback.active && !vm.state.value.playback.resolving }
                 val direct = vm.state.value.playing
                 if (direct == null) { outcomes += "type ${choice.value.type}: resolver failure"; continue }
                 val stream = LocalSportsPages(mapOf("/player" to "<script>window.jwplayer=function(){return {getPlaylist:function(){return [{file:${Json.encodeToString(direct.link)}}];}}};</script>")).use { page ->

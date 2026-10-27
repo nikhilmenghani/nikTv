@@ -1,5 +1,6 @@
 package com.nikhil.niktv.sports
 
+import android.os.SystemClock
 import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -13,6 +14,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -27,31 +29,52 @@ import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import java.util.Base64
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.*
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Unit) {
+internal fun SportsPlayer(session: SportsPlaybackSession, title: String, onBack: () -> Unit, onFailure: (Long) -> Unit, onRetry: () -> Unit, onFirstFrame: () -> Unit = {}) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var failure by remember(stream) { mutableStateOf<String?>(null) }
-    val player = remember(stream) { runCatching { sportsPlayer(context, stream) }.getOrElse {
-        failure = "This stream could not be initialized. Choose another stream."
-        null
-    } }
+    val failureCallback by rememberUpdatedState(onFailure)
+    val frameCallback by rememberUpdatedState(onFirstFrame)
+    val player = remember(session.attemptId, session.current) { session.current?.let { runCatching { sportsPlayer(context, it) }.getOrNull() } }
+    var firstFrame by remember(player) { mutableStateOf(false) }
+    var terminalFailure by remember(player) { mutableStateOf(false) }
     DisposableEffect(player, lifecycle) {
         val listener = object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) { failure = "Playback failed (${error.errorCodeName}). Choose another stream." }
+            override fun onPlayerError(error: PlaybackException) { terminalFailure = true }
+            override fun onRenderedFirstFrame() { firstFrame = true; frameCallback() }
         }
         player?.addListener(listener)
+        var resume = player?.playWhenReady == true
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) player?.pause()
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> player?.pause()
+                Lifecycle.Event.ON_STOP -> { resume = player?.playWhenReady == true; player?.pause() }
+                Lifecycle.Event.ON_START -> if (resume) player?.play()
                 else -> Unit
             }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer); player?.removeListener(listener); player?.release() }
+    }
+    LaunchedEffect(player, session.attemptId) {
+        if (session.current == null) return@LaunchedEffect
+        var reported = false
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            val watchdog = SportsPlaybackWatchdog()
+            while (!reported) {
+                if (player == null || (player.playWhenReady && (terminalFailure || player.playerError != null)) || watchdog.failed(
+                    SystemClock.elapsedRealtime(), player.playWhenReady && player.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+                    player.playbackState == Player.STATE_READY, player.playbackState == Player.STATE_ENDED, firstFrame, player.currentPosition
+                )) {
+                    reported = true
+                    failureCallback(session.attemptId)
+                } else delay(500)
+            }
+        }
     }
     Column(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Surface(color = MaterialTheme.colorScheme.surface) {
@@ -59,14 +82,15 @@ internal fun SportsPlayer(stream: SportsStream, title: String, onBack: () -> Uni
                 TextButton(onClick = onBack) { Text("Streams") }
                 Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                     Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    Text(stream.title, style = MaterialTheme.typography.labelMedium)
+                    Text(session.current?.title ?: if (session.resolving) "Trying source ${session.attempts.coerceAtLeast(1)}…" else "Playback unavailable", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
-        failure?.let {
+        session.error?.let {
             Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
-            Button(onClick = onBack, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Choose another stream") }
+            Button(onClick = onRetry, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Retry with fresh links") }
         }
+        if (session.resolving) LinearProgressIndicator(Modifier.fillMaxWidth())
         AndroidView(factory = { ctx -> PlayerView(ctx).apply {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             this.player = player

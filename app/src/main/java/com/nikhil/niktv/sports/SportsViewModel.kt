@@ -18,9 +18,12 @@ internal data class SportsState(
     val streams: List<SportsStream> = emptyList(),
     val loadingStreams: Boolean = false,
     val streamError: String? = null,
-    val resolving: Int? = null,
-    val playing: SportsStream? = null,
-)
+    val playback: SportsPlaybackSession = SportsPlaybackSession(),
+    val lastCheckedAt: Long? = null,
+) {
+    val playing: SportsStream? get() = playback.current
+    val resolving: Int? get() = playback.selectedIndex.takeIf { playback.resolving }
+}
 
 internal class SportsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = SportsRepository(country = { sportsDeviceCountry(application) })
@@ -29,13 +32,23 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
     val state = mutable.asStateFlow()
     private var catalogueJob: Job? = null
     private var selectionJob: Job? = null
-    init { refresh() }
+    private val playback = SportsPlaybackController(viewModelScope, repository::streams, resolver::resolve)
+    init {
+        viewModelScope.launch { playback.state.collect { session ->
+            mutable.update { it.copy(playback = session, streams = if (session.active && session.slug == it.event?.slug) session.sources else it.streams) }
+        } }
+        refresh()
+    }
 
-    fun refresh() {
+    fun refreshIfStale() {
+        if (mutable.value.event == null && catalogueJob?.isActive != true && sportsCatalogueNeedsRefresh(mutable.value.lastCheckedAt, System.currentTimeMillis())) refresh(force = false)
+    }
+
+    fun refresh(force: Boolean = true) {
         catalogueJob?.cancel()
         catalogueJob = viewModelScope.launch {
             mutable.update { it.copy(loading = true, error = null) }
-            try { val events = repository.events(refresh = true); mutable.update { it.copy(events = events, loading = false) } }
+            try { val events = repository.events(refresh = force); mutable.update { it.copy(events = events, loading = false, lastCheckedAt = System.currentTimeMillis()) } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutable.update { it.copy(loading = false, error = message(failure)) } }
         }
@@ -43,7 +56,8 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
 
     fun open(event: SportsEvent) {
         selectionJob?.cancel()
-        mutable.update { it.copy(event = event, streams = emptyList(), loadingStreams = true, streamError = null, resolving = null, playing = null) }
+        playback.stop()
+        mutable.update { it.copy(event = event, streams = emptyList(), loadingStreams = true, streamError = null) }
         selectionJob = viewModelScope.launch {
             try { val streams = repository.streams(event.slug); mutable.update { it.copy(streams = streams, loadingStreams = false) } }
             catch (cancelled: CancellationException) { throw cancelled }
@@ -52,23 +66,21 @@ internal class SportsViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun play(index: Int) {
-        val stream = mutable.value.streams.getOrNull(index) ?: return
-        selectionJob?.cancel()
-        mutable.update { it.copy(resolving = index, streamError = null, playing = null) }
-        selectionJob = viewModelScope.launch {
-            try { val resolved = resolver.resolve(stream); mutable.update { it.copy(playing = resolved, resolving = null) } }
-            catch (cancelled: kotlinx.coroutines.TimeoutCancellationException) { mutable.update { it.copy(resolving = null, streamError = "This stream took too long. Choose another stream or retry.") } }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { mutable.update { it.copy(resolving = null, streamError = message(failure)) } }
-        }
+        val state = mutable.value
+        val event = state.event ?: return
+        if (index !in state.streams.indices) return
+        playback.start(event.slug, state.streams, index)
     }
+
+    fun playbackFailed(attemptId: Long) = playback.failed(attemptId)
+    fun retryPlayback() = playback.retry()
 
     fun back(): Boolean {
         val current = mutable.value
         if (current.event == null) return false
         selectionJob?.cancel()
-        mutable.update { if (it.playing != null) it.copy(playing = null, resolving = null)
-            else it.copy(event = null, streams = emptyList(), loadingStreams = false, streamError = null, resolving = null) }
+        playback.stop()
+        if (!current.playback.active) mutable.update { it.copy(event = null, streams = emptyList(), loadingStreams = false, streamError = null) }
         return true
     }
     private fun message(failure: Exception) = (failure as? SportsException)?.message ?: "The sports service is unavailable. Please retry."
