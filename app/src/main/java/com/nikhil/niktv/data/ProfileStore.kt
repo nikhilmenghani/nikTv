@@ -42,10 +42,15 @@ private val Context.dataStore by preferencesDataStore("nik_tv_profiles")
 
 @Serializable
 private data class NikTvBackup(
-    val formatVersion: Int = 1,
+    val formatVersion: Int = 2,
     val exportedAtMillis: Long = System.currentTimeMillis(),
     val strings: Map<String, String>,
-    val integers: Map<String, Int>
+    val integers: Map<String, Int>,
+    val devicePreferences: Map<String, Map<String, DevicePreferenceValue>> = emptyMap(),
+    val remoteConfiguration: RemoteConfigurationBackup? = null,
+    val backupConnection: BackupConnectionConfiguration? = null,
+    val backupMetadata: DeviceBackupMetadata? = null,
+    val nikTubeLibrary: Map<String, String>? = null
 )
 
 class ProfileStore @JvmOverloads constructor(
@@ -441,66 +446,50 @@ class ProfileStore @JvmOverloads constructor(
         prefs[categoryFiltersKey] = Json.encodeToString(existing - filterKey)
     }
 
-    suspend fun backupFingerprint(): String {
-        val values = preferences.data.first().asMap()
-        val canonical = buildString {
-            BACKUP_STRING_KEYS.sorted().forEach { name ->
-                val value =
-                    values.entries
-                        .firstOrNull { it.key.name == name }
-                        ?.value as? String
-                append("S:")
-                append(name.length)
-                append(':')
-                append(name)
-                append(':')
-                if (value == null) {
-                    append("-1:")
-                } else {
-                    append(value.length)
-                    append(':')
-                    append(value)
-                }
-                append('\n')
-            }
-            BACKUP_INT_KEYS.sorted().forEach { name ->
-                val value =
-                    values.entries
-                        .firstOrNull { it.key.name == name }
-                        ?.value as? Int
-                append("I:")
-                append(name.length)
-                append(':')
-                append(name)
-                append(':')
-                append(value?.toString() ?: "<missing>")
-                append('\n')
-            }
-        }
-        return MessageDigest.getInstance("SHA-256")
-            .digest(canonical.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-    }
-
-    suspend fun exportBackup(): String {
+    private suspend fun backupSnapshot(now: Long, metadata: DeviceBackupMetadata? = null): NikTvBackup {
         val values = preferences.data.first().asMap()
         val strings = values.mapNotNull { (key, value) ->
             if (key.name in BACKUP_STRING_KEYS && value is String) key.name to value else null
-        }.toMap()
+        }.toMap().toSortedMap()
         val integers = values.mapNotNull { (key, value) ->
             if (key.name in BACKUP_INT_KEYS && value is Int) key.name to value else null
-        }.toMap()
-        return backupExportJson.encodeToString(
-            NikTvBackup(strings = strings, integers = integers)
-        )
+        }.toMap().toSortedMap()
+        val connection = GitHubBackupManager(context).loadConfig()
+        return NikTvBackup(exportedAtMillis = now, strings = strings, integers = integers,
+            devicePreferences = DevicePreferencesBackup.capture(context),
+            remoteConfiguration = RemoteCredentials.exportDeviceConfiguration(context),
+            backupConnection = BackupConnectionConfiguration(connection.username, connection.repository, connection.token,
+                connection.passphrase, connection.backupMode.name, connection.autoBackupIntervalHours),
+            backupMetadata = metadata,
+            nikTubeLibrary = NikTubeRepository(context).use { it.exportDeviceLibrary() })
     }
 
-    suspend fun importBackup(content: String) {
+    suspend fun backupFingerprint(): String = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val canonical = backupExportJson.encodeToString(backupSnapshot(0))
+        MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    suspend fun exportBackup(): String = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        backupExportJson.encodeToString(backupSnapshot(now, DeviceBackupIdentity.create(context, now)))
+    }
+
+    suspend fun importBackup(content: String) = withContext(kotlinx.coroutines.Dispatchers.IO) {
         val backup = backupImportJson.decodeFromString<NikTvBackup>(content)
-        require(backup.formatVersion == 1) { "Unsupported NikTV backup version ${backup.formatVersion}" }
+        require(backup.formatVersion in 1..2) { "Unsupported NikTV backup version ${backup.formatVersion}" }
         backup.strings[profilesKey.name]?.let {
             require(runCatching { Json.decodeFromString<List<PortalProfile>>(it) }.getOrNull() != null) {
                 "The backup contains invalid profile data"
+            }
+        }
+        if (backup.formatVersion >= 2) {
+            DevicePreferencesBackup.validate(backup.devicePreferences)
+            backup.nikTubeLibrary?.let { NikTubeRepository.validateDeviceLibrary(it) }
+            RemoteCredentials.validateDeviceConfiguration(backup.remoteConfiguration)
+            backup.backupConnection?.let {
+                require(it.intervalHours in setOf(0, 6, 12, 24)) { "Invalid backup interval" }
+                BackupMode.valueOf(it.mode)
             }
         }
         preferences.edit { prefs ->
@@ -515,6 +504,17 @@ class ProfileStore @JvmOverloads constructor(
             // Portal tokens are intentionally device-local and must be refreshed.
             prefs.remove(sessionKey)
             prefs.remove(sessionsKey)
+        }
+        if (backup.formatVersion >= 2) {
+            DevicePreferencesBackup.restore(context, backup.devicePreferences)
+            backup.nikTubeLibrary?.let { library -> NikTubeRepository(context).use { it.restoreDeviceLibrary(library) } }
+            RemoteCredentials.restoreDeviceConfiguration(context, backup.remoteConfiguration)
+            backup.backupConnection?.let {
+                GitHubBackupManager(context).saveConfig(GitHubBackupConfig(username = it.username,
+                    repository = it.repository, token = it.token, passphrase = it.password,
+                    rememberPassphrase = it.password.isNotBlank(), backupMode = BackupMode.valueOf(it.mode),
+                    autoBackupIntervalHours = it.intervalHours), reschedule = false)
+            }
         }
     }
     suspend fun clear() = preferences.edit {
@@ -564,14 +564,15 @@ class ProfileStore @JvmOverloads constructor(
             "active_profile", "saved_profiles", "active_profile_identity", "favorites",
             "recently_played", "playback_progress", "recent_searches", "category_filters",
             "series_start_season", "watched_series", "remembered_series_seasons", "browse_layouts",
-            "tmdb_iptv_mappings", "tmdb_dashboard_sections"
+            "tmdb_iptv_mappings", "tmdb_dashboard_sections", "playback_engine",
+            "requested_recommendations_v1", "dismissed_recommendations_v1", "recommendation_progress_v1"
         )
         private val BACKUP_INT_KEYS = setOf(
             "catalog_cache_interval_minutes",
             "initial_catalog_items",
             "player_controls_timeout_seconds",
             "automatic_reauthentication",
-            "modern_ui_enabled"
+            "modern_ui_enabled", "keep_awake_only_during_playback"
         )
         private val INITIAL_CATALOG_OPTIONS = setOf(14, 28, 42, 56)
     }

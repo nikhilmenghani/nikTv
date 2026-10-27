@@ -1023,8 +1023,10 @@ internal fun DiscoveryHero(card: DiscoveryCard?, rank: Int?, height: Dp, landsca
         }
         Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
         val actions: @Composable () -> Unit = {
+            CompositionLocalProvider(LocalCollapsingDiscoveryActions provides false) {
             DiscoveryAction(if (detail && playLabel.startsWith("Resume ")) "Resume" else playLabel, Icons.Default.PlayArrow, selected = true,
                 modifier = Modifier.then(if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier).focusRequester(playRequester), enabled = card != null && playEnabled, onFocus = onFocus, onClick = play)
+            }
             DiscoveryAction(if (inList) "In My List" else "My List", if (inList) Icons.Default.Check else Icons.Default.Add,
                 iconOnly = !detail, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier, enabled = card != null, onFocus = onFocus, onClick = add)
             DiscoveryTrailerAction(card, onFocus = onFocus, modifier = if (detail) Modifier.width(160.dp).heightIn(min = 48.dp) else Modifier)
@@ -1282,10 +1284,10 @@ internal fun DiscoveryAction(label: String, icon: androidx.compose.ui.graphics.v
         .widthIn(min = if (LocalMobileGlassEnabled.current) 48.dp else 0.dp)
         .then(if (collapsible) Modifier.semantics { contentDescription = label } else Modifier)
         .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() },
-        shape = RoundedCornerShape(10.dp), color = if (focused) Color.White else if (selected) Accent
+        shape = RoundedCornerShape(10.dp), color = if (selected) Accent else if (focused) Color.White
             else if (LocalMobileGlassEnabled.current) Color.Transparent else Color(0xFF242831).copy(alpha = if (LocalDiscoveryGlassButtons.current) .38f else .85f),
         border = if (LocalMobileGlassEnabled.current) null else BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF454B58)),
-        contentColor = if (focused) Color.Black else Color.White) {
+        contentColor = if (focused && !selected) Color.Black else Color.White) {
         Row(Modifier.padding(horizontal = if (iconOnly || collapsible) 10.dp else horizontalPadding, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(if (collapsible) 0.dp else 6.dp, Alignment.CenterHorizontally)) {
             icon?.let { Icon(it, if (iconOnly && !collapsible) label else null, Modifier.size(20.dp)) }

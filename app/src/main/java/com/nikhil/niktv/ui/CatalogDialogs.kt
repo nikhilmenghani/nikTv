@@ -222,7 +222,7 @@ internal fun ProjectCardConfirmationDialog(
     confirm: () -> Unit
 ) {
     Dialog(onDismissRequest = close) {
-        Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF181818), modifier = Modifier.widthIn(max = 620.dp)) {
+        Surface(shape = RoundedCornerShape(10.dp), color = Color(0xFF181818), modifier = Modifier.widthIn(max = 620.dp)) {
             Column {
                 Column(Modifier.padding(24.dp)) {
                     Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -231,7 +231,7 @@ internal fun ProjectCardConfirmationDialog(
                 }
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.End) {
-                    NikTvTextActionButton(onClick = close, modifier = Modifier.remoteFocusFrame()) { Text("Cancel") }
+                    NikTvSecondaryActionButton(onClick = close, modifier = Modifier.remoteFocusFrame(RoundedCornerShape(10.dp))) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
                     NikTvPrimaryActionButton(onClick = confirm, modifier = Modifier.remoteFocusFrame(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914))) {
                         Text(confirmLabel)

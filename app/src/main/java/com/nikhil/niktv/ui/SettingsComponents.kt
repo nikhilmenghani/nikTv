@@ -47,7 +47,7 @@ internal fun RowScope.SettingsChoiceButton(
     Surface(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.weight(1f).heightIn(min = 48.dp).fillMaxHeight()
+        modifier = modifier.weight(1f).heightIn(min = 48.dp).fillMaxHeight().settingsFocusEntry(enabled)
             .semantics { role = Role.RadioButton; this.selected = selected },
         shape = shape,
         color = if (selected) Color(0xFF35171C) else Color(0xFF1B1E24),

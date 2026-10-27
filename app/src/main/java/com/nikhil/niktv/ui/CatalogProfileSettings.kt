@@ -28,6 +28,7 @@ internal fun CatalogProfileSettings(
     active: PortalProfile?,
     onProfileSelected: (PortalProfile) -> Unit = {}
 ) {
+    val page = LocalSettingsPage.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectedId by remember(profiles) {
@@ -91,7 +92,7 @@ internal fun CatalogProfileSettings(
             SearchMetadataSyncScheduler.fullScan(context, profile)
         }
     )
-    CatalogOperationPanel(CatalogOperations.scan(id), "Catalog scan", onStart = {
+    if (page == SettingsPage.CATALOG_UPDATES) CatalogOperationPanel(CatalogOperations.scan(id), "Catalog scan", onStart = {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }, onRetry = { SearchMetadataSyncScheduler.retryQueued(context, profile) },
         onCheckUpdates = { SearchMetadataSyncScheduler.checkForUpdates(context, profile) },
@@ -102,39 +103,25 @@ internal fun CatalogProfileSettings(
         restoredResumeLabel = restoredType?.let { "Resume ${it.title}" } ?: "Resume backup") {
         SearchMetadataSyncScheduler.refresh(context, profile, resume = true)
     }
-    CatalogTypeUpdatePanels(
+    if (page == SettingsPage.CATALOG_MEDIA_TYPES) CatalogTypeUpdatePanels(
         profile = profile,
         onCheck = { type -> SearchMetadataSyncScheduler.checkForUpdates(context, profile, type) },
         onResume = { type -> SearchMetadataSyncScheduler.resumeType(context, profile, type) },
         onRefresh = { type -> SearchMetadataSyncScheduler.refreshType(context, profile, type) },
         onAppend = { type -> SearchMetadataSyncScheduler.appendType(context, profile, type) }
     )
-    CatalogDatabasePanel(profile)
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Local database update schedule", style = MaterialTheme.typography.titleSmall)
-        Text("For ${profile.name} on this device. Each run appends new pages and resumes incomplete scans. Off allows restoring a checkpoint before scanning.", style = MaterialTheme.typography.bodySmall)
-        val scheduleOptions = listOf(0 to "Off", 6 to "6h", 12 to "12h", 24 to "Daily", 168 to "Weekly")
-        SettingsChoiceRow(Modifier.fillMaxWidth()) {
-            scheduleOptions.forEachIndexed { index, (value, label) ->
-                val shape = settingsChoiceShape(index, scheduleOptions.size)
-                SettingsChoiceButton(
-                    selected = hours == value,
-                    onClick = {
-                        hours = value
-                        CatalogScanPreferences.hours(context, id, value)
-                        SearchMetadataSyncScheduler.configureProfile(context, profile)
-                    },
-                    modifier = Modifier.remoteFocusFrame(shape),
-                    shape = shape
-                ) {
-                    Text(label, style = MaterialTheme.typography.labelLarge)
-                }
-            }
-        }
-        Text("Scans continue in the background with a notification. Requests are paced and scans yield during playback. Android may delay work under battery restrictions. Episode details are cached when opened.", style = MaterialTheme.typography.bodySmall)
-        Text("Newly saved pages trigger a GitHub catalog backup when backup is enabled. Use Sync for changes to earlier pages.", style = MaterialTheme.typography.bodySmall)
+    if (page == SettingsPage.CATALOG_TOOLS) CatalogDatabasePanel(profile)
+    if (page == SettingsPage.CATALOG_UPDATES) {
+        SettingsPickerRow("Automatic catalog updates", listOf(0 to "Off", 6 to "6 hours", 12 to "12 hours", 24 to "Daily", 168 to "Weekly"),
+            hours, { value ->
+                hours = value
+                CatalogScanPreferences.hours(context, id, value)
+                SearchMetadataSyncScheduler.configureProfile(context, profile)
+            }, "Append new pages and resume incomplete scans for this profile on this device. Android may delay background work.")
+        SettingsLinkRow(SettingsPage.CATALOG_MEDIA_TYPES, "Live TV, movies & series")
+        SettingsLinkRow(SettingsPage.CATALOG_TOOLS, "Checkpoints & saved database")
     }
-    BackupSettingsActionRow(Icons.Default.CloudDownload, "Restore a catalog checkpoint",
+    if (CatalogPreferences.CLOUD_BACKUP_AVAILABLE && page == SettingsPage.CATALOG_TOOLS) BackupSettingsActionRow(Icons.Default.CloudDownload, "Restore a catalog checkpoint",
         "Choose a dated GitHub backup for ${profile.name}. Merges Room listings without replacing favorites or history.",
         enabled = !busy, onClick = {
             busy = true; message = "Loading checkpoints…"

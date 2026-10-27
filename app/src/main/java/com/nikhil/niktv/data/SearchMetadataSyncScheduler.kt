@@ -20,6 +20,7 @@ object SearchMetadataSyncScheduler {
     private const val REFRESH = "niktv-catalog-refresh-v1"
 
     fun initialize(context: Context) {
+        if (!CatalogPreferences.CLOUD_BACKUP_AVAILABLE) CatalogPreferences.setBackupEnabled(context, false)
         val manager = WorkManager.getInstance(context)
         // Cancel the previous always-on GitHub search-index implementation on upgrade.
         listOf("niktv-search-metadata-sync", "niktv-search-metadata-periodic-sync").forEach(manager::cancelUniqueWork)
@@ -36,6 +37,7 @@ object SearchMetadataSyncScheduler {
         } else {
             manager.cancelUniqueWork(BACKUP)
             manager.cancelUniqueWork(MANUAL)
+            manager.cancelUniqueWork(RESTORE)
         }
     }
 
@@ -60,6 +62,7 @@ object SearchMetadataSyncScheduler {
     }
 
     fun requestRestore(context: Context, profile: PortalProfile, resume: Boolean = false, type: CatalogType? = null): UUID? {
+        if (!CatalogPreferences.CLOUD_BACKUP_AVAILABLE) return null
         if (resume) CatalogOperations.control(context, CatalogOperations.RESTORE, "Ready")
         if (CatalogOperations.held(context, CatalogOperations.RESTORE)) return null
         val restoreInput = Data.Builder().putString(PROFILE_ID, CatalogScanPreferences.id(profile))
@@ -767,6 +770,7 @@ class SearchMetadataSyncWorker(context: Context, params: WorkerParameters) : Cor
 
 class CatalogRestoreWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = restoreMutex.withLock {
+        if (!CatalogPreferences.CLOUD_BACKUP_AVAILABLE) return@withLock Result.success()
         val id = inputData.getString(SearchMetadataSyncScheduler.PROFILE_ID) ?: return@withLock Result.failure()
         val profile = ProfileStore(applicationContext).profiles.first()
             .firstOrNull { CatalogScanPreferences.id(it) == id } ?: return@withLock Result.failure()

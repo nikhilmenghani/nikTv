@@ -225,6 +225,15 @@ object AppUpdates {
         restoreDownload()
     }
 
+    fun refreshPreferences() {
+        if (!initialized) return
+        mutableUpdateEnforcementEnabled.value = preferences().getBoolean(PREF_ENFORCE_UPDATES, !distribution.development)
+        mutableStartupUpdateCheckEnabled.value = preferences().getBoolean(PREF_STARTUP_CHECK, true)
+        mutableUpdatePackage.value = runCatching {
+            UpdatePackage.valueOf(preferences().getString(PREF_UPDATE_PACKAGE, null) ?: UpdatePackage.AUTO.name)
+        }.getOrDefault(UpdatePackage.AUTO)
+    }
+
     fun setUpdateEnforcementEnabled(enabled: Boolean) {
         check(initialized) { "AppUpdates has not been initialized" }
         preferences().edit().putBoolean(PREF_ENFORCE_UPDATES, enabled).apply()

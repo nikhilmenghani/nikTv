@@ -65,14 +65,22 @@ data class GitHubBackupFile(
     val path: String,
     val size: Long,
     val encrypted: Boolean = name.endsWith(".niktv", ignoreCase = true)
-)
+) {
+    val displayLabel: String get() {
+        val match = Regex("""^NikTV-(.+)-d([a-f0-9]{8})-b(\d+)-settings-v\d+-(\d{8})-(\d{6})-(\d{3})Z\..+$""").matchEntire(name) ?: return name
+        val (device, id, number, date, time) = match.destructured
+        return "${device.replace('-', ' ')} · $id · Backup ${number.toLong()} · ${date.take(4)}-${date.substring(4, 6)}-${date.takeLast(2)} ${time.take(2)}:${time.substring(2, 4)}:${time.takeLast(2)} UTC"
+    }
+}
 
 data class GitHubBackupPreview(
     val deviceName: String,
     val appVersion: String,
     val settingsVersion: Int,
     val exportedAt: String,
-    val profileCount: Int
+    val profileCount: Int,
+    val deviceId: String? = null,
+    val backupNumber: Long? = null
 )
 
 data class GitHubBackupDecoded(
@@ -131,7 +139,7 @@ class GitHubBackupManager(context: Context) {
         )
     }
 
-    fun saveConfig(config: GitHubBackupConfig) {
+    fun saveConfig(config: GitHubBackupConfig, reschedule: Boolean = true) {
         if (loadSecret(KEY_PASSPHRASE_CIPHERTEXT, KEY_PASSPHRASE_IV) != config.passphrase) {
             prefs.edit().putLong("catalog_key_revision", catalogKeyRevision() + 1).apply()
         }
@@ -180,6 +188,7 @@ class GitHubBackupManager(context: Context) {
             )
         }
 
+        if (reschedule) {
         GitHubBackupScheduler.configure(
             appContext,
             normalized.copy(
@@ -187,6 +196,7 @@ class GitHubBackupManager(context: Context) {
             )
         )
         SearchMetadataSyncScheduler.initialize(appContext)
+        }
     }
 
     suspend fun uploadBackup(
@@ -213,7 +223,8 @@ class GitHubBackupManager(context: Context) {
         val name = suggestedBackupFileName(
             encrypted = encrypted,
             settingsVersion = settingsVersion,
-            date = createdAt
+            date = createdAt,
+            backupNumber = root.optJSONObject(BACKUP_METADATA_KEY)?.optLong("backupNumber")
         )
         val path = "$BACKUP_DIRECTORY/$name"
 
@@ -588,6 +599,7 @@ class GitHubBackupManager(context: Context) {
 
     private fun decorateBackup(rawBackup: String): String {
         val root = JSONObject(rawBackup)
+        if (root.has(BACKUP_METADATA_KEY)) return rawBackup
         val now = Date()
 
         val metadata = JSONObject()
@@ -650,7 +662,9 @@ class GitHubBackupManager(context: Context) {
                     root.optInt("formatVersion", 1)
                 ) ?: root.optInt("formatVersion", 1),
             exportedAt = exportedAt,
-            profileCount = profileCount
+            profileCount = profileCount,
+            deviceId = device?.optString("id")?.takeIf { it.isNotBlank() },
+            backupNumber = metadata?.optLong("backupNumber")?.takeIf { it > 0 }
         )
     }
 
@@ -882,16 +896,19 @@ class GitHubBackupManager(context: Context) {
 
     fun suggestedBackupFileName(
         encrypted: Boolean,
-        settingsVersion: Int = 1,
-        date: Date = Date()
+        settingsVersion: Int = 2,
+        date: Date = Date(),
+        backupNumber: Long? = null
     ): String {
-        val device = deviceDisplayName()
+        val device = DeviceBackupIdentity.name(appContext)
             .replace(Regex("[^A-Za-z0-9]+"), "-")
             .trim('-')
             .take(48)
             .ifBlank { "Android-device" }
         val extension = if (encrypted) "niktv" else "json"
-        return "NikTV-$device-settings-v$settingsVersion-${publicTimestamp(date)}.$extension"
+        val identity = DeviceBackupIdentity.id(appContext)
+        val number = backupNumber?.takeIf { it > 0 } ?: DeviceBackupIdentity.nextNumber(appContext)
+        return "NikTV-$device-d$identity-b${number.toString().padStart(5, '0')}-settings-v$settingsVersion-${publicTimestamp(date)}.$extension"
     }
 
     private fun readableTimestamp(date: Date): String =

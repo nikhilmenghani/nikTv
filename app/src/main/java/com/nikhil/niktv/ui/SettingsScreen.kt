@@ -35,8 +35,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -52,6 +50,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -68,6 +67,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -79,7 +79,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -128,165 +127,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 private fun TvSafeSettingsTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    modifier: Modifier = Modifier,
-    placeholder: String? = null,
-    password: Boolean = false,
-    requester: FocusRequester? = null,
-    upRequester: FocusRequester? = null,
-    downRequester: FocusRequester? = null,
+    value: String, onValueChange: (String) -> Unit, icon: ImageVector, title: String, subtitle: String,
+    modifier: Modifier = Modifier, placeholder: String? = null, password: Boolean = false,
+    requester: FocusRequester? = null, upRequester: FocusRequester? = null, downRequester: FocusRequester? = null,
     singleLine: Boolean = true
 ) {
-    val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val isTv = context.isTvLikeDevice(configuration)
-    var editing by remember { mutableStateOf(false) }
-    val keyboard = LocalSoftwareKeyboardController.current
-    val scope = rememberCoroutineScope()
-    val fallbackRequester = remember { FocusRequester() }
-    val fieldRequester = requester ?: fallbackRequester
-    val iconBoxSize = if (isTv) 32.dp else 28.dp
-    val iconSize = if (isTv) 24.dp else 22.dp
-    val contentInset = if (isTv) 44.dp else 40.dp
-    val fieldShape = RoundedCornerShape(12.dp)
-
-    fun beginEditing() {
-        if (editing) return
-        editing = true
-        scope.launch {
-            withFrameNanos { }
-            runCatching { fieldRequester.requestFocus() }
-            delay(50L)
-            keyboard?.show()
-        }
-    }
-
-    /* GITHUB_BACKUP_FIELDS_DPAD_EDIT_V1
-     * Focus and edit mode are deliberately separate on every device:
-     * D-pad traversal may focus the field without opening the IME, while
-     * OK/Enter or a real pointer tap explicitly enters editing. Once editing
-     * begins, normal TextField touch/cursor behavior is restored.
-     */
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = if (isTv) 4.dp else 2.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement =
-                Arrangement.spacedBy(if (isTv) 14.dp else 12.dp)
-        ) {
-            Box(
-                modifier = Modifier.size(iconBoxSize),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(iconSize),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Column(
-                Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    title,
-                    style =
-                        if (isTv) {
-                            MaterialTheme.typography.titleMedium
-                        } else {
-                            MaterialTheme.typography.bodyLarge
-                        },
-                    fontWeight =
-                        if (isTv) FontWeight.SemiBold
-                        else FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            placeholder = placeholder?.let { text -> ({ Text(text) }) },
-            visualTransformation =
-                if (password) {
-                    PasswordVisualTransformation()
-                } else {
-                    VisualTransformation.None
-                },
-            readOnly = isTv && !editing,
-            singleLine = singleLine,
-            shape = fieldShape,
-            textStyle = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = contentInset)
-                .heightIn(min = if (isTv) 60.dp else 56.dp)
-                .then(
-                    if (isTv && !editing) {
-                        Modifier.pointerInput(fieldRequester) {
-                            detectTapGestures(
-                                onTap = {
-                                    beginEditing()
-                                }
-                            )
-                        }
-                    } else {
-                        Modifier
-                    }
-                )
-                .focusRequester(fieldRequester)
-                .focusProperties {
-                    if (upRequester != null) {
-                        up = upRequester
-                    }
-                    if (downRequester != null) {
-                        down = downRequester
-                    }
-                }
-                .onFocusChanged {
-                    if (!it.isFocused) {
-                        editing = false
-                        keyboard?.hide()
-                    }
-                }
-                .onPreviewKeyEvent { event ->
-                    if (
-                        !editing &&
-                        event.type == KeyEventType.KeyDown &&
-                        event.key in setOf(
-                            Key.DirectionCenter,
-                            Key.Enter,
-                            Key.NumPadEnter
-                        )
-                    ) {
-                        beginEditing()
-                        true
-                    } else {
-                        false
-                    }
-                }
-                .remoteFocusFrame(fieldShape)
-        )
-    }
+    SettingsTextEditRow(title, value, onValueChange, subtitle,
+        modifier.then(if (requester != null) Modifier.focusRequester(requester) else Modifier).focusProperties {
+            if (upRequester != null) up = upRequester
+            if (downRequester != null) down = downRequester
+        }, placeholder, password)
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -315,8 +168,11 @@ internal fun ModernSettingsScreen(
     setBrowseLayout: (BrowseLayout) -> Unit,
     openCategoryManager: (CatalogType) -> Unit
 ) {
+    MaterialTheme(shapes = MaterialTheme.shapes.copy(
+        small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(10.dp),
+        large = RoundedCornerShape(10.dp), extraLarge = RoundedCornerShape(10.dp)
+    )) {
     val profile = state.savedProfile
-    BackHandler(onBack = closeSettings)
     val context = LocalContext.current
     var appBrightness by remember(context) {
         mutableFloatStateOf(AppBrightnessPreferences.get(context))
@@ -472,10 +328,7 @@ internal fun ModernSettingsScreen(
     var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     val updateDownloadRequester = remember { FocusRequester() }
     val versionRequester = remember { FocusRequester() }
-    val oneClickUpdateRequester = remember { FocusRequester() }
-    val settingsEntryRequester = remember { FocusRequester() }
     val settingsContentEntryRequester = remember { FocusRequester() }
-    val profileAvailabilityEntryRequester = remember { FocusRequester() }
     var profileSetupExplanation by remember { mutableStateOf<String?>(null) }
     profileSetupExplanation?.let { explanation ->
         FullDescriptionDialog("Profile setup", explanation, dismiss = { profileSetupExplanation = null })
@@ -484,17 +337,17 @@ internal fun ModernSettingsScreen(
     var restoreVersionFocus by remember { mutableStateOf(false) }
     var pendingPermissionUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var pendingPermissionInstallAfterDownload by remember { mutableStateOf(false) }
-    var oneClickUpdating by remember { mutableStateOf(false) }
-    val downloadState by AppUpdates.downloadState.collectAsStateWithLifecycle()
-    val pendingUpdate by AppUpdates.pendingUpdate.collectAsStateWithLifecycle()
-    val updateEnforcementEnabled by AppUpdates.updateEnforcementEnabled.collectAsStateWithLifecycle()
-    val startupUpdateCheckEnabled by AppUpdates.startupUpdateCheckEnabled.collectAsStateWithLifecycle()
-    val updatePackagePreference by AppUpdates.updatePackage.collectAsStateWithLifecycle()
+    val updates = settingsUpdateStreams()
+    val downloadState by updates.download.collectAsStateWithLifecycle()
+    val pendingUpdate by updates.pending.collectAsStateWithLifecycle()
+    val updateEnforcementEnabled by updates.enforcement.collectAsStateWithLifecycle()
+    val startupUpdateCheckEnabled by updates.startupCheck.collectAsStateWithLifecycle()
+    val updatePackagePreference by updates.updatePackage.collectAsStateWithLifecycle()
     var obsoleteApks by remember { mutableStateOf<DownloadedApkCleanup?>(null) }
     var cleaningObsoleteApks by remember { mutableStateOf(false) }
     var apkCleanupMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(downloadState) {
-        obsoleteApks = runCatching { AppUpdates.obsoleteDownloadedApks(context) }.getOrNull()
+        obsoleteApks = runCatching { updates.obsoleteApks(context) }.getOrNull()
     }
     val performDownload: (UpdateInfo) -> Unit = { update ->
         downloadActionMessage = null
@@ -557,31 +410,6 @@ internal fun ModernSettingsScreen(
             storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
     }
-    fun runOneClickUpdate() {
-        if (oneClickUpdating) return
-        oneClickUpdating = true
-        downloadActionMessage = null
-        updateMessage = "Checking for updates…"
-        scope.launch {
-            runCatching { AppUpdates.check() }
-                .onSuccess { update ->
-                    if (update == null) {
-                        updateMessage = "You're up to date"
-                    } else {
-                        updateMessage = "Version ${update.version} is available · starting update…"
-                        requestUpdateDownload(update, installAfterDownload = true)
-                    }
-                }
-                .onFailure {
-                    val message = updateCheckFailureMessage(it)
-                    updateMessage = message
-                    downloadActionMessage = message
-                }
-            oneClickUpdating = false
-            delay(80L)
-            runCatching { oneClickUpdateRequester.requestFocus() }
-        }
-    }
     LaunchedEffect(pendingUpdate) {
         pendingUpdate?.let { update ->
             availableUpdate = update
@@ -632,30 +460,82 @@ internal fun ModernSettingsScreen(
         is UpdateDownloadState.Queued -> 0L to null
         else -> null
     }
+    var backupActivityOpen by remember { mutableStateOf(false) }
+    val backupEvents by remember(context) { com.nikhil.niktv.data.BackupActivityLog.observe(context) }
+        .collectAsState(initial = com.nikhil.niktv.data.BackupActivityLog.read(context))
+    if (backupActivityOpen) BackupActivityDialog { backupActivityOpen = false }
+    var preferLocalCatalog by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.preferLocal(context)) }
+    var catalogProfileId by remember(state.profiles) {
+        mutableStateOf(
+            com.nikhil.niktv.data.CatalogScanPreferences.selectedProfileId(context)
+                ?.takeIf { saved -> state.profiles.any { com.nikhil.niktv.data.CatalogScanPreferences.id(it) == saved } }
+                ?: state.savedProfile?.let(com.nikhil.niktv.data.CatalogScanPreferences::id)
+        )
+    }
+    val catalogProfile = state.profiles.firstOrNull {
+        com.nikhil.niktv.data.CatalogScanPreferences.id(it) == catalogProfileId
+    } ?: state.savedProfile ?: state.profiles.firstOrNull()
     val settingsConfiguration = LocalConfiguration.current
     val settingsIsTv = context.isTvLikeDevice(settingsConfiguration)
-    val compactSettingsHeader = settingsConfiguration.screenWidthDp < 600
-    /* TABLET_SETTINGS_MODERN_V1
-     * Touch tablets reuse the mobile preference hierarchy while keeping the
-     * split rail/detail navigation. TVs retain their couch-distance layout.
-     */
+    val compactSettingsHeader = !settingsIsTv && (settingsConfiguration.screenWidthDp < 600 || settingsConfiguration.smallestScreenWidthDp < 600)
+    // One category rail on wide screens, with larger rows and text for TV.
     val tabletSettingsLayout =
         !settingsIsTv &&
             settingsConfiguration.smallestScreenWidthDp >= 600
-    val settingsDestinations = SettingsDestination.entries
-    var selectedSettingsDestination by remember {
-        mutableStateOf(if (PairingInvites.pending != null) SettingsDestination.PROFILES else SettingsDestination.GENERAL)
+    var selectedSettingsPage by rememberSaveable {
+        mutableStateOf(if (PairingInvites.pending != null) SettingsPage.PAIRING else SettingsPage.PLAYBACK)
     }
+    var selectedSettingsDestination by rememberSaveable { mutableStateOf(selectedSettingsPage.destination) }
+    var mobileCategoriesOpen by rememberSaveable { mutableStateOf(PairingInvites.pending == null) }
+    var returnToMobileCategory by remember { mutableStateOf(false) }
+    val mobileCategoryScrollState = rememberScrollState()
+    var confirmReset by remember { mutableStateOf(false) }
+    var managedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
+    var returnToSettingsPage by remember { mutableStateOf<SettingsPage?>(null) }
+    var enterSettingsPage by remember { mutableStateOf(false) }
+    val settingsPageParents = rememberSaveable(saver = mapSaver<MutableMap<SettingsPage, SettingsPage>>(
+        save = { parents -> parents.entries.associate { it.key.name to it.value.name } },
+        restore = { saved -> saved.entries.associate { SettingsPage.valueOf(it.key) to SettingsPage.valueOf(it.value as String) }.toMutableMap() }
+    )) { mutableMapOf<SettingsPage, SettingsPage>() }
+    val settingsPageRequesters = remember { SettingsPage.entries.associateWith { FocusRequester() } }
+    val settingsScrollStates = remember { mutableMapOf<SettingsPage, ScrollState>() }
+    val settingsFocusEntries = remember { mutableMapOf<SettingsPage, SettingsFocusEntries>() }
+    val openSettingsPage: (SettingsPage) -> Unit = { page ->
+        settingsPageParents[page] = selectedSettingsPage
+        enterSettingsPage = true
+        selectedSettingsPage = page
+    }
+    val settingsBack: () -> Unit = {
+        val current = selectedSettingsPage
+        val parent = settingsPageParents.remove(current) ?: current.parent
+        if (compactSettingsHeader && mobileCategoriesOpen) closeSettings()
+        else if (parent != null) {
+            returnToSettingsPage = current
+            selectedSettingsPage = parent
+        } else if (compactSettingsHeader) {
+            mobileCategoriesOpen = true
+            returnToMobileCategory = true
+            enterSettingsPage = false
+        } else closeSettings()
+    }
+    BackHandler(onBack = settingsBack)
+    if (confirmReset) ProjectCardConfirmationDialog(
+        title = "Clear all app data?",
+        message = "Remove every saved profile, credential, session, cache, favorite and recent item from this device. This cannot be undone. Back up your data first if you want to restore it later.",
+        confirmLabel = "Clear all app data", close = { confirmReset = false },
+        confirm = { confirmReset = false; logout() }
+    )
     val settingsRailRequesters = remember {
         SettingsDestination.entries.associateWith { FocusRequester() }
     }
-    val settingsPagerState = rememberPagerState(
-        initialPage = if (PairingInvites.pending != null) settingsDestinations.indexOf(SettingsDestination.PROFILES) else 0,
-        pageCount = { settingsDestinations.size }
-    )
-    val mobileSettingsTopBarBehavior =
-        TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-
+    LaunchedEffect(mobileCategoriesOpen, compactSettingsHeader) {
+        if (compactSettingsHeader && mobileCategoriesOpen && returnToMobileCategory) {
+            withFrameNanos { }
+            withFrameNanos { }
+            runCatching { settingsRailRequesters.getValue(selectedSettingsDestination).requestFocus() }
+            returnToMobileCategory = false
+        }
+    }
     LaunchedEffect(compactSettingsHeader) {
         withFrameNanos { }
         if (!compactSettingsHeader) {
@@ -667,60 +547,30 @@ internal fun ModernSettingsScreen(
         }
     }
 
-    LaunchedEffect(settingsPagerState.currentPage, compactSettingsHeader) {
-        if (compactSettingsHeader) {
-            selectedSettingsDestination =
-                settingsDestinations[settingsPagerState.currentPage]
-        }
-    }
+    CompositionLocalProvider(
+        LocalSettingsPage provides selectedSettingsPage,
+        LocalSettingsTv provides settingsIsTv,
+        LocalRemoteFocusColor provides Color.White,
+        LocalRemoteFocusShape provides RoundedCornerShape(10.dp),
+        LocalRemoteFocusMargin provides 6.dp,
+        LocalOpenSettingsPage provides openSettingsPage,
+        LocalSettingsPageRequesters provides settingsPageRequesters,
+        LocalSettingsRailFocus provides if (compactSettingsHeader) null else settingsRailRequesters.getValue(selectedSettingsDestination)
+    ) {
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
-            .then(
-                if (compactSettingsHeader) {
-                    Modifier.nestedScroll(mobileSettingsTopBarBehavior.nestedScrollConnection)
-                } else Modifier
-            ),
+            .windowInsetsPadding(WindowInsets.safeDrawing),
         containerColor = Color(0xFF07080A),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            if (compactSettingsHeader) {
-                LargeTopAppBar(
-                    title = { Text("Settings", fontWeight = FontWeight.Bold) },
-                    navigationIcon = {
-                        IconButton(onClick = closeSettings) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color(0xFF090A0C),
-                        scrolledContainerColor = Color(0xFF101216)
-                    ),
-                    scrollBehavior = mobileSettingsTopBarBehavior
-                )
-            } else {
-                ModernScreenTopBar("Settings", closeSettings)
-            }
-        },
-        bottomBar = {
-            if (compactSettingsHeader) {
-                SettingsBottomNavigation(
-                    currentDestination =
-                        settingsDestinations[settingsPagerState.currentPage],
-                    selectDestination = { destination ->
-                        scope.launch {
-                            settingsPagerState.animateScrollToPage(
-                                settingsDestinations.indexOf(destination)
-                            )
-                        }
-                    }
-                )
-            }
-        }
+        topBar = { CompactSettingsTopBar(if (compactSettingsHeader) null else profile?.name, settingsBack,
+            compact = compactSettingsHeader) }
     ) { padding ->
         val settingsPageContent: @Composable () -> Unit = {
         val activeDestination = LocalSettingsDestination.current ?: selectedSettingsDestination
-        val pageScroll = remember(activeDestination) { ScrollState(0) }
+        val activePage = LocalSettingsPage.current
+        val pageScroll = settingsScrollStates.getOrPut(activePage) { ScrollState(0) }
+        CompositionLocalProvider(LocalSettingsFocusEntries provides settingsFocusEntries.getOrPut(activePage) { SettingsFocusEntries() }) {
         Column(
         Modifier
             .fillMaxSize()
@@ -736,6 +586,19 @@ internal fun ModernSettingsScreen(
             .padding(padding)
             .focusRequester(settingsContentEntryRequester)
             .focusGroup()
+            .onGloballyPositioned {
+                // Transfer only once the new page's targets are attached and laid out,
+                // before drawing an intermediate focus highlight on a reused row.
+                val returning = returnToSettingsPage
+                if (returning != null) {
+                    if (runCatching { settingsPageRequesters.getValue(returning).requestFocus() }.getOrDefault(false))
+                        returnToSettingsPage = null
+                } else if (enterSettingsPage) {
+                    val entered = settingsFocusEntries[activePage]?.requestFirst() == true ||
+                        runCatching { settingsContentEntryRequester.requestFocus() }.getOrDefault(false)
+                    if (entered) enterSettingsPage = false
+                }
+            }
             .verticalScroll(pageScroll)
             .padding(
                 horizontal =
@@ -759,592 +622,132 @@ internal fun ModernSettingsScreen(
             }
         )
     ) {
-        SettingsDestinationHeader(activeDestination)
+        val parentPage = settingsPageParents[activePage] ?: activePage.parent
+        if (parentPage != null && !compactSettingsHeader) {
+            NikTvTextActionButton(onClick = settingsBack, modifier = Modifier.focusProperties { canFocus = false }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(parentPage.title)
+            }
+        }
+        Text(activePage.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
 
-        val showMobileAppearance =
-            !settingsIsTv && settingsConfiguration.smallestScreenWidthDp < 600
-
-        val mobileDpadRequester = remember { FocusRequester() }
-        val followSystemBrightnessRequester = remember { FocusRequester() }
-        val appBrightnessRequester = remember { FocusRequester() }
-        val keepAwakeRequester = remember { FocusRequester() }
-        val orientationRequester = remember { FocusRequester() }
-        val queueLayoutRequester = remember { FocusRequester() }
-        val nikTubeEngineRequester = remember { FocusRequester() }
-        val playbackEngineRequester = remember { FocusRequester() }
-        val audioFallbackRequester = remember { FocusRequester() }
-        val seriesSeasonRequester = remember { FocusRequester() }
-        val catalogRefreshRequester = remember { FocusRequester() }
-        val initialCatalogItemsRequester = remember { FocusRequester() }
-        val appBrightnessStep =
-            (AppBrightnessPreferences.MAX - AppBrightnessPreferences.MIN) /
-                17f
+        if (activePage == SettingsPage.PROFILES) {
+            SettingsSection("Profiles & access", page = SettingsPage.PROFILES) {
+                SettingsLinkRow(SettingsPage.MANAGE_PROFILES, "${state.profiles.size} saved")
+                if (profile != null) SettingsLinkRow(SettingsPage.CONNECTION, profile.name)
+                SettingsLinkRow(SettingsPage.PARENTAL, if (state.parentalControlsEnabled) "On" else "Off")
+                SettingsLinkRow(SettingsPage.PRIVATE_CONFIGURATION, if (RemoteCredentials.configured(context)) "Configured" else "Set up")
+                SettingsLinkRow(SettingsPage.PAIRING, "Nearby, remote or file")
+            }
+        }
+        if (activePage == SettingsPage.LIBRARY) {
+            SettingsSection("Library & backup", page = SettingsPage.LIBRARY) {
+                SettingsLinkRow(SettingsPage.CATALOG_UPDATES, catalogProfile?.name ?: "Choose profile")
+                SettingsControlRow("Use local catalog first", checked = preferLocalCatalog, onToggle = {
+                    preferLocalCatalog = it
+                    com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(context, it)
+                })
+                SettingsLinkRow(SettingsPage.BROWSE_REFRESH, "Cache & initial load")
+                SettingsLinkRow(SettingsPage.BACKUPS, "App data & settings")
+                SettingsControlRow("Backup activity", backupEvents.firstOrNull()?.status ?: "No activity", onClick = { backupActivityOpen = true })
+            }
+        }
+        if (activePage == SettingsPage.BACKUPS) {
+            SettingsSection("Back up & restore", page = SettingsPage.BACKUPS) {
+                SettingsLinkRow(SettingsPage.DEVICE_BACKUP, "Tiles, favorites, history & settings")
+                SettingsLinkRow(SettingsPage.BACKUP_DESTINATION, if (githubBackupConfig.backupMode == com.nikhil.niktv.data.BackupMode.GITHUB) "GitHub" else "Local file")
+                SettingsControlRow("Backup activity", onClick = { backupActivityOpen = true })
+            }
+        }
 
         SettingsSection("Device & display") {
-            if (showMobileAppearance) {
+            if (!settingsIsTv && settingsConfiguration.smallestScreenWidthDp < 600) {
                 val onScreenDpad by rememberOnScreenDpadEnabled()
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.Tune,
-                    title = "On-screen D-pad",
-                    subtitle =
-                        "Show a movable remote control overlay for testing focus navigation on this phone.",
-                    trailingContent = {
-SettingsSwitch(
-                            checked = onScreenDpad,
-                            onCheckedChange = {
-                                OnScreenDpadPreferences.setEnabled(context, it)
-                            },
-                            modifier = Modifier
-                                .focusRequester(mobileDpadRequester)
-                                .focusProperties {
-                                    down = followSystemBrightnessRequester
-                                }
-                        )
-                    }
-                )
-
-                SettingsDivider()
+                SettingsControlRow("On-screen D-pad", checked = onScreenDpad,
+                    onToggle = { OnScreenDpadPreferences.setEnabled(context, it) },
+                    description = "Show the movable remote overlay for testing focus navigation.")
             }
-
-            CompactSettingsOptionRow(
-                icon = Icons.Default.BrightnessAuto,
-                title = "Follow system brightness",
-                subtitle =
-                    "Use the brightness configured by this device or TV.",
-                trailingContent = {
-SettingsSwitch(
-                        checked = followSystemBrightness,
-                        onCheckedChange = {
-                            followSystemBrightness = it
-                            AppBrightnessPreferences
-                                .setFollowsSystem(context, it)
-                        },
-                        modifier = Modifier
-                            .focusRequester(
-                                followSystemBrightnessRequester
-                            )
-                            .focusProperties {
-                                up =
-                                    when {
-                                        showMobileAppearance -> mobileDpadRequester
-                                        !compactSettingsHeader -> settingsRailRequesters.getValue(activeDestination)
-                                        else -> FocusRequester.Default
-                                    }
-                                if (!compactSettingsHeader) {
-                                    left = settingsRailRequesters.getValue(activeDestination)
-                                }
-                                down =
-                                    if (followSystemBrightness) {
-                                        keepAwakeRequester
-                                    } else {
-                                        appBrightnessRequester
-                                    }
-                            }
-                    )
+            if (!settingsIsTv) {
+                SettingsPickerRow("Brightness", listOf(true to "System", false to "Manual"), followSystemBrightness, {
+                    followSystemBrightness = it
+                    AppBrightnessPreferences.setFollowsSystem(context, it)
+                }, "Use system brightness, or choose an app-only level.")
+                if (!followSystemBrightness) {
+                    SettingsControlRow("App brightness", "${(appBrightness * 100).toInt()}%")
+                    Slider(value = appBrightness, onValueChange = {
+                        appBrightness = it
+                        AppBrightnessPreferences.set(context, it)
+                    }, valueRange = AppBrightnessPreferences.MIN..AppBrightnessPreferences.MAX, steps = 16,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).remoteFocusFrame(RoundedCornerShape(10.dp)))
                 }
-            )
-            SettingsDivider()
-
-            CompactSettingsOptionRow(
-                icon = Icons.Default.Brightness6,
-                title = "App brightness",
-                subtitle =
-                    if (followSystemBrightness) {
-                        "System controlled."
-                    } else {
-                        "${(appBrightness * 100).toInt()}% · Applies only while NikTV is open."
-                    },
-                belowContent = {
-                    Spacer(Modifier.height(6.dp))
-                    Slider(
-                        value = appBrightness,
-                        enabled = !followSystemBrightness,
-                        onValueChange = {
-                            appBrightness = it
-                            AppBrightnessPreferences.set(context, it)
-                        },
-                        valueRange =
-                            AppBrightnessPreferences.MIN..
-                                AppBrightnessPreferences.MAX,
-                        steps = 16,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 40.dp, end = 2.dp)
-                            .focusRequester(appBrightnessRequester)
-                            .onPreviewKeyEvent { event ->
-                                if (
-                                    event.type != KeyEventType.KeyDown
-                                ) {
-                                    return@onPreviewKeyEvent false
-                                }
-
-                                when (event.key) {
-                                    Key.DirectionLeft -> {
-                                        val next =
-                                            (appBrightness -
-                                                appBrightnessStep)
-                                                .coerceIn(
-                                                    AppBrightnessPreferences.MIN,
-                                                    AppBrightnessPreferences.MAX
-                                                )
-                                        appBrightness = next
-                                        AppBrightnessPreferences.set(
-                                            context,
-                                            next
-                                        )
-                                        true
-                                    }
-
-                                    Key.DirectionRight -> {
-                                        val next =
-                                            (appBrightness +
-                                                appBrightnessStep)
-                                                .coerceIn(
-                                                    AppBrightnessPreferences.MIN,
-                                                    AppBrightnessPreferences.MAX
-                                                )
-                                        appBrightness = next
-                                        AppBrightnessPreferences.set(
-                                            context,
-                                            next
-                                        )
-                                        true
-                                    }
-
-                                    Key.DirectionUp -> {
-                                        followSystemBrightnessRequester
-                                            .requestFocus()
-                                        true
-                                    }
-
-                                    Key.DirectionDown -> {
-                                        keepAwakeRequester.requestFocus()
-                                        true
-                                    }
-
-                                    else -> false
-                                }
-                            }
-                            .remoteFocusFrame(
-                                RoundedCornerShape(12.dp)
-                            )
-                    )
-                }
-            )
-            SettingsDivider()
-
-            CompactSettingsOptionRow(
-                icon = Icons.Default.LightMode,
-                title = "Keep screen awake during playback",
-                subtitle =
-                    if (state.keepAwakeOnlyDuringPlayback) {
-                        "Browsing may sleep normally; playback always stays awake."
-                    } else {
-                        "Keep the screen awake while NikTV is open."
-                    },
-                trailingContent = {
-SettingsSwitch(
-                        checked =
-                            state.keepAwakeOnlyDuringPlayback,
-                        onCheckedChange =
-                            setKeepAwakeOnlyDuringPlayback,
-                        modifier = Modifier
-                            .focusRequester(keepAwakeRequester)
-                            .focusProperties {
-                                up =
-                                    if (followSystemBrightness) {
-                                        followSystemBrightnessRequester
-                                    } else {
-                                        appBrightnessRequester
-                                    }
-                                down = orientationRequester
-                            }
-                    )
-                }
-            )
-            SettingsDivider()
-
-            CompactOrientationSetting(
-                entryRequester = orientationRequester,
-                upRequester = keepAwakeRequester,
-                downRequester = queueLayoutRequester
-            )
-
-
+                val orientation by rememberUiOrientationMode()
+                SettingsPickerRow("Screen orientation", UiOrientationMode.entries.map { it to it.title }, orientation,
+                    { UiOrientationPreferences.set(context, it) }, "Auto follows the device rotation setting.")
+            }
+            SettingsPickerRow("Keep screen awake", listOf(true to "During playback", false to "While NikTV is open"),
+                state.keepAwakeOnlyDuringPlayback, setKeepAwakeOnlyDuringPlayback,
+                "Playback always stays awake. Choose whether browsing can sleep normally.")
         }
         SettingsSection("Playback") {
+            val engines = listOf(PlaybackEngine.AUTO to "Automatic", PlaybackEngine.MEDIA3 to "ExoPlayer",
+                PlaybackEngine.FLOW to "Flow", PlaybackEngine.VLC to "VLC", PlaybackEngine.MPV to "MPV")
+                .filter { it.first != PlaybackEngine.MPV || mpvSupportedSdk(android.os.Build.VERSION.SDK_INT) }
+            SettingsPickerRow("Playback engine", engines, state.playbackEngine, setPlaybackEngine,
+                "Automatic learns compatibility and uses VLC when needed.")
             val queueLayout = rememberPlayerQueueLayout()
-            CompactSettingsOptionRow(
-                icon = Icons.Default.ViewList,
-                title = "Player media browser",
-                subtitle = "Choose compact tiles or a list in a side panel while video continues playing.",
-                belowContent = {
-                    Spacer(Modifier.height(8.dp))
-                    SettingsChoiceGrid(options = PlayerQueueLayout.entries.map { it to it.label },
-                        selected = queueLayout, onSelect = { PlayerQueuePreferences.setLayout(context, it) },
-                        entryRequester = queueLayoutRequester, upRequester = orientationRequester,
-                        downRequester = nikTubeEngineRequester)
-                }
-            )
-            SettingsDivider()
+            SettingsPickerRow("Player media browser", PlayerQueueLayout.entries.map { it to it.label }, queueLayout,
+                { PlayerQueuePreferences.setLayout(context, it) }, "Browse media while the video continues.")
             var nikTubeEngine by remember { mutableStateOf(com.nikhil.niktv.data.NikTubeEnginePreferences.selected(context)) }
-            CompactSettingsOptionRow(
-                icon = Icons.Default.PlayCircle,
-                title = "NikTube experience",
-                subtitle = "Automatic uses SmartTube on TV and Flow on phones/tablets. You can choose either experience on this device.",
-                belowContent = {
-                    Spacer(Modifier.height(8.dp))
-                    SettingsChoiceGrid(
-                        options = listOf(com.nikhil.niktv.data.NikTubeEngine.AUTO to "Automatic", com.nikhil.niktv.data.NikTubeEngine.FLOW to "Flow", com.nikhil.niktv.data.NikTubeEngine.SMARTTUBE to "SmartTube"),
-                        selected = nikTubeEngine,
-                        onSelect = { nikTubeEngine = it; com.nikhil.niktv.data.NikTubeEnginePreferences.set(context, it) },
-                        entryRequester = nikTubeEngineRequester, upRequester = queueLayoutRequester,
-                        downRequester = audioFallbackRequester
-                    )
-                }
-            )
-            SettingsDivider()
-            val audioFallbackContext = LocalContext.current
-            var audioFallbackEnabled by remember {
-                mutableStateOf(AudioFailurePreferences.enabled(audioFallbackContext))
-            }
-            CompactSettingsOptionRow(
-                icon = Icons.Default.VolumeOff,
-                title = "Continue video if audio fails",
-                subtitle = "This device only · ExoPlayer. Disable failed audio output and keep video playing. Retry audio when earphones connect.",
-                trailingContent = {
-                    SettingsSwitch(
-                        checked = audioFallbackEnabled,
-                        modifier = Modifier.focusRequester(audioFallbackRequester).focusProperties {
-                            up = nikTubeEngineRequester
-                            down = playbackEngineRequester
-                        },
-                        onCheckedChange = {
-                            audioFallbackEnabled = it
-                            AudioFailurePreferences.setEnabled(audioFallbackContext, it)
-                        }
-                    )
-                }
-            )
-            SettingsDivider()
-            PlaybackEngineSettingsContent(
-                selectedEngine = state.playbackEngine,
-                setPlaybackEngine = setPlaybackEngine,
-                compact = true,
-                entryRequester = playbackEngineRequester,
-                upRequester = audioFallbackRequester,
-                downRequester = seriesSeasonRequester
-            )
-            SettingsDivider()
-
-            CompactSettingsOptionRow(
-                icon = Icons.Default.VideoLibrary,
-                title = "Default season",
-                subtitle =
-                    "Used when a series has no remembered season. NikTV loads one season at a time.",
-                belowContent = {
-                    Spacer(Modifier.height(8.dp))
-                    SettingsChoiceRow(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = 40.dp, end = 2.dp)
-                    ) {
-                        SeriesStartSeason.entries
-                            .forEachIndexed { index, option ->
-                                val shape =
-                                    settingsChoiceShape(
-                                        index,
-                                        SeriesStartSeason.entries.size
-                                    )
-                                val selected =
-                                    state.seriesStartSeason == option
-                                SettingsChoiceButton(
-                                    selected = selected,
-                                    onClick = {
-                                        setSeriesStartSeason(option)
-                                    },
-                                    modifier = Modifier
-                                        .then(
-                                            if (selected) {
-                                                Modifier.focusRequester(
-                                                    seriesSeasonRequester
-                                                )
-                                            } else {
-                                                Modifier
-                                            }
-                                        )
-                                        .focusProperties {
-                                            up = playbackEngineRequester
-                                            down = catalogRefreshRequester
-                                            }
-                                        .remoteFocusFrame(shape),
-                                    shape = shape
-                                ) {
-                                    Text(
-                                        if (
-                                            option ==
-                                            SeriesStartSeason.FIRST
-                                        ) {
-                                            "First season"
-                                        } else {
-                                            "Latest season"
-                                        },
-                                        style =
-                                            MaterialTheme.typography
-                                                .labelLarge
-                                    )
-                                }
-                            }
-                    }
-                }
-            )
-
-
+            SettingsPickerRow("NikTube experience", listOf(com.nikhil.niktv.data.NikTubeEngine.AUTO to "Automatic",
+                com.nikhil.niktv.data.NikTubeEngine.FLOW to "Flow", com.nikhil.niktv.data.NikTubeEngine.SMARTTUBE to "SmartTube"),
+                nikTubeEngine, { nikTubeEngine = it; com.nikhil.niktv.data.NikTubeEnginePreferences.set(context, it) },
+                "Automatic uses SmartTube on TV and Flow on phones and tablets.")
+            SettingsPickerRow("Default season", SeriesStartSeason.entries.map { it to if (it == SeriesStartSeason.FIRST) "First season" else "Latest season" },
+                state.seriesStartSeason, setSeriesStartSeason, "Used when a series has no remembered season.")
+            SettingsLinkRow(SettingsPage.COMPATIBILITY, "Audio recovery")
+        }
+        SettingsSection("Compatibility") {
+            var audioFallbackEnabled by remember { mutableStateOf(AudioFailurePreferences.enabled(context)) }
+            SettingsControlRow("Continue video if audio fails", description = "ExoPlayer only. Retry audio when earphones connect.",
+                checked = audioFallbackEnabled, onToggle = { audioFallbackEnabled = it; AudioFailurePreferences.setEnabled(context, it) })
         }
         SettingsSection("Storage & refresh") {
-
-            val refreshOptions =
-                listOf(
-                    30 to "30m",
-                    60 to "1h",
-                    360 to "6h",
-                    1440 to "24h"
-                )
-
-            CompactSettingsOptionRow(
-                icon = Icons.Default.Refresh,
-                title = "Refresh interval",
-                subtitle =
-                    "Choose how long categories and media lists stay cached on this device.",
-                belowContent = {
-                    Spacer(Modifier.height(8.dp))
-                    SettingsChoiceRow(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = 40.dp, end = 2.dp)
-                    ) {
-                        refreshOptions.forEachIndexed {
-                                index,
-                                (minutes, label) ->
-                            val shape =
-                                settingsChoiceShape(
-                                    index,
-                                    refreshOptions.size
-                                )
-                            val selected =
-                                state.cacheIntervalMinutes == minutes
-                            SettingsChoiceButton(
-                                selected = selected,
-                                onClick = {
-                                    setCacheIntervalMinutes(minutes)
-                                },
-                                modifier = Modifier
-                                    .then(
-                                        if (selected) {
-                                            Modifier.focusRequester(
-                                                catalogRefreshRequester
-                                            )
-                                        } else {
-                                            Modifier
-                                        }
-                                    )
-                                    .focusProperties {
-                                        up = seriesSeasonRequester
-                                        down = initialCatalogItemsRequester
-                                    }
-                                    .remoteFocusFrame(shape),
-                                shape = shape
-                            ) {
-                                Text(
-                                    label,
-                                    style =
-                                        MaterialTheme.typography
-                                            .labelLarge
-                                )
-                            }
-                        }
-                    }
-                }
-            )
-
-            if (state.savedProfile != null) {
-                val itemOptions = listOf(14, 28, 42, 56)
-
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.GridView,
-                    title = "Initial media load",
-                    subtitle = "Choose how many IPTV items load when a category opens.",
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        SettingsChoiceRow(
-                            Modifier.fillMaxWidth().padding(start = 40.dp, end = 2.dp)
-                        ) {
-                            itemOptions.forEachIndexed { index, count ->
-                                val shape = settingsChoiceShape(index, itemOptions.size)
-                                SettingsChoiceButton(
-                                    selected = state.initialCatalogItems == count,
-                                    onClick = { setInitialCatalogItems(count) },
-                                    modifier = Modifier
-                                        .then(
-                                            if (state.initialCatalogItems == count) {
-                                                Modifier.focusRequester(
-                                                    initialCatalogItemsRequester
-                                                )
-                                            } else {
-                                                Modifier
-                                            }
-                                        )
-                                        .focusProperties {
-                                            up = catalogRefreshRequester
-                                        }
-                                        .remoteFocusFrame(shape),
-                                    shape = shape
-                                ) { Text(count.toString()) }
-                            }
-                        }
-                    }
-                )
-
-            }
-
+            SettingsPickerRow("Refresh cached lists after", listOf(30 to "30 minutes", 60 to "1 hour", 360 to "6 hours", 1440 to "24 hours"),
+                state.cacheIntervalMinutes, setCacheIntervalMinutes, "How long category and media lists stay cached on this device.")
+            if (profile != null) SettingsPickerRow("Initial category load", listOf(14, 28, 42, 56).map { it to "$it items" },
+                state.initialCatalogItems, setInitialCatalogItems, "How many IPTV items load when a category opens.")
         }
+        val knownProfiles = (state.profiles + preconfiguredProfiles).distinctBy { it.cacheKey() }
         SettingsSection("Profiles") {
-            if (preconfiguredProfiles.isNotEmpty()) {
-                SettingsGroupHeading("Available profiles", "Choose which configured profiles appear when NikTV opens.")
+            knownProfiles.forEach { entry ->
+                val saved = state.profiles.any { it.cacheKey() == entry.cacheKey() }
+                SettingsControlRow(entry.name,
+                    if (entry.cacheKey() == profile?.cacheKey()) "Active" else if (saved) "Enabled" else "Set up / enable",
+                    modifier = if (entry.cacheKey() == managedProfileId) Modifier.focusRequester(settingsPageRequesters.getValue(SettingsPage.PROFILE_DETAILS)) else Modifier,
+                    onClick = { managedProfileId = entry.cacheKey(); openSettingsPage(SettingsPage.PROFILE_DETAILS) })
             }
-
-            preconfiguredProfiles.forEachIndexed { index, builtIn ->
-                val enabled = state.profiles.any {
-                    it.cacheKey() == builtIn.cacheKey()
-                }
-                val available = builtIn.portalUrl.isNotBlank() &&
-                    (builtIn.portalType == PortalType.STALKER ||
+            SettingsControlRow("Add profile", description = "Stalker / MAG or Xtream Codes", onClick = addProfile)
+        }
+        SettingsSection("Profile details", page = SettingsPage.PROFILE_DETAILS) {
+            val managed = knownProfiles.firstOrNull { it.cacheKey() == managedProfileId }
+            if (managed != null) {
+                val saved = state.profiles.firstOrNull { it.cacheKey() == managed.cacheKey() }
+                val builtIn = preconfiguredProfiles.firstOrNull { it.cacheKey() == managed.cacheKey() }
+                SettingsControlRow(managed.name, managed.portalType.displayName())
+                if (builtIn != null) {
+                    val available = builtIn.portalUrl.isNotBlank() && (builtIn.portalType == PortalType.STALKER ||
                         (builtIn.username.isNotBlank() && builtIn.password.isNotBlank()))
-                ProfileAvailabilitySetting(
-                    name = builtIn.name,
-                    stalker = builtIn.portalType == PortalType.STALKER,
-                    checked = enabled, available = available,
-                    onCheckedChange = { setPreconfiguredProfileEnabled(builtIn, it) },
-                    onSetupNeeded = {
-                        profileSetupExplanation = "Sync private configuration in Settings → Profiles before enabling ${builtIn.name}. Each NikTV installation keeps its own configuration."
-                    },
-                    modifier = Modifier
-                        .then(if (index == 0) Modifier.focusRequester(profileAvailabilityEntryRequester) else Modifier)
-                        .then(if (!compactSettingsHeader) Modifier.focusProperties {
-                            left = settingsRailRequesters.getValue(SettingsDestination.PROFILES)
-                        } else Modifier)
-                )
-                if (
-                    index != preconfiguredProfiles.lastIndex ||
-                    state.profiles.isNotEmpty()
-                ) {
-                    SettingsDivider()
+                    SettingsControlRow("Enable profile", checked = saved != null, onToggle = { enabled ->
+                        if (available || !enabled) setPreconfiguredProfileEnabled(builtIn, enabled)
+                        else profileSetupExplanation = "Sync private configuration before enabling ${builtIn.name}."
+                    })
                 }
+                if (saved != null && saved.cacheKey() != profile?.cacheKey()) SettingsControlRow("Open profile", onClick = { switchProfile(saved) })
+                if (saved != null && saved.cacheKey() == profile?.cacheKey()) SettingsLinkRow(SettingsPage.CONNECTION, "Active profile")
+                if (saved != null) SettingsControlRow("Remove profile", danger = true, onClick = { pendingRemoval = saved })
             }
-
-            SettingsGroupHeading("Saved connections", "Open a profile or manage its saved connection.")
-            state.profiles.forEachIndexed { index, saved ->
-                val isPreconfigured = preconfiguredProfiles.any {
-                    it.cacheKey() == saved.cacheKey()
-                }
-                ResponsiveSettingsOptionRow(
-                    icon =
-                        if (saved.portalType == PortalType.STALKER) {
-                            Icons.Default.Tv
-                        } else {
-                            Icons.Default.Key
-                        },
-                    title = saved.name,
-                    subtitle =
-                        if (isPreconfigured) {
-                            "Preconfigured ${saved.portalType.displayName()} profile"
-                        } else {
-                            "${saved.portalType.displayName()} · ${saved.portalUrl}"
-                        },
-                    trailingContent = {
-                        if (saved == profile) {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                "Active",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        } else {
-                            NikTvTextActionButton(
-                                onClick = { switchProfile(saved) },
-                                modifier = Modifier
-                                    .height(48.dp)
-                                    .then(
-                                        if (index == 0) {
-                                            Modifier.focusRequester(
-                                                settingsEntryRequester
-                                            )
-                                        } else {
-                                            Modifier
-                                        }
-                                    )
-                            ) {
-                                Text("Open")
-                            }
-                        }
-                        IconButton(
-                            onClick = { pendingRemoval = saved },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .then(
-                                    if (
-                                        index == 0 &&
-                                        saved == profile
-                                    ) {
-                                        Modifier.focusRequester(
-                                            settingsEntryRequester
-                                        )
-                                    } else {
-                                        Modifier
-                                    }
-                                )
-                                .remoteFocusFrame(CircleShape)
-                        ) {
-                            Icon(
-                                Icons.Default.DeleteOutline,
-                                "Remove ${saved.name}"
-                            )
-                        }
-                    }
-                )
-                if (index != state.profiles.lastIndex) {
-                    SettingsDivider()
-                }
-            }
-
-            SettingsDivider()
-            ResponsiveSettingsOptionRow(
-                icon = Icons.Default.AddCircleOutline,
-                title = "Add profile",
-                subtitle = "Connect another Stalker or Xtream service",
-                modifier = Modifier
-                    .remoteFocusFrame(RoundedCornerShape(14.dp))
-                    .clickable(onClick = addProfile),
-                trailingContent = {
-                    Icon(Icons.Default.ChevronRight, "Add profile")
-                }
-            )
         }
-        val activeSettingsDestination = LocalSettingsDestination.current
-
-        if (
-            profile != null &&
-            (
-                activeSettingsDestination == null ||
-                    activeSettingsDestination == SettingsDestination.GENERAL
-                )
-        ) {
-            PlaybackDesignSettingsSection(
-                profile.cacheKey(),
-                Modifier.focusGroup()
-            )
-        }
-
         if (profile != null) SettingsSection("Connection") {
             SettingsValueRow(
                 Icons.Default.AccountCircle,
@@ -1368,23 +771,8 @@ SettingsSwitch(
                 }
             )
             SettingsDivider()
-            ResponsiveSettingsOptionRow(
-                icon = Icons.Default.Security,
-                title = "Automatically re-authenticate expired sessions",
-                subtitle =
-                    if (state.automaticReauthentication) {
-                        "Retry an interrupted page load or playback once with a fresh session."
-                    } else {
-                        "Show the Session expired prompt and wait for confirmation."
-                    },
-                trailingContent = {
-SettingsSwitch(
-                        checked = state.automaticReauthentication,
-                        onCheckedChange = setAutomaticReauthentication,
-                        modifier = Modifier
-                    )
-                }
-            )
+            SettingsControlRow("Renew expired sessions automatically", checked = state.automaticReauthentication,
+                onToggle = setAutomaticReauthentication, description = "Retry an interrupted load or playback once with a fresh session.")
             SettingsDivider()
             SettingsValueRow(
                 Icons.Default.Wifi,
@@ -1419,145 +807,18 @@ SettingsSwitch(
             )
 
         }
-        SettingsSection("Profiles") {
+        SettingsSection("Parental controls") {
             ParentalControlsSettings()
         }
-SettingsSection("Data and sync") {
-            var backupActivityOpen by remember { mutableStateOf(false) }
-            val backupEvents by remember(context) { com.nikhil.niktv.data.BackupActivityLog.observe(context) }
-                .collectAsState(initial = com.nikhil.niktv.data.BackupActivityLog.read(context))
-            if (backupActivityOpen) BackupActivityDialog { backupActivityOpen = false }
-            var catalogBackupEnabled by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.backupEnabled(context)) }
-            var preferLocalCatalog by remember { mutableStateOf(com.nikhil.niktv.data.CatalogPreferences.preferLocal(context)) }
-            var catalogStatus by remember { mutableStateOf("") }
-            var catalogRestoreBusy by remember { mutableStateOf(false) }
-            var confirmCatalogBackup by remember { mutableStateOf(false) }
-            var confirmCatalogRestore by remember { mutableStateOf(false) }
-            var catalogTransferType by remember { mutableStateOf<CatalogType?>(null) }
-            val catalogScope = rememberCoroutineScope()
-            var catalogProfileId by remember(state.profiles) {
-                mutableStateOf(
-                    com.nikhil.niktv.data.CatalogScanPreferences.selectedProfileId(context)
-                        ?.takeIf { saved -> state.profiles.any { com.nikhil.niktv.data.CatalogScanPreferences.id(it) == saved } }
-                        ?: state.savedProfile?.let(com.nikhil.niktv.data.CatalogScanPreferences::id)
-                )
-            }
-            val catalogProfile = state.profiles.firstOrNull {
-                com.nikhil.niktv.data.CatalogScanPreferences.id(it) == catalogProfileId
-            } ?: state.savedProfile ?: state.profiles.firstOrNull()
-            if (confirmCatalogBackup && catalogProfile != null) {
-                val scopeLabel = catalogTransferType?.title ?: "full catalog"
-                ProjectCardConfirmationDialog(
-                    title = "Upload ${catalogProfile.name} $scopeLabel?",
-                    message = "This uploads the local ${catalogTransferType?.title ?: "Live TV, Movies and Series"} Room data for ${catalogProfile.name} to GitHub in device-specific parts. The current snapshot for this device is updated; snapshots from other devices are kept. Restores merge records instead of replacing personal data. Dated checkpoints are created only by a full-catalog upload when the catalog is small enough. The upload continues in the background and can be paused or resumed.",
-                    confirmLabel = "Upload catalog",
-                    close = { confirmCatalogBackup = false },
-                    confirm = {
-                        confirmCatalogBackup = false
-                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile, type = catalogTransferType)
-                    }
-                )
-            }
-            if (confirmCatalogRestore && catalogProfile != null) {
-                val scopeLabel = catalogTransferType?.title ?: "full catalog"
-                ProjectCardConfirmationDialog(
-                    title = "Restore ${catalogProfile.name} $scopeLabel?",
-                    message = "This downloads the latest ${catalogTransferType?.title ?: "Live TV, Movies and Series"} device snapshots for ${catalogProfile.name} and merges them into this device's Room database. Existing newer records, favorites and watch history are retained. A separate restored resume point is saved so you can choose Resume restored instead of continuing this device's local cursor.",
-                    confirmLabel = "Restore and merge",
-                    close = { confirmCatalogRestore = false },
-                    confirm = {
-                        confirmCatalogRestore = false
-                        com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, catalogProfile, resume = true, type = catalogTransferType)
-                    }
-                )
-            }
+        if (activePage in setOf(SettingsPage.CATALOG_UPDATES, SettingsPage.CATALOG_MEDIA_TYPES, SettingsPage.CATALOG_TOOLS))
+        SettingsSection("Data and sync", page = activePage) {
             SettingsGroupHeading("Local catalog", "Choose a profile, build its catalog and review scan progress.")
-            CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
+            if (catalogProfile == null) SettingsControlRow("Add a profile", description = "A connection is needed before building a catalog.", onClick = addProfile)
+            else CatalogProfileSettings(state.profiles, catalogProfile) { selected ->
                 catalogProfileId = com.nikhil.niktv.data.CatalogScanPreferences.id(selected)
             }
-            SettingsDivider()
-            ResponsiveSettingsOptionRow(
-                icon = Icons.Default.Storage,
-                title = "Prefer local catalog",
-                subtitle = "Load saved channels, movies and series first. Missing data uses the provider. Turn off to request fresh provider catalogs.",
-                trailingContent = {
-                    SettingsSwitch(checked = preferLocalCatalog, onCheckedChange = {
-                        preferLocalCatalog = it
-                        com.nikhil.niktv.data.CatalogPreferences.setPreferLocal(context, it)
-                    })
-                }
-            )
-            SettingsDivider()
-            SettingsGroupHeading("Catalog backup & restore", "Transfer IPTV listings and scan checkpoints between devices.")
-            ResponsiveSettingsOptionRow(
-                icon = Icons.Default.CloudUpload,
-                title = "Back up catalog from this device",
-                subtitle = "Off by default. Upload every 12 hours and after completed catalog updates. Each device has its own snapshot; imports merge records. Requires GitHub; a backup password is optional.",
-                trailingContent = {
-                    SettingsSwitch(checked = catalogBackupEnabled, onCheckedChange = {
-                        val saved = githubBackupManager.loadConfig()
-                        if (it && (saved.token.isBlank() || (saved.passphrase.isNotBlank() && saved.passphrase.length < 12) || saved.backupMode != com.nikhil.niktv.data.BackupMode.GITHUB)) {
-                            catalogStatus = "Save GitHub settings below, then enable catalog backup. Leave the password blank, or use at least 12 characters."
-                        } else {
-                            catalogBackupEnabled = it
-                            com.nikhil.niktv.data.CatalogPreferences.setBackupEnabled(context, it)
-                            com.nikhil.niktv.data.SearchMetadataSyncScheduler.initialize(context)
-                            com.nikhil.niktv.data.BackupActivityLog.record(context, "Automatic IPTV catalog backup",
-                                if (it) "Enabled" else "Disabled", if (it) "Runs approximately every 12 hours on this device." else "Automatic catalog uploads are off on this device.")
-                        }
-                    })
-                }
-            )
-            SettingsDivider()
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Backup and restore scope", style = MaterialTheme.typography.titleSmall)
-                Text("Choose the whole catalog or operate on one media type.", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SettingsChoiceGrid(
-                    options = listOf<CatalogType?>(null, CatalogType.LIVE_TV, CatalogType.MOVIES, CatalogType.SERIES)
-                        .map { it to (it?.title ?: "Full catalog") },
-                    selected = catalogTransferType,
-                    onSelect = { catalogTransferType = it }
-                )
-            }
-            CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.BACKUP, "GitHub catalog upload", catalogBackupEnabled) {
-                com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestNow(context, resume = true, profile = catalogProfile, type = catalogTransferType)
-            }
-            CatalogOperationPanel(com.nikhil.niktv.data.CatalogOperations.RESTORE, "GitHub catalog restore") {
-                catalogProfile?.let { com.nikhil.niktv.data.SearchMetadataSyncScheduler.requestRestore(context, it, resume = true, type = catalogTransferType) }
-            }
-            BackupSettingsActionRow(
-                icon = Icons.Default.CloudUpload,
-                title = "Back up ${catalogTransferType?.title ?: "full IPTV catalog"} now",
-                subtitle = if (catalogBackupEnabled) "Upload changed ${catalogProfile?.name ?: "profile"} snapshots to GitHub." else "Enable catalog backup on this device first.",
-                enabled = catalogBackupEnabled,
-                onClick = {
-                    confirmCatalogBackup = true
-                    catalogStatus = ""
-                }
-            )
-            BackupSettingsActionRow(
-                icon = Icons.Default.CloudDownload,
-                title = if (catalogRestoreBusy) "Restoring IPTV catalog…" else "Restore ${catalogTransferType?.title ?: "full IPTV catalog"}",
-                subtitle = "Merge ${catalogProfile?.name ?: "the selected profile"} snapshots from any device into this device.",
-                enabled = !catalogRestoreBusy && catalogProfile != null,
-                onClick = {
-                    confirmCatalogRestore = true
-                }
-            )
-            if (catalogStatus.isNotBlank()) Text(catalogStatus, modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SettingsDivider()
-            BackupSettingsActionRow(
-                icon = Icons.Default.History,
-                title = "Backup and restore activity",
-                subtitle = backupEvents.firstOrNull()?.let {
-                    "${it.operation} · ${it.status} · ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(it.timestamp))}"
-                } ?: "View timestamped activity on this device. No events yet.",
-                onClick = { backupActivityOpen = true }
-            )
-            SettingsDivider()
-            SettingsGroupHeading("Device backup", "Configure storage, then export or import your settings, favorites and watch history.")
+        }
+        SettingsSection("Backup destination") {
             val backupModes =
                 listOf(
                     com.nikhil.niktv.data.BackupMode.GITHUB to "GitHub",
@@ -1565,56 +826,17 @@ SettingsSection("Data and sync") {
                 )
 
 
-            CompactSettingsOptionRow(
-                icon = Icons.Default.CloudUpload,
-                title = "Backup mode",
-                subtitle =
-                    "Choose where NikTV stores backups. Backups can contain portal credentials.",
-                belowContent = {
-                    Spacer(Modifier.height(8.dp))
-                    SettingsChoiceRow(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = 40.dp, end = 2.dp)
-                    ) {
-                        backupModes.forEachIndexed {
-                                index,
-                                (mode, label) ->
-                            val shape =
-                                settingsChoiceShape(
-                                    index,
-                                    backupModes.size
-                                )
-                            SettingsChoiceButton(
-                                selected =
-                                    githubBackupConfig.backupMode ==
-                                        mode,
-                                onClick = {
-                                    val updated =
-                                        githubBackupConfig.copy(
-                                            backupMode = mode
-                                        )
-                                    githubBackupConfig = updated
-                                    githubBackupManager.saveConfig(
-                                        updated
-                                    )
-                                },
-                                modifier =
-                                    Modifier.remoteFocusFrame(shape),
-                                shape = shape
-                            ) {
-                                Text(
-                                    label,
-                                    style =
-                                        MaterialTheme.typography
-                                            .labelLarge
-                                )
-                            }
-                        }
-                    }
-                }
-            )
+            SettingsPickerRow("Save backups to", backupModes, githubBackupConfig.backupMode, { mode ->
+                val updated = githubBackupConfig.copy(backupMode = mode)
+                githubBackupConfig = updated
+                githubBackupManager.saveConfig(updated)
+            }, "Device backups can contain portal credentials.")
 
+            var backupDeviceName by remember { mutableStateOf(com.nikhil.niktv.data.DeviceBackupIdentity.name(context)) }
+            SettingsTextEditRow("Backup device name", backupDeviceName, {
+                backupDeviceName = it
+                com.nikhil.niktv.data.DeviceBackupIdentity.rename(context, it)
+            }, "A label to distinguish this device in the list of backups.")
 
             if (
                 githubBackupConfig.backupMode ==
@@ -1622,11 +844,7 @@ SettingsSection("Data and sync") {
             ) {
                 SettingsDivider()
                 Column(
-                    Modifier.padding(
-                        horizontal =
-                            16.dp,
-                        vertical = 10.dp
-                    ),
+                    Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     val githubUsernameRequester =
@@ -1697,7 +915,7 @@ SettingsSection("Data and sync") {
                         title = "Backup password",
                         subtitle =
                             "Optional · Leave blank for readable JSON. " +
-                                "Use 12+ characters to encrypt profile and catalog GitHub backups.",
+                                "Use 12+ characters to encrypt device backups.",
                         placeholder = "Optional backup password",
                         password = true,
                         requester = githubPasswordRequester,
@@ -1737,63 +955,11 @@ SettingsSection("Data and sync") {
                         }
 
 
-                    CompactSettingsOptionRow(
-                        icon = Icons.Default.Refresh,
-                        title = "Automatic GitHub backup",
-                        subtitle = scheduleSummary,
-                        horizontalPadding = 0.dp,
-                        verticalPadding = 4.dp,
-                        belowContent = {
-                            Spacer(Modifier.height(8.dp))
-                            SettingsChoiceRow(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(
-                                        start = 40.dp,
-                                        end = 2.dp
-                                    )
-                            ) {
-                                scheduleOptions.forEachIndexed {
-                                        index,
-                                        (hours, label) ->
-                                    val shape =
-                                        settingsChoiceShape(
-                                            index,
-                                            scheduleOptions.size
-                                        )
-                                    SettingsChoiceButton(
-                                        selected =
-                                            githubBackupConfig
-                                                .autoBackupIntervalHours ==
-                                                hours,
-                                        onClick = {
-                                            val updated =
-                                                githubBackupConfig.copy(
-                                                    autoBackupIntervalHours =
-                                                        hours
-                                                )
-                                            githubBackupConfig = updated
-                                            githubBackupManager
-                                                .saveConfig(updated)
-                                        },
-                                        modifier =
-                                            Modifier.remoteFocusFrame(
-                                                shape
-                                            ),
-                                        shape = shape
-                                    ) {
-                                        Text(
-                                            label,
-                                            style =
-                                                MaterialTheme.typography
-                                                    .labelLarge
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    )
-
+                    SettingsPickerRow("Automatic device backup", scheduleOptions, githubBackupConfig.autoBackupIntervalHours, { hours ->
+                        val updated = githubBackupConfig.copy(autoBackupIntervalHours = hours)
+                        githubBackupConfig = updated
+                        githubBackupManager.saveConfig(updated)
+                    }, scheduleSummary)
 
                     NikTvSecondaryActionButton(
                         onClick = {
@@ -1856,6 +1022,9 @@ SettingsSection("Data and sync") {
             }
 
             SettingsDivider()
+        }
+        SettingsSection("Device backup") {
+            SettingsLinkRow(SettingsPage.BACKUP_DESTINATION, if (githubBackupConfig.backupMode == com.nikhil.niktv.data.BackupMode.GITHUB) "GitHub" else "Local file")
             ResponsiveSettingsOptionRow(
                 icon =
                     if (
@@ -1954,6 +1123,10 @@ SettingsSection("Data and sync") {
         }
 
 
+        githubBackupMessage?.let { message ->
+            Text(message, Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium,
+                color = if (githubBackupSucceeded == false) MaterialTheme.colorScheme.error else SettingsMuted)
+        }
         if (githubRestoreDialogOpen) {
             AlertDialog(
                 onDismissRequest = {
@@ -1988,12 +1161,16 @@ SettingsSection("Data and sync") {
                             githubPendingRestore != null -> {
                                 val decoded = githubPendingRestore!!
                                 val preview = decoded.preview
+                                Column(Modifier.heightIn(max = (settingsConfiguration.screenHeightDp * .55f).dp)
+                                    .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text(
-                                    "Decryption successful",
+                                    "Backup ready",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text("Device: ${preview.deviceName}")
+                                preview.deviceId?.let { Text("Device ID: $it") }
+                                preview.backupNumber?.let { Text("Backup number: $it") }
                                 Text("Backup date: ${preview.exportedAt}")
                                 Text("NikTV version: ${preview.appVersion}")
                                 Text("Settings version: ${preview.settingsVersion}")
@@ -2013,6 +1190,7 @@ SettingsSection("Data and sync") {
                                     }
                                 ) {
                                     Text("Choose another backup")
+                                }
                                 }
                             }
 
@@ -2041,7 +1219,7 @@ SettingsSection("Data and sync") {
                                             ListItem(
                                                 headlineContent = {
                                                     Text(
-                                                        backup.name,
+                                                        backup.displayLabel,
                                                         maxLines = 4,
                                                         overflow = TextOverflow.Visible,
                                                         style = MaterialTheme.typography.bodyMedium,
@@ -2052,12 +1230,6 @@ SettingsSection("Data and sync") {
                                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                                         Text(
                                                             "${formatOfflineBytes(backup.size)} · " + if (backup.encrypted) "Encrypted backup" else "Readable JSON",
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                        )
-                                                        Text(
-                                                            backup.path,
-                                                            maxLines = 2,
-                                                            style = MaterialTheme.typography.labelSmall,
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                                         )
                                                     }
@@ -2072,7 +1244,9 @@ SettingsSection("Data and sync") {
                                                     )
                                                 },
                                                 modifier = Modifier
-                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .padding(4.dp)
+                                                    .remoteFocusFrame(RoundedCornerShape(10.dp))
+                                                    .clip(RoundedCornerShape(10.dp))
                                                     .clickable {
                                                         val config =
                                                             normalizedGitHubBackupConfig()
@@ -2153,47 +1327,12 @@ SettingsSection("Data and sync") {
             )
         }
 
-        SettingsSection("App updates") {
+        SettingsSection("Update preferences") {
             Column {
-                ResponsiveSettingsOptionRow(
-                    icon = Icons.Default.AdminPanelSettings,
-                    title = "Require updates before using NikTV",
-                    subtitle =
-                        if (BuildConfig.DEBUG) {
-                            "Development build · disabled by default"
-                        } else {
-                            "Block access until an available update is installed"
-                        },
-                    trailingContent = {
-SettingsSwitch(
-                            checked = updateEnforcementEnabled,
-                            onCheckedChange =
-                                AppUpdates::setUpdateEnforcementEnabled,
-                            modifier = Modifier
-                        )
-                    }
-                )
+                SettingsControlRow("Require available updates", checked = updateEnforcementEnabled,
+                    onToggle = { AppUpdates.setUpdateEnforcementEnabled(it) },
+                    description = "Block app access until an available update is installed.")
                 SettingsDivider()
-                ResponsiveSettingsOptionRow(
-                    icon = Icons.Default.Refresh,
-                    title = "Check for updates on startup",
-                    subtitle =
-                        if (startupUpdateCheckEnabled) {
-                            "Enabled · check for an update whenever NikTV starts"
-                        } else {
-                            "Disabled · no launch-time update check"
-                        },
-                    trailingContent = {
-SettingsSwitch(
-                            checked = startupUpdateCheckEnabled,
-                            onCheckedChange =
-                                AppUpdates::setStartupUpdateCheckEnabled,
-                            modifier = Modifier
-                        )
-                    }
-                )
-                SettingsDivider()
-
                 val updatePackageSummary =
                     if (updatePackagePreference == UpdatePackage.AUTO) {
                         "Automatic · ${AppUpdates.effectiveUpdatePackage().displayName} detected"
@@ -2202,59 +1341,20 @@ SettingsSwitch(
                     }
 
 
-                CompactSettingsOptionRow(
-                    icon = Icons.Default.SystemUpdate,
-                    title = "Update APK",
-                    subtitle = updatePackageSummary,
-                    belowContent = {
-                        Spacer(Modifier.height(8.dp))
-                        Box(Modifier.padding(start = 40.dp, end = 2.dp)) {
-                            SettingsChoiceGrid(
-                                options = UpdatePackage.entries.map { it to it.displayName },
-                                selected = updatePackagePreference,
-                                onSelect = { option ->
-                                    AppUpdates.setUpdatePackage(option)
-                                    availableUpdate = null
-                                    updateMessage = "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
-                                }
-                            )
-                        }
-                    }
-                )
-
+                SettingsPickerRow("Installer package", UpdatePackage.entries.map { it to it.displayName },
+                    updatePackagePreference, { option ->
+                        AppUpdates.setUpdatePackage(option)
+                        availableUpdate = null
+                        updateMessage = "Update APK set to ${if (option == UpdatePackage.AUTO) AppUpdates.effectiveUpdatePackage().displayName else option.displayName}"
+                    }, updatePackageSummary)
 
                 SettingsDivider()
-                ResponsiveSettingsOptionRow(
-                    icon = Icons.Default.SystemUpdateAlt,
-                    title = "One-click update",
-                    subtitle =
-                        if (oneClickUpdating) {
-                            "Checking for an update…"
-                        } else {
-                            "Check now, download an available update, then open Android's installer"
-                        },
-                    modifier = Modifier
-                        .focusRequester(oneClickUpdateRequester)
-                        .remoteFocusFrame(RoundedCornerShape(14.dp))
-                        .clickable {
-                            if (!oneClickUpdating && !checkingUpdate) {
-                                runOneClickUpdate()
-                            }
-                        },
-                    trailingContent = {
-                        if (oneClickUpdating) {
-                            CircularProgressIndicator(
-                                Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.ChevronRight,
-                                "Run one-click update"
-                            )
-                        }
-                    }
-                )
+            }
+        }
+        SettingsSection("App updates") {
+            Column {
+                SettingsControlRow("Check for updates on startup", checked = startupUpdateCheckEnabled,
+                    onToggle = { AppUpdates.setStartupUpdateCheckEnabled(it) })
                 SettingsDivider()
 
                 val versionStatus =
@@ -2271,13 +1371,13 @@ SettingsSwitch(
 
                 ResponsiveSettingsOptionRow(
                     icon = Icons.Default.SystemUpdate,
-                    title = "NikTV ${BuildConfig.VERSION_NAME}",
-                    subtitle = versionStatus,
+                    title = "Check for updates",
+                    subtitle = "NikTV ${BuildConfig.VERSION_NAME} · $versionStatus",
                     modifier = Modifier
                         .focusRequester(versionRequester)
                         .remoteFocusFrame(RoundedCornerShape(14.dp))
                         .clickable {
-                            if (!checkingUpdate && !oneClickUpdating) {
+                            if (!checkingUpdate) {
                                 checkingUpdate = true
                                 updateMessage = "Checking for updates…"
                                 scope.launch {
@@ -2552,6 +1652,10 @@ SettingsSwitch(
                 }
             }
         }
+        if (activePage == SettingsPage.APP) {
+            SettingsLinkRow(SettingsPage.UPDATE_PREFERENCES, "Package & enforcement")
+            SettingsLinkRow(SettingsPage.RESET, "Review before clearing")
+        }
         TmdbCredentialSettingsSection()
         SettingsSection("Data & reset") {
             ResponsiveSettingsOptionRow(
@@ -2565,7 +1669,7 @@ SettingsSwitch(
                     MaterialTheme.colorScheme.error.copy(alpha = .78f),
                 modifier = Modifier
                     .remoteFocusFrame(RoundedCornerShape(14.dp))
-                    .clickable(onClick = logout),
+                    .clickable { confirmReset = true },
                 trailingContent = {
                     Icon(
                         Icons.Default.ChevronRight,
@@ -2577,8 +1681,7 @@ SettingsSwitch(
 
         }
         if (
-            LocalSettingsDestination.current ==
-                SettingsDestination.SYSTEM
+            activePage == SettingsPage.RESET
         ) {
             Text(
                 "NikTV keeps the active profile and session in this app's private storage. Expired sessions are refreshed automatically.",
@@ -2586,19 +1689,18 @@ SettingsSwitch(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        } }
+        } } }
         if (compactSettingsHeader) {
-            HorizontalPager(
-                state = settingsPagerState,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-                CompositionLocalProvider(
-                    LocalSettingsDestination provides
-                        settingsDestinations[page]
-                ) {
-                    settingsPageContent()
+            if (mobileCategoriesOpen) {
+                SettingsCategoryIndex(Modifier.fillMaxSize().padding(padding), mobileCategoryScrollState, settingsRailRequesters) { destination ->
+                    returnToSettingsPage = null
+                    settingsPageParents.clear()
+                    selectedSettingsDestination = destination
+                    selectedSettingsPage = destination.rootPage()
+                    mobileCategoriesOpen = false
+                    enterSettingsPage = true
                 }
-            }
+            } else settingsPageContent()
         } else {
             Row(
                 Modifier
@@ -2607,10 +1709,22 @@ SettingsSwitch(
             ) {
                 SettingsDestinationRail(
                     selected = selectedSettingsDestination,
-                    onSelected = { selectedSettingsDestination = it },
+                    onSelected = {
+                        returnToSettingsPage = null
+                        enterSettingsPage = false
+                        settingsPageParents.clear()
+                        selectedSettingsDestination = it
+                        selectedSettingsPage = it.rootPage()
+                    },
                     requesters = settingsRailRequesters,
-                    detailRequester = if (selectedSettingsDestination == SettingsDestination.PROFILES && preconfiguredProfiles.isNotEmpty())
-                        profileAvailabilityEntryRequester else settingsContentEntryRequester,
+                    detailRequester = settingsContentEntryRequester,
+                    onEnterContent = { destination ->
+                        if (selectedSettingsDestination != destination) {
+                            selectedSettingsDestination = destination
+                            selectedSettingsPage = destination.rootPage()
+                        }
+                        if (settingsFocusEntries[selectedSettingsPage]?.requestFirst() != true) enterSettingsPage = true
+                    },
                     modifier = Modifier
                         .width(
                             when {
@@ -2646,13 +1760,13 @@ SettingsSwitch(
             }
         }
     }
+    }
     pendingRemoval?.let { target ->
-        AlertDialog(
-            onDismissRequest = { pendingRemoval = null },
-            title = { Text("Remove ${target.name}?") },
-            text = { Text("This removes its saved credentials and session. Other profiles remain available.") },
-            confirmButton = { NikTvTextActionButton(onClick = { removeProfile(target); pendingRemoval = null }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { NikTvTextActionButton(onClick = { pendingRemoval = null }) { Text("Cancel") } }
+        ProjectCardConfirmationDialog(
+            title = "Remove ${target.name}?",
+            message = "This removes its saved credentials and session. Other profiles remain available.",
+            confirmLabel = "Remove", close = { pendingRemoval = null },
+            confirm = { removeProfile(target); pendingRemoval = null; selectedSettingsPage = SettingsPage.MANAGE_PROFILES }
         )
     }
     availableUpdate?.let { update ->
@@ -2662,7 +1776,7 @@ SettingsSwitch(
         }) {
             Surface(
                 modifier = Modifier.fillMaxWidth().widthIn(max = 620.dp),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
                 tonalElevation = 2.dp,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -2693,14 +1807,14 @@ SettingsSwitch(
                             },
                             modifier = Modifier.height(44.dp)
                                 .focusProperties { canFocus = updateDialogNavigationEnabled }
-                                .remoteFocusFrame(CircleShape),
-                            shape = CircleShape
+                                .remoteFocusFrame(RoundedCornerShape(12.dp)),
+                            shape = RoundedCornerShape(12.dp)
                         ) { Text("Later") }
                         NikTvPrimaryActionButton(
                             onClick = { requestUpdateDownload(update) },
                             enabled = AppUpdates.canStartDownload(update),
-                            modifier = Modifier.height(44.dp).focusRequester(updateDownloadRequester).remoteFocusFrame(CircleShape),
-                            shape = CircleShape
+                            modifier = Modifier.height(44.dp).focusRequester(updateDownloadRequester).remoteFocusFrame(RoundedCornerShape(12.dp)),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Download, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -2710,6 +1824,7 @@ SettingsSwitch(
                 }
             }
         }
+    }
     }
 }
 
@@ -3823,21 +2938,13 @@ private val LocalSettingsDestination =
     compositionLocalOf<SettingsDestination?> { null }
 
 @Composable
-private fun SettingsDestinationHeader(destination: SettingsDestination) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(destination.title, style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold, color = Color(0xFFF5F5F7))
-        Text(destination.subtitle, style = MaterialTheme.typography.bodySmall, color = SettingsMuted)
-    }
-}
-
-@Composable
 internal fun SettingsDestinationRail(
     selected: SettingsDestination,
     onSelected: (SettingsDestination) -> Unit,
     requesters: Map<SettingsDestination, FocusRequester>,
     detailRequester: FocusRequester,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onEnterContent: ((SettingsDestination) -> Unit)? = null
 ) {
     Surface(
         modifier = modifier,
@@ -3846,17 +2953,10 @@ internal fun SettingsDestinationRail(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 18.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                "PREFERENCES",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFFF5F5F7)
-            )
-            Spacer(Modifier.height(4.dp))
-
             SettingsDestination.entries.forEach { destination ->
                 val isSelected = destination == selected
                 val shape = RoundedCornerShape(10.dp)
@@ -3864,8 +2964,14 @@ internal fun SettingsDestinationRail(
                     onClick = { onSelected(destination) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 54.dp)
+                        .heightIn(min = 48.dp)
                         .focusRequester(requesters.getValue(destination))
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight && onEnterContent != null) {
+                                onEnterContent(destination)
+                                true
+                            } else false
+                        }
                         .focusProperties {
                             right = detailRequester
                         }
@@ -3924,7 +3030,7 @@ internal fun SettingsDestinationRail(
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(20.dp))
             Text(
                 "NikTV ${BuildConfig.VERSION_NAME}",
                 style = MaterialTheme.typography.labelSmall,
@@ -3951,7 +3057,7 @@ internal fun CompactSettingsOptionRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 72.dp)
+            .heightIn(min = if (LocalSettingsTv.current) 68.dp else 60.dp)
             .padding(
                 horizontal = horizontalPadding,
                 vertical = verticalPadding
@@ -3980,13 +3086,13 @@ internal fun CompactSettingsOptionRow(
             ) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = if (LocalSettingsTv.current) 17.sp else 15.sp, lineHeight = if (LocalSettingsTv.current) 23.sp else 21.sp),
                     fontWeight = FontWeight.SemiBold,
                     color = titleColor
                 )
                 Text(
                     subtitle,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = if (LocalSettingsTv.current) 14.sp else 12.sp, lineHeight = if (LocalSettingsTv.current) 20.sp else 17.sp),
                     color = subtitleColor
                 )
             }
@@ -4017,84 +3123,12 @@ private fun ResponsiveSettingsOptionRow(
 }
 
 @Composable
-private fun CompactOrientationSetting(
-    entryRequester: FocusRequester,
-    upRequester: FocusRequester,
-    downRequester: FocusRequester? = null
-) {
-    val context = LocalContext.current
-    val selected by rememberUiOrientationMode()
-
-    CompactSettingsOptionRow(
-        icon = Icons.Default.ScreenRotation,
-        title = "Screen orientation",
-        subtitle =
-            "Auto follows device rotation settings on phones and tablets. TVs stay landscape.",
-        belowContent = {
-            Spacer(Modifier.height(8.dp))
-            SettingsChoiceRow(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 40.dp, end = 2.dp)
-            ) {
-                UiOrientationMode.entries.forEachIndexed { index, mode ->
-                    val shape =
-                        settingsChoiceShape(
-                            index,
-                            UiOrientationMode.entries.size
-                        )
-                    SettingsChoiceButton(
-                        selected = selected == mode,
-                        onClick = {
-                            UiOrientationPreferences.set(
-                                context,
-                                mode
-                            )
-                        },
-                        modifier = Modifier
-                            .then(
-                                if (index == 0) {
-                                    Modifier.focusRequester(
-                                        entryRequester
-                                    )
-                                } else {
-                                    Modifier
-                                }
-                            )
-                            .focusProperties {
-                                up = upRequester
-                                if (downRequester != null) {
-                                    down = downRequester
-                                }
-                            }
-                            .remoteFocusFrame(shape),
-                        shape = shape
-                    ) {
-                        Text(
-                            mode.title,
-                            style =
-                                MaterialTheme.typography.labelLarge,
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-        }
-    )
-}
-
-@Composable
 internal fun SettingsSection(
     title: String,
+    page: SettingsPage = compactSettingsPageFor(title),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val destination = LocalSettingsDestination.current
-    if (
-        destination != null &&
-        settingsDestinationFor(title) != destination
-    ) {
-        return
-    }
+    if (LocalSettingsPage.current != page) return
 
     val danger = title == "Data & reset"
 
@@ -4104,18 +3138,9 @@ internal fun SettingsSection(
             .focusGroup(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        if (destination == null || title.replace("&", "and") != destination.title.replace("&", "and")) {
-        Text(
-            text = title,
-            modifier = Modifier.padding(horizontal = 6.dp),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (danger) MaterialTheme.colorScheme.error else Color(0xFFB9BDC6)
-        )
-        }
         Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(4.dp),
+            shape = RoundedCornerShape(10.dp),
             color = if (danger) Color(0xFF171012) else SettingsSurface,
             border = BorderStroke(
                 1.dp,
@@ -4123,7 +3148,7 @@ internal fun SettingsSection(
             )
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(4.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 content = content
             )
@@ -4186,41 +3211,6 @@ internal fun RowScope.ExpressiveBottomNavigationItem(
                     fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun SettingsBottomNavigation(
-    currentDestination: SettingsDestination,
-    selectDestination: (SettingsDestination) -> Unit
-) {
-    Surface(color = Color(0xFF101216), tonalElevation = 8.dp) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding(),
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                Modifier
-                    .widthIn(max = 448.dp)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                    .animateContentSize(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                SettingsDestination.entries.forEach { destination ->
-                    val selected = destination == currentDestination
-                    ExpressiveBottomNavigationItem(
-                        icon = destination.icon(),
-                        label = destination.title,
-                        selected = selected,
-                        onClick = { selectDestination(destination) },
-                        modifier = if (selected) Modifier.weight(1f) else Modifier.width(56.dp)
-                    )
-                }
             }
         }
     }
@@ -4692,14 +3682,5 @@ internal fun BackupSettingsActionRow(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    ResponsiveSettingsOptionRow(
-        icon = icon,
-        title = title,
-        subtitle = subtitle,
-        modifier = Modifier
-            .then(if (enabled) Modifier.remoteFocusFrame(RoundedCornerShape(8.dp)) else Modifier)
-            .clickable(enabled = enabled, onClick = onClick),
-        titleColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.5f),
-        trailingContent = { Icon(Icons.Default.ChevronRight, null) }
-    )
+    SettingsControlRow(title, description = subtitle, onClick = onClick, enabled = enabled)
 }

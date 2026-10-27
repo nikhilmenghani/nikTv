@@ -14,6 +14,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -62,44 +69,12 @@ internal fun ParentalPinPrompt(vm: NikTvViewModel) {
 internal fun ParentalControlsSettings(vm: NikTvViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var changingPin by remember { mutableStateOf(false) }
-    SettingsGroupHeading("Parental controls", "Manage access to sensitive content on this device.")
-    CompactSettingsOptionRow(
-        icon = Icons.Default.Lock,
-        title = "Protect sensitive content",
-        subtitle = "Require a PIN to access sensitive channels, movies and series.",
-        trailingContent = {
-            SettingsSwitch(checked = state.parentalControlsEnabled, onCheckedChange = vm::setParentalControlsEnabled)
-        }
-    )
-    SettingsDivider()
-    CompactSettingsOptionRow(
-        icon = Icons.Default.Timer,
-        title = "Lock again after",
-        subtitle = "Choose how long sensitive content stays unlocked. Access also locks when the app goes into the background.",
-        belowContent = {
-            Spacer(Modifier.height(8.dp))
-            Box(Modifier.padding(start = 40.dp)) {
-                SettingsChoiceGrid(
-                    options = ParentalControls.relockOptions,
-                    selected = state.parentalRelockMinutes,
-                    onSelect = vm::setParentalRelockMinutes
-                )
-            }
-        }
-    )
-    SettingsDivider()
-    CompactSettingsOptionRow(
-        icon = Icons.Default.Key,
-        title = "Parental PIN",
-        subtitle = "Update the PIN used to manage sensitive content access.",
-        belowContent = {
-            Spacer(Modifier.height(8.dp))
-            NikTvSecondaryActionButton(
-                onClick = { vm.authorizeParentalSettings { changingPin = true } },
-                modifier = Modifier.padding(start = 40.dp)
-            ) { Text("Change PIN") }
-        }
-    )
+    SettingsControlRow("Protect sensitive content", checked = state.parentalControlsEnabled,
+        onToggle = vm::setParentalControlsEnabled, description = "Require a PIN for sensitive channels, movies and series.")
+    if (state.parentalControlsEnabled) SettingsPickerRow("Lock again after", ParentalControls.relockOptions,
+        state.parentalRelockMinutes, vm::setParentalRelockMinutes,
+        "Sensitive content also locks when NikTV goes into the background.")
+    SettingsControlRow("Change PIN", onClick = { vm.authorizeParentalSettings { changingPin = true } })
     if (changingPin) {
         var pin by remember { mutableStateOf("") }
         var confirmation by remember { mutableStateOf("") }
@@ -127,8 +102,34 @@ internal fun ParentalPinDialog(
     confirmation: String? = null, onConfirmation: ((String) -> Unit)? = null
 ) {
     val focus = remember { FocusRequester() }
+    val confirmationFocus = remember { FocusRequester() }
+    val cancelFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var editingField by remember { mutableStateOf<Int?>(null) }
+    val pinInteraction = remember { MutableInteractionSource() }
+    val confirmationInteraction = remember { MutableInteractionSource() }
+    val pinPressed by pinInteraction.collectIsPressedAsState()
+    val confirmationPressed by confirmationInteraction.collectIsPressedAsState()
+    LaunchedEffect(pinPressed, confirmationPressed) {
+        if (pinPressed) editingField = 0
+        if (confirmationPressed) editingField = 1
+    }
+    LaunchedEffect(editingField) {
+        if (editingField != null) { withFrameNanos { }; keyboard?.show() }
+    }
+    fun Modifier.pinKeyboard(field: Int, next: FocusRequester): Modifier = onFocusChanged {
+        if (!it.isFocused && editingField == field) { editingField = null; keyboard?.hide() }
+    }.onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) false
+        else when (event.key) {
+            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { editingField = field; keyboard?.show(); true }
+            Key.DirectionDown -> { editingField = null; keyboard?.hide(); next.requestFocus(); true }
+            else -> false
+        }
+    }
     LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
+        shape = RoundedCornerShape(10.dp),
         onDismissRequest = dismiss,
         title = { Text(title) },
         text = {
@@ -137,25 +138,30 @@ internal fun ParentalPinDialog(
                     value = pin, onValueChange = { onPin(it.filter { c -> c in '0'..'9' }.take(4)) },
                     label = { Text(if (confirmation == null) "PIN" else "New PIN") },
                     singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
+                    readOnly = editingField != 0, interactionSource = pinInteraction,
+                    shape = RoundedCornerShape(10.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done, showKeyboardOnFocus = false),
                     keyboardActions = KeyboardActions(onDone = { if (validParentalPin(pin) && confirmation == null) confirm() }),
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus)
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus).pinKeyboard(0, if (confirmation != null) confirmationFocus else cancelFocus)
                 )
                 if (confirmation != null) OutlinedTextField(
                     value = confirmation,
                     onValueChange = { onConfirmation?.invoke(it.filter { c -> c in '0'..'9' }.take(4)) },
                     label = { Text("Confirm new PIN") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
+                    readOnly = editingField != 1, interactionSource = confirmationInteraction,
+                    shape = RoundedCornerShape(10.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done, showKeyboardOnFocus = false),
                     keyboardActions = KeyboardActions(onDone = { if (validParentalPin(pin) && validParentalPin(confirmation)) confirm() }),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().focusRequester(confirmationFocus).pinKeyboard(1, cancelFocus)
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                NikTvSecondaryActionButton(onClick = dismiss, modifier = Modifier.weight(1f).height(48.dp)) { Text("Cancel") }
+                NikTvSecondaryActionButton(onClick = dismiss, modifier = Modifier.weight(1f).height(48.dp)
+                    .focusRequester(cancelFocus).focusProperties { up = if (confirmation != null) confirmationFocus else focus }) { Text("Cancel") }
                 NikTvPrimaryActionButton(onClick = confirm, enabled = validParentalPin(pin) &&
                     (confirmation == null || validParentalPin(confirmation)),
                     modifier = Modifier.weight(1f).height(48.dp)) { Text(if (confirmation == null) "Unlock" else "Save") }

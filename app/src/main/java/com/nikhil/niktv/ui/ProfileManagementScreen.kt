@@ -364,31 +364,9 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
             advanced = false
         }
     }
-    val nameFocus = remember { FocusRequester() }; val urlFocus = remember { FocusRequester() }
-    val credentialFocus = remember { FocusRequester() }; val lastFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val profileConfiguration = LocalConfiguration.current
-    val profileIsTv = context.isTvLikeDevice(profileConfiguration)
-    var editingField by remember { mutableStateOf<String?>(null) }
-    fun Modifier.profileTextField(field: String): Modifier = this
-        .onFocusChanged {
-            if (it.isFocused && !profileIsTv) editingField = field
-            if (!it.isFocused && editingField == field) {
-                editingField = null
-                keyboard?.hide()
-            }
-        }
-        .onPreviewKeyEvent { event ->
-            if (profileIsTv && editingField != field && event.type == KeyEventType.KeyUp &&
-                event.key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
-            ) {
-                editingField = field
-                keyboard?.show()
-                true
-            } else false
-        }
     Box(Modifier.fillMaxSize().background(Color(0xFF090909)).statusBarsPadding().imePadding().padding(16.dp), contentAlignment = Alignment.Center) {
-        Card(Modifier.widthIn(max = 520.dp).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
+        Card(Modifier.widthIn(max = 520.dp).fillMaxHeight(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF111827))) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (profiles.isNotEmpty()) IconButton(onClick = cancelEditor) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to profiles") }
@@ -398,13 +376,13 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                     SegmentedButton(portalType == PortalType.STALKER, { useDefaults(PortalType.STALKER) }, uniformSegmentShape(0, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(0, 2))) { Text("Stalker / MAG") }
                     SegmentedButton(portalType == PortalType.XTREAM, { useDefaults(PortalType.XTREAM) }, uniformSegmentShape(1, 2), modifier = Modifier.remoteFocusFrame(uniformSegmentShape(1, 2))) { Text("Xtream") }
                 }
-                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().focusRequester(nameFocus).profileTextField("name"), label = { Text("Profile name") }, singleLine = true, readOnly = profileIsTv && editingField != "name", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { editingField = null; urlFocus.requestFocus() }))
-                OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().focusRequester(urlFocus).profileTextField("url"), label = { Text("Portal URL") }, placeholder = { Text("https://provider.example") }, singleLine = true, readOnly = profileIsTv && editingField != "url", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { editingField = null; credentialFocus.requestFocus() }))
+                SettingsTextEditRow("Profile name", name, { name = it }, "Name shown in the profile chooser.")
+                SettingsTextEditRow("Portal URL", url, { url = it }, "The provider portal address.", placeholder = "https://provider.example")
                 if (portalType == PortalType.XTREAM) {
-                    OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus).profileTextField("username"), label = { Text("Username") }, singleLine = true, readOnly = profileIsTv && editingField != "username", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), keyboardActions = KeyboardActions(onNext = { editingField = null; lastFocus.requestFocus() }))
-                    OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().focusRequester(lastFocus).profileTextField("password"), label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, readOnly = profileIsTv && editingField != "password", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { editingField = null; keyboard?.hide() }))
+                    SettingsTextEditRow("Username", username, { username = it }, "The username supplied by your provider.")
+                    SettingsTextEditRow("Password", password, { password = it }, "The password supplied by your provider.", password = true)
                 } else {
-                    OutlinedTextField(mac, { mac = it }, Modifier.fillMaxWidth().focusRequester(credentialFocus).profileTextField("mac"), label = { Text("MAC address") }, placeholder = { Text("00:1A:79:XX:XX:XX") }, singleLine = true, readOnly = profileIsTv && editingField != "mac", keyboardOptions = KeyboardOptions(imeAction = if (advanced) ImeAction.Next else ImeAction.Done), keyboardActions = KeyboardActions(onNext = { editingField = null; lastFocus.requestFocus() }, onDone = { editingField = null; keyboard?.hide() }))
+                    SettingsTextEditRow("MAC address", mac, { mac = it }, "The MAC address registered with your provider.", placeholder = "00:1A:79:XX:XX:XX")
                     NikTvTextActionButton(onClick = {
                         mac = generatedIdentity.macAddress
                         serial = generatedIdentity.serialNumber
@@ -415,7 +393,7 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                         Text("Generate compatible device identity")
                     }
                     NikTvTextActionButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Hide advanced identity" else "Advanced identity") }
-                    if (advanced) OutlinedTextField(serial, { serial = it }, Modifier.fillMaxWidth().focusRequester(lastFocus).profileTextField("serial"), label = { Text("Portal serial number (optional)") }, supportingText = { Text("Use the serial registered for this MAC, or leave blank to generate one.") }, singleLine = true, readOnly = profileIsTv && editingField != "serial", keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { editingField = null; keyboard?.hide() }))
+                    if (advanced) SettingsTextEditRow("Portal serial number (optional)", serial, { serial = it }, "Use the serial registered for this MAC, or leave blank to generate one.")
                 }
                 val credentialsReady = if (portalType == PortalType.XTREAM) username.isNotBlank() && password.isNotBlank() else mac.isNotBlank()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

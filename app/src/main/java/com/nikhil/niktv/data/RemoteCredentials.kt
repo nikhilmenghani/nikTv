@@ -110,6 +110,36 @@ object RemoteCredentials {
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString("owner", "nikhilmenghani").orEmpty()
 
+    internal fun exportDeviceConfiguration(context: Context): RemoteConfigurationBackup? {
+        val savedToken = token(context)
+        if (savedToken.isBlank() && values.isEmpty()) return null
+        return RemoteConfigurationBackup(savedToken, owner(context), repository(context), filePath(context),
+            values.toSortedMap(), canPairDevices(context))
+    }
+
+    internal fun validateDeviceConfiguration(backup: RemoteConfigurationBackup?) {
+        if (backup == null || backup.token.isBlank()) return
+        require(REPOSITORY_PATTERN.matches(backup.owner.trim())) { "Invalid private configuration owner" }
+        require(REPOSITORY_PATTERN.matches(backup.repository.trim())) { "Invalid private configuration repository" }
+        require(backup.path.isNotBlank() && backup.path.split('/').none { it.isBlank() || it == "." || it == ".." }) {
+            "Invalid private configuration file path"
+        }
+    }
+
+    internal fun restoreDeviceConfiguration(context: Context, backup: RemoteConfigurationBackup?) {
+        validateDeviceConfiguration(backup)
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        if (backup != null) {
+            if (backup.token.isNotBlank()) saveConnection(context, backup.token, backup.owner, backup.repository,
+                backup.path, manuallyEntered = backup.administrator)
+            val known = backup.values.filterKeys { it in KNOWN_KEYS }
+            prefs.edit().putString("cached_values", encrypt(JSONObject(known).toString())).commit()
+            values = known
+        } else values = emptyMap()
+        lastUpdatedAt = 0L
+    }
+
     fun repository(context: Context): String =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString("repository", "myenv").orEmpty().substringAfterLast('/')

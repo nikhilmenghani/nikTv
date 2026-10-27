@@ -560,7 +560,10 @@ internal fun CatalogScreen(
             else MainContent(Modifier.fillMaxSize())
         }
     }
-    if (phoneExperience) {
+    if (state.settingsOpen) {
+        // Settings owns its header, navigation and system insets on every layout.
+        MainContent(Modifier.fillMaxSize())
+    } else if (phoneExperience) {
         val showPhoneBar = !phoneDetailOpen && state.selectedSeries == null && state.providerMovieDetails == null &&
             state.movieMatchSelection == null && state.seriesMatchSelection == null && !state.categoryManagerOpen
         val destination = when {

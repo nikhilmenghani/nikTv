@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -225,9 +226,11 @@ internal fun NikTubeMobileScreen(back: () -> Unit, vm: NikTubeMobileViewModel = 
         if (!shortsVisible) vm.opening?.let { item -> AlertDialog(onDismissRequest = vm::cancelOpening, title = { Text("Opening video") }, text = { Column { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(item.title) } }, confirmButton = { TextButton(onClick = vm::cancelOpening) { Text("Cancel") } }) }
         vm.failedVideo?.let { item -> AlertDialog(onDismissRequest = vm::dismissFailure, title = { Text("Could not open video") }, text = { Text(vm.error.orEmpty()) },
             confirmButton = { FilledTonalButton(onClick = { vm.play(item) }) { Text("Retry") } }, dismissButton = { OutlinedButton(onClick = { external(item); vm.dismissFailure() }) { Text("Open with") } }) }
-        if (settings) AlertDialog(onDismissRequest = { settings = false }, title = { Text("NikTube playback") }, text = {
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("Background audio", Modifier.weight(1f)); Switch(NikTubeSession.backgroundAudio, NikTubeSession::setBackground) }
-        }, confirmButton = { FilledTonalButton(onClick = { settings = false }) { Text("Close") } })
+        if (settings) AlertDialog(onDismissRequest = { settings = false }, shape = RoundedCornerShape(10.dp),
+            title = { Text("NikTube playback") }, text = {
+                SettingsControlRow("Background audio", checked = NikTubeSession.backgroundAudio,
+                    onToggle = NikTubeSession::setBackground)
+            }, confirmButton = { NikTvSecondaryActionButton(onClick = { settings = false }) { Text("Close") } })
         if (description) ModalBottomSheet(onDismissRequest = { description = false }) {
             Text("Description", Modifier.padding(horizontal = 24.dp), style = MaterialTheme.typography.titleLarge)
             Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState()).padding(24.dp)) {

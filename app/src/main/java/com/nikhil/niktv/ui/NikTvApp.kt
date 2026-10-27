@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -206,13 +207,19 @@ internal fun uniformSegmentShape(index: Int, count: Int): RoundedCornerShape = w
     else -> RoundedCornerShape(0.dp)
 }
 
+internal val LocalRemoteFocusColor = staticCompositionLocalOf { Color(0xFFFFB3B8) }
+internal val LocalRemoteFocusShape = staticCompositionLocalOf<Shape> { CircleShape }
+internal val LocalRemoteFocusMargin = staticCompositionLocalOf { 0.dp }
+
 @Composable
 internal fun Modifier.remoteFocusFrame(
-    shape: Shape = CircleShape
+    shape: Shape = LocalRemoteFocusShape.current
 ): Modifier {
     var focused by remember { mutableStateOf(false) }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    val margin = with(androidx.compose.ui.platform.LocalDensity.current) { LocalRemoteFocusMargin.current.toPx() }
+    var focusSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isTv = context.isTvLikeDevice(configuration)
@@ -228,13 +235,18 @@ internal fun Modifier.remoteFocusFrame(
      * focused controls into view without adding a colored shadow.
      */
     return this
+        .then(if (margin > 0f) Modifier.onSizeChanged { focusSize = it } else Modifier)
         .bringIntoViewRequester(bringIntoViewRequester)
         .onFocusChanged {
             focused = it.isFocused
 
-            if (it.isFocused && !isTv) {
+            if (it.isFocused && (!isTv || margin > 0f)) {
                 scope.launch {
-                    bringIntoViewRequester.bringIntoView()
+                    bringIntoViewRequester.bringIntoView(
+                        if (margin > 0f && focusSize.height > 0) androidx.compose.ui.geometry.Rect(
+                            0f, -margin, focusSize.width.toFloat(), focusSize.height + margin
+                        ) else null
+                    )
                 }
             }
         }
@@ -243,7 +255,7 @@ internal fun Modifier.remoteFocusFrame(
                 Modifier
                     .border(
                         2.dp,
-                        Color(0xFFFFB3B8),
+                        LocalRemoteFocusColor.current,
                         shape
                     )
             } else {

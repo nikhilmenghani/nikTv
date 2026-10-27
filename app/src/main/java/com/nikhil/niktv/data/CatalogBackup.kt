@@ -26,8 +26,9 @@ import java.io.ByteArrayOutputStream
 
 /** Device-only preferences are deliberately excluded from profile/settings backup restoration. */
 object CatalogPreferences {
+    const val CLOUD_BACKUP_AVAILABLE = false
     private fun prefs(context: Context) = context.getSharedPreferences("catalog_device", Context.MODE_PRIVATE)
-    fun backupEnabled(context: Context) = prefs(context).getBoolean("upload", false)
+    fun backupEnabled(context: Context) = CLOUD_BACKUP_AVAILABLE && prefs(context).getBoolean("upload", false)
     fun preferLocal(context: Context) = prefs(context).getBoolean("prefer_local", true)
     fun setPreferLocal(context: Context, value: Boolean) { prefs(context).edit().putBoolean("prefer_local", value).apply() }
     fun setBackupEnabled(context: Context, enabled: Boolean) { prefs(context).edit().putBoolean("upload", enabled).apply() }
@@ -421,6 +422,7 @@ class CatalogBackupManager(context: Context) {
     }
 
     private fun config(): GitHubBackupConfig = crypto.loadConfig().also {
+        check(CatalogPreferences.CLOUD_BACKUP_AVAILABLE) { "Catalog cloud backup is temporarily unavailable" }
         require(it.backupMode == BackupMode.GITHUB && it.token.isNotBlank()) { "Configure GitHub backup first." }
         require(it.username.matches(Regex("[A-Za-z0-9-]+")) && it.repository.matches(Regex("[A-Za-z0-9_.-]+")))
         require(it.passphrase.isBlank() || it.passphrase.length >= 12) { "Backup password must be blank or at least 12 characters." }

@@ -46,6 +46,20 @@ class NikTubeRepository(context: Context) : SQLiteOpenHelper(context.application
     suspend fun savePlaylists(playlists: Map<String, List<NikTubeVideo>>) = withContext(Dispatchers.IO) {
         write("playlists", JSONObject().apply { playlists.forEach { (name, videos) -> put(name, JSONArray().apply { videos.forEach { put(encode(it)) } }) } }.toString())
     }
+    /** User library records are portable; cached pages remain local and rebuildable. */
+    internal fun exportDeviceLibrary(): Map<String, String> = listOf("history", "subscriptions", "playlists")
+        .mapNotNull { key -> read(key)?.let { key to it } }.toMap().toSortedMap()
+
+    internal fun restoreDeviceLibrary(documents: Map<String, String>) {
+        validateDeviceLibrary(documents)
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("documents", "key IN ('history', 'subscriptions', 'playlists')", null)
+            documents.forEach { (key, value) -> write(key, value) }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
     suspend fun cached(key: String): NikTubePage? = withContext(Dispatchers.IO) {
         readableDatabase.rawQuery("SELECT value FROM documents WHERE key=? AND updated>?", arrayOf("page:$key", (System.currentTimeMillis() - 30 * 60_000).toString())).use { cursor ->
             if (!cursor.moveToFirst()) return@withContext null
@@ -67,6 +81,24 @@ class NikTubeRepository(context: Context) : SQLiteOpenHelper(context.application
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
     companion object {
+        internal fun validateDeviceLibrary(documents: Map<String, String>) {
+            require(documents.keys.all { it in setOf("history", "subscriptions", "playlists") }) { "Invalid library document" }
+            documents.forEach { (key, value) ->
+                if (key == "playlists") {
+                    val playlists = JSONObject(value)
+                    playlists.keys().forEach { name ->
+                        val rows = playlists.getJSONArray(name)
+                        for (index in 0 until rows.length()) decode(rows.getJSONObject(index))
+                    }
+                } else {
+                    val rows = JSONArray(value)
+                    for (index in 0 until rows.length()) {
+                        val row = rows.getJSONObject(index)
+                        if (key == "history") decode(row) else { row.getString("id"); row.getString("title") }
+                    }
+                }
+            }
+        }
         internal fun encode(v: NikTubeVideo) = JSONObject().put("id", v.id).put("title", v.title).put("channel", v.channel)
             .put("duration", v.duration).put("channelId", v.channelId).put("avatar", v.avatar).put("views", v.views)
             .put("published", v.published).put("thumbnail", v.thumbnailUrl)

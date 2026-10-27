@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
+import com.nikhil.niktv.update.AppUpdates
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
@@ -7738,18 +7739,21 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+    private var settingsReturnSurface: SettingsReturnSurface? = null
     fun openSettings() {
-        searchSeriesReturn = null
+        if (!_state.value.settingsOpen) settingsReturnSurface = SettingsReturnSurface.capture(_state.value)
         cancelPendingPlayback()
         _state.update {
             it.copy(settingsOpen = true, offlineDownloadsOpen = false, searchOpen = false, favoritesOpen = false, homeOpen = false)
         }
     }
-    fun openSettingsFromProfileChooser(profile: PortalProfile? = null) =
+    fun openSettingsFromProfileChooser(profile: PortalProfile? = null) {
+        settingsReturnSurface = null
         _state.update {
             it.copy(savedProfile = profile, settingsOpen = true, profileEditorOpen = false,
                 searchOpen = false, favoritesOpen = false, offlineDownloadsOpen = false, homeOpen = false)
         }
+    }
 
     fun setPreconfiguredProfileEnabled(profile: PortalProfile, enabled: Boolean) = viewModelScope.launch {
         if (enabled) store.addProfile(profile) else store.removeProfile(profile)
@@ -7763,7 +7767,11 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
     }
-    fun closeSettings() = _state.update { it.copy(settingsOpen = false) }
+    fun closeSettings() {
+        val origin = settingsReturnSurface
+        settingsReturnSurface = null
+        _state.update { origin?.restore(it) ?: it.copy(settingsOpen = false) }
+    }
     fun reauthenticate() {
         val profile = _state.value.savedProfile ?: return
         if (_state.value.reauthenticating) return
@@ -7813,15 +7821,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             store.importBackup(content)
             }
         }.onSuccess {
-            val profiles = store.profiles.first()
-            _state.update { NikTvState(
-                discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()),
-                profiles = profiles,
-                savedProfile = profiles.firstOrNull(),
-                profileEditorOpen = profiles.isEmpty(),
-                restoring = false,
-                backupMessage = "Backup imported. Choose a profile to authenticate."
-            ) }
+            _state.value = restoredDeviceBackupState()
         }.onFailure { error ->
             _state.update { it.copy(backupMessage = "Could not import backup: ${error.message}") }
         }
@@ -7833,17 +7833,7 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
             store.importBackup(content)
             }
         }.onSuccess {
-            val profiles = store.profiles.first()
-            _state.update {
-                NikTvState(
-                    discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(getApplication()),
-                    profiles = profiles,
-                    savedProfile = profiles.firstOrNull(),
-                    profileEditorOpen = profiles.isEmpty(),
-                    restoring = false,
-                    backupMessage = "Backup imported. Choose a profile to authenticate."
-                )
-            }
+            _state.value = restoredDeviceBackupState()
         }.onFailure { error ->
             _state.update {
                 it.copy(
@@ -7851,6 +7841,26 @@ class NikTvViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+    private suspend fun restoredDeviceBackupState(): NikTvState {
+        val app = getApplication<Application>()
+        com.nikhil.niktv.data.GitHubBackupScheduler.initialize(app)
+        com.nikhil.niktv.data.SearchMetadataSyncScheduler.initialize(app)
+        AppUpdates.refreshPreferences()
+        val profiles = store.profiles.first()
+        return NikTvState(
+            discoveryExperienceEnabled = com.nikhil.niktv.discovery.DiscoveryExperiencePreferences.enabled(app),
+            parentalControlsEnabled = com.nikhil.niktv.data.ParentalControls.enabled(app),
+            parentalRelockMinutes = com.nikhil.niktv.data.ParentalControls.relockMinutes(app),
+            profiles = profiles, savedProfile = store.activeProfile.first(), profileEditorOpen = profiles.isEmpty(), restoring = false,
+            favorites = store.favorites.first(), recentlyPlayed = store.recentlyPlayed.first(),
+            playbackProgress = store.playbackProgress.first(), playbackEngine = store.playbackEngine.first(),
+            seriesStartSeason = store.seriesStartSeason.first(), cacheIntervalMinutes = store.cacheIntervalMinutes.first(),
+            initialCatalogItems = store.initialCatalogItems.first(), playerControlsTimeoutSeconds = store.playerControlsTimeoutSeconds.first(),
+            automaticReauthentication = store.automaticReauthentication.first(), modernUiEnabled = store.modernUiEnabled.first(),
+            keepAwakeOnlyDuringPlayback = store.keepAwakeOnlyDuringPlayback.first(),
+            backupMessage = "Setup restored. Choose a profile to authenticate; caches will rebuild."
+        )
     }
     fun dismissBackupMessage() = _state.update { it.copy(backupMessage = null) }
     fun cancelProfileEditor() = _state.update { current ->
