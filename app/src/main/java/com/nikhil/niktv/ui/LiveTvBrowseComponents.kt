@@ -454,6 +454,10 @@ internal fun ModernSideRail(
             }
             ModernRailButton(Icons.Default.Favorite, "My List", state.favoritesOpen && !state.offlineDownloadsOpen && !state.searchOpen && !state.settingsOpen, expanded, openFavorites)
             ModernRailButton(Icons.Default.DownloadDone, "Offline", state.offlineDownloadsOpen, expanded, openOfflineDownloads)
+            val sportsContext = LocalContext.current
+            ModernRailButton(Icons.Default.SportsCricket, "Sports", false, expanded) {
+                sportsContext.startActivity(android.content.Intent(sportsContext, com.nikhil.niktv.sports.SportsActivity::class.java))
+            }
             Spacer(Modifier.height(12.dp))
             ModernRailButton(Icons.Default.Settings, "Settings", state.settingsOpen, expanded, openSettings)
             Spacer(Modifier.height(12.dp))

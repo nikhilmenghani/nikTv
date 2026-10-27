@@ -1,5 +1,7 @@
 package com.nikhil.niktv.ui
 
+import androidx.compose.material.icons.filled.SportsCricket
+
 import com.nikhil.niktv.data.providerDisplayTitle
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.indication
@@ -475,6 +477,12 @@ private fun ModernTilePhoneHeader(
                             text = { Text("Switch profile") },
                             leadingIcon = { Icon(Icons.Default.AccountCircle, null) },
                             onClick = { profileMenuOpen = false; openProfileSwitcher() }
+                        )
+                        val sportsContext = LocalContext.current
+                        DropdownMenuItem(
+                            text = { Text("Sports") },
+                            leadingIcon = { Icon(Icons.Default.SportsCricket, null) },
+                            onClick = { profileMenuOpen = false; sportsContext.startActivity(android.content.Intent(sportsContext, com.nikhil.niktv.sports.SportsActivity::class.java)) }
                         )
                         DropdownMenuItem(
                             text = { Text("Settings") },

@@ -281,6 +281,17 @@ internal fun ProfileScreen(saved: PortalProfile?, profiles: List<PortalProfile>,
                 }
 
                 ProfileChooserTile(
+                    title = "Sports",
+                    subtitle = "Live events & stream choices",
+                    icon = Icons.Default.SportsCricket,
+                    tileWidth = chooserTileWidth,
+                    portraitCardHeight = portraitCardHeight,
+                    compact = compactChooser
+                ) {
+                    chooserContext.startActivity(android.content.Intent(chooserContext, com.nikhil.niktv.sports.SportsActivity::class.java))
+                }
+
+                ProfileChooserTile(
                     title = "Offline",
                     subtitle = "Downloaded movies & episodes",
                     icon = Icons.Default.DownloadDone,

@@ -38,12 +38,14 @@ import com.nikhil.niktv.ui.NikDropdownMenuItem
 import com.nikhil.niktv.ui.StableTileFocusViewport
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.nikhil.niktv.sports.openSports
 import java.util.Date
 
 @Composable
 internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
     surface: DashboardSurface, classic: (String) -> Unit, customize: (() -> Unit)?,
     categoryManagerOpen: Boolean = false, categoryPopupChanged: (Boolean) -> Unit = {}) {
+    val context = LocalContext.current
     val configure = LocalConfigureProviderDiscovery.current
     val options = LocalDiscoveryLibraryOptions.current
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -59,6 +61,7 @@ internal fun DiscoveryBrowseMenu(expanded: Boolean, change: (Boolean) -> Unit,
                 onClick = { change(false); categoryTrigger++ })
             customize?.let { action -> NikDropdownMenuItem(text = { Text("TMDB categories") },
                 onClick = { change(false); action() }) }
+            NikDropdownMenuItem(text = { Text("Sports") }, onClick = { change(false); context.openSports() })
             listOf("Offline", "Settings").forEach { label ->
                 NikDropdownMenuItem(text = { Text(label) }, onClick = { change(false); classic(label) })
             }
